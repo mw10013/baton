@@ -66,47 +66,47 @@ const instructions = Schema.decodeUnknownSync(Domain.TaskInstructions);
 const note = Schema.decodeUnknownSync(Domain.RunNote);
 const reason = Schema.decodeUnknownSync(Domain.BlockReason);
 
-/** Nobody's list in particular: a reader who has started nothing, so `viewOf` never answers "mine". */
+/** Nobody's list in particular: a reader who has started nothing, so `listStateOf` never answers "started_by_you". */
 const VIEWER = emailOf("viewer@example.com");
 
-/** The four views whose rows `listRuns` returns; "done" is `listRecent`'s. */
-const RUN_VIEWS = [
-  "mine",
-  "upNext",
-  "teammates",
+/** The four states whose rows `listRuns` returns; "done" is `listRecent`'s. */
+const RUN_STATES = [
+  "started_by_you",
+  "ready",
+  "started_by_others",
   "blocked",
-] as const satisfies readonly Domain.WorkflowsListView[];
+] as const satisfies readonly Domain.WorkflowsListState[];
 
 /**
- * The rows `listRuns` returns, flattened back into one list in view-row order,
+ * The rows `listRuns` returns, flattened back into one list in state-row order,
  * so a test that only cares about *which* runs are listed reads the same as it
- * did before the read became one view at a time. `view` names the single view
- * where that is what the test is about; tests about the views themselves call
+ * did before the read became one state at a time. `state` names the single state
+ * where that is what the test is about; tests about the states themselves call
  * `listRuns` directly.
  */
 const runListRows = Effect.fn("runListRows")(function* ({
   teamIds,
   memberEmail = VIEWER,
-  view,
+  state,
   team = null,
   limit = Domain.RUN_PAGE,
 }: {
   readonly teamIds: readonly Domain.TeamId[];
   readonly memberEmail?: Domain.Email;
-  readonly view?: Domain.WorkflowsListView;
+  readonly state?: Domain.WorkflowsListState;
   readonly team?: Domain.TeamId | null;
   readonly limit?: number;
 }) {
   const repository = yield* RunRepository;
-  const read = (wanted: Domain.WorkflowsListView) =>
+  const read = (wanted: Domain.WorkflowsListState) =>
     repository.listRuns({
       teamIds,
       memberEmail,
-      query: { team, view: wanted, limit },
+      query: { team, state: wanted, limit, q: null },
     });
-  if (view !== undefined) return (yield* read(view)).items;
+  if (state !== undefined) return (yield* read(state)).items;
   const rows: Domain.RunListItem[] = [];
-  for (const wanted of RUN_VIEWS) rows.push(...(yield* read(wanted)).items);
+  for (const wanted of RUN_STATES) rows.push(...(yield* read(wanted)).items);
   return rows;
 });
 
@@ -1603,7 +1603,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
       }),
     ));
 
-  it("listRuns shows only current tasks for the given teams, and a blocked run on the Blocked view", () =>
+  it("listRuns shows only current tasks for the given teams, and a blocked run in the Blocked state", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
@@ -1643,11 +1643,11 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
           actor: MERCHANT,
           reason: reason("Out of thread"),
         });
-        // The block decides the view, not the position in one list: the
+        // The block decides the state, not the position in one list: the
         // held run leaves Ready for Blocked and the untouched one stays.
         const blocked = yield* runListRows({
           teamIds: [TEAM_A.id, TEAM_B.id],
-          view: "blocked",
+          state: "blocked",
         });
         deepStrictEqual(
           blocked.map((item) => [
@@ -1659,7 +1659,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         deepStrictEqual(
           (yield* runListRows({
             teamIds: [TEAM_A.id, TEAM_B.id],
-            view: "upNext",
+            state: "ready",
           })).map((item) => [item.run.id, item.run.blockedAt]),
           [[first.run.id, null]],
         );
@@ -1714,7 +1714,12 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         const { counts } = yield* runs.listRuns({
           teamIds: teams,
           memberEmail: VIEWER,
-          query: { team: null, view: "mine", limit: Domain.RUN_PAGE },
+          query: {
+            team: null,
+            state: "started_by_you",
+            limit: Domain.RUN_PAGE,
+            q: null,
+          },
         });
         strictEqual(counts.total, 1);
         strictEqual(counts.blocked, 0);
@@ -1797,7 +1802,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
           actor: maker,
           teamIds: [TEAM_A.id],
         });
-        // A hold on the other run, so the view is reached without disturbing
+        // A hold on the other run, so the state is reached without disturbing
         // either run's tasks.
         yield* runs.blockRun({
           runId: theirs.run.id,
@@ -1806,21 +1811,26 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
           reason: reason("Waiting on the customer"),
         });
 
-        // The counts come back whatever view is asked for, so one read per
+        // The counts come back whatever state is asked for, so one read per
         // reader says where every row landed for them.
         const countsFor = (memberEmail: Domain.Email) =>
           runs
             .listRuns({
               teamIds: [TEAM_A.id],
               memberEmail,
-              query: { team: null, view: "mine", limit: Domain.RUN_PAGE },
+              query: {
+                team: null,
+                state: "started_by_you",
+                limit: Domain.RUN_PAGE,
+                q: null,
+              },
             })
             .pipe(
               Effect.map(({ counts, items }) => ({
                 counts: [
-                  counts.mine,
-                  counts.upNext,
-                  counts.teammates,
+                  counts.started_by_you,
+                  counts.ready,
+                  counts.started_by_others,
                   counts.blocked,
                 ],
                 mine: items.map((item) => item.run.id),
@@ -1841,7 +1851,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
           (yield* runListRows({
             teamIds: [TEAM_A.id],
             memberEmail: VIEWER,
-            view: "teammates",
+            state: "started_by_others",
           })).map((item) => item.run.id),
           [mine.run.id],
         );
@@ -1849,14 +1859,14 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
           (yield* runListRows({
             teamIds: [TEAM_A.id],
             memberEmail: maker.email,
-            view: "blocked",
+            state: "blocked",
           })).map((item) => item.run.id),
           [theirs.run.id],
         );
       }),
     ));
 
-  it("listRuns counts the whole view and returns only the limit; the team counts ignore the narrowing", () =>
+  it("listRuns counts the whole state and returns only the limit; the team counts ignore the narrowing", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
@@ -1871,12 +1881,12 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
           runs.listRuns({
             teamIds: [TEAM_A.id, TEAM_B.id],
             memberEmail: VIEWER,
-            query: { team: null, view: "upNext", limit },
+            query: { team: null, state: "ready", limit, q: null },
           });
 
         const capped = yield* read(10);
         strictEqual(capped.items.length, 10);
-        strictEqual(capped.counts.upNext, 12);
+        strictEqual(capped.counts.ready, 12);
         strictEqual(capped.counts.total, 12);
         deepStrictEqual(
           capped.counts.teamCounts.map(({ teamId, count }) => [teamId, count]),
@@ -1889,11 +1899,11 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
 
         const deeper = yield* read(20);
         strictEqual(deeper.items.length, 12);
-        strictEqual(deeper.counts.upNext, 12);
+        strictEqual(deeper.counts.ready, 12);
       }),
     ));
 
-  it("listRuns on the Done view returns no items and counts the other views all the same", () =>
+  it("listRuns on Done or closed returns no items and counts the other states all the same", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
@@ -1903,13 +1913,163 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         const done = yield* runs.listRuns({
           teamIds: [TEAM_A.id],
           memberEmail: VIEWER,
-          query: { team: null, view: "done", limit: Domain.RUN_PAGE },
+          query: { team: null, state: "done", limit: Domain.RUN_PAGE, q: null },
         });
-        // The Done or closed view's rows are `listRecent`'s; the view row above them is still
-        // this read's, which is why the counts do not depend on the view.
+        // Done or closed's rows are `listRecent`'s; the state row above them is still
+        // this read's, which is why the counts do not depend on the state.
         strictEqual(done.items.length, 0);
-        strictEqual(done.counts.upNext, 1);
+        strictEqual(done.counts.ready, 1);
         strictEqual(done.counts.total, 1);
+      }),
+    ));
+
+  it("under a search items hold the open matches across states and recent the Done or closed matches", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        yield* seedStepped;
+        const runs = yield* RunRepository;
+        const since = Date.now() - 1000;
+        yield* upsertAndReconcile(order(), [
+          lineItem(1, ["s"], {
+            title: "Signet ring",
+            variantTitle: "Gold",
+            sku: "RING-1",
+          }),
+          lineItem(2, ["s"], { title: "Brass hinge", sku: "HINGE-2" }),
+        ]);
+        const details = yield* runsForOrder();
+        const ring = details.find(
+          (each) => each.run.lineItemTitle === "Signet ring",
+        );
+        if (ring === undefined) throw new Error("no ring run");
+        yield* complete(ring, 1, [TEAM_A.id]);
+        const search = (text: string) =>
+          Effect.gen(function* () {
+            const q = Schema.decodeUnknownSync(Domain.ListSearch)(text);
+            const teamIds = [TEAM_A.id, TEAM_B.id];
+            return {
+              // Blocked and Team C would show nothing: the search ignores both.
+              open: yield* runs.listRuns({
+                teamIds,
+                memberEmail: VIEWER,
+                query: { team: TEAM_C.id, state: "blocked", limit: 25, q },
+              }),
+              recent: yield* runs.listRecent({
+                teamIds,
+                since,
+                limit: 25,
+                q,
+              }),
+            };
+          });
+        const byTitle = yield* search("ring");
+        deepStrictEqual(
+          byTitle.open.items.map((item) => item.run.lineItemTitle),
+          ["Signet ring"],
+        );
+        deepStrictEqual(
+          byTitle.recent.items.map((item) => item.run.lineItemTitle),
+          ["Signet ring"],
+        );
+        const byVariant = yield* search("gold");
+        strictEqual(byVariant.open.items.length, 1);
+        const bySku = yield* search("hinge-2");
+        deepStrictEqual(
+          bySku.open.items.map((item) => item.run.lineItemTitle),
+          ["Brass hinge"],
+        );
+        strictEqual(bySku.recent.items.length, 0);
+        const byNumber = yield* search("1001");
+        strictEqual(byNumber.open.items.length, 2);
+        strictEqual(byNumber.recent.items.length, 1);
+        strictEqual((yield* search("1002")).open.items.length, 0);
+      }),
+    ));
+
+  it("the match count is every match before the cut, open and Done or closed, and null without a search", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        yield* seedStepped;
+        const runs = yield* RunRepository;
+        const since = Date.now() - 1000;
+        yield* upsertAndReconcile(order(), [
+          lineItem(1, ["s"], { title: "Signet ring" }),
+          lineItem(2, ["s"], { title: "Signet ring" }),
+          lineItem(3, ["s"], { title: "Signet ring" }),
+          lineItem(4, ["s"], { title: "Brass hinge" }),
+        ]);
+        const [first] = yield* runsForOrder();
+        if (first === undefined) throw new Error("no run");
+        yield* complete(first, 1, [TEAM_A.id]);
+        const teamIds = [TEAM_A.id, TEAM_B.id];
+        const q = Schema.decodeUnknownSync(Domain.ListSearch)("ring");
+        const open = yield* runs.listRuns({
+          teamIds,
+          memberEmail: VIEWER,
+          query: { team: null, state: "ready", limit: 1, q },
+        });
+        strictEqual(open.items.length, 1);
+        strictEqual(open.matches, 3);
+        const recent = yield* runs.listRecent({ teamIds, since, limit: 1, q });
+        strictEqual(recent.items.length, 1);
+        strictEqual(recent.total, 1);
+        strictEqual(
+          (yield* runs.listRecent({ teamIds, since, limit: 0, q: null })).total,
+          1,
+        );
+        strictEqual(
+          (yield* runs.listRecent({
+            teamIds,
+            since,
+            limit: 0,
+            q: Schema.decodeUnknownSync(Domain.ListSearch)("hinge"),
+          })).total,
+          0,
+        );
+        const unsearched = yield* runs.listRuns({
+          teamIds,
+          memberEmail: VIEWER,
+          query: { team: null, state: "ready", limit: 25, q: null },
+        });
+        strictEqual(unsearched.matches, null);
+      }),
+    ));
+
+  it("the counts ignore the search; the Done or closed count is read with no term", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        yield* seedStepped;
+        const runs = yield* RunRepository;
+        const since = Date.now() - 1000;
+        yield* upsertAndReconcile(order(), [
+          lineItem(1, ["s"], { title: "Signet ring" }),
+          lineItem(2, ["s"], { title: "Brass hinge" }),
+        ]);
+        const [first] = yield* runsForOrder();
+        if (first === undefined) throw new Error("no run");
+        yield* complete(first, 1, [TEAM_A.id]);
+        const read = (q: Domain.ListSearch | null) =>
+          Effect.gen(function* () {
+            const { counts } = yield* runs.listRuns({
+              teamIds: [TEAM_A.id, TEAM_B.id],
+              memberEmail: VIEWER,
+              query: { team: null, state: "ready", limit: 25, q },
+            });
+            // The state row's Done or closed count is `listRecent` with no
+            // term, as `readRuns` reads it; with the term `total` is the
+            // search's own count.
+            const { total } = yield* runs.listRecent({
+              teamIds: [TEAM_A.id, TEAM_B.id],
+              since,
+              limit: 25,
+              q: null,
+            });
+            return { counts, total };
+          });
+        deepStrictEqual(
+          yield* read(Schema.decodeUnknownSync(Domain.ListSearch)("hinge")),
+          yield* read(null),
+        );
       }),
     ));
 
@@ -1925,7 +2085,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
           runs.listRuns({
             teamIds,
             memberEmail: VIEWER,
-            query: { team, view: "upNext", limit: Domain.RUN_PAGE },
+            query: { team, state: "ready", limit: Domain.RUN_PAGE, q: null },
           });
 
         const both = yield* read(null);
@@ -1949,13 +2109,13 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
           ],
         );
         strictEqual(onlyA.counts.total, 1);
-        strictEqual(onlyA.counts.upNext, 1);
+        strictEqual(onlyA.counts.ready, 1);
 
         const foreign = yield* read(TEAM_C.id);
         strictEqual(foreign.items.length, 0);
-        // The view counts are after the narrowing — they describe the lists the
+        // The state counts are after the narrowing — they describe the lists the
         // member can switch to — while `total` and `teamCounts` are not.
-        strictEqual(foreign.counts.upNext, 0);
+        strictEqual(foreign.counts.ready, 0);
         strictEqual(foreign.counts.total, 1);
         deepStrictEqual(
           foreign.counts.teamCounts.map(({ count }) => count),
@@ -2296,8 +2456,12 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         const detail = yield* steppedRun();
         const since = Date.now() - 1000;
         strictEqual(
-          (yield* runs.listRecent({ teamIds: [TEAM_A.id], since, limit: 10 }))
-            .total,
+          (yield* runs.listRecent({
+            teamIds: [TEAM_A.id],
+            since,
+            limit: 10,
+            q: null,
+          })).total,
           0,
         );
         yield* complete(detail, 1, [TEAM_A.id]);
@@ -2306,6 +2470,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
           teamIds: [TEAM_A.id],
           since,
           limit: 10,
+          q: null,
         });
         strictEqual(teamA.total, 1);
         strictEqual(teamA.items.length, 1);
@@ -2317,6 +2482,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
           teamIds: [TEAM_A.id],
           since,
           limit: 0,
+          q: null,
         });
         strictEqual(collapsed.total, 1);
         strictEqual(collapsed.items.length, 0);
@@ -2326,6 +2492,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
             teamIds: [TEAM_A.id, TEAM_B.id],
             since: Date.now() + 60_000,
             limit: 10,
+            q: null,
           })).total,
           0,
         );
@@ -2338,6 +2505,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
           teamIds: [TEAM_A.id, TEAM_B.id],
           since,
           limit: 10,
+          q: null,
         });
         deepStrictEqual(
           taskItems(both.items).map((entry) => [
@@ -2415,6 +2583,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
           teamIds: [TEAM_A.id],
           since,
           limit: 10,
+          q: null,
         });
         strictEqual(teamA.total, 2);
         deepStrictEqual(shape(teamA.items), [
@@ -2425,6 +2594,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
           teamIds: [TEAM_A.id, TEAM_B.id],
           since,
           limit: 2,
+          q: null,
         });
         strictEqual(both.total, 3);
         deepStrictEqual(shape(both.items), [
@@ -2433,13 +2603,22 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         ]);
         // Collapsed: the count and no rows.
         deepStrictEqual(
-          yield* runs.listRecent({ teamIds: [TEAM_A.id], since, limit: 0 }),
+          yield* runs.listRecent({
+            teamIds: [TEAM_A.id],
+            since,
+            limit: 0,
+            q: null,
+          }),
           { items: [], total: 2 },
         );
         // A team with nothing on the run, and a window after it: nothing.
         strictEqual(
-          (yield* runs.listRecent({ teamIds: [TEAM_C.id], since, limit: 10 }))
-            .total,
+          (yield* runs.listRecent({
+            teamIds: [TEAM_C.id],
+            since,
+            limit: 10,
+            q: null,
+          })).total,
           0,
         );
         strictEqual(
@@ -2447,6 +2626,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
             teamIds: [TEAM_A.id, TEAM_B.id],
             since: Date.now() + 60_000,
             limit: 10,
+            q: null,
           })).total,
           0,
         );

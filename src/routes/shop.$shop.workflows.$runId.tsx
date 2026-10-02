@@ -205,7 +205,7 @@ function RouteComponent() {
   /** Block, the note, Edit reason and Unblock: {@link Domain.runActions}. */
   const can = Domain.runActions(actor, page.order, run, page.tasks);
   /**
-   * Unblock lifts the hold and nothing else: the run goes back to the view
+   * Unblock lifts the hold and nothing else: the run goes back to the state
    * and the tasks it had, and whoever lifted it presses Done next if the work
    * is in fact done. It takes one tap and no confirmation: Block undoes it.
    *
@@ -255,7 +255,7 @@ function RouteComponent() {
       {/* No breadcrumb: `MemberBar` sits directly above this heading and its
           mark is the link to `/shop/$shop/workflows`, the workflows list. A second
           link to the same place, a stride below the first, is one link too
-          many — and the mark's link lands on the list the member left, view,
+          many — and the mark's link lands on the list the member left, state,
           team and depth included, because this page's URL carries their
           context too (`MemberSearch` in `shop.$shop.tsx`). */}
       <s-page heading={run.lineItemTitle} inlineSize="small">

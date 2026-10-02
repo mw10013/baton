@@ -465,7 +465,8 @@ const make = Effect.gen(function* () {
     limit,
     cursor,
     q,
-    view,
+    position,
+    issues,
     team,
   }: Domain.ListOrdersInput) => {
     const readTeams = () => teams();
@@ -481,7 +482,8 @@ const make = Effect.gen(function* () {
           limit,
           cursor,
           q,
-          view,
+          position,
+          issues,
           team,
           teams,
         }),
@@ -1309,16 +1311,19 @@ const make = Effect.gen(function* () {
    * No D1 read: `startedByEmail` is a snapshot on the row, so the list reads
    * the same after the member is deleted. Every half of `Domain.WorkflowsListData`
    * comes from one call so the loader and the socket paint one snapshot: the
-   * view row and the list under it are never two reads that can disagree.
+   * state row and the list under it are never two reads that can disagree.
    *
-   * The Done or closed count is read on every view (`listRecent` with `limit: 0`
-   * counts without reading rows) because the view row shows it whatever is
-   * pressed; its rows are read only when `query.view` is "done".
+   * The Done or closed count is read on every state (`listRecent` with `limit: 0`
+   * counts without reading rows) because the state row shows it whatever is
+   * chosen; its rows are read only when `query.state` is "done", or under a
+   * search, when both halves come back: the open matches and the Done or
+   * closed matches, each cut to `query.limit` ({@link Domain.WorkflowsListData}).
    *
-   * `query.team` narrows Done or closed the same way it narrows the other views, and a team
+   * `query.team` narrows Done or closed the same way it narrows the other states, and a team
    * the member is not on narrows it to nothing — the same answer the
-   * repository gives for the other views, reached here because `listRecent` takes
-   * the team list already narrowed.
+   * repository gives for the other states, reached here because `listRecent` takes
+   * the team list already narrowed. A search ignores the team, so its rows
+   * are read over every team on the connection while the count stays narrowed.
    */
   const readRuns = (
     teamIds: readonly Domain.TeamId[],
@@ -1329,7 +1334,11 @@ const make = Effect.gen(function* () {
     return Effect.gen(function* () {
       const repository = yield* RunRepository;
       const started = yield* Clock.currentTimeMillis;
-      const { counts, items } = yield* repository.listRuns({
+      const {
+        counts,
+        items,
+        matches: openMatches,
+      } = yield* repository.listRuns({
         teamIds,
         memberEmail,
         query,
@@ -1338,27 +1347,55 @@ const make = Effect.gen(function* () {
         query.team === null
           ? teamIds
           : teamIds.filter((teamId) => teamId === query.team);
+      const since = started - Domain.DONE_WINDOW_MS;
       const recent = yield* repository.listRecent({
         teamIds: recentTeamIds,
-        since: started - Domain.DONE_WINDOW_MS,
-        limit: query.view === "done" ? query.limit : 0,
+        since,
+        limit:
+          query.q === null && Domain.workflowsListStateIsDone(query.state)
+            ? query.limit
+            : 0,
+        q: null,
       });
+      /**
+       * The search's Done or closed half, read over every team with the
+       * term: its rows, and its `total` is how many of the window match
+       * before the cut, which with the open half's `matches` is
+       * `Domain.WorkflowsListData.matches`.
+       */
+      const recentMatches =
+        query.q === null
+          ? null
+          : yield* repository.listRecent({
+              teamIds,
+              since,
+              limit: query.limit,
+              q: query.q,
+            });
+      const recentItems =
+        recentMatches === null ? recent.items : recentMatches.items;
+      const matches =
+        openMatches === null || recentMatches === null
+          ? null
+          : openMatches + recentMatches.total;
       /**
        * The fan-out this read was cut to bound, measured on real shops:
        * `rows` is what left the object, and it must stay at or under
-       * `query.limit`.
+       * `query.limit`, or twice it under a search, which returns both halves.
        */
-      const rows = query.view === "done" ? recent.items.length : items.length;
+      const rows = items.length + recentItems.length;
       const team = query.team ?? "all";
+      const q = query.q === null ? "null" : "set";
       const ms = (yield* Clock.currentTimeMillis) - started;
       yield* Effect.logInfo(
-        `ShopAgent.readRuns: shop=${shop} teams=${String(teamIds.length)} team=${team} view=${query.view} rows=${String(rows)} ms=${String(ms)}`,
+        `ShopAgent.readRuns: shop=${shop} teams=${String(teamIds.length)} team=${team} state=${query.state} q=${q} rows=${String(rows)} ms=${String(ms)}`,
       ).pipe(
         Effect.annotateLogs({
           shop,
           teams: teamIds.length,
           team,
-          view: query.view,
+          state: query.state,
+          q,
           rows,
           ms,
         }),
@@ -1366,7 +1403,8 @@ const make = Effect.gen(function* () {
       return {
         counts: { ...counts, done: recent.total },
         items,
-        recent: recent.items,
+        recent: recentItems,
+        matches,
       } satisfies Domain.WorkflowsListData;
     });
   };
@@ -2139,8 +2177,8 @@ const make = Effect.gen(function* () {
               id: `${id}/line-${String(position + 1)}`,
               orderId: id,
               title: item.title,
-              variantTitle: null,
-              sku: null,
+              variantTitle: item.variantTitle ?? null,
+              sku: item.sku ?? null,
               quantity: item.quantity,
               currentQuantity,
               productTags: item.tags,

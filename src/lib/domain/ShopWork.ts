@@ -11,31 +11,36 @@
  * Nouns, shop work. "(none)" means no screen says the word; the
  * cell says what a screen shows instead:
  *
- * | word          | meaning                                                                                                                                                                                                      | symbol                                                        | screen                                                      |
- * | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------- | ----------------------------------------------------------- |
- * | merchant      | the shop's owner, acting from the Shopify admin                                                                                                                                                              | `Actor` role `merchant`                                       | "you" to the merchant, "the merchant" to a member           |
- * | member        | a person at the bench, on one or more teams                                                                                                                                                                  | `Actor` role `member`, `Member`                               | member (merchant screens); "you" or a name (member screens) |
- * | team          | the group a task is assigned to                                                                                                                                                                              | `Team`                                                        | team, or its name                                           |
- * | workflow      | the definition: steps of tasks                                                                                                                                                                               | `Workflow`, `WorkflowTask`                                    | workflow, or its name                                       |
- * | step          | a position in a workflow; its tasks are done in parallel                                                                                                                                                     | `WorkflowTask`, `RunTask` field                               | Step k of n                                                 |
- * | run           | one item going through one workflow                                                                                                                                                                          | `Run`                                                         | the item's workflow, on both sides; never bare, never "run" |
- * | task          | one unit of work on a run, on one team                                                                                                                                                                       | `RunTask`                                                     | task, or its name                                           |
- * | block         | a person's hold on a run                                                                                                                                                                                     | `runIsBlocked`                                                | Blocked                                                     |
- * | note          | free text on a run                                                                                                                                                                                           | `RunNote`                                                     | Note                                                        |
- * | draft         | the workflow's edited copy of its tasks, from Edit until Apply or Discard; one or none                                                                                                                       | `WorkflowDraft`                                               | Draft                                                       |
- * | view          | a preset of a list, one at a time, chosen by its button; the row's first is the default                                                                                                                      | `WorkflowsListView`, `OrdersIndexView`, `WorkflowsIndexView`  | its label (Started by you, Issues, ...)                     |
- * | reconcile     | make an order's runs agree with the order and the eligible workflows; idempotent                                                                                                                             | `reconcileItem`, `RunRepository.reconcileOrder`               | (none)                                                      |
- * | reconcile all | reconcile every stored open, paid order once, after anything that changes which workflows are eligible or whether a run may be created                                                                       | `ShopWorkAgent.reconcileAllNow`, `RunRepository.reconcileAll` | (none)                                                      |
- * | eligible      | a workflow that is on, has a task, and has every task on a team; only an eligible workflow creates runs                                                                                                      | `workflowIsEligible`, `EligibleContext`                       | (none): Needs a team names the fault                        |
- * | match         | an item and an eligible workflow: a product tag equals the workflow's tag and units to make are above zero                                                                                                   | `itemMatches`                                                 | the order page's picker lists them first                    |
- * | multi-match   | an item two or more eligible workflows match, with units to make and no run in any state, on an order that can create runs; an unpaid order is not choosing, since reconcile would create nothing either way | `multiMatchItems`, `OrderIssue` `multi_match`                 | Multiple workflows match                                    |
- * | units to make | what is left to make on an item: Shopify's current quantity                                                                                                                                                  | `unitsToMake`                                                 | the quantity on the card                                    |
+ * | word          | meaning                                                                                                                                | symbol                                                                                             | screen                                                      |
+ * | ------------- | -------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+ * | merchant      | the shop's owner, acting from the Shopify admin                                                                                        | `Actor` role `merchant`                                                                            | "you" to the merchant, "the merchant" to a member           |
+ * | member        | a person at the bench, on one or more teams                                                                                            | `Actor` role `member`, `Member`                                                                    | member (merchant screens); "you" or a name (member screens) |
+ * | team          | the group a task is assigned to                                                                                                        | `Team`                                                                                             | team, or its name                                           |
+ * | workflow      | the definition: steps of tasks                                                                                                         | `Workflow`, `WorkflowTask`                                                                         | workflow, or its name                                       |
+ * | step          | a position in a workflow; its tasks are done in parallel                                                                               | `WorkflowTask`, `RunTask` field                                                                    | Step k of n                                                 |
+ * | run           | one item going through one workflow                                                                                                    | `Run`                                                                                              | the item's workflow, on both sides; never bare, never "run" |
+ * | task          | one unit of work on a run, on one team                                                                                                 | `RunTask`                                                                                          | task, or its name                                           |
+ * | block         | a person's hold on a run                                                                                                               | `runIsBlocked`                                                                                     | Blocked                                                     |
+ * | note          | free text on a run                                                                                                                     | `RunNote`                                                                                          | Note                                                        |
+ * | draft         | the workflow's edited copy of its tasks, from Edit until Apply or Discard; one or none                                                 | `WorkflowDraft`                                                                                    | Draft                                                       |
+ * | filter        | one axis of a list with a fixed set of values; the list shows the rows matching every chosen filter                                    | `OrdersPositionFilter`, `WorkflowsListState`, `WorkflowsIndexState`, `ListOrdersInput`, `RunQuery` | the axis name (Status, Team) or the value (Making, Ready)   |
+ * | count         | how many rows a filter value would show, given the other filters and never the search                                                  | `OrderCounts`, `RunListCounts`                                                                     | the number beside the value                                 |
+ * | search        | free text matched against a row's order number, item title, variant title and SKU; finds, does not narrow                              | `ListSearch`, `searchTerm`                                                                         | Search by order number or item                              |
+ * | default       | what a list shows with no filter and no search                                                                                         | `null` position (Open); `DEFAULT_WORKFLOWS_LIST_STATE`                                             | Open; Started by you                                        |
+ * | reconcile     | make an order's runs agree with the order and the eligible workflows; idempotent                                                       | `reconcileItem`, `RunRepository.reconcileOrder`                                                    | (none)                                                      |
+ * | reconcile all | reconcile every stored open, paid order once, after anything that changes which workflows are eligible or whether a run may be created | `ShopWorkAgent.reconcileAllNow`, `RunRepository.reconcileAll`                                      | (none)                                                      |
+ * | eligible      | a workflow that is on, has a task, and has every task on a team; only an eligible workflow creates runs                                | `workflowIsEligible`, `EligibleContext`                                                            | (none): Needs a team names the fault                        |
+ * | match         | an item and an eligible workflow: a product tag equals the workflow's tag and units to make are above zero                             | `itemMatches`                                                                                      | the order page's picker lists them first                    |
+ * | multi-match   | an item two or more eligible workflows match, with units to make and no run in any state, on an order that can create runs; an unpaid order is not choosing, since reconcile would create nothing either way | `multiMatchItems`, `OrderIssue` `multi_match`                                                      | Multiple workflows match                                    |
+ * | units to make | what is left to make on an item: Shopify's current quantity                                                                            | `unitsToMake`                                                                                      | the quantity on the card                                    |
  *
- * The merchant's two indexes read the view row too: the orders index's views
- * are `OrdersIndexView`, the workflows index's are `WorkflowsIndexView`. A
- * view is the one thing a list's URL carries under a key of its own (`?view=`
- * on both merchant indexes); a filter that is a state's word is still a view,
- * not a `?state=`, because what the button picks is a preset of the list.
+ * Each list's main filter is keyed in the URL by its axis's word:
+ * `?position=` on the orders index (`OrdersPositionFilter`), `?state=` on the
+ * workflows index (`WorkflowsIndexState`) and on the member's workflows list
+ * (`WorkflowsListState`). The literal is the label's words (`started_by_you`
+ * reads Started by you), so a URL a person reads names what the screen shows.
+ * The orders index's Issues and Team are filters of their own (`?issues=`,
+ * `?team=`), and a search (`?q=`) ignores every filter.
  *
  * "run" is an implementation noun a merchant or member would have to learn;
  * the merchant already has the item and its workflow (Change workflow replaces
@@ -241,21 +246,19 @@ export const RUN_UNSTARTED_LABEL = "Not started";
 export const WORKFLOW_STATE_LABEL = { on: "On", off: "Off" } as const;
 
 /**
- * The views of the merchant's workflows index, in view-row order: All and
- * the two workflow states ({@link workflowIsOn}, labelled by
- * {@link WORKFLOW_STATE_LABEL}). All is the default and is not a value: it
- * is `null` in the URL, the key left out, as Open is on the orders index
- * ({@link OrdersIndexView}, the other merchant view row, under the same
- * `?view=` key). A view row rather than a state filter because the
- * vocabulary's view row already names this control: one preset at a time,
- * chosen by its button, and All is a view on the orders index too.
+ * The merchant's workflows index's main filter, in row order: All and the
+ * two workflow states ({@link workflowIsOn}, labelled by
+ * {@link WORKFLOW_STATE_LABEL}). Keyed `?state=` because each value is a
+ * workflow state. All is the default and is not a value: it is the key left
+ * out, as Open is `?position=` left out on the orders index
+ * ({@link OrdersPositionFilter}).
  */
-export const WorkflowsIndexView = Schema.Literals(["on", "off"]);
-export type WorkflowsIndexView = typeof WorkflowsIndexView.Type;
+export const WorkflowsIndexState = Schema.Literals(["on", "off"]);
+export type WorkflowsIndexState = typeof WorkflowsIndexState.Type;
 
 /**
  * The vocabulary's order-positions screen column: the orders index's Status
- * badge and its position views. "Not started" is also
+ * badge and its position filter values. "Not started" is also
  * {@link RUN_UNSTARTED_LABEL}, the merchant's word for an open run nobody has
  * touched: it is the same fact one level down, and the two never render on
  * one row (the orders index shows positions, the order page shows runs).
@@ -271,7 +274,7 @@ export const ORDER_POSITION_LABEL = {
 /**
  * The vocabulary's order-issues screen column: the badges in the orders index's
  * Issues column. A row of filter buttons used to carry these words too; now
- * only the badges do, and the Issues view holds all of them. The workflows
+ * only the badges do, and the Issues filter holds all of them. The workflows
  * index's badges and the workflow page's banners read `unassigned` and
  * `empty_team` from here too, with {@link ORDER_ISSUE_TONE}, so a fault has
  * one label and one tone on every screen.
@@ -284,25 +287,23 @@ export const ORDER_ISSUE_LABEL = {
 } as const satisfies Record<OrderIssue, string>;
 
 /**
- * The orders index's view-row labels, in view-row order: the positions of
- * {@link ORDER_POSITION_LABEL} plus Open, Issues and All, the three views
- * that are scopes rather than positions ({@link OrdersIndexView}). Not a
- * vocabulary table: Open and All carry no rule of their own, and the two
- * vocabulary tables cover the words. `open` keys the default view, which is
- * `null` in the URL; `cancelled` has no button.
+ * The orders index's filter labels: Open, the positions of
+ * {@link ORDER_POSITION_LABEL} and All, in the Status select's order
+ * ({@link OrdersPositionFilter}), and Issues, the filter of its own
+ * ({@link ListOrdersInput} `issues`). Not a vocabulary table: Open and All
+ * carry no rule of their own, and the two vocabulary tables cover the words.
+ * `open` keys the default, which is `?position=` left out.
  */
-export const ORDERS_INDEX_VIEW_LABEL = {
+export const ORDERS_FILTER_LABEL = {
   open: "Open",
   not_started: ORDER_POSITION_LABEL.not_started,
   making: ORDER_POSITION_LABEL.making,
   made: ORDER_POSITION_LABEL.made,
   fulfilled: ORDER_POSITION_LABEL.fulfilled,
+  cancelled: ORDER_POSITION_LABEL.cancelled,
   all: "All",
   issues: "Issues",
-} as const satisfies Record<
-  Exclude<OrdersIndexView, "cancelled"> | "open",
-  string
->;
+} as const satisfies Record<OrdersPositionFilter | "open" | "issues", string>;
 
 /**
  * The vocabulary's verbs, as the action structs name them ({@link RunActions},
@@ -1282,6 +1283,9 @@ export const SeedOrdersInput = Schema.Struct({
       lineItems: Schema.Array(
         Schema.Struct({
           title: Schema.String,
+          /** Left out is `null`, as Shopify sends an item with one variant. */
+          variantTitle: Schema.optionalKey(Schema.String),
+          sku: Schema.optionalKey(Schema.String),
           quantity: Schema.Number,
           currentQuantity: Schema.optionalKey(Schema.Number),
           tags: Schema.Array(Schema.String),
@@ -1358,45 +1362,33 @@ export const OrderPosition = Schema.Literals([
 export type OrderPosition = typeof OrderPosition.Type;
 
 /**
- * The orders index's view row: one whole question about the list at a time,
- * chosen by pressing its button. The views are exclusive, so nothing crosses:
+ * The orders index's main filter, on the order's position ({@link orderPosition}):
+ * `null` is Open, the default, {@link orderIsOpen}; a position is itself; `"all"` is
+ * every stored order, cancelled included, and the only value that reads both open
+ * and closed orders. Keyed `?position=` in the URL (`OrdersSearch` in `app.orders.tsx`)
+ * because that is the axis's word; the column the merchant reads is headed Status,
+ * which is the screen's word for one value per row and not a Baton key
+ * (the vocabulary's entry test on `status`).
  *
- * - `null` is **Open**, {@link orderIsOpen}: not started, making and made,
- *   the three rungs Baton owns. It is the default because retention keeps a
- *   year of orders (`ShopLimits.orderRetentionDays` in Platform) and a merchant
- *   opening Orders is looking at the bench, not at the year.
- * - `"issues"` is an open order with at least one {@link orderIssues}
- *   element: what needs the merchant.
- * - The five positions are {@link orderPosition}.
- * - `"all"` is the whole history, cancelled included. With `"fulfilled"` and
- *   `"cancelled"` it is a view that reads closed orders, and the only one
- *   that reads both open and closed. It is not an `OrderPosition`: nothing
- *   derives it from an order.
- * - `"cancelled"` is a legal value with no button: a Shopify cancel is rare
- *   and final, and the order sits under All with its badge.
+ * Open is the default because retention keeps a year of orders
+ * (`ShopLimits.orderRetentionDays` in Platform) and a merchant opening Orders
+ * is looking at the bench, not at the year. `"all"` is not an
+ * `OrderPosition`: nothing derives it from an order.
  *
- * One row, not a Status row of positions crossed with a row of issue
- * filters. Crossed, four of the nine cells could never be anything but zero
- * (a team gap and a block are only ever making), and Fulfilled had to hide
- * the issue row because no closed order carries an issue: a control that must disappear when a sibling is pressed
- * is not a sibling. The row has no label on purpose: "Status" promised one
- * axis, and the row holds scopes (Open, Issues, All) and positions side by
- * side, as the Shopify admin's own views do (All · Unfulfilled · Unpaid ·
- * Open · Archived).
- *
- * The word is view for the reasons on {@link WorkflowsListView}, the other
- * view row. The labels are {@link ORDERS_INDEX_VIEW_LABEL}.
+ * Issues is not a value here: an issue crosses the three open positions, so it is its
+ * own filter, {@link ListOrdersInput} `issues`. The two combine (Making and Issues is a
+ * legal, often empty, list), and so does Team; a search ignores all three.
+ * The labels are {@link ORDERS_FILTER_LABEL}.
  */
-export const OrdersIndexView = Schema.Union([
-  Schema.Literal("issues"),
+export const OrdersPositionFilter = Schema.Union([
   OrderPosition,
   Schema.Literal("all"),
 ]);
-export type OrdersIndexView = typeof OrdersIndexView.Type;
+export type OrdersPositionFilter = typeof OrdersPositionFilter.Type;
 
 /**
  * **An issue is an open order that will not move until the merchant acts**:
- * the orders index's Issues view and Issues column. The one definition is
+ * the orders index's Issues filter and Issues column. The one definition is
  * {@link orderIssues}; the SQL predicates in `OrderRepository.listOrders`
  * restate each element and must move with it.
  *
@@ -1485,30 +1477,86 @@ export const OrdersCursor = Schema.String.check(
 );
 
 /**
- * What the merchant types into the order-number field. Trimmed and capped
- * because it reaches SQL as a `like` pattern: an order name is `#` plus a
- * handful of digits, so anything past 32 characters is not a search anyone
- * can satisfy, and letting it through would only widen the scan. `#` alone
- * (or `##`) is refused too: {@link normaliseOrderSearch} would reduce it to
- * `#`, a prefix every order name shares, which matches the whole list and is
- * not a search either.
+ * What a person types into a list's search field, on both sides. Trimmed and capped at
+ * 64 characters because it reaches SQL as a `like` pattern. `#` alone (or `##`) is
+ * refused: {@link searchTerm} would read it as the order number `#`, a prefix every
+ * order shares.
  */
-export const OrderSearch = trimmedText("OrderSearch", 32).check(
+export const ListSearch = trimmedText("ListSearch", 64).check(
   Schema.makeFilter(
-    (q) => q.replace(/^#+/u, "").length > 0 || "an order number, not just #",
+    (q) =>
+      q.replace(/^#+/u, "").length > 0 ||
+      "an order number or a word, not just #",
   ),
 );
-export type OrderSearch = typeof OrderSearch.Type;
+export type ListSearch = typeof ListSearch.Type;
+
+/** How a search reads: an order name matched whole, or a word prefix ({@link searchTerm}). */
+export type SearchTerm =
+  | { readonly kind: "orderName"; readonly name: string }
+  | { readonly kind: "prefix"; readonly text: string };
 
 /**
- * `1001`, `#1001`, ` #1001 ` all mean the order named `#1001`. Shopify writes
- * `ShopOrder.name` with the `#`, the merchant reads the number off the admin
- * and may or may not type it, so the one normalisation lives here and both the
- * SQL and the route's no-match text call it — text that said `1001` while
- * the query matched `#1001` would be two facts where there is one.
+ * The one reading of a search, used by both repositories and by the screens' "matches"
+ * line, so the SQL and the copy agree: digits with an optional leading `#` are an
+ * order number, matched whole against `ShopOrder.name` (`1001`, `#1001`, ` #1001 `
+ * all mean `#1001`); anything else is a word prefix, matched case-insensitively
+ * against the item title, the variant title and the SKU (`sig` finds "Signet ring",
+ * `ring` finds it too, `9` is a number and does not). No `field:value`, no operators:
+ * the admin's syntax exists because it has forty fields; a list here has four.
+ *
+ * Shopify writes `ShopOrder.name` with the `#`; the merchant reads the number off
+ * the admin and may or may not type it. Case-insensitive holds for ASCII only,
+ * because SQLite's `like` folds no other letters: "élan" does not find "Élan".
  */
-export const normaliseOrderSearch = (q: string): string =>
-  `#${q.trim().replace(/^#+/u, "")}`;
+export const searchTerm = (q: ListSearch): SearchTerm => {
+  const text = q.trim();
+  const digits = text.replace(/^#+/u, "");
+  return /^\d+$/u.test(digits)
+    ? { kind: "orderName", name: `#${digits}` }
+    : { kind: "prefix", text };
+};
+
+/** A search as the screens print it: `#1001` for an order number, else the typed text. */
+export const searchTermText = (term: SearchTerm) =>
+  term.kind === "orderName" ? term.name : term.text;
+
+/** ASCII case folding, the only folding SQLite's `like` does. */
+const fold = (text: string) =>
+  text.replaceAll(/[A-Z]/gu, (c) => c.toLowerCase());
+
+/**
+ * {@link searchTerm} over one item's fields, for a read that filters rows it
+ * already holds (the member's open runs); the SQL reads use
+ * {@link prefixPatterns}. Folds ASCII case only, as SQLite's `like` does, so
+ * the two halves of one search agree.
+ */
+export const searchMatches = (
+  term: SearchTerm,
+  item: {
+    readonly orderName: string;
+    readonly title: string;
+    readonly variantTitle: string | null;
+    readonly sku: string | null;
+  },
+) => {
+  if (term.kind === "orderName") return item.orderName === term.name;
+  const wanted = fold(term.text);
+  return [item.title, item.variantTitle, item.sku].some((field) => {
+    const text = fold(field ?? "");
+    return text.startsWith(wanted) || text.includes(` ${wanted}`);
+  });
+};
+
+/**
+ * The two `like` patterns that make {@link searchTerm}'s word prefix: the text at
+ * the start of the field, or after a space. `%`, `_` and `\` in the text are
+ * escaped, so the SQL beside them says `escape '\'`.
+ */
+export const prefixPatterns = (text: string): readonly [string, string] => {
+  const escaped = text.replaceAll(/[\\%_]/gu, (c) => `\\${c}`);
+  return [`${escaped}%`, `% ${escaped}%`];
+};
 
 /**
  * `subscriberId` is what subscribes the calling connection to invalidations —
@@ -1525,25 +1573,30 @@ export const ListOrdersInput = Schema.Struct({
   ),
   cursor: Schema.NullOr(OrdersCursor),
   /**
-   * Order-number search, matched against `ShopOrder.name` after
-   * {@link normaliseOrderSearch}: `null` is no search.
+   * The search, read by {@link searchTerm}: `null` is no search.
    *
-   * **Search ignores the view and the team.** When `q` is not null the read
-   * is over every stored order and `view` and `team` are not applied: the
-   * number the merchant typed is the whole question, and a search crossed
-   * with the view meant "no match under Made" sent them to All to type it
-   * again. The counts ignore `q` in turn ({@link OrderCounts}).
+   * **Search ignores the filters.** When `q` is not null the read is over
+   * every stored order and `position`, `issues` and `team` are not applied:
+   * what the merchant typed is the whole question, and a search crossed with
+   * a filter meant "no match under Made" sent them to All to type it again.
+   * The counts ignore `q` in turn ({@link OrderCounts}).
    *
    * Always send the key, for the same reason as `team`.
    */
-  q: Schema.NullOr(OrderSearch),
+  q: Schema.NullOr(ListSearch),
   /**
-   * {@link OrdersIndexView}: `null` is Open, `"all"` is every order, and each
-   * other view has a SQL form in `OrderRepository.listOrders` that restates
-   * `orderPosition` or the union of `orderIssues`. Always send the key, for
-   * the same reason as `team`.
+   * {@link OrdersPositionFilter}: `null` is Open, `"all"` is every order, and
+   * a position has a SQL form in `OrderRepository.listOrders` that restates
+   * `orderPosition`. Always send the key, for the same reason as `team`.
    */
-  view: Schema.NullOr(OrdersIndexView),
+  position: Schema.NullOr(OrdersPositionFilter),
+  /**
+   * `true` keeps only orders with at least one {@link orderIssues} element,
+   * restated in SQL in `OrderRepository.listOrders`. Combines with
+   * `position` and `team`: Making and Issues is the making orders that have
+   * an issue.
+   */
+  issues: Schema.Boolean,
   /**
    * `null` is any team; an id keeps only orders waiting on that team
    * ({@link OrderRow} `waitingOn`, open orders only) — the workflows list's own
@@ -1689,7 +1742,7 @@ export const orderPosition = ({
  * Shop work's reading of an order, from {@link orderIsOpen} and
  * {@link orderCanCreateRuns} in Orders: its {@link OrderIssue}s, in
  * `OrderIssue` order; `[]` for a closed order. The one definition: the orders index's
- * Issues column renders this result, and its Issues view is this result's
+ * Issues column renders this result, and its Issues filter is this result's
  * non-emptiness, restated in SQL in `OrderRepository.listOrders`.
  */
 export const orderIssues = ({
@@ -1762,16 +1815,17 @@ export const runCounts = (runs: readonly Run[]): RunCounts =>
   );
 
 /**
- * The counts on the orders index's counted views ({@link OrdersIndexView}):
- * `open` is Open, `issues` is Issues, and the three positions are theirs.
+ * The counts on the orders index's strip ({@link OrdersPositionFilter} and the
+ * Issues filter): `open` is Open, `issues` is Issues, and the three positions
+ * are theirs.
  *
- * **A count is what pressing that view would show, given the team.** Counts
+ * **A count is what choosing that value would show, given the team.** Counts
  * honour the team select and nothing else: not the search, because the
- * search ignores the views ({@link ListOrdersInput} `q`); not the pressed
- * view, because a view never narrows its own row. With one row of exclusive
- * views there is nothing for a count to cross with, so the numbers move only
- * when the team changes, which is what a merchant expects a team select to
- * do. `open` is the sum of the three positions.
+ * search ignores the filters ({@link ListOrdersInput} `q`); and a count
+ * ignores the main filter and the issues filter, because it describes the
+ * list the merchant can switch to; it honours the team and nothing else. So
+ * the numbers move only when the team changes, which is what a merchant
+ * expects a team select to do. `open` is the sum of the three positions.
  *
  * All are computed over open orders only. They are read through the partial
  * index over unfulfilled, uncancelled orders, so a count costs one row per
@@ -1797,6 +1851,12 @@ export const OrdersPage = Schema.Struct({
   limit: Schema.Number,
   nextCursor: Schema.NullOr(OrdersCursor),
   counts: OrderCounts,
+  /**
+   * How many stored orders the search finds, over every page; `null` without
+   * a search. Not a count ({@link OrderCounts}): it is the search's answer,
+   * which the screen prints as "N orders match <term>".
+   */
+  matches: Schema.NullOr(Schema.Number),
 });
 export type OrdersPage = typeof OrdersPage.Type;
 
@@ -1823,8 +1883,8 @@ export type SubscribeOrderInput = typeof SubscribeOrderInput.Type;
  * this and every struct that is what one screen reads ({@link OrderPageData},
  * {@link WorkflowPageData}, {@link WorkflowsListData}, {@link RunPageData}):
  * `Data` is TanStack's own word for what a screen reads (`loaderData`,
- * `useLoaderData`), and the old `View` suffix now means a view-row button
- * ({@link OrdersIndexView}, {@link WorkflowsListView}). The structs carry no
+ * `useLoaderData`), and a `View` suffix would read as the retired word for a
+ * filter ({@link OrdersPositionFilter}, {@link WorkflowsListState}). The structs carry no
  * rule of their own, so a generic suffix is right and the screen name carries
  * the meaning.
  */
@@ -1896,7 +1956,7 @@ export const actorLabel = (actor: ActorDisplay) =>
 /**
  * Whether a task's recorded actor is this member, by email: the durable identity, since
  * a removed and re-added member mints a new id but keeps the address (the
- * member row on {@link D1_TABLES}; the same reason {@link viewOf} matches
+ * member row on {@link D1_TABLES}; the same reason {@link listStateOf} matches
  * a started task to its starter by email). The merchant has no email and is never "you" on a member
  * page.
  */
@@ -1963,9 +2023,9 @@ export type RunTaskId = typeof RunTaskId.Type;
  * closed item, the order's retention delete) removes tasks.
  *
  * **Started by you, Started by others, Ready and Blocked hold open runs only.** Closed and done runs leave the
- * member's Started by you, Started by others, Ready and Blocked views, and stop counting on
+ * member's Started by you, Started by others, Ready and Blocked states, and stop counting on
  * the orders index, by this state and no other rule: the list reads select
- * `state = 'open'`. The fifth view, Done or closed, holds done tasks and closed
+ * `state = 'open'`. The fifth state, Done or closed, holds done tasks and closed
  * runs, a closed run with its reason ({@link RecentItem}).
  *
  * What each state means to reconcile and the data model. Who may do each
@@ -2088,7 +2148,7 @@ export const runIsDone = (run: { readonly state: RunState }) =>
  * | which verbs a block refuses and which it leaves: the `blocked yes` rows | {@link taskActions}, {@link runActions}      |
  * | a blocked run holds no team ("waiting on") and shows no Now line        | `OrderRepository.listOrders`, the order page |
  * | counted as `blocked`, open runs only                                    | {@link runCounts}                            |
- * | the run's row is on the Blocked view                                    | {@link viewOf}                               |
+ * | the run's row is in the Blocked state                                   | {@link listStateOf}                          |
  *
  * Assign is left under a block on purpose: moving a held task to the team
  * that can unstick it is a fix. Why Reopen and Put back fall where they do
@@ -2117,7 +2177,7 @@ export const Run = Schema.Struct({
   orderName: Schema.String,
   /**
    * `ShopOrder.processedAt` snapshotted at creation, like `orderName`: the
-   * workflows list sorts every view oldest-order-first from the run rows alone,
+   * workflows list sorts every state oldest-order-first from the run rows alone,
    * before it joins `ShopOrder` for the order's open state.
    */
   orderProcessedAt: Schema.Number,
@@ -2635,7 +2695,7 @@ export const reconcileItem = ({
 /**
  * One current task the member may act on, cut to what a run's row renders.
  * `startedByEmail` is read off the row — the snapshot taken at Start, never a
- * live join — and it is load-bearing beyond display: {@link viewOf} decides
+ * live join — and it is load-bearing beyond display: {@link listStateOf} decides
  * "Started by you" with it.
  *
  * Two groups of columns are omitted rather than carried as nulls. The three
@@ -2666,15 +2726,17 @@ export type RunListTask = typeof RunListTask.Type;
 /**
  * The run behind a row, cut the same way. `orderProcessedAt` and
  * `lineItemId` stay although nothing prints them: they are two thirds of
- * {@link byAge}, which is the order every view is in. `quantity` and
+ * {@link byAge}, which is the order every state is in. `quantity` and
  * `quantityChangedFrom` stay because the row wears the quantity badge
  * ("Quantity changed · 3 → 2"), and the block columns stay because a blocked
  * row prints its reason and who. `workflowName` stays because the row
  * names the item's workflow, the noun both sides use for a run.
  *
+ * `variantTitle` and `sku` stay because a search matches them and line one
+ * prints the variant ("Signet ring · Gold").
+ *
  * What goes is everything only the workflow page reads — the order id, the
- * variant, the SKU, the timestamps, and `lineItemProperties`, which is the
- * one that matters: a JSON blob on every row of every read, parsed on
+ * timestamps, and `lineItemProperties`, which is the one that matters: a JSON blob on every row of every read, parsed on
  * arrival, to render nothing. The run `note` stays:
  * the row prints it.
  */
@@ -2682,8 +2744,6 @@ export const RunListRun = Schema.Struct(
   Struct.omit(Run.fields, [
     "workflowId",
     "orderId",
-    "variantTitle",
-    "sku",
     "lineItemProperties",
     "createdAt",
     "updatedAt",
@@ -2746,55 +2806,61 @@ export const runRowLine = (
 };
 
 /**
- * The four views an open run's row can fall in: four of the five views of
- * the member's workflows list ({@link WorkflowsListView}). `done`
- * (Done or closed) is not one of them because it is a window over what left the lists
- * rather than a grouping of them. The labels the member reads are the
- * route's (`workflowsListViews.ts`); the object only needs the keys, because
- * it is the side that groups, sorts, and caps.
+ * The four states an open run's row can be in, from the member's seat:
+ * {@link WorkflowsListState} less Done or closed, which is a window over what
+ * left the lists rather than a grouping of them. The labels the member reads
+ * are the route's (`workflowsListStates.ts`); the object only needs the keys,
+ * because it is the side that groups, sorts, and caps.
  */
-export const RunView = Schema.Literals([
+export const RunListState = Schema.Literals([
   "blocked",
-  "mine",
-  "teammates",
-  "upNext",
+  "started_by_you",
+  "started_by_others",
+  "ready",
 ]);
-export type RunView = typeof RunView.Type;
+export type RunListState = typeof RunListState.Type;
 
 /**
- * The five views of the member's workflows list, in view-row order: what I
- * have started, what someone else has started, what I can start, what a
- * person has blocked, and what left my lists lately. Four are the views of
- * {@link viewOf}, and hold open runs only ({@link RunState}); the blocked
- * view (Blocked) holds blocks and nothing else, since a Shopify change is
- * never a to-do. `done` is the Done or closed window ({@link RecentItem}); the key
- * keeps its old name, the label is the route's (`workflowsListViews.ts`). The
- * view is the unit of a read: one read returns every view's count and one
- * view's rows. {@link OrdersIndexView} is the other view row, on the orders
- * index.
+ * The workflows list's main filter: the state of the work from where the member
+ * stands, one value at a time, in row order: what I have started, what someone
+ * else has started, what I can start, what a person has blocked, and what left
+ * my lists lately. Four hold open runs only ({@link RunState}), grouped by
+ * {@link listStateOf}; Blocked holds blocks and nothing else, since a Shopify
+ * change is never a to-do. `done` is the Done or closed window
+ * ({@link RecentItem}). The literal is the label's words (`started_by_you`
+ * reads Started by you), the stored-literal rule applied to a URL key. Keyed
+ * `?state=` because every value is a state word, the task's (`started`,
+ * `ready`) or the run's (`blocked`, `done`, `closed`), read from the member's
+ * seat; {@link RunState} is the run's own stored state and this is the list's
+ * filter, two symbols for two things. One read returns every value's count
+ * and one value's rows.
  *
- * The word is view, not tab. It is Shopify's word for the same control on its
- * own index pages (the Orders page's menu is labelled "Select a view": one
- * whole question about the list at a time, beside filters that narrow it);
- * the Polaris web components have no tab component, so what is drawn is a
- * row of buttons, not tabs; and "tab" in this codebase means a browser tab
- * (one socket per tab), a meaning the socket reasoning needs.
+ * Drawn as one row of buttons with a gap, not tabs and not a segmented
+ * control: the Polaris web components have no tab component, and "tab" in
+ * this codebase means a browser tab (one socket per tab), a meaning the
+ * socket reasoning needs; why the five are not joined into one outline is
+ * on `.run-state-row` in `styles.css`.
  */
-export const WorkflowsListView = Schema.Literals([
-  "mine",
-  "teammates",
-  "upNext",
+export const WorkflowsListState = Schema.Literals([
+  "started_by_you",
+  "started_by_others",
+  "ready",
   "blocked",
   "done",
 ]);
-export type WorkflowsListView = typeof WorkflowsListView.Type;
-export const DEFAULT_WORKFLOWS_LIST_VIEW: WorkflowsListView = "mine";
+export type WorkflowsListState = typeof WorkflowsListState.Type;
+export const DEFAULT_WORKFLOWS_LIST_STATE: WorkflowsListState =
+  "started_by_you";
+
+/** Whether the workflows list's state is Done or closed, the one value whose rows are the window ({@link RecentItem}) rather than open runs. */
+export const workflowsListStateIsDone = (state: WorkflowsListState) =>
+  state === "done";
 
 /**
- * Which view a row belongs in: a block wins ({@link runIsBlocked}); else a
- * task the viewer started; else any started task; else up next. Every row
+ * Which state a row is in: a block wins ({@link runIsBlocked}); else a
+ * task the member started; else any started task; else ready. Every row
  * here is an open run already: closed and done runs never reach one of these
- * views.
+ * states.
  *
  * "Started by you" is by `startedByEmail`; the row keeps no member id. Removing a
  * member and re-adding the same address mints a **new** `Member.id` (the
@@ -2809,21 +2875,22 @@ export const DEFAULT_WORKFLOWS_LIST_VIEW: WorkflowsListView = "mine";
  * run leaves Started by you without being done.
  *
  * Here rather than beside the route's labels because the object sorts the
- * rows by view now: one read counts every view and returns one of them, so the
+ * rows by state: one read counts every state and returns one of them, so the
  * grouping has to happen on the side that decides what leaves.
  */
-export const viewOf = (
+export const listStateOf = (
   { run, tasks }: RunListItem,
   memberEmail: Email,
-): RunView => {
+): RunListState => {
   if (runIsBlocked(run)) return "blocked";
-  if (tasks.some((task) => task.startedByEmail === memberEmail)) return "mine";
-  if (tasks.some((task) => task.startedAt !== null)) return "teammates";
-  return "upNext";
+  if (tasks.some((task) => task.startedByEmail === memberEmail))
+    return "started_by_you";
+  if (tasks.some((task) => task.startedAt !== null)) return "started_by_others";
+  return "ready";
 };
 
 /**
- * Within a view, oldest order first by `run.orderProcessedAt` (the snapshot
+ * Within a state, oldest order first by `run.orderProcessedAt` (the snapshot
  * on the run, so no join), then by item, then by run id. Two runs of one
  * order share the first key, and `createdAt` would not split them either (one
  * reconcile inserts them in the same millisecond), so the item id is the
@@ -2915,7 +2982,7 @@ export const reopenBlockedBy = (
 };
 
 /**
- * One entry of the member's Done or closed view: **what left my lists lately**, inside
+ * One entry of the member's Done or closed state: **what left my lists lately**, inside
  * {@link DONE_WINDOW_MS}, newest first. Two kinds:
  *
  * - `task`: a task one of the member's teams did, with its run for the
@@ -2946,17 +3013,17 @@ export const RecentItem = Schema.Union([
 export type RecentItem = typeof RecentItem.Type;
 
 /**
- * Provisional. The rows one view returns before it offers "Show more", and the
- * size of each "more". One number for every view: a member's own view (Started by you) is
+ * Provisional. The rows one state returns before it offers "Show more", and the
+ * size of each "more". One number for every state: a member's own (Started by you) is
  * the one they scroll least and the one that must fit, and at ~50 px a row 25
  * is under two phone screens. A proposal, not a tuned figure.
  */
 export const RUN_PAGE = 25;
-/** Provisional: the most rows one view may be expanded to in a single read. */
+/** Provisional: the most rows one state may be expanded to in a single read. */
 export const RUN_LIMIT_MAX = 100;
 
 /**
- * How deep one read of a view goes, as the object accepts it: a whole number
+ * How deep one read of a state goes, as the object accepts it: a whole number
  * of rows from 1 to {@link RUN_LIMIT_MAX}.
  *
  * **The object refuses a depth out of range; the URL clamps one into it.**
@@ -2996,18 +3063,23 @@ export const clampRunLimit = (value: number) =>
 
 /**
  * What the browser may choose about its workflows list: one of its own teams to narrow
- * to (`null` is every team on the connection), which view, and how many rows
- * of that view. `team` is validated against the connection's `teamIds` by the
+ * to (`null` is every team on the connection), which state, how many rows
+ * of that state, and a search. `team` is validated against the connection's `teamIds` by the
  * object; a team the member is not on reads as an empty list, never as an
  * error. The screen resolves a URL's team against the teams before it gets
  * here (`shop.$shop.workflows.index.tsx`), so that empty list is reserved for a caller
- * that ignored the teams. The counts of every view come back regardless of
- * `view`, so the view row is always current.
+ * that ignored the teams. The counts of every state come back regardless of
+ * `state` and `q`, so the state row is always current.
+ *
+ * **Search ignores the filters.** When `q` is not null, `state` and `team`
+ * are not applied: the rows are every match on the member's teams, open ones
+ * in `items` and Done or closed ones in `recent` ({@link WorkflowsListData}).
  */
 export const RunQuery = Schema.Struct({
   team: Schema.NullOr(TeamId),
-  view: WorkflowsListView,
+  state: WorkflowsListState,
   limit: RunLimit,
+  q: Schema.NullOr(ListSearch),
 });
 export type RunQuery = typeof RunQuery.Type;
 
@@ -3017,7 +3089,10 @@ export type RunQuery = typeof RunQuery.Type;
  * press, and the loader's own query is built from the URL.
  */
 export const sameRunQuery = (a: RunQuery, b: RunQuery) =>
-  a.team === b.team && a.view === b.view && a.limit === b.limit;
+  a.team === b.team &&
+  a.state === b.state &&
+  a.limit === b.limit &&
+  a.q === b.q;
 
 export const RunListTeamCount = Schema.Struct({
   teamId: TeamId,
@@ -3026,16 +3101,16 @@ export const RunListTeamCount = Schema.Struct({
 export type RunListTeamCount = typeof RunListTeamCount.Type;
 
 /**
- * The view row's counts. `mine`, `upNext`, `teammates`, `blocked` and `done`
- * are the counts of the five views **after** `query.team` narrows them, because they
+ * The state row's counts, keyed by {@link WorkflowsListState}: the counts of
+ * the five states **after** `query.team` narrows them and never the search, because they
  * describe the lists the member can switch to. `total` and `teamCounts` are
  * over every team on the connection regardless of `query.team`, so the team
  * select does not move under the finger.
  */
 export const RunListCounts = Schema.Struct({
-  mine: Schema.Number,
-  upNext: Schema.Number,
-  teammates: Schema.Number,
+  started_by_you: Schema.Number,
+  started_by_others: Schema.Number,
+  ready: Schema.Number,
   blocked: Schema.Number,
   done: Schema.Number,
   total: Schema.Number,
@@ -3045,17 +3120,29 @@ export type RunListCounts = typeof RunListCounts.Type;
 
 /**
  * Everything the member's workflows list renders, in one socket round trip:
- * every view's count and one view's rows. Exactly one of `items` and `recent`
- * is populated: `items` when `query.view` is a {@link RunView}, `recent` when it is
- * "done". The selected view's total is `counts[query.view]`. One value rather
+ * every state's count and one state's rows. Without a search exactly one of
+ * `items` and `recent` is populated: `items` when `query.state` is a
+ * {@link RunListState}, `recent` when it is "done", and the chosen state's
+ * total is `counts[query.state]`. Under a search `items` holds the open
+ * matches whatever their state and `recent` the Done or closed matches, so a
+ * member who marked the wrong thing done can find it by number. One value rather
  * than two reads so the loader and the socket paint the same snapshot and the
- * view row never disagrees with the list under it. The suffix is `Data` for
+ * state row never disagrees with the list under it. The suffix is `Data` for
  * the reason on {@link OrdersIndexData}.
  */
 export const WorkflowsListData = Schema.Struct({
   counts: RunListCounts,
   items: Schema.Array(RunListItem),
   recent: Schema.Array(RecentItem),
+  /**
+   * How many rows the search finds over every team on the connection, open
+   * and Done or closed together, before either half is cut to
+   * `query.limit`; `null` without a search. Not a count
+   * ({@link RunListCounts}): it is the search's answer, which the screen
+   * prints as "N workflows match <term>" and pages with Show more, the
+   * same as {@link OrdersPage} `matches` on the orders index.
+   */
+  matches: Schema.NullOr(Schema.Number),
 });
 export type WorkflowsListData = typeof WorkflowsListData.Type;
 
@@ -3563,7 +3650,7 @@ export type ListRunsInput = typeof ListRunsInput.Type;
  * trip. `teamIds` and `memberEmail` are absent on purpose — the list is
  * scoped by the membership on the connection, which the member cannot name
  * for themselves. `query` is theirs to name: it chooses among their own teams,
- * which view, and how far that view is expanded, and the object bounds all three.
+ * which state, how far that state is expanded, and a search, and the object bounds them.
  */
 export const SubscribeRunsInput = Schema.Struct({
   ...SubscriberIdInput.fields,

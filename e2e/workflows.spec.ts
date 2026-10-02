@@ -526,10 +526,10 @@ test("editing the tag from the detail page writes immediately and starts no draf
 });
 
 /**
- * `WorkflowsSearch` on the `/app/workflows` layout: the view rides the
+ * `WorkflowsSearch` on the `/app/workflows` layout: the filter rides the
  * workflow page's URL, so its breadcrumb returns to the filtered list.
  */
-test("the workflows index keeps its view across the workflow page", async ({
+test("the workflows index keeps its filter across the workflow page", async ({
   page,
 }) => {
   test.setTimeout(120_000);
@@ -557,7 +557,7 @@ test("the workflows index keeps its view across the workflow page", async ({
   const frame = await gotoApp(page);
   await clickHoisted(appNavLink(page, "Workflows"));
   await expect(frame.getByRole("link", { name: OFF })).toBeVisible();
-  const view = () => new URL(page.url()).searchParams.get("view");
+  const state = () => new URL(page.url()).searchParams.get("state");
 
   await frame
     .getByRole("button", {
@@ -565,17 +565,17 @@ test("the workflows index keeps its view across the workflow page", async ({
       exact: true,
     })
     .click();
-  await expect.poll(view).toBe("on");
+  await expect.poll(state).toBe("on");
   await expect(frame.getByRole("link", { name: OFF })).toHaveCount(0);
 
   await frame.getByRole("link", { name: EXISTING }).click();
   await expect(frame.locator(`s-page[heading="${EXISTING}"]`)).toBeVisible();
-  await expect.poll(view).toBe("on");
+  await expect.poll(state).toBe("on");
 
   /* The hoisted breadcrumb's back arrow; see the orders round trip. */
   await clickHoisted(page.locator('button[aria-label="Workflows"]'));
   await expect(frame.getByRole("link", { name: EXISTING })).toBeVisible();
-  await expect.poll(view).toBe("on");
+  await expect.poll(state).toBe("on");
   await expect(frame.getByRole("link", { name: OFF })).toHaveCount(0);
 });
 

@@ -3,10 +3,10 @@ import {
   Outlet,
   retainSearchParams,
 } from "@tanstack/react-router";
-import { Schema, SchemaGetter } from "effect";
+import { Schema } from "effect";
 
 import * as Domain from "@/lib/Domain";
-import { lenientSearchKey } from "@/lib/searchParams";
+import { lenientSearchKey, ListSearchParam } from "@/lib/searchParams";
 
 declare module "@tanstack/react-router" {
   interface HistoryState {
@@ -20,25 +20,6 @@ declare module "@tanstack/react-router" {
 }
 
 /**
- * **A bare order number in the URL is the search.** The router JSON-encodes
- * every search value, so a search the app writes is `?q="1575"` and comes
- * back a string, but a merchant who types or shares `?q=1575` by hand gets
- * the number 1575 from the parser, which `Domain.OrderSearch` refuses and
- * {@link lenientSearchKey} would then drop as no search: a URL that looked
- * right would open the unfiltered list. A number is read as its digits;
- * everything else is the string it already was. Only the read widens: the
- * app keeps writing the string form, and `q` is the one key a person would
- * type, since a view is a word and a team or cursor is an id.
- */
-const OrderSearchParam = Schema.Union([Schema.String, Schema.Number]).pipe(
-  Schema.decodeTo(Domain.OrderSearch, {
-    // oxlint-disable-next-line unicorn/prefer-native-coercion-functions -- bare `String` is typed `(value?: any) => string` and loses the union
-    decode: SchemaGetter.transform((value: string | number) => String(value)),
-    encode: SchemaGetter.transform((q) => q),
-  }),
-);
-
-/**
  * **The merchant's context on the orders index, and it travels.** The same
  * rule as the member area's {@link MemberSearch} (`shop.$shop.tsx`), which
  * carries the reasoning: the keys live on the layout so every page under it,
@@ -49,12 +30,14 @@ const OrderSearchParam = Schema.Union([Schema.String, Schema.Number]).pipe(
  * and the browser's Back all land on the filters and the page the merchant
  * left.
  *
- * `?view=` picks a view (`Domain.OrdersIndexView`; `made` is the packer's
- * queue, `all` the whole history), and an absent `view` is Open. `?q=` is
- * the order-number search: it searches every stored order and the view and
- * team are then ignored (`Domain.ListOrdersInput.q`), though they stay in the
- * URL so clearing the field returns to them. `?team=` keeps only orders
- * waiting on that team, which is the link the team page drills in with.
+ * `?position=` is the main filter (`Domain.OrdersPositionFilter`; `made` is
+ * the packer's queue, `all` the whole history), and an absent `position` is
+ * Open. `?issues=1` keeps the orders with an issue, and combines with the
+ * position. `?q=` is the search (`Domain.searchTerm`): it searches every
+ * stored order and the filters are then ignored (`Domain.ListOrdersInput.q`),
+ * though they stay in the URL so Clear search returns to them. `?team=` keeps
+ * only orders waiting on that team, which is the link the team page drills in
+ * with. An old `?view=` is not a key and is dropped by the first navigation.
  * `?after=` is the page, as the keyset cursor it starts after; an absent
  * `after` is page one.
  *
@@ -80,8 +63,10 @@ const OrderSearchParam = Schema.Union([Schema.String, Schema.Number]).pipe(
  * (`OrderRepository.listOrders`).
  */
 const OrdersSearch = Schema.Struct({
-  q: lenientSearchKey(OrderSearchParam),
-  view: lenientSearchKey(Domain.OrdersIndexView),
+  q: lenientSearchKey(ListSearchParam),
+  position: lenientSearchKey(Domain.OrdersPositionFilter),
+  /** `1` is on; anything else reads as off. A number rather than `true` so the URL reads `?issues=1`. */
+  issues: lenientSearchKey(Schema.Literal(1)),
   team: lenientSearchKey(Domain.TeamId),
   after: lenientSearchKey(Domain.OrdersCursor),
 });
@@ -95,7 +80,9 @@ const OrdersSearch = Schema.Struct({
 export const Route = createFileRoute("/app/orders")({
   validateSearch: Schema.toStandardSchemaV1(OrdersSearch),
   search: {
-    middlewares: [retainSearchParams(["q", "view", "team", "after"])],
+    middlewares: [
+      retainSearchParams(["q", "position", "issues", "team", "after"]),
+    ],
   },
   component: () => <Outlet />,
 });

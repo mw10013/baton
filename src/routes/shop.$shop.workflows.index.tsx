@@ -6,30 +6,38 @@ import {
 import { createServerFn } from "@tanstack/react-start";
 import { Effect, Schema } from "effect";
 
+import { ListSearchField } from "@/components/ListSearchField";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { MemberBar } from "@/components/MemberBar";
 import { ClosedLine, QuantityBadge } from "@/components/MemberRun";
 import * as Domain from "@/lib/Domain";
+import { formatNumber } from "@/lib/format";
 import { requireMember } from "@/lib/MemberAccess";
 import { memberServerFnMiddleware } from "@/lib/MemberServerFnMiddleware";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { SocketBanner } from "@/lib/SocketBanner";
 import { useMemberRunActions } from "@/lib/useMemberRunActions";
 import { useSubscribedQuery } from "@/lib/useSubscribedQuery";
-import { VIEW_EMPTY, VIEW_LABEL, VIEWS } from "@/lib/workflowsListViews";
+import {
+  SEARCH_EMPTY,
+  STATE_EMPTY,
+  STATE_LABEL,
+  STATES,
+} from "@/lib/workflowsListStates";
 
 const LoaderInput = Schema.Struct({
   shop: Schema.String,
-  view: Domain.WorkflowsListView,
+  state: Domain.WorkflowsListState,
   /** Text, not a {@link Domain.TeamId}: the member's teams resolve it (`MemberSearch` in `shop.$shop.tsx`). */
   team: Schema.String.check(Schema.isMaxLength(Domain.TEAM_SEARCH_MAX)),
   limit: Domain.RunLimit,
+  q: Schema.NullOr(Domain.ListSearch),
 });
 
 /**
  * The member's
  * workflows list, which is the member area's landing page (`/shop/$shop`
- * redirects to it). `list` is the read of `query` — the view from the URL, every
+ * redirects to it). `list` is the read of `query` — the state from the URL, every
  * team, one page deep — which is why `memberEmail` is here to be *sent* on
  * the socket's later reads rather than to group rows the page holds; it and
  * `memberId` come out of the same `requireMember` that resolved `teams`.
@@ -59,11 +67,11 @@ interface RunListLoaderData {
  * `memberEmail` are resolved server-side and never sent by the browser.
  *
  * **The whole query comes from the URL, so the paint is the screen the member
- * left.** View, team and depth are the member's context (`MemberSearch` in
+ * left.** State, team, depth and search are the member's context (`MemberSearch` in
  * `shop.$shop.tsx`), which every link under `/shop/$shop` carries, so a return
  * from the workflow page server-renders narrowed and deepened rather than painting
  * page one of every team and correcting itself when the socket answers. The
- * query it read comes back beside the view, which is what lets these rows
+ * query it read comes back beside the list, which is what lets these rows
  * serve as the socket query's `initialData` ({@link Domain.sameRunQuery}).
  *
  * `team` is resolved against the shop's live teams here, not trusted: a member taken
@@ -82,8 +90,9 @@ const getLoaderData = createServerFn({ method: "GET" })
         });
         const query: Domain.RunQuery = {
           team: teams.find((team) => team.id === data.team)?.id ?? null,
-          view: data.view,
+          state: data.state,
           limit: data.limit,
+          q: data.q,
         };
         const list = yield* (yield* ShopAgentClient).listRuns(shop, {
           teamIds: teams.map((team) => team.id),
@@ -104,9 +113,10 @@ const getLoaderData = createServerFn({ method: "GET" })
 
 export const Route = createFileRoute("/shop/$shop/workflows/")({
   loaderDeps: ({ search }) => ({
-    view: search.view ?? Domain.DEFAULT_WORKFLOWS_LIST_VIEW,
+    state: search.state ?? Domain.DEFAULT_WORKFLOWS_LIST_STATE,
     team: search.team ?? "",
     limit: search.limit ?? Domain.RUN_PAGE,
+    q: search.q ?? null,
   }),
   loader: ({ params, deps }) =>
     getLoaderData({ data: { shop: params.shop, ...deps } }),
@@ -114,9 +124,9 @@ export const Route = createFileRoute("/shop/$shop/workflows/")({
    * A query is a different loader key, so its first visit runs the loader once
    * and that read is the socket query's `initialData` for the new key; after
    * that the socket owns the data and pushes keep it current. Without this the
-   * default `staleTime: 0` would re-run the loader on every return to a view,
-   * team or depth whose data the socket already holds — which, now that all
-   * three are in the URL, is every way back to this screen.
+   * default `staleTime: 0` would re-run the loader on every return to a state,
+   * team, depth or search whose data the socket already holds — which, now that all
+   * four are in the URL, is every way back to this screen.
    */
   staleTime: Infinity,
   head: () => ({ meta: [{ title: "Workflows — Baton" }] }),
@@ -149,10 +159,23 @@ const insideRow = (event: {
 };
 
 /**
+ * Line one's item: the title, then the variant when the item has one
+ * ("Signet ring · Gold"), so two variants of one product on one order read as
+ * two pieces. A search matches the variant too (`Domain.searchTerm`).
+ */
+const itemTitle = (run: {
+  readonly lineItemTitle: string;
+  readonly variantTitle: string | null;
+}) =>
+  run.variantTitle === null
+    ? run.lineItemTitle
+    : `${run.lineItemTitle} · ${run.variantTitle}`;
+
+/**
  * Who did a Done or closed task entry, spelled as the waiting rows spell an actor:
  * `you` for the reader, the email for anybody else, `Merchant` for the
  * merchant. Your own address repeated down a page is the noisiest text on the
- * view and the least informative line on it. Empty rather than "nobody" for a
+ * list and the least informative line on it. Empty rather than "nobody" for a
  * row written before the role column.
  */
 const doneActorLabel = (task: Domain.RunTask, memberEmail: Domain.Email) => {
@@ -180,9 +203,9 @@ function RouteComponent() {
     teamIds: teams.map((team) => team.id),
   };
   /**
-   * Which list, narrowed to which team, how far down: all three from the URL
+   * Which list, narrowed to which team, how far down, and the search: all four from the URL
    * (`MemberSearch` in `shop.$shop.tsx`), with the defaults applied here at the
-   * read. All three are part of the query key, because every one of them is a
+   * read. All four are part of the query key, because every one of them is a
    * different read of the object.
    *
    * A `team` the member is no longer on is read as All teams, the same
@@ -191,9 +214,10 @@ function RouteComponent() {
    * alternative is a list that is empty for a reason nothing on screen states.
    */
   const {
-    view = Domain.DEFAULT_WORKFLOWS_LIST_VIEW,
+    state = Domain.DEFAULT_WORKFLOWS_LIST_STATE,
     team: searchTeam = "",
     limit = Domain.RUN_PAGE,
+    q = null,
   } = Route.useSearch();
   const team = teams.find(({ id }) => id === searchTeam)?.id ?? null;
   const navigate = useNavigate({ from: Route.fullPath });
@@ -210,7 +234,7 @@ function RouteComponent() {
    * read the SSR paint never made, and `keepPreviousData` in the hook holds
    * the previous rows on screen until it returns.
    */
-  const query: Domain.RunQuery = { team, view, limit };
+  const query: Domain.RunQuery = { team, state, limit, q };
   const { data, invalidate, agent, identified } = useSubscribedQuery({
     queryKey: ["shop-runs", shop, query],
     subscribe: (stub, subscriberId) =>
@@ -224,7 +248,7 @@ function RouteComponent() {
    * every team), so the loader's stand in while a new key is in flight. The
    * rows are not: for a query the loader never read and with no previous rows
    * to keep, the page says it is loading rather than paint the unnarrowed
-   * loader rows under a pressed view.
+   * loader rows under a chosen state.
    */
   const list = data ?? loaderList;
   const loading = data === undefined;
@@ -235,21 +259,29 @@ function RouteComponent() {
   });
 
   /**
-   * The three controls, all of them navigations, because all three are in the
+   * The controls, all of them navigations, because all of them are in the
    * URL. **Filters are a screen's state, not a trail:** `replace: true` on
    * every one so Back leaves the workflows list rather than walking the member back
-   * through every view and team they glanced at. The embedded app's orders and
+   * through every state, team and search they glanced at. The embedded app's orders and
    * workflows filters follow this rule (`setFilters` in `app.orders.index.tsx`
    * and `app.workflows.index.tsx`).
    *
-   * A view or a team is a different list, so depth resets: "Show 25 more" of Up
-   * next is not a promise about Blocked. `undefined` is how a key is removed,
-   * which is what puts the default back and keeps it out of the URL.
+   * A state, a team or a search is a different list, so depth resets: "Show
+   * 25 more" of Ready is not a promise about Blocked. `undefined` is how a key
+   * is removed, which is what puts the default back and keeps it out of the
+   * URL.
    */
-  const selectView = (next: Domain.WorkflowsListView) => {
-    if (next === view) return;
+  const selectState = (next: Domain.WorkflowsListState) => {
+    if (next === state) return;
     void navigate({
-      search: (prev) => ({ ...prev, view: next, limit: undefined }),
+      search: (prev) => ({ ...prev, state: next, limit: undefined }),
+      replace: true,
+    });
+  };
+
+  const setSearch = (next: Domain.ListSearch | null) => {
+    void navigate({
+      search: (prev) => ({ ...prev, q: next ?? undefined, limit: undefined }),
       replace: true,
     });
   };
@@ -302,8 +334,9 @@ function RouteComponent() {
    * discriminates nothing; a member on one team never had a second team for
    * it to sort against. The same two facts decide whether the filter exists
    * at all, so the reader who has the filter is the reader who gets the name.
+   * A search ignores the team, so under one the rows span teams again.
    */
-  const showTeam = teams.length > 1 && team === null;
+  const showTeam = teams.length > 1 && (team === null || q !== null);
 
   /**
    * One row per run: the whole row is one link to the workflow page, and
@@ -313,7 +346,7 @@ function RouteComponent() {
    * expanded row used to and the run history, the editors and a printable
    * ticket besides, for the same single tap.
    *
-   * Line one is the item's title, then its workflow and order, and the
+   * Line one is the item's title and variant ({@link itemTitle}), then its workflow and order, and the
    * quantity badge after a Shopify change ({@link QuantityBadge}): what the
    * row is. The item leads because it is what to make; the workflow name is
    * the noun the merchant's order page uses for the same run, so the two
@@ -334,11 +367,11 @@ function RouteComponent() {
     const line = Domain.runRowLine(item, showTeam);
     /**
      * A row you started says where it is in the run, not "Started · you".
-     * Starting a task is what puts the row in Started by you ({@link Domain.viewOf}),
-     * and Put back is the inverse that takes it out again, so those words are true of every row under that pressed view and so
+     * Starting a task is what puts the row in Started by you ({@link Domain.listStateOf}),
+     * and Put back is the inverse that takes it out again, so those words are true of every row in that state and so
      * distinguish none of them. A row a teammate started says who instead,
-     * which is the whole of what the Started by others view is for. The test is the
-     * starter rather than the pressed view because a run can have several current
+     * which is the whole of what Started by others is for. The test is the
+     * starter rather than the chosen state because a run can have several current
      * tasks on the member's teams and `tasks[0]` is the lowest-positioned
      * one, not necessarily theirs.
      */
@@ -464,9 +497,9 @@ function RouteComponent() {
       /* The separator above every row but the list's first, and nothing else.
          A blocked row used to draw a rule down its leading edge as well; it
          went the way of the subdued surface that marked a row in hand, and
-         for the same reason. A block puts the row in the Blocked view
-         ({@link Domain.viewOf}) and nowhere else, so the mark fired on every
-         row of the only view it could appear on and separated nothing. It also
+         for the same reason. A block puts the row in the Blocked state
+         ({@link Domain.listStateOf}) and nowhere else, so the mark fired on every
+         row of the only state it could appear on and separated nothing. It also
          ran past the list container's rounded corner, which a radius does not
          clip without `overflow: hidden`. */
       <s-box key={run.id} borderWidth={first ? "none" : "base none none none"}>
@@ -486,10 +519,10 @@ function RouteComponent() {
           >
             <s-stack gap="small-500">
               <s-stack direction="inline" gap="small-300" alignItems="center">
-                <s-text type="strong">{run.lineItemTitle}</s-text>
+                <s-text type="strong">{itemTitle(run)}</s-text>
                 <s-text color="subdued">{`${run.workflowName} · ${run.orderName}`}</s-text>
-                {/* No Blocked badge: it would read "Blocked" under a pressed
-                    Blocked view, beside an Unblock item, above the reason as
+                {/* No Blocked badge: it would read "Blocked" under a chosen
+                    Blocked state, beside an Unblock item, above the reason as
                     typed — one fact said four times. */}
                 <QuantityBadge run={run} />
               </s-stack>
@@ -522,7 +555,7 @@ function RouteComponent() {
     );
   };
 
-  /** The same rule as the workflow page's Undo, {@link Domain.taskActions}' `reopen`, on the view's own row. */
+  /** The same rule as the workflow page's Undo, {@link Domain.taskActions}' `reopen`, on the list's own row. */
   const reopenOf = (entry: Extract<Domain.RecentItem, { kind: "task" }>) =>
     Domain.taskActions(actor, entry.order, entry.run, {
       ...entry.task,
@@ -542,7 +575,7 @@ function RouteComponent() {
    * the reasoning that a missing control reads as a row that was never
    * reopenable while a disabled one reads as the refusal it is. That holds
    * while refusal is the exception. Here it is the rule: reopen is blocked the
-   * moment anything downstream starts, so a busy shop's Done or closed view was mostly
+   * moment anything downstream starts, so a busy shop's Done or closed list was mostly
    * dead buttons each explaining itself in a third line. When most rows can
    * offer nothing, absence is the norm a reader learns in two rows and the
    * kebab is the signal. The refusal is not lost — the workflow page the row
@@ -576,7 +609,7 @@ function RouteComponent() {
             <s-stack gap="small-500">
               <s-stack direction="inline" gap="small-300" alignItems="center">
                 <s-text type="strong">{entry.task.name}</s-text>
-                <s-text color="subdued">{`${entry.run.lineItemTitle} · ${entry.run.workflowName} · ${entry.run.orderName}`}</s-text>
+                <s-text color="subdued">{`${itemTitle(entry.run)} · ${entry.run.workflowName} · ${entry.run.orderName}`}</s-text>
               </s-stack>
               <div className="run-detail-line">
                 <s-text color="subdued">
@@ -642,7 +675,7 @@ function RouteComponent() {
       >
         <s-stack gap="small-500">
           <s-stack direction="inline" gap="small-300" alignItems="center">
-            <s-text type="strong">{entry.run.lineItemTitle}</s-text>
+            <s-text type="strong">{itemTitle(entry.run)}</s-text>
             <s-text color="subdued">{`${entry.run.workflowName} · ${entry.run.orderName}`}</s-text>
           </s-stack>
           <div className="run-detail-line">
@@ -659,7 +692,7 @@ function RouteComponent() {
       : renderClosed(entry, first);
 
   /**
-   * "Show 25 more of N". The button is the only way past the pressed view's cut
+   * "Show 25 more of N". The button is the only way past the chosen state's cut
    * and it asks the object for the deeper read rather than revealing rows the
    * page already holds, so the count it names is the object's count.
    */
@@ -686,24 +719,32 @@ function RouteComponent() {
    * screen whose subject is the list below it.
    *
    * It is rendered into `MemberBar`, beside the shop. On the workflows list it had a
-   * line of its own above the views — it cannot share the view row, where a
-   * merchant-typed team name would decide how many views a phone has room for
+   * line of its own above the states — it cannot share the state row, where a
+   * merchant-typed team name would decide how many states a phone has room for
    * — and a whole line above the fold is what a bench tablet has least of.
    * The bar already holds the two answers a member needs on every screen, and
    * a set-once filter is at home beside them.
    *
-   * The button carries no count. The view counts beside it are narrowed to the
+   * The button carries no count. The state counts beside it are narrowed to the
    * chosen team while `counts.total` is over every team, so two numbers on
    * one row would be counting different things. Inside the menu the counts
    * stay, because there they are what is being chosen between — and they are
    * over every team whatever is selected, so the option just chosen does not
    * renumber itself.
+   *
+   * Disabled under a search, which ignores the team (`Domain.RunQuery`): a
+   * filter that looks set but does nothing is the controls table's "never"
+   * (`Control` in `Screen.ts`).
    */
   const teamMenuId = "run-team-menu";
   const teamMenu =
     teams.length > 1 ? (
       <div>
-        <s-button variant="secondary" commandFor={teamMenuId}>
+        <s-button
+          variant="secondary"
+          commandFor={teamMenuId}
+          disabled={q !== null}
+        >
           {team === null
             ? "All teams"
             : (teams.find(({ id }) => id === team)?.name ?? "All teams")}
@@ -731,79 +772,136 @@ function RouteComponent() {
     ) : null;
 
   /**
-   * The view row is the heading — literally, now that the page has none:
-   * every view with its count, the selected one pressed. A zero-count view
+   * The state row is the heading — literally, now that the page has none:
+   * every state with its count, the chosen one pressed. A zero-count state
    * stays — the row must not reflow when a count crosses zero — and stays
    * enabled, because an empty list with its empty state is a valid screen to
    * land on, a disabled button leaves the tab order altogether, and the count
    * already says zero.
    *
-   * Five views and nothing else; the team filter is in the member bar.
-   * Polaris has no view component either — its index pages put views in a
-   * menu — so a view here is an `s-press-button`, as on the Orders index
-   * (whose `viewButton` holds the rule for both view rows): `pressed`
-   * reaches the native button as `aria-pressed`, and `onClick` first puts
-   * `pressed` back to what React rendered, because the element flips it on
-   * every click and pressing the pressed view re-renders nothing. Blocked has
-   * no colour: `s-press-button` takes only `tone="neutral"`, and a member is
-   * not usually the one who clears a block. Five in a grid so they never
-   * wrap; `inlineSize="fill"` is what makes each one its grid cell's width,
-   * so five buttons read as one row rather than five differently sized ones.
+   * Five states and nothing else; the team filter and the search are in the
+   * member bar. Polaris has no segmented control, so a state here is an
+   * `s-press-button`: `pressed` reaches the native button as `aria-pressed`,
+   * and `onClick` first puts `pressed` back to what React rendered, because
+   * the element flips it on every click and pressing the pressed state
+   * re-renders nothing. Blocked has no colour: `s-press-button` takes only
+   * `tone="neutral"`, and a member is not usually the one who clears a block.
+   * Five in a grid so they never wrap; `inlineSize="fill"` is what makes each
+   * one its grid cell's width, so five buttons read as one row with one
+   * value pressed. They keep a gap rather than joining into one outline;
+   * `.run-state-row` in `styles.css` says why.
    */
-  const viewRow = (
+  const stateRow = (
     /* Not `s-button-group`, which renders only its named action slots so
        buttons in its default slot never reach the page; and not `s-stack`,
-       which wraps when it is inline. `.run-view-row` in `styles.css` is
+       which wraps when it is inline. `.run-state-row` in `styles.css` is
        the grid, and says why it is not a scroller. */
-    <div className="run-view-row">
-      {VIEWS.map((each) => (
+    <div className="run-state-row">
+      {STATES.map((each) => (
         <s-press-button
           key={each}
-          pressed={each === view}
+          pressed={each === state}
           inlineSize="fill"
           onClick={(event) => {
-            event.currentTarget.pressed = each === view;
-            selectView(each);
+            event.currentTarget.pressed = each === state;
+            selectState(each);
           }}
         >
-          {`${VIEW_LABEL[each]} · ${String(list.counts[each])}`}
+          {`${STATE_LABEL[each]} · ${String(list.counts[each])}`}
         </s-press-button>
       ))}
     </div>
   );
 
-  const total = list.counts[view];
-  const rows = view === "done" ? list.recent : list.items;
+  /** The search as the screen prints it (`Domain.searchTermText`): `#1001`, or the typed words. */
+  const term = q === null ? null : Domain.searchTermText(Domain.searchTerm(q));
+  const clearSearch = () => {
+    setSearch(null);
+  };
+
+  const total = list.counts[state];
+  const rows = Domain.workflowsListStateIsDone(state)
+    ? list.recent
+    : list.items;
   const hidden = total - rows.length;
   /**
-   * The way out of an empty view; `null` when there is nowhere worth sending
+   * The way out of an empty state; `null` when there is nowhere worth sending
    * the reader. "Go to" rather than the bare label so the button cannot be
-   * confused with the view-row button above it that carries the same count.
+   * confused with the state-row button above it that carries the same count.
    */
-  const goTo = VIEW_EMPTY[view].goTo;
+  const goTo = STATE_EMPTY[state].goTo;
   const renderEmpty = () => (
     <s-stack gap="small-300">
-      <s-paragraph color="subdued">{VIEW_EMPTY[view].text}</s-paragraph>
+      <s-paragraph color="subdued">{STATE_EMPTY[state].text}</s-paragraph>
       {goTo !== null && list.counts[goTo] > 0 && (
         <s-button
           variant="tertiary"
           onClick={() => {
-            selectView(goTo);
+            selectState(goTo);
           }}
         >
-          {`Go to ${VIEW_LABEL[goTo]} · ${String(list.counts[goTo])}`}
+          {`Go to ${STATE_LABEL[goTo]} · ${String(list.counts[goTo])}`}
         </s-button>
       )}
     </s-stack>
   );
   const renderList = () => (
     <s-box borderWidth="base" borderRadius="base">
-      {view === "done"
+      {Domain.workflowsListStateIsDone(state)
         ? list.recent.map((entry, index) => renderRecent(entry, index === 0))
         : list.items.map((item, index) => renderItem(item, index === 0))}
       {hidden > 0 && renderMore(hidden)}
     </s-box>
   );
+  /**
+   * Under a search (`Domain.RunQuery`, which ignores the state and the team):
+   * the state row gives way to one line, how many rows match and Clear search
+   * (`Control` in `Screen.ts`, "a search is on"); the rows are the open
+   * matches, then the Done or closed matches under a divider, so a member who
+   * marked the wrong thing done finds it by number. N is every match before
+   * the cut (`Domain.WorkflowsListData.matches`), each half is cut to the
+   * depth, and Show more deepens both, so a match past the cut is reachable.
+   * Nothing matching is one sentence and Clear search.
+   */
+  const renderSearch = (text: string) => {
+    const shown = list.items.length + list.recent.length;
+    const matches = list.matches ?? shown;
+    if (matches === 0)
+      return (
+        <s-stack gap="small-300">
+          <s-paragraph color="subdued">{`${SEARCH_EMPTY} ${text}`}</s-paragraph>
+          <s-button variant="tertiary" onClick={clearSearch}>
+            Clear search
+          </s-button>
+        </s-stack>
+      );
+    return (
+      <>
+        <s-stack direction="inline" gap="base" alignItems="center">
+          <s-text>
+            {matches === 1
+              ? `1 workflow matches ${text}`
+              : `${formatNumber(matches)} workflows match ${text}`}
+          </s-text>
+          <s-button onClick={clearSearch}>Clear search</s-button>
+        </s-stack>
+        {list.items.length > 0 && (
+          <s-box borderWidth="base" borderRadius="base">
+            {list.items.map((item, index) => renderItem(item, index === 0))}
+          </s-box>
+        )}
+        {list.items.length > 0 && list.recent.length > 0 && <s-divider />}
+        {list.recent.length > 0 && (
+          <s-box borderWidth="base" borderRadius="base">
+            {list.recent.map((entry, index) =>
+              renderRecent(entry, index === 0),
+            )}
+          </s-box>
+        )}
+        {matches > shown && renderMore(matches - shown)}
+      </>
+    );
+  };
   const renderRuns = () => {
     if (loading)
       return <s-paragraph color="subdued">Loading&hellip;</s-paragraph>;
@@ -811,10 +909,41 @@ function RouteComponent() {
     return renderList();
   };
 
+  const renderBody = () => {
+    if (teams.length === 0)
+      return (
+        <s-paragraph color="subdued">
+          You&rsquo;re not on a team yet. Ask the merchant to add you to a team.
+        </s-paragraph>
+      );
+    if (term !== null) return renderSearch(term);
+    return (
+      <>
+        {/* `.run-state-row-sticky` in `styles.css` keeps it on screen. */}
+        <div className="run-state-row-sticky">{stateRow}</div>
+        {renderRuns()}
+      </>
+    );
+  };
+
   return (
     <>
-      <MemberBar shop={shop} email={memberEmail} filter={teamMenu} />
-      {/* No `heading`: the view row below says the same word and says more with
+      <MemberBar
+        shop={shop}
+        email={memberEmail}
+        filter={
+          teams.length === 0 ? null : (
+            <>
+              {teamMenu}
+              {/* `.member-bar-search` in `styles.css` sizes it. */}
+              <div className="member-bar-search">
+                <ListSearchField value={q} onSubmit={setSearch} />
+              </div>
+            </>
+          )
+        }
+      />
+      {/* No `heading`: the state row below says the same word and says more with
           it, and a heading block above the fold is what a bench tablet has
           least of. "Workflows", the rows' noun, is in the document title and
           the section's accessibility label: the browser tab and the
@@ -826,18 +955,7 @@ function RouteComponent() {
             {actions.banner !== null && (
               <s-banner tone="critical">{actions.banner}</s-banner>
             )}
-            {teams.length === 0 ? (
-              <s-paragraph color="subdued">
-                You&rsquo;re not on a team yet. Ask the merchant to add you to a
-                team.
-              </s-paragraph>
-            ) : (
-              <>
-                {/* `.run-view-row-sticky` in `styles.css` keeps it on screen. */}
-                <div className="run-view-row-sticky">{viewRow}</div>
-                {renderRuns()}
-              </>
-            )}
+            {renderBody()}
           </s-stack>
         </s-section>
       </s-page>

@@ -125,34 +125,39 @@ afterEach(async () => {
  * tests in the same worker, so sharing a shop would leak workflows between cases.
  */
 /**
- * The current half of the workflows list, flattened back into one list in view-row
- * order because one read now returns one view; the Done view and sorting by view
+ * The current half of the workflows list, flattened back into one list in state-row
+ * order because one read now returns one state; Done or closed and sorting by state
  * itself are covered by the repository tests. `memberEmail` defaults to
  * nobody these tests started work as, so every started task reads as a
- * teammate's; `view` names one view where that is what a case is about.
+ * teammate's; `state` names one state where that is what a case is about.
  */
 const runListItems = async (
   agent: Awaited<ReturnType<typeof getAgentByName<Cloudflare.Env, ShopAgent>>>,
   teamIds: readonly string[],
   {
     memberEmail = "viewer@example.com",
-    view,
+    state,
   }: {
     readonly memberEmail?: string;
-    readonly view?: Domain.WorkflowsListView;
+    readonly state?: Domain.WorkflowsListState;
   } = {},
 ) => {
-  const read = async (wanted: Domain.WorkflowsListView) => {
+  const read = async (wanted: Domain.WorkflowsListState) => {
     const list = await agent.listRuns({
       teamIds,
       memberEmail,
-      query: { team: null, view: wanted, limit: Domain.RUN_PAGE },
+      query: { team: null, state: wanted, limit: Domain.RUN_PAGE, q: null },
     });
     return list.items;
   };
-  if (view !== undefined) return await read(view);
-  const views = ["mine", "upNext", "teammates", "blocked"] as const;
-  const reads = await Promise.all(views.map(read));
+  if (state !== undefined) return await read(state);
+  const states = [
+    "started_by_you",
+    "ready",
+    "started_by_others",
+    "blocked",
+  ] as const;
+  const reads = await Promise.all(states.map(read));
   return reads.flat();
 };
 
@@ -1451,11 +1456,11 @@ describe("ShopAgent workflow run callables", () => {
       teamIds: [team.id],
     });
     expect(await engraver.startTask({ runTaskId })).toEqual({ _tag: "Ok" });
-    // Their own started task, so it is Started by you for them — which is the view the
+    // Their own started task, so it is Started by you for them — which is the state the
     // snapshotted email has to survive the delete in.
     const [item] = await runListItems(agent, [team.id], {
       memberEmail,
-      view: "mine",
+      state: "started_by_you",
     });
     strictEqual(item?.run.state, "open");
     strictEqual(item?.tasks[0]?.startedByEmail, "w@example.com");
@@ -1472,7 +1477,7 @@ describe("ShopAgent workflow run callables", () => {
     );
     const [deletedItem] = await runListItems(agent, [team.id], {
       memberEmail,
-      view: "mine",
+      state: "started_by_you",
     });
     strictEqual(deletedItem?.tasks[0]?.startedByEmail, "w@example.com");
     expect(
@@ -1611,7 +1616,8 @@ const ordersPage = async (
     limit: 50,
     cursor: null,
     q: null,
-    view: null,
+    position: null,
+    issues: false,
     team: null,
   });
   return data.page.orders;

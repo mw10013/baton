@@ -330,18 +330,21 @@ export class RunRepository extends Context.Service<
       | RunOrderClosedError
     >;
     /**
-     * The member's workflows list, sorted by view and cut here rather than on the page: every run
+     * The member's workflows list, sorted by state and cut here rather than on the page: every run
      * with at least one current task owned by `teamIds`, grouped by
-     * {@link Domain.viewOf} against `memberEmail`. **Every** view is counted;
-     * **one** is returned — the one `query.view` names — sorted oldest first
-     * and cut to `query.limit`. `view: "done"` returns no items at all and the
-     * caller reads `listRecent` for that view's rows. Only open runs have
+     * {@link Domain.listStateOf} against `memberEmail`. **Every** state is counted;
+     * **one** is returned — the one `query.state` names — sorted oldest first
+     * and cut to `query.limit`. `state: "done"` returns no items at all and the
+     * caller reads `listRecent` for that state's rows. Under a search
+     * (`query.q`) the items are every open match on `teamIds` whatever its
+     * state or team ({@link Domain.RunQuery}), `matches` is how many there
+     * were before the cut (`null` without a search), and the counts ignore it. Only open runs have
      * current tasks, so a closed or done run is never listed
      * ({@link Domain.RunState}).
      *
      * `teamCounts` and `total` are over all of `teamIds` whatever `query.team`
      * narrows to, so the team select does not move under the finger, while the
-     * four view counts are after the narrowing, because they describe the
+     * four state counts are after the narrowing, because they describe the
      * lists the member can switch to.
      *
      * Both statements still read every row of `teamIds`: the rows are not the
@@ -356,11 +359,12 @@ export class RunRepository extends Context.Service<
       {
         readonly counts: Omit<Domain.RunListCounts, "done">;
         readonly items: readonly Domain.RunListItem[];
+        readonly matches: number | null;
       },
       SqlError.SqlError | RunRepositoryError
     >;
     /**
-     * The Done or closed view ({@link Domain.RecentItem}): tasks owned by `teamIds`
+     * The Done or closed state ({@link Domain.RecentItem}): tasks owned by `teamIds`
      * done at or after `since`, each with its run and the reopen verdict
      * ({@link Domain.reopenBlockedBy}), and runs with a task on `teamIds` that
      * closed at or after `since`, newest first by `doneAt` or
@@ -368,14 +372,18 @@ export class RunRepository extends Context.Service<
      * as readily as its author, and a closed run is news to everyone who
      * could see it.
      *
-     * `total` is always the count inside the window, because the view row says it
-     * even while another view is showing; `limit: 0` returns the count alone,
-     * reading no rows.
+     * `total` is the count inside the window, because the state row says it
+     * even while another state is showing; `limit: 0` returns the count alone,
+     * reading no rows. `q` narrows the rows and `total` alike, so under a
+     * search `total` is how many of the window match before the cut
+     * ({@link Domain.WorkflowsListData} `matches`); the Done or closed count
+     * the state row shows ({@link Domain.RunListCounts}) is read with `q: null`.
      */
     readonly listRecent: (input: {
       readonly teamIds: readonly string[];
       readonly since: number;
       readonly limit: number;
+      readonly q: Domain.ListSearch | null;
     }) => Effect.Effect<
       { readonly items: readonly Domain.RecentItem[]; readonly total: number },
       SqlError.SqlError | RunRepositoryError
@@ -842,7 +850,7 @@ export class RunRepository extends Context.Service<
        * in TypeScript below rather than in SQL. Nothing about the other
        * teams' tasks is shipped.
        *
-       * Separate from `listRuns` because sorting by view, narrowing, and capping are
+       * Separate from `listRuns` because sorting by state, narrowing, and capping are
        * decisions about the rows rather than about the query: keeping them
        * apart means the two statements below are read once, in one place.
        */
@@ -1482,33 +1490,54 @@ export class RunRepository extends Context.Service<
                 });
           // `Map.groupBy` would say this in one line, but the repo's `lib` is
           // below es2024; a reduce into a record is the same pass.
-          const byView = narrowed.reduce<
-            Record<Domain.RunView, Domain.RunListItem[]>
+          const byState = narrowed.reduce<
+            Record<Domain.RunListState, Domain.RunListItem[]>
           >(
             (grouped, item) => {
-              grouped[Domain.viewOf(item, memberEmail)].push(item);
+              grouped[Domain.listStateOf(item, memberEmail)].push(item);
               return grouped;
             },
-            { blocked: [], mine: [], teammates: [], upNext: [] },
+            {
+              blocked: [],
+              started_by_you: [],
+              started_by_others: [],
+              ready: [],
+            },
           );
-          const inView = (wanted: Domain.RunView) => byView[wanted];
-          // "done" (Done or closed) is not a RunView: its rows come from `listRecent`,
-          // which reads done tasks and closed runs rather than the current
-          // ones grouped here.
-          const selected =
-            query.view === "done"
+          const inState = (wanted: Domain.RunListState) => byState[wanted];
+          // A search ignores the state and the team: every open match on the
+          // member's teams. Without one, "done" (Done or closed) is not a
+          // RunListState: its rows come from `listRecent`, which reads done
+          // tasks and closed runs rather than the current ones grouped here.
+          const chosen = (): readonly Domain.RunListItem[] => {
+            if (query.q !== null) {
+              const term = Domain.searchTerm(query.q);
+              return items.filter(({ run }) =>
+                Domain.searchMatches(term, {
+                  orderName: run.orderName,
+                  title: run.lineItemTitle,
+                  variantTitle: run.variantTitle,
+                  sku: run.sku,
+                }),
+              );
+            }
+            return Domain.workflowsListStateIsDone(query.state)
               ? []
-              : inView(query.view).toSorted(Domain.byAge).slice(0, query.limit);
+              : inState(query.state);
+          };
+          const wanted = chosen();
+          const selected = wanted.toSorted(Domain.byAge).slice(0, query.limit);
           return {
             counts: {
-              mine: inView("mine").length,
-              upNext: inView("upNext").length,
-              teammates: inView("teammates").length,
-              blocked: inView("blocked").length,
+              started_by_you: inState("started_by_you").length,
+              started_by_others: inState("started_by_others").length,
+              ready: inState("ready").length,
+              blocked: inState("blocked").length,
               total: items.length,
               teamCounts,
             },
             items: selected,
+            matches: query.q === null ? null : wanted.length,
           };
         }),
 
@@ -1516,13 +1545,38 @@ export class RunRepository extends Context.Service<
           teamIds,
           since,
           limit,
+          q,
         }: {
           readonly teamIds: readonly string[];
           readonly since: number;
           readonly limit: number;
+          readonly q: Domain.ListSearch | null;
         }) {
           if (teamIds.length === 0) return { items: [], total: 0 };
           const teams = json(teamIds);
+          /**
+           * `Domain.searchTerm` over the run's snapshot of its item, aliased
+           * `r`: the order name whole, or a word prefix of the item title,
+           * the variant title or the SKU (`Domain.prefixPatterns`). Narrows
+           * the rows and `total` alike; `1 = 1` without a search.
+           */
+          const matching = Option.match(Option.fromNullOr(q), {
+            onNone: () => sql.literal("1 = 1"),
+            onSome: (text) => {
+              const term = Domain.searchTerm(text);
+              if (term.kind === "orderName")
+                return sql`r.orderName = ${term.name}`;
+              const [start, word] = Domain.prefixPatterns(term.text);
+              return sql`(
+                r.lineItemTitle like ${start} escape '\\'
+                or r.lineItemTitle like ${word} escape '\\'
+                or r.variantTitle like ${start} escape '\\'
+                or r.variantTitle like ${word} escape '\\'
+                or r.sku like ${start} escape '\\'
+                or r.sku like ${word} escape '\\'
+              )`;
+            },
+          });
           /**
            * Two windows, each bounded by `since` and served by its own index:
            * done tasks by `RunTask_teamId_idx (teamId,
@@ -1541,13 +1595,17 @@ export class RunRepository extends Context.Service<
             select count(*) from RunTask s
             where s.doneAt >= ${since}
               and s.teamId in (select value from json_each(${teams}))
+              and exists (
+                select 1 from Run r where r.id = s.runId and ${matching}
+              )
           `.values;
           const countedClosed =
-            yield* sql`select count(*) from Run r where ${closedWhere}`.values;
+            yield* sql`select count(*) from Run r where ${closedWhere} and ${matching}`
+              .values;
           const total =
             Number(countedTasks[0]?.[0] ?? 0) +
             Number(countedClosed[0]?.[0] ?? 0);
-          // Collapsed: the view row still counts the day, so the counts are read
+          // Collapsed: the state row still counts the day, so the counts are read
           // and the rows are not.
           if (limit === 0) return { items: [], total };
           const done = yield* decodeTasks(
@@ -1555,13 +1613,16 @@ export class RunRepository extends Context.Service<
               select s.* from RunTask s
               where s.doneAt >= ${since}
                 and s.teamId in (select value from json_each(${teams}))
+                and exists (
+                  select 1 from Run r where r.id = s.runId and ${matching}
+                )
               order by s.doneAt desc, s.position desc
               limit ${limit}
             `,
           );
           const closed = yield* decodeRuns(
             yield* sql`
-              select r.* from Run r where ${closedWhere}
+              select r.* from Run r where ${closedWhere} and ${matching}
               order by r.closedAt desc, r.id desc
               limit ${limit}
             `,

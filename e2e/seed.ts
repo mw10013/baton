@@ -55,6 +55,9 @@ export interface SeedProgress {
 /** An item of a seeded order; `tags` are the product tags a workflow matches on. `currentQuantity` defaults to `quantity`. */
 export interface SeedLineItem {
   readonly title: string;
+  /** Left out is `null`, as Shopify sends an item with one variant. */
+  readonly variantTitle?: string;
+  readonly sku?: string;
   readonly quantity: number;
   readonly currentQuantity?: number;
   readonly tags: readonly string[];

@@ -19,4 +19,15 @@ describe("lenientSearchKey", () => {
     expect(decode({ status: "on" })).toStrictEqual({ status: "on" });
     expect(decode({})).toStrictEqual({});
   });
+
+  it("a flag key reads 1 as on and anything else as absent, as the orders index's ?issues= does", () => {
+    const Flag = Schema.Struct({ issues: lenientSearchKey(Schema.Literal(1)) });
+    const decodeFlag = Schema.decodeUnknownSync(Flag);
+    expect(decodeFlag({ issues: 1 })).toStrictEqual({ issues: 1 });
+    for (const value of [0, "1", true, "yes"])
+      expect(decodeFlag({ issues: value })).toStrictEqual({
+        issues: undefined,
+      });
+    expect(decodeFlag({})).toStrictEqual({});
+  });
 });

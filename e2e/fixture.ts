@@ -850,7 +850,7 @@ const bigOrder = (n: number): SeedOrder => ({
   }),
 });
 
-/** Cycled over the generated orders so every view of the workflows list is populated, not only Ready. */
+/** Cycled over the generated orders so every state of the workflows list is populated, not only Ready. */
 const SCALE_PROGRESS: readonly SeedProgress[] = [
   {},
   { advance: 1 },
@@ -860,7 +860,7 @@ const SCALE_PROGRESS: readonly SeedProgress[] = [
 ];
 
 /**
- * Volume, always seeded: the workflows list's views are uncapped apart from Ready and
+ * Volume, always seeded: the workflows list's states are uncapped apart from Ready and
  * the orders index pages at 25, so neither can be judged at ten orders. Kept
  * to a few hundred runs — every one is a real reconcile and every round a real
  * write, and the reseed has to stay quick enough that people still run it.

@@ -30,6 +30,8 @@ const SeedOrderByWorkflowName = Schema.Struct({
   lineItems: Schema.Array(
     Schema.Struct({
       title: Schema.String,
+      variantTitle: Schema.optionalKey(Schema.String),
+      sku: Schema.optionalKey(Schema.String),
       quantity: Schema.Number,
       currentQuantity: Schema.optionalKey(Schema.Number),
       tags: Schema.Array(Schema.String),

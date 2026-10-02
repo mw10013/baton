@@ -170,8 +170,9 @@ const seedShopWithWork = async (shopName: string) => {
 /** One page of Ready, every team: what every test here seeds a single row into. */
 const READY: Domain.RunQuery = {
   team: null,
-  view: "upNext",
+  state: "ready",
   limit: Domain.RUN_PAGE,
+  q: null,
 };
 
 const subscribeList = (
@@ -185,7 +186,7 @@ const subscribeList = (
   });
 
 /**
- * The current rows of one view. Every test here seeds a single untouched task on
+ * The current rows of one state. Every test here seeds a single untouched task on
  * one team, which is Ready for whoever reads it.
  */
 const subscribe = (
@@ -226,9 +227,9 @@ describe("member workflows list socket", () => {
 
   /**
    * The query is the browser's to choose and the object's to honour: the same
-   * connection, re-subscribing with a different view, gets that view's rows
+   * connection, re-subscribing with a different state, gets that state's rows
    * while every read agrees on the counts. What this proves is that `query`
-   * reaches the object and selects the view — sorting by view itself is the
+   * reaches the object and selects the state — sorting by state itself is the
    * repository's test.
    */
   it("re-subscribing with a different query changes what the read returns", async () => {
@@ -240,21 +241,21 @@ describe("member workflows list socket", () => {
       memberEmail: "alice@example.com",
       teamIds: [working.id],
     });
-    const upNext = await subscribeList(worker.socket, "sub-alice", {
+    const ready = await subscribeList(worker.socket, "sub-alice", {
       ...READY,
       limit: 1,
     });
-    expect(upNext.items).toHaveLength(1);
-    expect(upNext.counts.upNext).toBe(1);
-    expect(upNext.counts.total).toBe(1);
+    expect(ready.items).toHaveLength(1);
+    expect(ready.counts.ready).toBe(1);
+    expect(ready.counts.total).toBe(1);
 
     const done = await subscribeList(worker.socket, "sub-alice", {
       ...READY,
-      view: "done",
+      state: "done",
     });
     expect(done.items).toHaveLength(0);
     expect(done.recent).toHaveLength(0);
-    expect(done.counts.upNext).toBe(1);
+    expect(done.counts.ready).toBe(1);
     worker.close();
   });
 

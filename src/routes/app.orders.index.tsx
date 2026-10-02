@@ -8,8 +8,9 @@ import {
   useRouter,
 } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
-import { Effect, Match, Option, Schema } from "effect";
+import { Effect, Match, Schema } from "effect";
 
+import { ListSearchField } from "@/components/ListSearchField";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { QuotaBanners } from "@/components/QuotaBanners";
 import * as Domain from "@/lib/Domain";
@@ -24,14 +25,6 @@ import { useSubscribedQuery } from "@/lib/useSubscribedQuery";
 
 const ORDERS_PAGE_SIZE = 25;
 /**
- * Raw field text to the branded search, or `None` for anything the schema
- * refuses: empty, blank, or past its 32 characters. `None` is "no search",
- * which is what an emptied field means, so the caller needs no second test.
- * The field sets no `maxLength`: Polaris would draw a character counter, and
- * no order number comes near the limit.
- */
-const decodeOrderSearch = Schema.decodeUnknownOption(Domain.OrderSearch);
-/**
  * Caps the Waiting on cell at two team names and a `+n`. The names sit one
  * per line, so the cap bounds the row's height, not its width (the width is
  * bounded by the names wrapping; see {@link waitingOnNames}). Three or more
@@ -40,45 +33,55 @@ const decodeOrderSearch = Schema.decodeUnknownOption(Domain.OrderSearch);
  */
 const WAITING_ON_LIMIT = 2;
 
+/** The `?issues=` value a patch writes: `1` on, `undefined` off, the old value when the patch leaves it out. */
+const issuesKeyOf = (next: boolean | undefined, prev: 1 | undefined) => {
+  if (next === undefined) return prev;
+  return next ? (1 as const) : undefined;
+};
+
 /**
- * Keyed by the view, every filter and the page as well as the shop: each
+ * Keyed by every filter, the search and the page as well as the shop: each
  * combination is a different read, and the order page's invalidation of
  * `["orders", shop]` is a prefix match so it still reaches every one of them.
  */
 const ordersQueryKey = (
   shop: string,
-  q: Domain.OrderSearch | null,
-  view: Domain.OrdersIndexView | null,
+  q: Domain.ListSearch | null,
+  position: Domain.OrdersPositionFilter | null,
+  issues: boolean,
   team: Domain.TeamId | null,
   after: string | null,
-) => ["orders", shop, q, view, team, after] as const;
+) => ["orders", shop, q, position, issues, team, after] as const;
 
 /**
- * The view row, left to right: Open (the default, `null` in the URL), the
- * ladder in the order an order moves, Fulfilled, All, then Issues. Each is
- * one whole question and exactly one is pressed
- * ({@link Domain.OrdersIndexView}, which carries the rule and why the row is
- * not two crossed rows). Open, the positions and All read as one run: a
- * total, its parts in lifecycle order, then the scope widening to the whole
- * history. Issues cuts across the three open positions; it comes last, in
- * the same row, and its count is the only signal on the page that an open
- * order has an issue. There is no label to the row's left: the row holds
- * scopes and positions side by side, and a label such as "Status" would
- * promise one axis. `count` is the `Domain.OrderCounts` key the button
- * shows; Fulfilled and All carry none. `cancelled` has no button. Labels are
- * `Domain.ORDERS_INDEX_VIEW_LABEL`.
+ * The strip, left to right: Open (the default, `?position=` left out), the
+ * three open positions in the order an order moves, then Issues, which cuts
+ * across them. These are the five values `Domain.OrderCounts` counts; each
+ * cell is the value's name over its count and is a one-click filter. Fulfilled,
+ * Cancelled and All carry no count and live only in the Status select.
+ * Labels are `Domain.ORDERS_FILTER_LABEL`.
  */
-const VIEWS: readonly {
-  readonly value: Exclude<Domain.OrdersIndexView, "cancelled"> | null;
-  readonly count: keyof Domain.OrderCounts | null;
-}[] = [
-  { value: null, count: "open" },
-  { value: "not_started", count: "not_started" },
-  { value: "making", count: "making" },
-  { value: "made", count: "made" },
-  { value: "fulfilled", count: null },
-  { value: "all", count: null },
-  { value: "issues", count: "issues" },
+const STRIP: readonly (keyof Domain.OrderCounts)[] = [
+  "open",
+  "not_started",
+  "making",
+  "made",
+  "issues",
+];
+
+/**
+ * The Status select's values, in its order: Open, the positions, All. Open's
+ * option value is `"open"`, not `""`: an `s-option` with an empty value takes
+ * its label as the value.
+ */
+const POSITIONS: readonly (Domain.OrdersPositionFilter | null)[] = [
+  null,
+  "not_started",
+  "making",
+  "made",
+  "fulfilled",
+  "cancelled",
+  "all",
 ];
 
 /**
@@ -166,41 +169,56 @@ const syncStatusText = (
 };
 
 /**
- * What an empty view says, one line each. With a team selected the list is
- * narrowed by a filter as well as a view, so the text says that rather than
- * claiming the view itself is empty. A search has its own heading (see
- * `renderOrders`).
+ * What an empty list says, one line each (the `empty` slot, `CopySlot`).
+ * With a team selected the list is narrowed by more than one filter, so the
+ * text says that rather than claiming one value is empty. A search has its
+ * own heading (see `renderOrders`).
  */
 const emptyText = (
-  view: Domain.OrdersIndexView | null,
+  position: Domain.OrdersPositionFilter | null,
+  issues: boolean,
   team: Domain.TeamId | null,
-) =>
-  team === null
-    ? Match.value(view).pipe(
-        Match.when(null, () => "No open orders."),
-        Match.when("issues", () => "No open orders have issues."),
-        Match.when("not_started", () => "No open orders are waiting to start."),
-        Match.when("making", () => "Nothing is being made."),
-        Match.when(
-          "made",
-          () => "No orders are made and waiting to be fulfilled.",
-        ),
-        Match.when("fulfilled", () => "No orders have been fulfilled yet."),
-        Match.when("cancelled", () => "No cancelled orders."),
-        Match.when("all", () => "No orders yet."),
-        Match.exhaustive,
-      )
-    : "No orders match these filters.";
+) => {
+  if (team !== null) return "No orders match these filters.";
+  if (!issues) return positionEmptyText(position);
+  return Match.value(position).pipe(
+    Match.when(
+      (value) => value === null || value === "all",
+      () => "No open orders have issues.",
+    ),
+    Match.when(
+      (value) => value === "fulfilled" || value === "cancelled",
+      () => "A fulfilled or cancelled order has no issues.",
+    ),
+    Match.orElse(
+      (value) =>
+        `No ${Domain.ORDERS_FILTER_LABEL[value ?? "open"].toLowerCase()} orders have issues.`,
+    ),
+  );
+};
+
+const positionEmptyText = (position: Domain.OrdersPositionFilter | null) =>
+  Match.value(position).pipe(
+    Match.when(null, () => "No open orders."),
+    Match.when("not_started", () => "No open orders are waiting to start."),
+    Match.when("making", () => "Nothing is being made."),
+    Match.when("made", () => "No orders are made and waiting to be fulfilled."),
+    Match.when("fulfilled", () => "No orders have been fulfilled yet."),
+    Match.when("cancelled", () => "No cancelled orders."),
+    Match.when("all", () => "No orders yet."),
+    Match.exhaustive,
+  );
 
 /**
- * The loader half of the subscribed page: the current view, filters and page, read
+ * The loader half of the subscribed page: the current filters, search and page, read
  * Worker-side so it paints during SSR. The socket's `subscribeOrders` takes
  * over on identify (see `useSubscribedQuery`). The page is in the URL like the
  * filters, so the SSR paint is the page the merchant left.
  */
 const OrdersLoaderInput = Schema.Struct({
-  q: Schema.NullOr(Domain.OrderSearch),
-  view: Schema.NullOr(Domain.OrdersIndexView),
+  q: Schema.NullOr(Domain.ListSearch),
+  position: Schema.NullOr(Domain.OrdersPositionFilter),
+  issues: Schema.Boolean,
   team: Schema.NullOr(Domain.TeamId),
   after: Schema.NullOr(Domain.OrdersCursor),
 });
@@ -223,7 +241,10 @@ const getLoaderData = createServerFn({ method: "GET" })
   .validator(Schema.toStandardSchemaV1(OrdersLoaderInput))
   .middleware([shopifyServerFnMiddleware])
   .handler(
-    ({ data: { q, view, team, after }, context: { runEffect, session } }) =>
+    ({
+      data: { q, position, issues, team, after },
+      context: { runEffect, session },
+    }) =>
       runEffect(
         Effect.gen(function* () {
           const client = yield* ShopAgentClient;
@@ -232,7 +253,8 @@ const getLoaderData = createServerFn({ method: "GET" })
               limit: ORDERS_PAGE_SIZE,
               cursor: after,
               q,
-              view,
+              position,
+              issues,
               team,
             }),
             usage: yield* client.getUsage(session.shop),
@@ -244,7 +266,8 @@ const getLoaderData = createServerFn({ method: "GET" })
 export const Route = createFileRoute("/app/orders/")({
   loaderDeps: ({ search }) => ({
     q: search.q ?? null,
-    view: search.view ?? null,
+    position: search.position ?? null,
+    issues: search.issues === 1,
     team: search.team ?? null,
     after: search.after ?? null,
   }),
@@ -268,10 +291,12 @@ function RouteComponent() {
   const { shop } = Route.useRouteContext();
   const {
     q = null,
-    view = null,
+    position = null,
+    issues: issuesKey,
     team = null,
     after = null,
   } = Route.useSearch();
+  const issues = issuesKey === 1;
   const navigate = useNavigate({ from: Route.fullPath });
   const router = useRouter();
   const nextPageEntry = useLocation({
@@ -283,9 +308,9 @@ function RouteComponent() {
   const [syncing, setSyncing] = React.useState(false);
 
   /**
-   * A view or filter change is a new list, so the page resets to one. `replace: true`
-   * for the member's workflows list's reason (`selectView` in `shop.$shop.workflows.index.tsx`): the
-   * view and filters are a screen's state, not a trail.
+   * A filter or search change is a new list, so the page resets to one. `replace: true`
+   * for the member's workflows list's reason (`selectState` in `shop.$shop.workflows.index.tsx`): the
+   * filters are a screen's state, not a trail.
    *
    * A patch over `prev`, not the whole set from this render: the URL commits
    * before the page re-renders with it, so a second control pressed in that
@@ -295,15 +320,20 @@ function RouteComponent() {
    * the layout's middleware retains (`OrdersSearch` in `app.orders.tsx`).
    */
   const setFilters = (patch: {
-    readonly q?: Domain.OrderSearch | null;
-    readonly view?: Domain.OrdersIndexView | null;
+    readonly q?: Domain.ListSearch | null;
+    readonly position?: Domain.OrdersPositionFilter | null;
+    readonly issues?: boolean;
     readonly team?: Domain.TeamId | null;
   }) => {
     void navigate({
       search: (prev) => ({
         ...prev,
         q: patch.q === undefined ? prev.q : (patch.q ?? undefined),
-        view: patch.view === undefined ? prev.view : (patch.view ?? undefined),
+        position:
+          patch.position === undefined
+            ? prev.position
+            : (patch.position ?? undefined),
+        issues: issuesKeyOf(patch.issues, prev.issues),
         team: patch.team === undefined ? prev.team : (patch.team ?? undefined),
         after: undefined,
       }),
@@ -338,22 +368,6 @@ function RouteComponent() {
     });
   };
 
-  /**
-   * The field's text while it is being typed. The URL is the filter; this is
-   * the draft on the way to it, so a keystroke is not a navigation and not a
-   * read. It re-seeds whenever `q` changes from outside the field — "Clear
-   * the search", a back button — the same seeded-state shape
-   * the workflow pages use for a loaded name.
-   */
-  const [searchDraft, setSearchDraft] = React.useState(q ?? "");
-  const [seededSearch, setSeededSearch] = React.useState<string | null>(q);
-  if (q !== seededSearch) {
-    setSeededSearch(q);
-    setSearchDraft(q ?? "");
-  }
-  const searchField =
-    React.useRef<HTMLElementTagNameMap["s-search-field"]>(null);
-
   const {
     data,
     query: ordersQuery,
@@ -361,54 +375,21 @@ function RouteComponent() {
     agent,
     identified,
   } = useSubscribedQuery({
-    queryKey: ordersQueryKey(shop, q, view, team, after),
+    queryKey: ordersQueryKey(shop, q, position, issues, team, after),
     subscribe: (stub, subscriberId) =>
       stub
         .subscribeOrders({
           limit: ORDERS_PAGE_SIZE,
           cursor: after,
           q,
-          view,
+          position,
+          issues,
           team,
           subscriberId,
         })
         .then(decodeOrdersIndexData),
     initialData: initialOrders,
   });
-
-  /**
-   * Enter and blur, not a debounce: every other control in this row navigates
-   * on the merchant's own action (a view button click, a select change), and
-   * a timer that navigated mid-number would page the table under the typing.
-   * A no-op submit is dropped so re-blurring an unchanged field costs nothing.
-   * An emptied field submits at once (see the field's `onInput`).
-   */
-  const submitSearch = (draft: string = searchDraft) => {
-    const next = Option.getOrNull(decodeOrderSearch(draft));
-    if (next === q) return;
-    setFilters({ q: next });
-  };
-  /**
-   * The latest submit, held in a ref so the keydown listener below is attached
-   * once rather than re-attached on every keystroke: `submitSearch` closes over
-   * the draft and every filter, so it is a new function each render.
-   */
-  const submitRef = React.useRef(submitSearch);
-  React.useEffect(() => {
-    submitRef.current = submitSearch;
-  });
-  /** The field's shadow input does not submit a surrounding form, so Enter is listened for on the custom element (as `WorkflowTag` does). */
-  React.useEffect(() => {
-    const element = searchField.current;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Enter" && !event.isComposing) {
-        event.preventDefault();
-        submitRef.current();
-      }
-    };
-    element?.addEventListener("keydown", onKeyDown);
-    return () => element?.removeEventListener("keydown", onKeyDown);
-  }, []);
 
   const startSync = () => {
     if (!agent) return;
@@ -435,7 +416,7 @@ function RouteComponent() {
 
   const syncInFlight = data?.syncState.inFlight ?? false;
   const orders = data?.page.orders ?? [];
-  const filtered = q !== null || view !== null || team !== null;
+  const filtered = q !== null || position !== null || issues || team !== null;
   /**
    * Nothing stored and nothing filtered: the shop has never had orders here,
    * so the card is the empty state alone. Declared beside `orders` rather than
@@ -526,6 +507,135 @@ function RouteComponent() {
     </s-box>
   );
 
+  /** The search as the screen prints it (`Domain.searchTermText`): `#1001`, or the typed words. */
+  const term = q === null ? null : Domain.searchTermText(Domain.searchTerm(q));
+  const clearSearch = () => {
+    setFilters({ q: null });
+  };
+
+  /**
+   * The filter slot: the search, then Status and Team, then a chip per chosen
+   * value. Rendered in the table's `filters` slot when there are rows, and
+   * above the empty sentence when there are none, so the controls that
+   * emptied the list stay in reach.
+   *
+   * The selects are disabled under a search, because the read ignores them
+   * (`Domain.ListOrdersInput.q`) and a filter that looks set but does
+   * nothing is the controls table's "never" (`Control` in `Screen.ts`). They
+   * keep their values, so Clear search restores the list they describe.
+   *
+   * Status is the main filter ({@link Domain.OrdersPositionFilter}), labelled
+   * because it is one axis now; Issues is not one of its values, it is the
+   * strip's last cell and a chip. Team is a select rather than buttons: the
+   * team list is unbounded. The primary way in is the drill-in from the team
+   * page, which sets `?team=`. It keeps the orders the Waiting on column names
+   * the team for. Under Fulfilled it can only match nothing, because a closed
+   * order waits on no team (`Domain.OrderRow.waitingOn`); that reads as an
+   * empty list with its text, which is better than a control that disappears.
+   * Options are names only: a count per option would be a new per-team
+   * aggregate on every refresh of a subscribed page, which is the cost
+   * `Domain.OrderCounts` is bounded to avoid.
+   *
+   * The chips name what is chosen, so a filter the strip does not show
+   * (Fulfilled, a team) is still visible, and removing one clears that
+   * filter. None under a search, for the selects' reason.
+   */
+  const filters = (slotted: boolean) => (
+    <s-stack {...(slotted ? { slot: "filters" } : {})} gap="small-300">
+      <s-query-container>
+        <s-grid
+          gridTemplateColumns="@container (inline-size > 560px) 1fr 12rem 12rem, 1fr"
+          gap="small-300"
+          alignItems="end"
+        >
+          <ListSearchField
+            value={q}
+            onSubmit={(next) => {
+              setFilters({ q: next });
+            }}
+          />
+          <s-select
+            label="Status"
+            value={position ?? "open"}
+            disabled={q !== null}
+            onChange={(event) => {
+              const value = event.currentTarget.value;
+              setFilters({
+                position: POSITIONS.find((each) => each === value) ?? null,
+              });
+            }}
+          >
+            {POSITIONS.map((each) => (
+              <s-option key={each ?? "open"} value={each ?? "open"}>
+                {Domain.ORDERS_FILTER_LABEL[each ?? "open"]}
+              </s-option>
+            ))}
+          </s-select>
+          <s-select
+            label="Team"
+            value={team ?? ""}
+            disabled={q !== null}
+            onChange={(event) => {
+              const value = event.currentTarget.value;
+              setFilters({
+                team: data?.teams.find(({ id }) => id === value)?.id ?? null,
+              });
+            }}
+          >
+            <s-option value="">Any team</s-option>
+            {data?.teams.map(({ id, name }) => (
+              <s-option key={id} value={id}>
+                {name}
+              </s-option>
+            ))}
+            {/* A link that set `?team=` outlives the team it named. Without
+              this the control would read "Any team" while the list stayed
+              filtered to nothing. */}
+            {team !== null && !teamName.has(team) && (
+              <s-option disabled value={team}>
+                Deleted team
+              </s-option>
+            )}
+          </s-select>
+        </s-grid>
+      </s-query-container>
+      {q === null && (position !== null || issues || team !== null) && (
+        <s-stack direction="inline" gap="small-300">
+          {position !== null && (
+            <s-clickable-chip
+              removable
+              onRemove={() => {
+                setFilters({ position: null });
+              }}
+            >
+              {Domain.ORDERS_FILTER_LABEL[position]}
+            </s-clickable-chip>
+          )}
+          {issues && (
+            <s-clickable-chip
+              removable
+              onRemove={() => {
+                setFilters({ issues: false });
+              }}
+            >
+              {Domain.ORDERS_FILTER_LABEL.issues}
+            </s-clickable-chip>
+          )}
+          {team !== null && (
+            <s-clickable-chip
+              removable
+              onRemove={() => {
+                setFilters({ team: null });
+              }}
+            >
+              {teamName.get(team) ?? "Deleted team"}
+            </s-clickable-chip>
+          )}
+        </s-stack>
+      )}
+    </s-stack>
+  );
+
   const renderOrders = () => {
     /**
      * A failed read renders as a failure. Without this the page shows
@@ -544,31 +654,37 @@ function RouteComponent() {
         </s-box>
       );
     /**
-     * An empty view or filtered list: centred like `emptyState`, since a
-     * lone line in the card's corner read as leftover text rather than the
-     * answer. The search names what it did not find, because the number the
-     * merchant typed is the whole question they asked; the view copy
-     * answers a different one and would read as a non sequitur under a
-     * search that missed. No "Clear the search": the field's own clear
-     * control does that.
+     * An empty filtered list or a search that missed: centred like
+     * `emptyState`, since a lone line in the card's corner read as leftover
+     * text rather than the answer. The search names what it did not find,
+     * because what the merchant typed is the whole question they asked, and
+     * offers Clear search (the controls table's rule for a search with
+     * nothing matching); the filter copy answers a different question and
+     * would read as a non sequitur under a search that missed.
      */
     if (orders.length === 0 && filtered)
       return (
-        <s-box padding="base">
-          <s-grid justifyItems="center" paddingBlock="large-400">
-            <s-grid justifyItems="center" maxInlineSize="450px" gap="base">
-              {q === null ? (
-                <s-paragraph color="subdued">
-                  {emptyText(view, team)}
-                </s-paragraph>
-              ) : (
-                <s-heading>
-                  {`No order matches ${Domain.normaliseOrderSearch(q)}`}
-                </s-heading>
-              )}
+        <>
+          <s-box padding="base" paddingBlockEnd="none">
+            {filters(false)}
+          </s-box>
+          <s-box padding="base">
+            <s-grid justifyItems="center" paddingBlock="large-400">
+              <s-grid justifyItems="center" maxInlineSize="450px" gap="base">
+                {term === null ? (
+                  <s-paragraph color="subdued">
+                    {emptyText(position, issues, team)}
+                  </s-paragraph>
+                ) : (
+                  <>
+                    <s-heading>{`No order matches ${term}`}</s-heading>
+                    <s-button onClick={clearSearch}>Clear search</s-button>
+                  </>
+                )}
+              </s-grid>
             </s-grid>
-          </s-grid>
-        </s-box>
+          </s-box>
+        </>
       );
     if (orders.length === 0) return emptyState();
     return (
@@ -583,10 +699,11 @@ function RouteComponent() {
           if (next !== null) nextPage(next);
         }}
       >
-        {/* Status and Issues are two columns because each has its own view,
-            and a column is headed by its view's word. "Status" is right for
-            a column, which holds exactly one value per row; it was wrong for
-            a row of buttons that was not one axis. */}
+        {filters(true)}
+        {/* Status and Issues are two columns because each has its own
+            filter, and a column is headed by its filter's word. "Status" is
+            right for a column, which holds exactly one value per row, and
+            for the select, which picks one position. */}
         <s-table-header-row>
           <s-table-header listSlot="primary">Order</s-table-header>
           <s-table-header listSlot="secondary">Placed</s-table-header>
@@ -657,47 +774,74 @@ function RouteComponent() {
   };
 
   /**
-   * One button of the view row. The rule for both view rows, this one and
-   * the member Workflows list's: a view is an `s-press-button`, because
-   * `pressed` is a real state that reaches the native button in its shadow
-   * root as `aria-pressed`, where `aria-pressed` on an `s-button` host never
-   * did, and `variant="primary"` on an `s-button` means the page's main
-   * action, which a view is not. No view is red: `s-press-button` takes only
-   * `tone="neutral"`, and the alarm colour belongs with the remedy, on the
-   * Issues badges.
+   * One cell of the strip, the metrics-card composition
+   * (`refs/shopify-docs/docs/api/app-home/latest/patterns/compositions/metrics-card.md`):
+   * the value's name over its count, the whole cell a one-click filter. Open
+   * clears the position and Issues; a position sets the position and keeps
+   * Issues; Issues sets Issues and keeps the position, so Making then Issues
+   * is the making orders with an issue.
    *
-   * The element flips its own `pressed` on every click, and React re-sets a
-   * controlled property only when its value changes between renders.
-   * Pressing the pressed view navigates to the same search, nothing
-   * re-renders, and the element would stay unpressed; so `onClick` first
-   * puts `pressed` back to what React rendered.
-   *
-   * A counted view always renders, at zero if need be, so nothing on the
-   * row appears or disappears with the data. An uncounted one (Fulfilled,
-   * All) is just its name: a blank where a number belongs reads as a number
-   * that failed to load.
-   *
-   * Every view reads unpressed while a search is on, because the read
-   * ignores the view (`Domain.ListOrdersInput.q`) and a pressed button that
-   * is ignored is a lie the merchant would have to learn. Pressing one
-   * clears the search and shows that view.
+   * The chosen cells are filled (`background="subdued"`), and a chip under
+   * the filters names each one. Not `aria-current`: `s-clickable` leaves it on
+   * the host, and the native button in its shadow root, which is what a
+   * screen reader reads, never gets it; the accessibility label says
+   * "selected" instead, since that label does reach the button. A count
+   * always renders, at zero if need be,
+   * so nothing on the strip appears or disappears with the data. No cell is
+   * red: the alarm colour belongs with the remedy, on the Issues badges.
    */
-  const viewButton = ({ value, count }: (typeof VIEWS)[number]) => {
-    const label = Domain.ORDERS_INDEX_VIEW_LABEL[value ?? "open"];
-    const n = count === null ? null : (data?.page.counts[count] ?? null);
-    const pressed = q === null && view === value;
-    const text = n === null ? label : `${label} · ${formatNumber(n)}`;
+  const stripCell = (key: (typeof STRIP)[number]) => {
+    const label = Domain.ORDERS_FILTER_LABEL[key];
+    const n = data?.page.counts[key] ?? 0;
+    const chosen = Match.value(key).pipe(
+      Match.when("open", () => position === null && !issues),
+      Match.when("issues", () => issues),
+      Match.orElse((value) => position === value),
+    );
     return (
-      <s-press-button
-        key={value ?? "open"}
-        pressed={pressed}
-        onClick={(event) => {
-          event.currentTarget.pressed = pressed;
-          setFilters({ view: value, q: null });
+      <s-clickable
+        key={key}
+        paddingBlock="small-400"
+        paddingInline="small-100"
+        borderRadius="base"
+        background={chosen ? "subdued" : "transparent"}
+        accessibilityLabel={`${label}, ${formatNumber(n)}${chosen ? ", selected" : ""}`}
+        onClick={() => {
+          setFilters(
+            Match.value(key).pipe(
+              Match.when("open", () => ({ position: null, issues: false })),
+              Match.when("issues", () => ({ issues: true })),
+              Match.orElse((value) => ({ position: value })),
+            ),
+          );
         }}
       >
-        {text}
-      </s-press-button>
+        <s-grid gap="small-300">
+          <s-heading>{label}</s-heading>
+          <s-text>{formatNumber(n)}</s-text>
+        </s-grid>
+      </s-clickable>
+    );
+  };
+
+  /**
+   * What replaces the strip under a search (`Control` in `Screen.ts`, "a
+   * search is on"): how many stored orders match, and Clear search. The
+   * count is the search's own (`Domain.OrdersPage.matches`), over every page.
+   * A search that matched nothing says so in the list's place instead.
+   */
+  const searchLine = () => {
+    const matches = data?.page.matches ?? 0;
+    if (term === null || matches === 0) return null;
+    return (
+      <s-stack direction="inline" gap="base" alignItems="center">
+        <s-text>
+          {matches === 1
+            ? `1 order matches ${term}`
+            : `${formatNumber(matches)} orders match ${term}`}
+        </s-text>
+        <s-button onClick={clearSearch}>Clear search</s-button>
+      </s-stack>
     );
   };
 
@@ -718,7 +862,7 @@ function RouteComponent() {
 
       <s-section padding="none" accessibilityLabel="Orders">
         {/* Rendered only with something in it: an empty box would still add
-            its padding above the filter box's own. */}
+            its padding above the strip's own. */}
         {(syncError !== null || syncStatus !== null) && (
           <s-box padding="base" paddingBlockEnd="none">
             <s-stack gap="small-300">
@@ -731,110 +875,26 @@ function RouteComponent() {
             </s-stack>
           </s-box>
         )}
-        {/* One filter box, gated on there being something to filter: see
-            `neverStored`. Top to bottom: the search, the view row, the team
-            filter. The view row has no label, so it starts at the box's
-            edge, and "Team" sits under that edge. */}
-        {!neverStored && (
-          <s-box padding="base">
-            <s-stack gap="base">
-              {/* Above the view row rather than beside it: a search is the
-                  merchant arriving with an order in hand, and it ignores the
-                  view and the team (`Domain.ListOrdersInput.q`). The
-                  placeholder is its own label. Width capped like the team
-                  select, which fills whatever it is given. The field shows
-                  the search that is on, so no chip repeats it; clearing the
-                  field clears the search and the view it left comes back. */}
+        {/* Gated on there being something to filter: see `neverStored`. The
+            strip, or under a search the line that replaces it, then the
+            table with its filter slot. Five columns where the card has room,
+            three below. The track lists carry no commas, here and in the
+            filter slot: a comma separates a responsive value's conditions. */}
+        {!neverStored && q === null && (
+          <s-box padding="base" paddingBlockEnd="none">
+            <s-query-container>
               <s-grid
-                gridTemplateColumns="minmax(0, 16rem)"
-                justifyContent="start"
+                gridTemplateColumns="@container (inline-size > 600px) 1fr 1fr 1fr 1fr 1fr, 1fr 1fr 1fr"
+                gap="small"
               >
-                {/* An emptied field is the search cleared, so it submits
-                    without waiting for Enter or blur: no half-typed number is
-                    in it to page the table under, and the field's own clear
-                    control leaves focus where it was. */}
-                <s-search-field
-                  ref={searchField}
-                  label="Order number"
-                  labelAccessibilityVisibility="exclusive"
-                  placeholder="Order number"
-                  value={searchDraft}
-                  onInput={(event) => {
-                    const draft = event.currentTarget.value;
-                    setSearchDraft(draft);
-                    if (draft === "") submitSearch(draft);
-                  }}
-                  onBlur={() => {
-                    submitSearch();
-                  }}
-                />
+                {STRIP.map(stripCell)}
               </s-grid>
-              <s-stack direction="inline" gap="small-300">
-                {VIEWS.map(viewButton)}
-              </s-stack>
-              <s-grid
-                gridTemplateColumns="auto 1fr"
-                gap="base"
-                alignItems="center"
-              >
-                <s-text color="subdued">Team</s-text>
-                {/* A select rather than view buttons: the team list is
-                    unbounded, and a select whose value is the team already
-                    reads as the active chip, so this is one control instead
-                    of a control plus a chip. The primary way in is the
-                    drill-in from the team page, which sets `?team=`. It keeps
-                    the orders the Waiting on column names the team for, and
-                    it narrows every view and count but not a search.
-
-                    Always shown. Under Fulfilled it can only match nothing,
-                    because a closed order waits on no team
-                    (`Domain.OrderRow.waitingOn`); that reads as an empty list
-                    with its text, which is better than a control that
-                    disappears when a view is pressed. Under All it narrows
-                    to the open orders waiting on that team.
-
-                    Options are names only. A count per option would be
-                    a new per-team aggregate on every refresh of a
-                    subscribed page, which is the cost
-                    `Domain.OrderCounts` is bounded to avoid. The grid
-                    caps the width: `s-select` fills whatever inline size
-                    it is given. */}
-                <s-grid
-                  gridTemplateColumns="minmax(0, 16rem)"
-                  justifyContent="start"
-                >
-                  <s-select
-                    label="Team"
-                    labelAccessibilityVisibility="exclusive"
-                    value={team ?? ""}
-                    onChange={(event) => {
-                      const value = event.currentTarget.value;
-                      setFilters({
-                        team:
-                          data?.teams.find(({ id }) => id === value)?.id ??
-                          null,
-                      });
-                    }}
-                  >
-                    <s-option value="">Any team</s-option>
-                    {data?.teams.map(({ id, name }) => (
-                      <s-option key={id} value={id}>
-                        {name}
-                      </s-option>
-                    ))}
-                    {/* A link that set `?team=` outlives the team it
-                        named. Without this the control would read "Any
-                        team" while the list stayed filtered to
-                        nothing. */}
-                    {team !== null && !teamName.has(team) && (
-                      <s-option disabled value={team}>
-                        Deleted team
-                      </s-option>
-                    )}
-                  </s-select>
-                </s-grid>
-              </s-grid>
-            </s-stack>
+            </s-query-container>
+          </s-box>
+        )}
+        {!neverStored && q !== null && searchLine() !== null && (
+          <s-box padding="base" paddingBlockEnd="none">
+            {searchLine()}
           </s-box>
         )}
         {renderOrders()}

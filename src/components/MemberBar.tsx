@@ -18,7 +18,7 @@ import { signOutFn } from "@/lib/memberSignOut";
  * needs no sign-out button.
  *
  * **The mark is home.** The link around it goes to `/shop/$shop/workflows`,
- * the workflows list, and it lands on the list the member left — same view, same team, same
+ * the workflows list, and it lands on the list the member left — same state, same team, same
  * depth — because the layout's middleware puts their context on every link
  * built under `/shop/$shop` (`MemberSearch` in `src/routes/shop.$shop.tsx`).
  * This bar is the only chrome the member area has, so the mark is the only
@@ -35,11 +35,13 @@ import { signOutFn } from "@/lib/memberSignOut";
  * of them. A shared bench tablet is the case that needs it: the person who
  * picks it up has to know whose session they are about to press Done in.
  *
- * `filter` is a slot beside the shop for a control that belongs to the screen
- * below rather than to the bar. The workflows list passes its team filter there and
- * every other member screen passes nothing, so the bar does change shape by
- * route — that is the price of keeping the workflows list's one filter off a line of
- * its own on the screen with least room for one. Nothing the bar owns moves
+ * `filter` is a slot beside the shop for controls that belong to the screen
+ * below rather than to the bar. The workflows list passes its team filter and
+ * its search there and every other member screen passes nothing, so the bar
+ * does change shape by route — that is the price of keeping the workflows
+ * list's controls off a line of their own on the screen with least room for
+ * them. The shop's half wraps, so on a phone the controls drop under the shop
+ * name. Nothing the bar owns moves
  * either way, which is what the "where am I, who am I" job actually needs.
  */
 export function MemberBar({
@@ -61,7 +63,7 @@ export function MemberBar({
         alignItems="center"
         justifyContent="space-between"
       >
-        <s-stack direction="inline" gap="small-300" alignItems="center">
+        <div className="member-bar-start">
           <Link
             to="/shop/$shop/workflows"
             params={{ shop }}
@@ -73,7 +75,7 @@ export function MemberBar({
             </s-stack>
           </Link>
           {filter}
-        </s-stack>
+        </div>
         <s-stack direction="inline" gap="small-300" alignItems="center">
           {email !== undefined && <s-text color="subdued">{email}</s-text>}
           <s-button

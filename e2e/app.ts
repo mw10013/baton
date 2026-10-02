@@ -41,7 +41,7 @@ export const editorFrame = (page: Page): FrameLocator =>
 /**
  * Land on the authed home and return once it is safe to interact INSIDE the
  * iframe. `path` lands on another app page instead, relative to the preview
- * URL's `/app` (`"app/orders?view=all"`); the admin forwards it to the iframe.
+ * URL's `/app` (`"app/orders?position=all"`); the admin forwards it to the iframe.
  *
  * The gate is `awaitHydration` (`e2e/hydration.ts`) against the iframe: the
  * `data-hydrated` marker on the embedded document's `<body>`, which flips in

@@ -33,6 +33,6 @@ export const copyFiles = (): readonly string[] => [
     "useMemberRunActions.ts",
     "changeWarning.ts",
     "workflowShared.ts",
-    "workflowsListViews.ts",
+    "workflowsListStates.ts",
   ].map((name) => join(SRC, "lib", name)),
 ];

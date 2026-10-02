@@ -128,6 +128,17 @@ describe("a retired word stays off every merchant and member screen", () => {
     expect(hits(source)).toEqual([1]);
   });
 
+  it("view is a retired word in screen copy", () => {
+    const source = [
+      "<s-button>Issues view</s-button>",
+      'const a = "Choose a filter";',
+      "// the old view row",
+      '<svg viewBox="0 0 10 10" />',
+      "<s-link href={url}>View in Shopify</s-link>",
+    ].join("\n");
+    expect(hits(source)).toEqual([1]);
+  });
+
   it("needs a workflow is retired in screen copy", () => {
     const source = [
       '<s-badge tone="critical">Needs a workflow</s-badge>',

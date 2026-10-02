@@ -7,21 +7,22 @@
  * constants cannot reach (toasts, error sentences, empty states): the words
  * it retired stay off every merchant and member screen.
  *
- * | pattern                   | why                                                                |
- * | ------------------------- | ------------------------------------------------------------------ |
- * | run, runs, workflow run   | no screen says run: the item and its workflow, or the work         |
- * | line item                 | the screen word is item                                            |
- * | mark done, marked done    | the verb's label is Done                                           |
- * | finish, finished          | done (a task), or done or closed (a run)                           |
- * | in progress               | the run's label, read from `Domain.RUN_STATE_LABEL`                |
- * | unclaimed                 | no such state; a task waits for a member                           |
- * | tab, tabs                 | a list's button is a view (`Domain.WorkflowsListView`)             |
- * | staff, staffed, unstaffed | a team's people are members; Shopify's staff are the merchant side |
- * | attention                 | an issue is named by its fault: unassigned, empty team, blocked    |
- * | billing period            | the screen word is billing cycle (`Domain.ShopUsage`)              |
- * | import, imports, importing | the word is sync: Baton's copy agreeing with Shopify; import is Shopify's word for `orderCreate` |
- * | resync                    | the word is sync at one-order scope; the button is Sync from Shopify |
- * | needs a workflow          | the fault is that more than one workflow matches; the label is Multiple workflows match |
+ * | pattern                    | why                                                                                                       |
+ * | -------------------------- | --------------------------------------------------------------------------------------------------------- |
+ * | run, runs, workflow run    | no screen says run: the item and its workflow, or the work                                                |
+ * | line item                  | the screen word is item                                                                                   |
+ * | mark done, marked done     | the verb's label is Done                                                                                  |
+ * | finish, finished           | done (a task), or done or closed (a run)                                                                  |
+ * | in progress                | the run's label, read from `Domain.RUN_STATE_LABEL`                                                       |
+ * | unclaimed                  | no such state; a task waits for a member                                                                  |
+ * | tab, tabs                  | a list's button is a filter value (`Domain.WorkflowsListState`)                                           |
+ * | view, views                | retired; a filter, a search, or the member's list state; "View in Shopify", the verb on a link out, stays |
+ * | staff, staffed, unstaffed  | a team's people are members; Shopify's staff are the merchant side                                        |
+ * | attention                  | an issue is named by its fault: unassigned, empty team, blocked                                           |
+ * | billing period             | the screen word is billing cycle (`Domain.ShopUsage`)                                                     |
+ * | import, imports, importing | the word is sync: Baton's copy agreeing with Shopify; import is Shopify's word for `orderCreate`          |
+ * | resync                     | the word is sync at one-order scope; the button is Sync from Shopify                                      |
+ * | needs a workflow           | the fault is that more than one workflow matches; the label is Multiple workflows match                   |
  *
  * And the copy words that are wrong in every slot, whatever the noun: copy
  * states facts and names the act, so it never pleads, apologises, exclaims
@@ -75,6 +76,7 @@ export const RETIRED: readonly RegExp[] = [
   /\bin progress\b/iu,
   /\bunclaimed\b/iu,
   /\btabs?\b/iu,
+  /\bviews?\b(?! in Shopify\b)/iu,
   /\b(?:un)?staff(?:s|ed|ing)?\b/iu,
   /\battention\b/iu,
   /\bbilling periods?\b/iu,
@@ -194,18 +196,19 @@ export const exportedNames = (source: string): readonly ExportedName[] =>
  * The word stems the vocabulary retired or reserved, refused in any exported
  * identifier under `src/lib/`, case-insensitive, as a substring:
  *
- * | stem       | why                                                                                 |
- * | ---------- | ----------------------------------------------------------------------------------- |
- * | active     | a workflow is on, a run is open; "active" is Shopify's word for an app subscription |
- * | roster     | a synonym: the shop's members, the member count, or its teams                       |
- * | slot       | a metaphor for the rule "one run per item"                                          |
- * | tier       | a view of the member's workflows list; billing's tier is Shopify's and not exported |
- * | glossary   | the block is the vocabulary                                                         |
- * | production | the deploy environment; the core context is shop work                               |
- * | activated  | nothing; the switch is `state`, `on` / `off`                                        |
- * | import     | retired; the word is sync                                                           |
- * | resync     | retired; the word is sync                                                           |
- * | ambigu     | retired; the word is multi-match                                                    |
+ * | stem       | why                                                                                  |
+ * | ---------- | ------------------------------------------------------------------------------------ |
+ * | active     | a workflow is on, a run is open; "active" is Shopify's word for an app subscription  |
+ * | roster     | a synonym: the shop's members, the member count, or its teams                        |
+ * | slot       | a metaphor for the rule "one run per item"                                           |
+ * | tier       | a state of the member's workflows list; billing's tier is Shopify's and not exported |
+ * | view       | retired; a filter, a search, or the member's list state                              |
+ * | glossary   | the block is the vocabulary                                                          |
+ * | production | the deploy environment; the core context is shop work                                |
+ * | activated  | nothing; the switch is `state`, `on` / `off`                                         |
+ * | import     | retired; the word is sync                                                            |
+ * | resync     | retired; the word is sync                                                            |
+ * | ambigu     | retired; the word is multi-match                                                     |
  *
  * {@link RESERVED_STEM_ALLOWED} names the exports that keep a stem on
  * purpose.
@@ -221,6 +224,7 @@ export const RESERVED_STEMS: readonly string[] = [
   "import",
   "resync",
   "ambigu",
+  "view",
 ];
 
 /**

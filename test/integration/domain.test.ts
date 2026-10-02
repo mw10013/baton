@@ -486,24 +486,24 @@ const runIds = (items: readonly Domain.RunListItem[]) =>
 
 const ME = Schema.decodeUnknownSync(Domain.Email)("me@example.com");
 
-describe("Domain.viewOf", () => {
-  it("a blocked run is in blocked; then mine, then a teammate's, then untouched", () => {
+describe("Domain.listStateOf", () => {
+  it("a blocked run is in blocked; then started by you, then started by others, then ready", () => {
     strictEqual(
-      Domain.viewOf(
+      Domain.listStateOf(
         runListItem("blocked-mine", 40, { blocked: true, startedBy: "me" }),
         ME,
       ),
       "blocked",
     );
     strictEqual(
-      Domain.viewOf(runListItem("mine", 20, { startedBy: "me" }), ME),
-      "mine",
+      Domain.listStateOf(runListItem("mine", 20, { startedBy: "me" }), ME),
+      "started_by_you",
     );
     strictEqual(
-      Domain.viewOf(runListItem("theirs", 5, { startedBy: "them" }), ME),
-      "teammates",
+      Domain.listStateOf(runListItem("theirs", 5, { startedBy: "them" }), ME),
+      "started_by_others",
     );
-    strictEqual(Domain.viewOf(runListItem("early-next", 10), ME), "upNext");
+    strictEqual(Domain.listStateOf(runListItem("early-next", 10), ME), "ready");
   });
 });
 
@@ -550,8 +550,9 @@ describe("Domain.runHasRecord", () => {
 describe("Domain.sameRunQuery", () => {
   const query: Domain.RunQuery = {
     team: null,
-    view: "mine",
+    state: "started_by_you",
     limit: Domain.RUN_PAGE,
+    q: null,
   };
 
   it("is structural, and every field counts", () => {
@@ -563,7 +564,14 @@ describe("Domain.sameRunQuery", () => {
       }),
       false,
     );
-    strictEqual(Domain.sameRunQuery(query, { ...query, view: "done" }), false);
+    strictEqual(Domain.sameRunQuery(query, { ...query, state: "done" }), false);
+    strictEqual(
+      Domain.sameRunQuery(query, {
+        ...query,
+        q: Schema.decodeUnknownSync(Domain.ListSearch)("ring"),
+      }),
+      false,
+    );
     strictEqual(
       Domain.sameRunQuery(query, {
         ...query,
@@ -574,16 +582,53 @@ describe("Domain.sameRunQuery", () => {
   });
 });
 
-describe("Domain.OrderSearch", () => {
-  const decode = Schema.decodeUnknownOption(Domain.OrderSearch);
-  it("normalises 1001, #1001, and padded #1001 to #1001", () => {
+/** `Domain.searchTerm` over raw text, decoded first because the term takes a `ListSearch`. */
+const search = (q: string) =>
+  Domain.searchTerm(Schema.decodeUnknownSync(Domain.ListSearch)(q));
+
+describe("Domain.searchTerm", () => {
+  const decode = Schema.decodeUnknownOption(Domain.ListSearch);
+  it("digits with an optional # are an order number", () => {
     for (const q of ["1001", "#1001", " #1001 ", "##1001"])
-      strictEqual(Domain.normaliseOrderSearch(q), "#1001");
+      deepStrictEqual(search(q), {
+        kind: "orderName",
+        name: "#1001",
+      });
   });
-  it("refuses # alone, which would normalise to a prefix every order shares", () => {
+  it("anything else is a word prefix", () => {
+    for (const q of ["sig", "Signet ring", "SKU-9", "#ring", "10 karat"])
+      strictEqual(search(q).kind, "prefix", q);
+    deepStrictEqual(search(" ring "), {
+      kind: "prefix",
+      text: "ring",
+    });
+  });
+  it("# alone is refused by ListSearch", () => {
     for (const q of ["#", "##", " # ", "", "  "])
       strictEqual(decode(q)._tag, "None", q);
     strictEqual(decode("#1")._tag, "Some");
+  });
+  it("a word prefix matches the start of a word in the title, the variant or the SKU, ASCII case folded", () => {
+    const item = {
+      orderName: "#1001",
+      title: "Signet ring",
+      variantTitle: "Rose gold",
+      sku: "RING-9",
+    };
+    const matches = (q: string) => Domain.searchMatches(search(q), item);
+    strictEqual(matches("sig"), true);
+    strictEqual(matches("RING"), true);
+    strictEqual(matches("gold"), true);
+    strictEqual(matches("ring-9"), true);
+    strictEqual(matches("net"), false);
+    strictEqual(matches("1001"), true);
+    strictEqual(matches("100"), false);
+  });
+  it("prefixPatterns escapes like syntax", () => {
+    deepStrictEqual(Domain.prefixPatterns(String.raw`50%_\x`), [
+      String.raw`50\%\_\\x%`,
+      String.raw`% 50\%\_\\x%`,
+    ]);
   });
 });
 

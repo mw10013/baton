@@ -94,7 +94,7 @@ export const Route = createFileRoute("/app/workflows/")({
  */
 function RouteComponent() {
   const { workflows } = Route.useLoaderData();
-  const { view } = Route.useSearch();
+  const { state } = Route.useSearch();
   const router = useRouter();
   const navigate = useNavigate({ from: Route.fullPath });
   const shopify = useAppBridge();
@@ -187,36 +187,36 @@ function RouteComponent() {
   };
 
   /**
-   * `view: undefined` is how the filter is removed; leaving the key out
+   * `state: undefined` is how the filter is removed; leaving the key out
    * would let the layout's middleware retain the old value
    * (`WorkflowsSearch` in `app.workflows.tsx`). `replace: true` for the
-   * member's workflows list's reason (`selectTab` in `shop.$shop.workflows.index.tsx`): the filters are a
+   * member's workflows list's reason (`selectState` in `shop.$shop.workflows.index.tsx`): the filters are a
    * screen's state, not a trail.
    */
   const setFilters = (next: {
-    readonly view: Domain.WorkflowsIndexView | undefined;
+    readonly state: Domain.WorkflowsIndexState | undefined;
   }) => {
     void navigate({
-      search: (prev) => ({ ...prev, view: next.view }),
+      search: (prev) => ({ ...prev, state: next.state }),
       replace: true,
     });
   };
 
   const trimmed = query.trim().toLowerCase();
   const rows = workflows.filter((workflow) => {
-    if (view === "on" && !Domain.workflowIsOn(workflow)) return false;
-    if (view === "off" && Domain.workflowIsOn(workflow)) return false;
+    if (state === "on" && !Domain.workflowIsOn(workflow)) return false;
+    if (state === "off" && Domain.workflowIsOn(workflow)) return false;
     if (trimmed !== "" && !workflow.name.toLowerCase().includes(trimmed))
       return false;
     return true;
   });
-  const filtered = view !== undefined || trimmed !== "";
+  const filtered = state !== undefined || trimmed !== "";
 
-  const viewButton = (label: string, value?: Domain.WorkflowsIndexView) => (
+  const stateButton = (label: string, value?: Domain.WorkflowsIndexState) => (
     <s-button
-      variant={view === value ? "primary" : "tertiary"}
+      variant={state === value ? "primary" : "tertiary"}
       onClick={() => {
-        setFilters({ view: value });
+        setFilters({ state: value });
       }}
     >
       {label}
@@ -255,7 +255,7 @@ function RouteComponent() {
               variant="secondary"
               onClick={() => {
                 setQuery("");
-                setFilters({ view: undefined });
+                setFilters({ state: undefined });
               }}
             >
               Clear filters
@@ -324,9 +324,9 @@ function RouteComponent() {
                 alignItems="center"
               >
                 <s-stack direction="inline" gap="small-300">
-                  {viewButton("All")}
-                  {viewButton(Domain.WORKFLOW_STATE_LABEL.on, "on")}
-                  {viewButton(Domain.WORKFLOW_STATE_LABEL.off, "off")}
+                  {stateButton("All")}
+                  {stateButton(Domain.WORKFLOW_STATE_LABEL.on, "on")}
+                  {stateButton(Domain.WORKFLOW_STATE_LABEL.off, "off")}
                 </s-stack>
                 <s-search-field
                   label="Search workflows by name"

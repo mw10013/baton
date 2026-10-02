@@ -59,7 +59,7 @@
  * Shared words. A word two contexts share always travels with its noun,
  * in copy and in identifiers (`<noun>Is<State>`, never `is<State>`), so
  * each context keeps its meaning. "open" on an order is `orderIsOpen` in Orders,
- * not fulfilled and not cancelled: the orders index's default view,
+ * not fulfilled and not cancelled: the orders index's default,
  * labelled Open. One row per shared word:
  *
  * | word   | contexts          | noun form                                                                                                                  |
@@ -145,9 +145,9 @@
  * | member   | `shop.$shop.workflows.$runId`     | the item's title             | the workflow page           |
  * | member   | `shop.$shop_.lapsed`              | the shop's domain            | the lapsed page             |
  *
- * The orders index's view row speaks the two order tables plus Open, Issues
- * and All (`ORDERS_INDEX_VIEW_LABEL` in ShopWork); the member's workflows list's
- * view row reads its labels from `workflowsListViews.ts`.
+ * The orders index's strip and Status select speak the two order tables plus
+ * Open, Issues and All (`ORDERS_FILTER_LABEL` in ShopWork); the member's
+ * workflows list's state row reads its labels from `workflowsListStates.ts`.
  */
 export * from "./domain/Platform.ts";
 export * from "./domain/Orders.ts";

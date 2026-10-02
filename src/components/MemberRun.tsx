@@ -11,7 +11,7 @@ import { formatNumber } from "@/lib/format";
  * merchant's order page render, kept together so the screens describe one item, one block and one
  * closed run in the same words.
  *
- * One fact, once. The pressed view on the workflows list says which view a row is in,
+ * One fact, once. The chosen state on the workflows list says which state a row is in,
  * so nothing inside the card repeats it. {@link BlockBanner} takes the buttons
  * that act on the block through its `actions` slot rather than rendering them
  * itself: each screen offers a different set, but all belong inside the

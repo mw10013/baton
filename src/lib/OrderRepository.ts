@@ -135,14 +135,6 @@ const decodeCursor = (cursor: string) => {
     : Option.some({ processedAt, id: cursor.slice(separator + 1) });
 };
 
-/**
- * Escapes the three characters `like` treats as pattern syntax, so a merchant
- * typing `%` searches for a literal `%` and gets nothing rather than every
- * order. The escape character is `\`, declared on every `like` that uses this.
- */
-const escapeLike = (value: string) =>
-  value.replaceAll(/[\\%_]/gu, (match) => `\\${match}`);
-
 const json = (value: unknown) => JSON.stringify(value);
 
 /**
@@ -222,8 +214,8 @@ const MULTI_MATCH_ITEM = `select 1 from OrderLineItem li
 const MULTI_MATCH = `fullyPaid = 1 and exists (${MULTI_MATCH_ITEM})`;
 
 /**
- * Each counted view's predicate over the `facts` rows of the count
- * statement in `listOrders`: `viewFilter` restated over per-order facts
+ * Each counted filter value's predicate over the `facts` rows of the count
+ * statement in `listOrders`: `positionFilter` and `issuesFilter` restated over per-order facts
  * instead of correlated subqueries, and moving with it. `OPEN` is the
  * statement's own `where`, so `open` is every row. `issues` is the four
  * `Domain.orderIssues` elements or'd.
@@ -360,28 +352,30 @@ export class OrderRepository extends Context.Service<
       orderId: string,
     ) => Effect.Effect<Option.Option<number>, SqlError.SqlError>;
     /**
-     * `view` filters by `Domain.OrdersIndexView`, each SQL fragment
-     * restating a branch of `orderPosition` or, for `issues`, the union of
+     * `position` filters by `Domain.OrdersPositionFilter`, each SQL fragment
+     * restating a branch of `orderPosition`, and `issues` by the union of
      * `orderIssues`' elements; each must move with the function it restates.
      * Open, the open positions, Issues and the `counts` aggregate spell out
      * `fulfillmentStatus <> 'FULFILLED' and cancelledAt is null` verbatim so
      * SQLite can prove they are served by the partial `ShopOrder_open_idx`,
      * which is what keeps a count from reading the shop's whole history.
      *
-     * `q` set means `view` and `team` are not applied: search ignores the
-     * view and the team (`Domain.ListOrdersInput.q`).
+     * `q` set means `position`, `issues` and `team` are not applied: search
+     * ignores the filters (`Domain.ListOrdersInput.q`).
      *
-     * `counts` follows `Domain.OrderCounts`: a count is what pressing that
-     * view would show, given the team. One count per view, narrowed by
-     * `team` and by nothing else; nothing crosses.
+     * `counts` follows `Domain.OrderCounts`: a count is what choosing that
+     * value would show, given the team. One count per filter value, narrowed
+     * by `team` and by nothing else.
      */
     readonly listOrders: (input: {
       readonly limit: number;
       readonly cursor: string | null;
-      /** `null` is no search; otherwise a prefix match on `ShopOrder.name` (`Domain.ListOrdersInput.q`). */
-      readonly q: Domain.OrderSearch | null;
-      /** `null` is Open (`Domain.ListOrdersInput.view`). */
-      readonly view: Domain.OrdersIndexView | null;
+      /** `null` is no search; otherwise `Domain.searchTerm`'s reading (`Domain.ListOrdersInput.q`). */
+      readonly q: Domain.ListSearch | null;
+      /** `null` is Open (`Domain.ListOrdersInput.position`). */
+      readonly position: Domain.OrdersPositionFilter | null;
+      /** `true` keeps orders with an issue (`Domain.ListOrdersInput.issues`). */
+      readonly issues: boolean;
       /** `null` is any team; an id is `Domain.ListOrdersInput.team` — waiting on that team. */
       readonly team: Domain.TeamId | null;
       /** The shop's teams, read live from D1 `unassigned`, `emptyTeam` and `waitingOn` are derived against (`Domain.OrderRow`). */
@@ -1024,14 +1018,16 @@ export class OrderRepository extends Context.Service<
           limit,
           cursor,
           q,
-          view,
+          position,
+          issues,
           team,
           teams,
         }: {
           readonly limit: number;
           readonly cursor: string | null;
-          readonly q: Domain.OrderSearch | null;
-          readonly view: Domain.OrdersIndexView | null;
+          readonly q: Domain.ListSearch | null;
+          readonly position: Domain.OrdersPositionFilter | null;
+          readonly issues: boolean;
           readonly team: Domain.TeamId | null;
           readonly teams: readonly Domain.TeamWithMemberCount[];
         }) {
@@ -1087,21 +1083,9 @@ export class OrderRepository extends Context.Service<
            * The open positions partition the open orders by run state alone:
            * no open and no done run is `not_started`, any open run is
            * `making`, only done runs is `made`, as `Domain.orderPosition`
-           * says. `issues` is `OPEN` and the four `Domain.orderIssues`
-           * elements or'd, each the fragment above that restates it.
+           * says.
            */
-          const viewFilter = Match.value(view).pipe(
-            Match.when("issues", () =>
-              sql.and([
-                OPEN,
-                sql.or([
-                  `(${MULTI_MATCH})`,
-                  unassignedRun,
-                  emptyTeamRun,
-                  `exists (${BLOCKED_RUN})`,
-                ]),
-              ]),
-            ),
+          const positionFilter = Match.value(position).pipe(
             Match.when("not_started", () =>
               sql.and([
                 OPEN,
@@ -1127,28 +1111,58 @@ export class OrderRepository extends Context.Service<
               sql.literal("cancelledAt is not null"),
             ),
             /**
-             * `null` is Open, the default view, and it is open work, not
+             * `null` is Open, the default, and it is open work, not
              * everything: the negation of the `fulfilled` and `cancelled`
              * branches above, spelled as `OPEN` so the partial index serves
-             * it. `"all"`, `"fulfilled"` and `"cancelled"` are the only views
-             * that read a shop's history ({@link Domain.OrdersIndexView}).
+             * it. `"all"`, `"fulfilled"` and `"cancelled"` are the only values
+             * that read a shop's history ({@link Domain.OrdersPositionFilter}).
              */
             Match.when(null, () => sql.literal(OPEN)),
             Match.when("all", () => sql.literal("1 = 1")),
             Match.exhaustive,
           );
           /**
-           * Prefix, not substring. An order name is `#` plus digits and the
-           * merchant types the digits they read off the admin, so `#10`
-           * listing `#1001` … `#1099` is the useful answer; `%10%` would also
-           * match `#2100`, which nobody asked for. Case-insensitive because a
-           * name is not always digits, and SQLite's `like` already folds ASCII
-           * case whatever the column's collation.
+           * `OPEN` and the four `Domain.orderIssues` elements or'd, each the
+           * fragment above that restates it. Combines with `positionFilter`:
+           * Making and Issues is the making orders with an issue.
            */
-          const searchFilter =
-            q === null
-              ? sql.literal("1 = 1")
-              : sql`name like ${`${escapeLike(Domain.normaliseOrderSearch(q))}%`} escape '\\'`;
+          const issuesFilter = issues
+            ? sql.and([
+                OPEN,
+                sql.or([
+                  `(${MULTI_MATCH})`,
+                  unassignedRun,
+                  emptyTeamRun,
+                  `exists (${BLOCKED_RUN})`,
+                ]),
+              ])
+            : sql.literal("1 = 1");
+          /**
+           * `Domain.searchTerm`'s reading. An order number matches the name
+           * whole: `#10` listing `#1001` … `#1099` read as a guess, and the
+           * merchant has the number off the admin. A word is a prefix of the
+           * item title, the variant title or the SKU, at the start or after a
+           * space (`Domain.prefixPatterns`), on any of the order's items.
+           */
+          const searchFilter = Option.match(Option.fromNullOr(q), {
+            onNone: () => sql.literal("1 = 1"),
+            onSome: (text) => {
+              const term = Domain.searchTerm(text);
+              if (term.kind === "orderName") return sql`name = ${term.name}`;
+              const [start, word] = Domain.prefixPatterns(term.text);
+              return sql`exists (
+                select 1 from OrderLineItem li
+                where li.orderId = ShopOrder.id and (
+                  li.title like ${start} escape '\\'
+                  or li.title like ${word} escape '\\'
+                  or li.variantTitle like ${start} escape '\\'
+                  or li.variantTitle like ${word} escape '\\'
+                  or li.sku like ${start} escape '\\'
+                  or li.sku like ${word} escape '\\'
+                )
+              )`;
+            },
+          });
           /**
            * Keyset, never `limit/offset`: the bulk stream and webhooks insert
            * while a merchant pages, and an offset would skip or repeat rows
@@ -1165,11 +1179,13 @@ export class OrderRepository extends Context.Service<
               ]),
           });
           /**
-           * A search reads every stored order: `view` and `team` apply only
-           * when `q` is null (`Domain.ListOrdersInput.q`).
+           * A search reads every stored order: `position`, `issues` and
+           * `team` apply only when `q` is null (`Domain.ListOrdersInput.q`).
            */
           const narrowing =
-            q === null ? [viewFilter, teamFilter] : [searchFilter];
+            q === null
+              ? [positionFilter, issuesFilter, teamFilter]
+              : [searchFilter];
           const page = yield* decodeOrders(
             yield* sql`
               select ${orderColumns} from ShopOrder
@@ -1321,14 +1337,14 @@ export class OrderRepository extends Context.Service<
           );
           /**
            * `Domain.OrderCounts` in one statement over the open orders the
-           * team leaves: one count per view, nothing crossed, and never the
-           * search, which ignores the views. `run_summary` is the per-page
+           * team leaves: one count per filter value, never the main filter
+           * or the issues filter, and never the search, which ignores the filters. `run_summary` is the per-page
            * `runRows` aggregate hoisted over every open order, one grouped
            * read of `Run` in place of a correlated `exists` per fragment;
            * `MULTI_MATCH`, `unassignedRun` and `emptyTeamRun` stay correlated, walking items and
            * tasks. `facts` is materialised so each correlated term runs once
            * per order however many sums read it. The sums restate
-           * `viewFilter` over those facts ({@link COUNT_FACT}) and must move
+           * `positionFilter` and `issuesFilter` over those facts ({@link COUNT_FACT}) and must move
            * with it.
            *
            * `run_summary` is a `cross join`, which SQLite reads as "keep this
@@ -1378,6 +1394,18 @@ export class OrderRepository extends Context.Service<
             making: Number(countRow?.[3] ?? 0),
             made: Number(countRow?.[4] ?? 0),
           } satisfies Domain.OrderCounts;
+          /**
+           * `Domain.OrdersPage.matches`: read only under a search, over every
+           * stored order, because the search ignores the filters and the
+           * screen's line says how many it found, not how many one page holds.
+           */
+          const matches =
+            q === null
+              ? null
+              : Number(
+                  (yield* sql`select count(*) from ShopOrder where ${searchFilter}`
+                    .values)[0]?.[0] ?? 0,
+                );
           const last = orders.at(-1);
           return {
             orders: orders.map((order) => ({
@@ -1400,6 +1428,7 @@ export class OrderRepository extends Context.Service<
                 ? encodeCursor(last)
                 : null,
             counts,
+            matches,
           } satisfies Domain.OrdersPage;
         }),
 

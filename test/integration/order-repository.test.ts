@@ -304,7 +304,8 @@ describe("OrderRepository.listOrders", () => {
           limit: 2,
           cursor: null,
           q: null,
-          view: null,
+          position: null,
+          issues: false,
           team: null,
           teams: [],
         });
@@ -314,7 +315,8 @@ describe("OrderRepository.listOrders", () => {
             limit: 2,
             cursor: first.nextCursor,
             q: null,
-            view: null,
+            position: null,
+            issues: false,
             team: null,
             teams: [],
           }),
@@ -334,9 +336,9 @@ describe("OrderRepository.listOrders", () => {
 
 /**
  * Every SQL fragment against `Domain.orderPosition` and `Domain.orderIssues`:
- * the fixture covers each branch, and each view must return exactly the
+ * the fixture covers each branch, and each filter value must return exactly the
  * names the TypeScript functions give it. Runs are written directly because
- * `RunRepository` is not in this test's layer and the views only read
+ * `RunRepository` is not in this test's layer and the filters only read
  * state. `#1005`, `#1009`, `#1010` and `#1012` are open with no open and no
  * done run: `not_started`. `#1005` matched no workflow, which is Not started
  * with no issue. `#1010`'s only run is closed, which still reads not started
@@ -434,6 +436,9 @@ const seedStates = Effect.gen(function* () {
  * Cut hang off `#1013` and `#1014`, so the team filter keeps one order with
  * an issue and one without.
  */
+/** A position filter, or `"issues"` for the Issues filter alone. */
+type Filter = Domain.OrdersPositionFilter | "issues" | null;
+
 const seedIssues = Effect.gen(function* () {
   const repository = yield* seedStates;
   const sql = yield* SqlClient.SqlClient;
@@ -475,16 +480,19 @@ const seedIssues = Effect.gen(function* () {
     { id: "team-cut", name: "Cut", memberCount: 1 },
     { id: "team-empty", name: "Polish", memberCount: 0 },
   ]);
+  /** `"issues"` is the Issues filter with no position; `issues` adds it to a position. */
   const list = (
-    view: Domain.OrdersIndexView | null,
+    filter: Filter,
     team: Domain.TeamId | null = null,
     q: string | null = null,
+    issues = false,
   ) =>
     repository.listOrders({
       limit: 20,
       cursor: null,
-      q: q === null ? null : Schema.decodeUnknownSync(Domain.OrderSearch)(q),
-      view,
+      q: q === null ? null : Schema.decodeUnknownSync(Domain.ListSearch)(q),
+      position: filter === "issues" ? null : filter,
+      issues: issues || filter === "issues",
       team,
       teams,
     });
@@ -552,7 +560,8 @@ describe("OrderRepository.listOrders multi-match", () => {
           limit: 20,
           cursor: null,
           q: null,
-          view: null,
+          position: null,
+          issues: false,
           team: null,
           teams,
         });
@@ -573,17 +582,18 @@ describe("OrderRepository.listOrders multi-match", () => {
   });
 });
 
-describe("OrderRepository.listOrders views", () => {
-  it("each position view returns exactly the orders orderPosition gives that position, and an order whose only run is closed is not started", async () => {
+describe("OrderRepository.listOrders filters", () => {
+  it("each position filter returns exactly the orders orderPosition gives that position, and an order whose only run is closed is not started", async () => {
     const pages = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* seedStates;
-        const list = (view: Domain.OrdersIndexView | null) =>
+        const list = (position: Domain.OrdersPositionFilter | null) =>
           repository.listOrders({
             limit: 20,
             cursor: null,
             q: null,
-            view,
+            position,
+            issues: false,
             team: null,
             teams: [],
           });
@@ -628,7 +638,7 @@ describe("OrderRepository.listOrders views", () => {
     }
   });
 
-  it("the Issues view returns exactly the orders orderIssues gives at least one issue", async () => {
+  it("the Issues filter returns exactly the orders orderIssues gives at least one issue", async () => {
     const { all, issues } = await runInRepository(
       Effect.gen(function* () {
         const { list } = yield* seedIssues;
@@ -657,16 +667,16 @@ describe("OrderRepository.listOrders views", () => {
   });
 
   /**
-   * `Domain.OrderCounts`, checked as the rule itself: for every view, team
-   * and search, each count equals the length of the list its view would show
-   * under that team with no search, so a count never moves with the pressed
-   * view or the search.
+   * `Domain.OrderCounts`, checked as the rule itself: for every filter, team
+   * and search, each count equals the length of the list its value would show
+   * under that team with no search, so a count never moves with the main
+   * filter, the issues filter or the search.
    */
-  it("a count is what pressing that view would show, given the team", async () => {
+  it("a count ignores the search and the main filter and honours the team", async () => {
     const checks = await runInRepository(
       Effect.gen(function* () {
         const { list } = yield* seedIssues;
-        const views = [
+        const filters = [
           null,
           "issues",
           "not_started",
@@ -681,26 +691,28 @@ describe("OrderRepository.listOrders views", () => {
           not_started: "not_started",
           making: "making",
           made: "made",
-        } as const satisfies Record<
-          keyof Domain.OrderCounts,
-          Domain.OrdersIndexView | null
-        >;
+        } as const satisfies Record<keyof Domain.OrderCounts, Filter>;
         const out: {
           readonly label: string;
           readonly count: number;
           readonly shown: number;
         }[] = [];
-        for (const view of views)
-          for (const team of [null, aTeamId("team-cut")])
-            for (const q of [null, "1007", "1013"]) {
-              const { counts } = yield* list(view, team, q);
-              for (const [key, shows] of Object.entries(counted))
-                out.push({
-                  label: `${String(view)}/${String(team)}/${String(q)}: ${key}`,
-                  count: counts[key as keyof typeof counted],
-                  shown: (yield* list(shows, team)).orders.length,
-                });
-            }
+        const reads = filters.flatMap((filter) =>
+          [null, aTeamId("team-cut")].flatMap((team) =>
+            [null, "1007", "1013", "item 1"].flatMap((q) =>
+              [false, true].map((issues) => ({ filter, team, q, issues })),
+            ),
+          ),
+        );
+        for (const { filter, team, q, issues } of reads) {
+          const { counts } = yield* list(filter, team, q, issues);
+          for (const [key, shows] of Object.entries(counted))
+            out.push({
+              label: `${String(filter)}/${String(team)}/${String(q)}/${String(issues)}: ${key}`,
+              count: counts[key as keyof typeof counted],
+              shown: (yield* list(shows, team)).orders.length,
+            });
+        }
         return {
           out,
           open: (yield* list(null)).counts,
@@ -727,15 +739,15 @@ describe("OrderRepository.listOrders views", () => {
     });
   });
 
-  it("search ignores the view and the team", async () => {
+  it("search ignores the filters", async () => {
     const found = await runInRepository(
       Effect.gen(function* () {
         const { list } = yield* seedIssues;
         return {
-          // Fulfilled, so under no Made view, and waiting on nobody.
-          fulfilled: yield* list("made", aTeamId("team-nobody"), "1007"),
+          // Fulfilled, so under no Made filter, and waiting on nobody.
+          fulfilled: yield* list("made", aTeamId("team-nobody"), "1007", true),
           // Waiting on Cut, making, not made.
-          cut: yield* list("made", aTeamId("team-nobody"), "1013"),
+          cut: yield* list("made", aTeamId("team-nobody"), "1013", true),
         };
       }),
     );
@@ -743,7 +755,46 @@ describe("OrderRepository.listOrders views", () => {
     deepStrictEqual(names(found.cut), ["#1013"]);
   });
 
-  it("a view under a team narrows to the open orders waiting on it", async () => {
+  it("a search by item title finds the order whatever the filters", async () => {
+    const found = await runInRepository(
+      Effect.gen(function* () {
+        const { list } = yield* seedIssues;
+        return yield* list("made", aTeamId("team-nobody"), "item 7", true);
+      }),
+    );
+    deepStrictEqual(names(found), ["#1007"]);
+    strictEqual(found.matches, 1);
+  });
+
+  it("a search by SKU", async () => {
+    const found = await runInRepository(
+      Effect.gen(function* () {
+        const { list } = yield* seedIssues;
+        return yield* list(null, null, "sku-13");
+      }),
+    );
+    deepStrictEqual(names(found), ["#1013"]);
+  });
+
+  it("Making and Issues combine", async () => {
+    const pages = await runInRepository(
+      Effect.gen(function* () {
+        const { list } = yield* seedIssues;
+        return {
+          making: yield* list("making"),
+          issues: yield* list("issues"),
+          both: yield* list("making", null, null, true),
+        };
+      }),
+    );
+    deepStrictEqual(
+      names(pages.both),
+      names(pages.making).filter((name) => names(pages.issues).includes(name)),
+    );
+    deepStrictEqual(names(pages.both), ["#1015", "#1013", "#1004", "#1003"]);
+  });
+
+  it("a filter under a team narrows to the open orders waiting on it", async () => {
     const pages = await runInRepository(
       Effect.gen(function* () {
         const { list } = yield* seedIssues;
@@ -787,7 +838,8 @@ describe("OrderRepository.listOrders views", () => {
             limit: 20,
             cursor: null,
             q: null,
-            view: null,
+            position: null,
+            issues: false,
             team: null,
             teams: [],
           }),
@@ -815,17 +867,18 @@ describe("OrderRepository.listOrders views", () => {
 });
 
 /**
- * `Domain.ListOrdersInput.q`: a prefix match on `ShopOrder.name` after
- * `normaliseOrderSearch`, so the `#` is the merchant's to type or omit, and
- * `like`'s own metacharacters are escaped rather than honoured.
+ * `Domain.ListOrdersInput.q`, read by `Domain.searchTerm`: an order number
+ * matches `ShopOrder.name` whole, the `#` the merchant's to type or omit; a
+ * word is a prefix of an item's title, variant title or SKU, with `like`'s
+ * own metacharacters escaped rather than honoured.
  */
 describe("OrderRepository.listOrders q", () => {
   const seedNames = Effect.gen(function* () {
     const repository = yield* OrderRepository;
-    for (const [n, name] of [
-      [1, "#1001"],
-      [2, "#1002"],
-      [3, "#2100"],
+    for (const [n, name, title, variantTitle, sku] of [
+      [1, "#1001", "Signet ring", "Rose gold", "RING-9"],
+      [2, "#1002", "Brass hinge", null, "HINGE_2"],
+      [3, "#2100", "Stamp", "Large", null],
     ] as const)
       yield* upsert(
         repository,
@@ -835,7 +888,7 @@ describe("OrderRepository.listOrders q", () => {
           name,
           processedAt: n * 1000,
         }),
-        [aLineItem(n, { orderId: orderId(n) })],
+        [aLineItem(n, { orderId: orderId(n), title, variantTitle, sku })],
       );
     return repository;
   });
@@ -846,8 +899,9 @@ describe("OrderRepository.listOrders q", () => {
       return yield* repository.listOrders({
         limit: 20,
         cursor: null,
-        q: Schema.decodeUnknownSync(Domain.OrderSearch)(q),
-        view: null,
+        q: Schema.decodeUnknownSync(Domain.ListSearch)(q),
+        position: null,
+        issues: false,
         team: null,
         teams: [],
       });
@@ -861,43 +915,25 @@ describe("OrderRepository.listOrders q", () => {
     ]);
   });
 
-  it("is a prefix, so #10 takes #1001 and #1002 but not #2100", async () => {
-    deepStrictEqual(names(await runInRepository(search("#10"))), [
-      "#1002",
-      "#1001",
-    ]);
+  it("an order number matches whole, so #10 takes nothing", async () => {
+    deepStrictEqual(names(await runInRepository(search("#10"))), []);
+  });
+
+  it("a word is a prefix of a word in the item title, case-insensitive", async () => {
+    deepStrictEqual(names(await runInRepository(search("sig"))), ["#1001"]);
+    deepStrictEqual(names(await runInRepository(search("RING"))), ["#1001"]);
+    deepStrictEqual(names(await runInRepository(search("net"))), []);
+  });
+
+  it("a search by variant title", async () => {
+    deepStrictEqual(names(await runInRepository(search("gold"))), ["#1001"]);
+    deepStrictEqual(names(await runInRepository(search("large"))), ["#2100"]);
   });
 
   it("escapes like's own wildcards rather than honouring them", async () => {
     deepStrictEqual(names(await runInRepository(search("%"))), []);
-    deepStrictEqual(names(await runInRepository(search("100_"))), []);
-  });
-
-  it("is case-insensitive, so ab takes #AB1001", async () => {
-    const found = await runInRepository(
-      Effect.gen(function* () {
-        const repository = yield* seedNames;
-        yield* upsert(
-          repository,
-          anOrder({
-            id: orderId(4),
-            legacyId: "4",
-            name: "#AB1001",
-            processedAt: 4000,
-          }),
-          [aLineItem(4, { orderId: orderId(4) })],
-        );
-        return yield* repository.listOrders({
-          limit: 20,
-          cursor: null,
-          q: Schema.decodeUnknownSync(Domain.OrderSearch)("ab"),
-          view: null,
-          team: null,
-          teams: [],
-        });
-      }),
-    );
-    deepStrictEqual(names(found), ["#AB1001"]);
+    deepStrictEqual(names(await runInRepository(search("hinge_"))), ["#1002"]);
+    deepStrictEqual(names(await runInRepository(search("hingex"))), []);
   });
 });
 
@@ -943,16 +979,17 @@ describe("OrderRepository.listOrders team issues", () => {
         yield* task("s1", "run-1-0", 1, "team-gone", 1);
         yield* task("s8", "run-8-0", 1, "team-cut", 1);
         yield* extra(task);
-        const list = (view: Domain.OrdersIndexView | null) =>
+        const list = (issues: boolean) =>
           repository.listOrders({
             limit: 20,
             cursor: null,
             q: null,
-            view,
+            position: null,
+            issues,
             team: null,
             teams,
           });
-        return { all: yield* list(null), issues: yield* list("issues") };
+        return { all: yield* list(false), issues: yield* list(true) };
       }),
     );
 
@@ -961,7 +998,7 @@ describe("OrderRepository.listOrders team issues", () => {
    * step; `#1014`'s has a current task on Cut and a later one on the deleted
    * team.
    */
-  it("an open task on a deleted team, on any step, makes the order unassigned, and the Issues view holds it", async () => {
+  it("an open task on a deleted team, on any step, makes the order unassigned, and the Issues filter holds it", async () => {
     const { all, issues } = await fixture((task) =>
       Effect.gen(function* () {
         yield* task("s3", "run-3-1", 1, "team-gone", null);
@@ -1059,15 +1096,13 @@ describe("OrderRepository.listOrders waitingOn", () => {
        Anodize sorts first by name, so it would show if it counted. */
     yield* task("s4a", "run-4-1", 1, "team-cut");
     yield* task("s4b", "run-4-1", 2, "team-polish");
-    const list = (
-      team: Domain.TeamId | null = null,
-      view: Domain.OrdersIndexView | null = null,
-    ) =>
+    const list = (team: Domain.TeamId | null = null, filter: Filter = null) =>
       repository.listOrders({
         limit: 20,
         cursor: null,
         q: null,
-        view,
+        position: filter === "issues" ? null : filter,
+        issues: filter === "issues",
         team,
         teams,
       });
@@ -1079,7 +1114,7 @@ describe("OrderRepository.listOrders waitingOn", () => {
    * run on a closed order, but the rule does not lean on that: each is given
    * a leftover open run with an unassigned current task and a current task on
    * Cut, and neither order has an issue or waits on anyone, in the cell or
-   * under the filter, whichever view is pressed.
+   * under the filter, whichever position is chosen.
    */
   it("a fulfilled or cancelled order has no issues and waits on no team", async () => {
     const { all, cut, issues } = await runInRepository(
