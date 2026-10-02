@@ -1374,29 +1374,30 @@ test("a bad filter value reads as no filter", async ({ page }) => {
 });
 
 /**
- * The Issues banner on the orders index. The sandbox holds real orders, so
- * the team select keeps this test to its own: `#9601` waits on a team with a
- * member and has an item matching two workflows, a Multiple workflows match issue;
+ * Every issue kind lands in the Issues view, and its badge is critical
+ * (`Domain.ORDER_ISSUE_TONE`): the view button is neutral, so the badge is
+ * where the alarm colour is. The sandbox holds real orders, so the team
+ * select keeps this test to its own: `#9601` waits on a team with a member
+ * and has an item matching two workflows, a Multiple workflows match issue;
  * `#9602`'s only task is on a team with no members, a Team has no members
  * issue; `#9603` has an unassigned task on a later step, a Needs a team
- * issue. The banner's count honours the team (`Domain.OrderCounts`), so each
- * team shows its own order, and every one of the three is critical
- * (`Domain.ORDER_ISSUE_TONE`).
+ * issue. The Issues count honours the team (`Domain.OrderCounts`), so each
+ * team shows its own order.
  *
  * The seed refuses to turn on a workflow with an unassigned task, so
  * `#9603`'s second step is seeded on a team that is then deleted on the
  * teams screen, which is how a task becomes unassigned in the app.
  */
-test("the Issues banner stands while any open order has an issue, is critical for every issue, and goes with the Issues view", async ({
+test("every issue kind counts in the Issues view and its badge is critical", async ({
   page,
 }) => {
   test.setTimeout(120_000);
 
-  const MEMBER = "e2e.banner@example.com";
-  const TEAM = "E2E Banner Bench";
-  const EMPTY_TEAM = "E2E Banner Empty";
-  const ORPHAN_TEAM = "E2E Banner Orphan";
-  const GONE_TEAM = "E2E Banner Gone";
+  const MEMBER = "e2e.flagged@example.com";
+  const TEAM = "E2E Flagged Bench";
+  const EMPTY_TEAM = "E2E Flagged Empty";
+  const ORPHAN_TEAM = "E2E Flagged Orphan";
+  const GONE_TEAM = "E2E Flagged Gone";
   await seedMembers(
     seedConfig(),
     [MEMBER],
@@ -1408,23 +1409,23 @@ test("the Issues banner stands while any open order has an issue, is critical fo
     ],
     [
       {
-        name: "E2E Banner Cuff",
-        tag: "e2e-banner",
+        name: "E2E Flagged Cuff",
+        tag: "e2e-flagged",
         tasks: [{ name: "Cut", team: TEAM }],
       },
       {
-        name: "E2E Banner Rush",
-        tag: "e2e-banner-rush",
+        name: "E2E Flagged Rush",
+        tag: "e2e-flagged-rush",
         tasks: [{ name: "Expedite", team: TEAM }],
       },
       {
-        name: "E2E Banner Empty team",
-        tag: "e2e-banner-empty",
+        name: "E2E Flagged Empty team",
+        tag: "e2e-flagged-empty",
         tasks: [{ name: "Wait", team: EMPTY_TEAM }],
       },
       {
-        name: "E2E Banner Orphan",
-        tag: "e2e-banner-orphan",
+        name: "E2E Flagged Orphan",
+        tag: "e2e-flagged-orphan",
         tasks: [
           { name: "Cut", team: ORPHAN_TEAM, step: 1 },
           { name: "Pack", team: GONE_TEAM, step: 2 },
@@ -1435,24 +1436,24 @@ test("the Issues banner stands while any open order has an issue, is critical fo
       {
         n: 9601,
         lineItems: [
-          { title: "E2E Cuff", quantity: 1, tags: ["e2e-banner"] },
+          { title: "E2E Cuff", quantity: 1, tags: ["e2e-flagged"] },
           {
             title: "E2E Twice",
             quantity: 1,
-            tags: ["e2e-banner", "e2e-banner-rush"],
+            tags: ["e2e-flagged", "e2e-flagged-rush"],
           },
         ],
       },
       {
         n: 9602,
         lineItems: [
-          { title: "E2E Nobody", quantity: 1, tags: ["e2e-banner-empty"] },
+          { title: "E2E Nobody", quantity: 1, tags: ["e2e-flagged-empty"] },
         ],
       },
       {
         n: 9603,
         lineItems: [
-          { title: "E2E Orphan", quantity: 1, tags: ["e2e-banner-orphan"] },
+          { title: "E2E Orphan", quantity: 1, tags: ["e2e-flagged-orphan"] },
         ],
       },
     ],
@@ -1477,50 +1478,25 @@ test("the Issues banner stands while any open order has an issue, is critical fo
 
   await clickHoisted(appNavLink(page, "Orders"));
   await expect(frame.locator('s-page[heading="Orders"]')).toBeVisible();
-
-  const banner = frame.locator("s-banner", {
-    has: frame.getByRole("button", { name: "Show issues" }),
-  });
-  const team = frame.getByRole("combobox", { name: "Team" });
-
-  await team.selectOption({ label: TEAM });
-  await expect(banner).toBeVisible();
-  await expect(banner).toHaveAttribute(
-    "heading",
-    /^\d+ open orders? ha(?:s|ve) (?:an )?issues?$/u,
-  );
-  await expect(banner).toHaveAttribute("heading", "1 open order has an issue");
-  await expect(banner).toHaveAttribute("tone", "critical");
-
-  await banner.getByRole("button", { name: "Show issues" }).click();
+  await viewButton(frame, "Issues").click();
   await expect.poll(() => listContext(page).view).toBe("issues");
-  await expect(viewButton(frame, "Issues")).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
-  await expect(frame.getByRole("link", { name: "#9601" })).toBeVisible();
-  await expect(banner).toHaveCount(0);
 
-  await viewButton(frame, "Open").click();
-  await expect(banner).toBeVisible();
-
-  /* The team with only a Team has no members order. */
-  await team.selectOption({ label: EMPTY_TEAM });
-  await expect(
-    frame
-      .locator("s-table-row", { hasText: "#9602" })
-      .getByText("Team has no members", { exact: true }),
-  ).toBeVisible();
-  await expect(banner).toHaveAttribute("tone", "critical");
-  await expect(banner).toHaveAttribute("heading", "1 open order has an issue");
-
-  /* The team with only a Needs a team order. */
-  await team.selectOption({ label: ORPHAN_TEAM });
-  await expect(
-    frame
-      .locator("s-table-row", { hasText: "#9603" })
-      .getByText("Needs a team", { exact: true }),
-  ).toBeVisible();
-  await expect(banner).toHaveAttribute("tone", "critical");
-  await expect(banner).toHaveAttribute("heading", "1 open order has an issue");
+  const team = frame.getByRole("combobox", { name: "Team" });
+  const cases = [
+    [TEAM, "#9601", "Multiple workflows match"],
+    [EMPTY_TEAM, "#9602", "Team has no members"],
+    [ORPHAN_TEAM, "#9603", "Needs a team"],
+  ] as const;
+  for (const [teamName, order, issue] of cases) {
+    await team.selectOption({ label: teamName });
+    await expect(
+      frame.getByRole("button", { name: "Issues · 1" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    await expect(frame.locator("s-table-row")).toHaveCount(1);
+    await expect(
+      frame
+        .locator("s-table-row", { hasText: order })
+        .locator("s-badge", { hasText: issue }),
+    ).toHaveAttribute("tone", "critical");
+  }
 });

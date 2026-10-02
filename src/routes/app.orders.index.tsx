@@ -55,17 +55,17 @@ const ordersQueryKey = (
 
 /**
  * The view row, left to right: Open (the default, `null` in the URL), the
- * ladder in the order an order moves, Fulfilled, All, and then Issues set
- * apart at the row's end. Each is one whole question and exactly one is
- * pressed ({@link Domain.OrdersIndexView}, which carries the rule and why the
- * row is not two crossed rows). Open, the positions and All read as one run:
- * a total, its parts in lifecycle order, then the scope widening to the whole
- * history. Issues cuts across the three open positions rather than following
- * them, so it sits outside that run instead of breaking it, at the row's far
- * edge. There is no label to the row's left: the row holds scopes
- * and positions side by side, and a label such as "Status" would promise one
- * axis. `count` is the `Domain.OrderCounts` key the button shows; Fulfilled
- * and All carry none. `cancelled` has no button. Labels are
+ * ladder in the order an order moves, Fulfilled, All, then Issues. Each is
+ * one whole question and exactly one is pressed
+ * ({@link Domain.OrdersIndexView}, which carries the rule and why the row is
+ * not two crossed rows). Open, the positions and All read as one run: a
+ * total, its parts in lifecycle order, then the scope widening to the whole
+ * history. Issues cuts across the three open positions; it comes last, in
+ * the same row, and its count is the only signal on the page that an open
+ * order has an issue. There is no label to the row's left: the row holds
+ * scopes and positions side by side, and a label such as "Status" would
+ * promise one axis. `count` is the `Domain.OrderCounts` key the button
+ * shows; Fulfilled and All carry none. `cancelled` has no button. Labels are
  * `Domain.ORDERS_INDEX_VIEW_LABEL`.
  */
 const VIEWS: readonly {
@@ -78,13 +78,8 @@ const VIEWS: readonly {
   { value: "made", count: "made" },
   { value: "fulfilled", count: null },
   { value: "all", count: null },
+  { value: "issues", count: "issues" },
 ];
-
-/** Issues, set apart at the view row's end ({@link VIEWS}). */
-const ISSUES_VIEW: (typeof VIEWS)[number] = {
-  value: "issues",
-  count: "issues",
-};
 
 /**
  * `Schema.toType`, not the schema itself. A Durable Object RPC result has
@@ -169,16 +164,6 @@ const syncStatusText = (
     ? "Syncing… this page updates as orders arrive."
     : null;
 };
-
-/**
- * The Issues banner's heading: how many open orders have an issue, given the
- * team. No body: the Issues column carries the breakdown by kind, and
- * repeating it in the banner would be the table said twice.
- */
-const issuesHeading = (n: number) =>
-  n === 1
-    ? "1 open order has an issue"
-    : `${formatNumber(n)} open orders have issues`;
 
 /**
  * What an empty view says, one line each. With a team selected the list is
@@ -679,7 +664,7 @@ function RouteComponent() {
    * did, and `variant="primary"` on an `s-button` means the page's main
    * action, which a view is not. No view is red: `s-press-button` takes only
    * `tone="neutral"`, and the alarm colour belongs with the remedy, on the
-   * Issues badges and the Issues banner.
+   * Issues badges.
    *
    * The element flips its own `pressed` on every click, and React re-sets a
    * controlled property only when its value changes between renders.
@@ -725,34 +710,6 @@ function RouteComponent() {
       {/* Above the sync button on purpose: the merchant who notices an order
           missing here is the one these two banners are for. */}
       <QuotaBanners usage={usage} />
-      {/* The Issues banner. It stands while any open order has an issue:
-          every issue is something the merchant clears in Baton, so it goes
-          away. Not dismissible, because dismissing would hide a state that
-          is still true and it would return on the next load. Hidden while
-          the Issues view is pressed, because the table below is that list.
-          Toned {@link Domain.ORDER_ISSUE_TONE}, matching the Issues
-          badges. The count is
-          `Domain.OrderCounts`, which honours the team select, so it is the
-          Issues button's number. On the orders index only, not the home
-          page, so one screen owns it. After the quota banners, which say
-          the app itself is stopped. */}
-      {data !== undefined &&
-        data.page.counts.issues > 0 &&
-        !(q === null && view === "issues") && (
-          <s-banner
-            heading={issuesHeading(data.page.counts.issues)}
-            tone={Domain.ORDER_ISSUE_TONE}
-          >
-            <s-button
-              slot="secondary-actions"
-              onClick={() => {
-                setFilters({ view: "issues", q: null });
-              }}
-            >
-              Show issues
-            </s-button>
-          </s-banner>
-        )}
       {/* Unconditional, empty list included: the resource-index template keeps
           the title-bar action and lets the empty state carry a second copy,
           so "sync is top right" holds on every visit.
@@ -812,15 +769,8 @@ function RouteComponent() {
                   }}
                 />
               </s-grid>
-              <s-stack
-                direction="inline"
-                gap="small-300"
-                justifyContent="space-between"
-              >
-                <s-stack direction="inline" gap="small-300">
-                  {VIEWS.map(viewButton)}
-                </s-stack>
-                {viewButton(ISSUES_VIEW)}
+              <s-stack direction="inline" gap="small-300">
+                {VIEWS.map(viewButton)}
               </s-stack>
               <s-grid
                 gridTemplateColumns="auto 1fr"
