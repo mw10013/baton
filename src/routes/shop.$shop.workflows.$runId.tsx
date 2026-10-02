@@ -126,8 +126,8 @@ function RouteComponent() {
    * primary; the banner carries the only action a block allows. The badge
    * carries the state and the buttons are its exits, the advancing one first:
    * `Start · Done`, `Done · Put back`, `Undo`. The label is Undo although the
-   * field is `reopen`: on the bench the verb takes back the member's own
-   * Done. Undo and Put back are offered where they are allowed and nowhere
+   * field is `reopen`: on the bench the verb takes back a Done, usually
+   * one's own, and the whole team may press it. Undo and Put back are offered where they are allowed and nowhere
    * else: a blocked undo draws no disabled button and no sentence explaining
    * itself, because the task standing in the way is on this same page with a
    * `Started` badge on it.

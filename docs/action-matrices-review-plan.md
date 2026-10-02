@@ -346,4 +346,44 @@ change the JSDoc in the same edit so the two never differ.
 Record here, as you go, anything that did not go as written: what the plan said, what you
 found, the two options you saw, and the one you took. One entry per item, dated.
 
-(none yet)
+All entries 2026-10-02.
+
+- **1.6, the Assign sentence.** The plan put it in the block table's new row. A row cell that long
+  breaks the table's width for one clause, so it is a sentence under the table instead, beside
+  the pointer to the `reopen` and `putBack` bullets.
+- **1.7, "over an open run".** `merchantAttachWorkflow` reads `changeWorkflow` over any run that is
+  not closed, done included (a done run answers `ItemDone`). The bullet says "a run that is not
+  closed". The inline comment in `agent/ShopWork.ts` that said Change workflow is gated through
+  `requireRunAction` contradicted the new bullet and was reworded.
+- **1.4, the backfill test.** `run-repository.test.ts` already pinned it, for the merchant, in
+  "merchant completes an unassigned task: no team clause, and the merchant fills both actors".
+  Retitled to "a Done without a Start records the actor as the starter too"; its body is
+  unchanged.
+- **1.10 and the Undo wording.** `shop.$shop.workflows.$runId.tsx` said the bench "takes back the
+  member's own Done", the same claim the vocabulary sentence made. Reworded to match decision 3.
+- **2.1, `Cell`.** A string refined by a predicate makes `Schema.is(Cell)` a guard on `string`,
+  whose negation narrows the value to `never` in the parser's message. `isCell` wraps it as a
+  plain boolean. The predicate is "the cell equals `M m v` cut to the letters it names", which
+  refuses unknown letters, repeats and order in one test.
+- **3.2, the note.** `run.note !== null && run.note.length > 0` was needed in two places, so it is
+  a `Domain` predicate, `runHasNote`, beside `runHasRecord`. `changeWarning` takes the run
+  (`blockedAt`, `note`) instead of `hasNote`, and the modal's state carries the run. A fourth
+  shape the plan did not list, a note alone on an untouched run, reads "<from> has a note. Change
+  to <to> anyway? The note will not carry over."
+- **3.3, "no warning".** The empty warning is the page's gate (`runHasRecord`), not
+  `changeWarning`'s output, so that test asserts `runHasRecord` is false.
+- **Phase 4, the ceiling test.** `shop-agent-orders-ceiling.test.ts` is the order ceiling
+  (`maxOrdersPerCycle`), not the open-run ceiling. The test is in `run-repository.test.ts`, in
+  "RunRepository open-run ceiling", using its `withMaxOpenRuns`.
+- **Phase 4, the outsider test.** It needs `memberGetRun`, which only the callables half has, so
+  it moved there; it also checks the outsider's `setRunNote` answers `NotAllowed`. The old pure
+  test "a task on none of the member's teams offers the member nothing" is gone, its assertion
+  kept inside the new one.
+- **Phase 4, the unassigned test.** The pure half carries the title. The callable half is a
+  second test, "callables: a task on no team refuses the member's Done and takes the merchant's",
+  because the pure tests have no live object.
+- **Phase 4, the Undo test.** In `run-actions.test.ts`'s callables half, with a second member
+  socket on the team: the reset records m1 as who pressed Done, and m2's `reopenTask` answers
+  `Ok`.
+- **Titles in the JSDoc.** Each rule sentence is in its JSDoc, but line-wrapped, so a one-line
+  grep from the title finds the test and not the sentence.

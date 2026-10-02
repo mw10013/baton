@@ -12,9 +12,34 @@ import type { OrderState, RunState } from "../../src/lib/Domain.ts";
  */
 import { Data, Result, Schema } from "effect";
 
-/** An action cell: blank is never, `blocker` is Reopen offered with the downstream blocker. */
-export const Cell = Schema.Literals(["", "M", "m", "M m", "blocker"]);
+/** The letters a cell may list, in the order it must list them; `v` is a `runActions` letter only. */
+const LETTERS: readonly string[] = ["M", "m", "v"];
+
+/**
+ * An action cell: blank is never, `blocker` is Reopen offered with the
+ * downstream blocker, and otherwise a space-separated list of letters from
+ * {@link LETTERS}, in that order, with no repeats (`M`, `m v`, `M m v`, ...).
+ */
+export const Cell = Schema.String.check(
+  Schema.makeFilter(
+    // A list is well formed when it equals {@link LETTERS} cut to the
+    // letters it names: that refuses an unknown letter, a repeat and a
+    // letter out of order alike, and lets blank through.
+    (cell) =>
+      cell === "blocker" ||
+      LETTERS.filter((letter) => cell.split(" ").includes(letter)).join(" ") ===
+        cell ||
+      "letters M m v in order, blank, or blocker",
+  ),
+);
 export type Cell = typeof Cell.Type;
+
+/**
+ * {@link Cell}'s check as a plain boolean. `Schema.is` is a type guard, and
+ * since `Cell` is a string its negation would narrow the value to `never`
+ * where the parser's message names it.
+ */
+const isCell: (cell: string) => boolean = Schema.is(Cell);
 
 /** One parsed row: the state words by column, the cell by action, and the source line it came from. */
 export interface Row {
@@ -118,7 +143,9 @@ const TASKS: Record<typeof TaskWord.Type, readonly TaskState[]> = {
  * One concrete input to `runActions` or `taskActions`. `task` is the task
  * under test for `taskActions`; for `runActions` it is the run's one task,
  * on the member's team and current exactly when the run is open, which is who
- * "m" is. `item` is present on `runActions` fixtures only.
+ * "m" is. `tasks` and `item` are present on `runActions` fixtures only:
+ * `tasks` is the list `runActions` is called with for "M" and "m", `[task]`.
+ * The "v" list is the test's to build, because an actor is not a state.
  */
 export interface Fixture<TeamId, Blocker> {
   readonly order: OrderState;
@@ -130,6 +157,10 @@ export interface Fixture<TeamId, Blocker> {
     readonly teamId: TeamId;
     readonly reopenBlockedBy: Blocker | null;
   };
+  readonly tasks?: readonly {
+    readonly teamId: TeamId;
+    readonly current: boolean;
+  }[];
   readonly item?: { readonly currentQuantity: number };
 }
 
@@ -159,6 +190,8 @@ export interface Fixture<TeamId, Blocker> {
  * | downstream | none         | `reopenBlockedBy: null`                                                              |
  * | downstream | started      | `reopenBlockedBy: BLOCKER` (the caller's `blocker`)                                  |
  * | downstream | -            | not applicable; fixture `null`                                                       |
+ * | cell letter | M / m       | `tasks: [task]` (runActions)                                                         |
+ * | cell letter | v           | `tasks` built by the test: the row's task, not current, plus a current one elsewhere |
  *
  * The `ready` and `started` words are the vocabulary's narrow task states. The
  * `current` flag they set is the broad one (`Domain.currentTasks`: the
@@ -188,10 +221,8 @@ export const expand = <TeamId, Blocker>(
   );
   if (name === "runActions")
     return states.flatMap(({ order, run }) =>
-      UNITS[word("units")].map((currentQuantity) => ({
-        order,
-        run,
-        task: {
+      UNITS[word("units")].map((currentQuantity) => {
+        const task = {
           teamId: context.teamId,
           // `Domain.runIsOpen`, spelled out: this module imports `Domain`
           // for types only, so the CLI runs without the app's runtime.
@@ -199,9 +230,9 @@ export const expand = <TeamId, Blocker>(
           startedAt: null,
           doneAt: null,
           reopenBlockedBy: null,
-        },
-        item: { currentQuantity },
-      })),
+        };
+        return { order, run, task, tasks: [task], item: { currentQuantity } };
+      }),
     );
   const reopenBlockedBy =
     word("downstream") === "started" ? context.blocker : null;
@@ -275,12 +306,16 @@ const decodeRow = (
   const cells: Record<string, Cell> = {};
   for (const [index, column] of actions.entries()) {
     const value = values[state.length + index] ?? "";
-    if (!Schema.is(Cell)(value))
+    if (!isCell(value))
       return fail(
-        `cell "${value}" under ${column}; expected one of: ${Cell.literals.map((cell) => (cell === "" ? "blank" : cell)).join(", ")}`,
+        `cell "${value}" under ${column}; expected letters M m v in order, blank, or blocker`,
       );
     if (value === "blocker" && column !== "reopen")
       return fail(`cell "blocker" under ${column}; it is only a reopen cell`);
+    if (name !== "runActions" && value.split(" ").includes("v"))
+      return fail(
+        `cell "${value}" under ${column}; v is only a runActions letter`,
+      );
     cells[column] = value;
   }
   return Result.succeed({ line, state: words, cells });

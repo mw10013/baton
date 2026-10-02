@@ -378,6 +378,12 @@ function RouteComponent() {
      * A started task also gets Put back, the one-press fix for a Start
      * pressed by mistake, wherever the action set allows it: for the whole
      * team, so a row a teammate started offers it too.
+     *
+     * The list sets `current: true` on every task of a row because the query
+     * returns current tasks only (`RunRepository.listRuns`), and
+     * `reopenBlockedBy: null` because the row holds no done task; a list that
+     * one day carried a waiting task would need `RunListTask` to carry
+     * `current`.
      */
     const menuItems = () => {
       if (blocked)

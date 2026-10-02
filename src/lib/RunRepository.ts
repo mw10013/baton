@@ -417,14 +417,10 @@ export class RunRepository extends Context.Service<
      * (`RunTerminalError`), a blocked run (`RunBlockedError`), or, for a
      * member, a task not on one of their teams (`RunNotAllowedError`).
      *
-     * Offered to the whole team, not only the starter: Start is a record, not
-     * a lock, and the inverse of a verb is as open as the verb. No column
-     * records who put it back; the task is plain Ready and the next Start
-     * writes a fresh record.
-     *
-     * Reopen is allowed under a block because it takes work back; Put back is
-     * refused, because a held task is the one someone needs to write on, and
-     * clearing who has it under a hold loses the one name the merchant needs.
+     * Offered to the whole team, not only the starter, and refused under a
+     * block; why is the `putBack` bullet on {@link Domain.taskActions}. No
+     * column records who put it back; the task is plain Ready and the next
+     * Start writes a fresh record.
      */
     readonly putBackTask: (
       input: Domain.PutBackTaskCommand,

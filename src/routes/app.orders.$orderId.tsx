@@ -431,7 +431,7 @@ function RouteComponent() {
   const [changing, setChanging] = React.useState<{
     readonly lineItemId: string;
     readonly from: Domain.WorkflowName;
-    readonly hasNote: boolean;
+    readonly run: Domain.Run;
     readonly options: readonly Domain.Workflow[];
     readonly tasks: readonly Domain.RunTask[];
     readonly workflowId: string | null;
@@ -721,19 +721,15 @@ function RouteComponent() {
   };
   const modalRun = runs.find(({ run }) => run.id === modalRunId)?.run ?? null;
   /**
-   * The modal's warning, empty until a workflow is picked and on a run with
-   * nothing started or done: a change there loses nothing.
+   * The modal's warning, empty until a workflow is picked; on a run with no
+   * record it is empty too, the rule on {@link changeWarning}.
    */
   const changingWarning = (() => {
     if (changing === null || changing.workflowId === null) return "";
-    const touched = changing.tasks.some(
-      (task) => task.startedAt !== null || task.doneAt !== null,
-    );
-    if (!touched) return "";
     const to =
       changing.options.find((workflow) => workflow.id === changing.workflowId)
         ?.name ?? "";
-    return changeWarning(changing.from, to, changing.tasks, changing.hasNote);
+    return changeWarning(changing.from, to, changing.run, changing.tasks);
   })();
   /**
    * The team picker and Assign button beside an unassigned task in
@@ -1060,7 +1056,7 @@ function RouteComponent() {
             setChanging({
               lineItemId: item.id,
               from: run.workflowName,
-              hasNote: run.note !== null && run.note.length > 0,
+              run,
               options,
               tasks,
               workflowId: null,

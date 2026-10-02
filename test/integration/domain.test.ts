@@ -528,6 +528,25 @@ describe("Domain.byAge", () => {
   });
 });
 
+describe("Domain.runHasRecord", () => {
+  it("a run has a record when a task is started or done, the run is blocked, or it has a note", () => {
+    const idle = { startedAt: null, doneAt: null };
+    const clean = { blockedAt: null, note: null };
+    strictEqual(Domain.runHasRecord(clean, [idle, idle]), false);
+    strictEqual(Domain.runHasRecord({ ...clean, note: "" }, [idle]), false);
+    strictEqual(
+      Domain.runHasRecord(clean, [{ startedAt: 1, doneAt: null }, idle]),
+      true,
+    );
+    strictEqual(
+      Domain.runHasRecord(clean, [{ startedAt: 1, doneAt: 2 }, idle]),
+      true,
+    );
+    strictEqual(Domain.runHasRecord({ ...clean, blockedAt: 1 }, [idle]), true);
+    strictEqual(Domain.runHasRecord({ ...clean, note: "x" }, [idle]), true);
+  });
+});
+
 describe("Domain.sameRunQuery", () => {
   const query: Domain.RunQuery = {
     team: null,

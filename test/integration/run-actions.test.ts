@@ -32,6 +32,8 @@ const RUN_ROWS = Result.getOrThrow(ActionTable.parse(source, "runActions"));
 const TASK_ROWS = Result.getOrThrow(ActionTable.parse(source, "taskActions"));
 
 const T = Schema.decodeUnknownSync(Domain.TeamId)("t");
+/** A team the member is not on, holding the run's current task in a "v" fixture. */
+const OTHER = Schema.decodeUnknownSync(Domain.TeamId)("other");
 const MERCHANT: Domain.Actor = { role: "merchant" };
 const MEMBER: Domain.Actor = {
   role: "member",
@@ -57,18 +59,18 @@ const BLOCKER: Domain.ReopenBlocker = {
   teamName: Schema.decodeUnknownSync(Domain.TeamName)("Finishing"),
 };
 
-/** Whether a cell offers the action to "M" or "m". `blocker` is offered to both. */
-const offered = (cell: ActionTable.Cell | undefined, who: "M" | "m") =>
+/** Whether a cell offers the action to "M", "m" or "v". `blocker` is offered to "M" and "m" ("v" is never in a `taskActions` cell). */
+const offered = (cell: ActionTable.Cell | undefined, who: "M" | "m" | "v") =>
   cell === "blocker" || (cell ?? "").split(" ").includes(who);
 
 /** The `reopen` field a cell says `who` gets: `null` when not offered, otherwise the blocker, `null` meaning the button. */
-const reopenOf = (cell: ActionTable.Cell | undefined, who: "M" | "m") => {
+const reopenOf = (cell: ActionTable.Cell | undefined, who: "M" | "m" | "v") => {
   if (!offered(cell, who)) return null;
   return { blockedBy: cell === "blocker" ? BLOCKER : null };
 };
 
 /** The result object a row's cells say `who` gets. */
-const expectedOf = (row: ActionTable.Row, who: "M" | "m") =>
+const expectedOf = (row: ActionTable.Row, who: "M" | "m" | "v") =>
   Object.fromEntries(
     Object.entries(row.cells).map(([field, cell]) => [
       field,
@@ -82,14 +84,25 @@ describe("Domain.runActions matrix", () => {
   for (const row of RUN_ROWS)
     it(ActionTable.renderRow("runActions", row), () => {
       for (const fixture of ActionTable.expand("runActions", row, CONTEXT)) {
-        const { order, run: state, task, item } = fixture;
+        const { order, run: state, tasks = [], item } = fixture;
         deepStrictEqual(
-          Domain.runActions(MERCHANT, order, state, [task], item),
+          Domain.runActions(MERCHANT, order, state, tasks, item),
           expectedOf(row, "M"),
         );
         deepStrictEqual(
-          Domain.runActions(MEMBER, order, state, [task], item),
+          Domain.runActions(MEMBER, order, state, tasks, item),
           expectedOf(row, "m"),
+        );
+        // "v": the member's task is not current; on an open run another
+        // team's is. On a done or closed run neither is, and "v" and "m"
+        // coincide there, as the cells do.
+        const visibleTasks = [
+          { teamId: T, current: false },
+          { teamId: OTHER, current: Domain.runIsOpen(state) },
+        ];
+        deepStrictEqual(
+          Domain.runActions(MEMBER, order, state, visibleTasks, item),
+          expectedOf(row, "v"),
         );
       }
     });
@@ -102,26 +115,28 @@ describe("Domain.runActions matrix", () => {
       false,
     );
   });
-
-  it("a member whose team holds no current task gets only the note, and only if the run is theirs to see", () => {
-    const tasks = [{ teamId: T, current: false }];
-    deepStrictEqual(
-      Domain.runActions(MEMBER, OPEN_ORDER, run("open", true), tasks),
-      {
-        note: true,
-        block: false,
-        editReason: false,
-        unblock: false,
-        cancel: false,
-        changeWorkflow: false,
-      },
-    );
-    strictEqual(
-      Domain.runActions(OUTSIDER, OPEN_ORDER, run("open"), tasks).note,
-      false,
-    );
-  });
 });
+
+/** The task set that offers nothing. */
+const NOTHING: Domain.TaskActions = {
+  start: false,
+  done: false,
+  putBack: false,
+  reopen: null,
+  assign: false,
+};
+
+/** The one row of `rows` whose state words are `state`. */
+const rowWhere = (
+  rows: readonly ActionTable.Row[],
+  state: Readonly<Record<string, string>>,
+) => {
+  const found = rows.find((row) =>
+    Object.entries(state).every(([column, word]) => row.state[column] === word),
+  );
+  if (found === undefined) throw new Error(JSON.stringify(state));
+  return found;
+};
 
 const task = (
   overrides: Partial<
@@ -155,17 +170,28 @@ describe("Domain.taskActions matrix", () => {
       }
     });
 
-  it("a task on none of the member's teams offers the member nothing", () => {
-    deepStrictEqual(
-      Domain.taskActions(OUTSIDER, OPEN_ORDER, run("open"), task()),
-      {
-        start: false,
-        done: false,
-        putBack: false,
-        reopen: null,
-        assign: false,
-      },
-    );
+  it("a task on no team is nobody's: every member cell is blank and every merchant cell holds", () => {
+    const ready = rowWhere(TASK_ROWS, {
+      order: "open",
+      run: "open",
+      blocked: "no",
+      task: "ready",
+    });
+    // No team, and a team that no longer exists: one answer for both.
+    for (const teamId of [
+      null,
+      Schema.decodeUnknownSync(Domain.TeamId)("gone"),
+    ]) {
+      const view = { ...task(), teamId };
+      deepStrictEqual(
+        Domain.taskActions(MEMBER, OPEN_ORDER, run("open"), view),
+        NOTHING,
+      );
+      deepStrictEqual(
+        Domain.taskActions(MERCHANT, OPEN_ORDER, run("open"), view),
+        expectedOf(ready, "M"),
+      );
+    }
   });
 });
 
@@ -753,6 +779,11 @@ describe("ShopAgent refuses what the action set refuses", () => {
    * callable reads that formula with the right inputs in every state. A
    * cell with no callable for an actor (member Cancel, merchant Start) is
    * skipped for that actor; the pure half covers its false side.
+   *
+   * "v" is not driven here. The pure half proves the formula equals the
+   * table for "v", and this half proves each callable reads the formula
+   * with the live inputs, which the "m" fixtures already exercise; a "v"
+   * fixture would need a second team on the live run for no new proof.
    */
   const setup = async () => {
     const shop = ACTION_SHOP;
@@ -984,4 +1015,106 @@ describe("ShopAgent refuses what the action set refuses", () => {
   for (const row of TASK_ROWS)
     it(`callables: ${ActionTable.renderRow("taskActions", row)}`, () =>
       checkTaskRow(row));
+
+  /** The first fixture of the `taskActions` row with these state words, on an open run with no block. */
+  const taskFixture = (state: Readonly<Record<string, string>>) => {
+    const fixture = ActionTable.expand(
+      "taskActions",
+      rowWhere(TASK_ROWS, state),
+      {
+        teamId: ctx.team.id,
+        blocker: BLOCKER,
+      },
+    ).find(
+      ({ order, run: target }) =>
+        Domain.orderIsOpen(order) &&
+        Domain.runIsOpen(target) &&
+        !Domain.runIsBlocked(target),
+    );
+    if (fixture === undefined) throw new Error(JSON.stringify(state));
+    return fixture;
+  };
+
+  it("a member whose teams hold no task of the run gets nothing, the note included", async () => {
+    const fixture = taskFixture({ order: "open", task: "ready" });
+    await reset(ctx.shop, ctx.live, ctx.team.id, fixture, tasksFor(fixture));
+    deepStrictEqual(
+      Domain.runActions(OUTSIDER, OPEN_ORDER, run("open"), [
+        { teamId: T, current: true },
+      ]),
+      {
+        note: false,
+        block: false,
+        editReason: false,
+        unblock: false,
+        cancel: false,
+        changeWorkflow: false,
+      },
+    );
+    deepStrictEqual(
+      Domain.taskActions(OUTSIDER, OPEN_ORDER, run("open"), task()),
+      NOTHING,
+    );
+    strictEqual(
+      await ctx.agent.memberGetRun({ runId: ctx.live.runId, teamIds: [] }),
+      null,
+    );
+    const outsider = await openMemberSocket(ctx.shop, {
+      memberId: "m3",
+      memberEmail: "m3@example.com",
+      teamIds: [],
+    });
+    try {
+      const noted = await outsider.setRunNote({
+        runId: ctx.live.runId,
+        note: "x",
+      });
+      strictEqual(noted._tag, NOT_ALLOWED);
+    } finally {
+      outsider.close();
+    }
+  });
+
+  it("callables: a task on no team refuses the member's Done and takes the merchant's", async () => {
+    const fixture = taskFixture({ order: "open", task: "ready" });
+    const tasks = tasksFor(fixture);
+    await reset(ctx.shop, ctx.live, ctx.team.id, fixture, tasks);
+    await runInDurableObject(
+      env.SHOP_AGENT.get(env.SHOP_AGENT.idFromName(ctx.shop)),
+      (_instance, state) => {
+        state.storage.sql.exec(
+          "update RunTask set teamId = null where id = ?",
+          ctx.live.cut,
+        );
+      },
+    );
+    const byMember = await ctx.member.markTaskDone({ runTaskId: ctx.live.cut });
+    strictEqual(byMember._tag, NOT_ALLOWED);
+    const byMerchant = await ctx.merchant.markTaskDone({
+      runTaskId: ctx.live.cut,
+    });
+    strictEqual(byMerchant._tag, OK);
+    await reset(ctx.shop, ctx.live, ctx.team.id, fixture, tasks);
+  });
+
+  it("Undo is offered to the task's whole team, not only to who pressed Done", async () => {
+    const fixture = taskFixture({ task: "done", downstream: "none" });
+    const tasks = tasksFor(fixture);
+    // The reset records m1 as who pressed Done; m2 is m1's teammate.
+    await reset(ctx.shop, ctx.live, ctx.team.id, fixture, tasks);
+    const teammate = await openMemberSocket(ctx.shop, {
+      memberId: "m2",
+      memberEmail: "m2@example.com",
+      teamIds: [ctx.team.id],
+    });
+    try {
+      const undone = await teammate.reopenTask({
+        runTaskId: ctx.live[tasks.target],
+      });
+      strictEqual(undone._tag, OK);
+    } finally {
+      teammate.close();
+    }
+    await reset(ctx.shop, ctx.live, ctx.team.id, fixture, tasks);
+  });
 });

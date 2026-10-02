@@ -143,11 +143,19 @@ describe("action table parser", () => {
     );
   });
 
-  it("a cell outside M, m, M m, blank and blocker fails", () => {
+  it("a cell that is not letters M m v in order, blank or blocker fails", () => {
+    for (const cell of ["Mm", "m M", "M M"])
+      expect(
+        parseError(
+          sourceOf(`| open | open | no | ready | - | ${cell} | | | | |`),
+        ),
+      ).toBe(
+        `taskActions, line 14: cell "${cell}" under start; expected letters M m v in order, blank, or blocker`,
+      );
     expect(
-      parseError(sourceOf("| open | open | no | ready | - | Mm | | | | |")),
+      parseError(sourceOf("| open | open | no | ready | - | v | | | | |")),
     ).toBe(
-      'taskActions, line 14: cell "Mm" under start; expected one of: blank, M, m, M m, blocker',
+      'taskActions, line 14: cell "v" under start; v is only a runActions letter',
     );
   });
 

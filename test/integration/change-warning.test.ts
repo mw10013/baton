@@ -34,23 +34,75 @@ const task = (
 
 const from = Schema.decodeUnknownSync(Domain.WorkflowName)("Engraving");
 
+const runOf = (
+  overrides: Partial<Pick<Domain.Run, "blockedAt" | "note">> = {},
+): Pick<Domain.Run, "blockedAt" | "note"> => ({
+  blockedAt: null,
+  note: null,
+  ...overrides,
+});
+const NOTE = Schema.decodeUnknownSync(Domain.RunNote)("Use the gold leaf");
+
 describe("changeWarning", () => {
   it("the change warning names the note when the run has one", () => {
     const tasks = [task(1, "done"), task(2, "open")];
     strictEqual(
-      changeWarning(from, "Rush", tasks, true),
+      changeWarning(from, "Rush", runOf({ note: NOTE }), tasks),
       "Engraving has 1 of 2 steps done. Change to Rush anyway? That work and the note will not carry over.",
     );
     strictEqual(
-      changeWarning(from, "Rush", tasks, false),
+      changeWarning(from, "Rush", runOf(), tasks),
       "Engraving has 1 of 2 steps done. Change to Rush anyway? That work will not carry over.",
     );
   });
 
   it("done outranks started", () => {
     strictEqual(
-      changeWarning(from, "Rush", [task(1, "started"), task(2, "open")], false),
+      changeWarning(from, "Rush", runOf(), [
+        task(1, "started"),
+        task(2, "open"),
+      ]),
       "Engraving has 1 of 2 steps started. Change to Rush anyway? That work will not carry over.",
+    );
+  });
+
+  it("the change warning names the block when the run is blocked", () => {
+    strictEqual(
+      changeWarning(from, "Rush", runOf({ blockedAt: 1, note: NOTE }), [
+        task(1, "done"),
+        task(2, "open"),
+      ]),
+      "Engraving has 1 of 2 steps done. Change to Rush anyway? That work, the block and the note will not carry over.",
+    );
+    strictEqual(
+      changeWarning(from, "Rush", runOf({ blockedAt: 1 }), [
+        task(1, "started"),
+        task(2, "open"),
+      ]),
+      "Engraving has 1 of 2 steps started. Change to Rush anyway? That work and the block will not carry over.",
+    );
+  });
+
+  it("a run with nothing started, no block and no note gets no warning", () => {
+    strictEqual(
+      changeWarning(from, "Rush", runOf(), [task(1, "open"), task(2, "open")]),
+      "",
+    );
+  });
+
+  it("a blocked run with nothing started gets the block warning without a progress clause", () => {
+    const tasks = [task(1, "open"), task(2, "open")];
+    strictEqual(
+      changeWarning(from, "Rush", runOf({ blockedAt: 1 }), tasks),
+      "Engraving is blocked. Change to Rush anyway? The block will not carry over.",
+    );
+    strictEqual(
+      changeWarning(from, "Rush", runOf({ blockedAt: 1, note: NOTE }), tasks),
+      "Engraving is blocked. Change to Rush anyway? The block and the note will not carry over.",
+    );
+    strictEqual(
+      changeWarning(from, "Rush", runOf({ note: NOTE }), tasks),
+      "Engraving has a note. Change to Rush anyway? The note will not carry over.",
     );
   });
 });

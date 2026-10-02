@@ -1042,9 +1042,10 @@ const make = Effect.gen(function* () {
       // an item with no run too: nothing to make, nothing to start.
       if (Domain.unitsToMake(target.value.lineItem) === 0)
         return { _tag: "NothingToMake" } satisfies Domain.AttachResult;
-      // Over a run this is Change workflow, gated like every run write
-      // ({@link requireRunAction}); the only way `changeWorkflow` is
-      // false on an open order is a done run. Over a closed run it is the
+      // Over a run this is Change workflow, gated by the same action set as
+      // every run write but read here, with the item, rather than through
+      // {@link requireRunAction}; the only way `changeWorkflow` is false on
+      // an open order with units to make is a done run. Over a closed run it is the
       // picker at rest, which the order gate above covers.
       const repository = yield* RunRepository;
       const incumbent = (yield* repository.listRunsForOrder({

@@ -107,6 +107,7 @@ export type CopySlot = typeof CopySlot.Type;
  * | a write whose result is off-screen or closed a modal, or a press that did nothing | a toast with the verb, or with the fact that made the press do nothing                     | a banner                                                     |
  * | a field that refuses a value                                                      | the field's own error, on submit                                                           | a banner; a toast                                            |
  * | leaving for another screen from body copy                                         | a link whose text is the screen's heading, only when the act is not on this screen         | "here"; a link inside an empty sentence for an on-screen act |
+ * | a verb that replaces a run with a record on it (started, done, blocked, or a note) | the verb's modal carries the consequence as its `confirm` slot: what is lost; nothing when the run is untouched | a second modal; a warning on an untouched run |
  */
 export const Control = Schema.Literals([
   "button",

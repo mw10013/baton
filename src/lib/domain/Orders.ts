@@ -164,6 +164,12 @@ export type OrderState = typeof OrderState.Type;
  * nothing to do with whether a workflow is attached. Every other order is
  * open, whatever its runs say.
  *
+ * Shopify's archive (`closedAt` on the order) is not read. An archived,
+ * unfulfilled order is open here, its runs workable and its items
+ * attachable: archiving is filing, and the work on an unfulfilled order is
+ * still work. `ShopOrder` carries no `closedAt` so that nobody reads it by
+ * reflex.
+ *
  * **A closed order is read only.** Every write that does work on its runs is
  * refused (`runActions`, `taskActions` in ShopWork); only the note stays,
  * because a note is a record, not work. There is nothing to cancel either:

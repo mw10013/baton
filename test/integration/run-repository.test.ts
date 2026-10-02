@@ -647,6 +647,30 @@ describe("RunRepository.reconcileOrder", () => {
       }),
     ));
 
+  it("a Done on an open run whose item is at zero units stands, and reconcile then leaves the done run alone", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        yield* seed;
+        const sql = yield* SqlClient.SqlClient;
+        yield* upsertAndReconcile(order(), [lineItem(1, ["a"])]);
+        const [target] = yield* runsForOrder();
+        if (target === undefined) throw new Error("no run");
+        // Shopify has taken the item to zero and reconcile has not run yet:
+        // the stored item says zero under an open run.
+        yield* sql`update OrderLineItem set currentQuantity = 0 where id = ${lineItem(1, []).id}`;
+        yield* complete(target, 1, [TEAM_A.id]);
+        yield* complete(target, 2, [TEAM_B.id]);
+        const counts = yield* upsertAndReconcile(
+          order({ updatedAt: PROCESSED_AT + 1 }),
+          [lineItem(1, ["a"], { currentQuantity: 0 })],
+        );
+        strictEqual(counts.closed, 0);
+        const [after] = yield* runsForOrder();
+        strictEqual(after?.run.state, "done");
+        strictEqual(after?.run.closedReason, null);
+      }),
+    ));
+
   it("a closed item creates nothing on reconcile", () =>
     runInRepository(
       Effect.gen(function* () {
@@ -2760,7 +2784,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
       }),
     ));
 
-  it("merchant completes an unassigned task: no team clause, and the merchant fills both actors", () =>
+  it("a Done without a Start records the actor as the starter too", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seedStepped;
@@ -3444,6 +3468,39 @@ describe("RunRepository open-run ceiling", () => {
               [lineItem(2, []).id, "open"],
             ],
           );
+        }),
+      ),
+    ));
+
+  it("Reopen is allowed at the open-run ceiling and takes the shop one over it", () =>
+    withMaxOpenRuns(1, () =>
+      runInRepository(
+        Effect.gen(function* () {
+          yield* seed;
+          const runs = yield* RunRepository;
+          const sql = yield* SqlClient.SqlClient;
+          const openRuns = () =>
+            sql<{
+              readonly n: number;
+            }>`select count(*) as n from Run where state = 'open'`.pipe(
+              Effect.map((rows) => rows[0]?.n ?? 0),
+            );
+          yield* upsertAndReconcile(order(), [lineItem(1, ["a"])]);
+          const [first] = yield* runsForOrder();
+          if (first === undefined) throw new Error("no run");
+          yield* complete(first, 1, [TEAM_A.id]);
+          yield* complete(first, 2, [TEAM_B.id]);
+          // The done run frees the one room; item 2's run takes it.
+          yield* upsertAndReconcile(order({ updatedAt: PROCESSED_AT + 1 }), [
+            lineItem(1, ["a"]),
+            lineItem(2, ["b"]),
+          ]);
+          strictEqual(yield* openRuns(), Domain.ShopLimits.maxOpenRuns);
+          yield* runs.reopenTask({
+            runTaskId: first.tasks[1]?.id ?? "",
+            actor: MERCHANT,
+          });
+          strictEqual(yield* openRuns(), Domain.ShopLimits.maxOpenRuns + 1);
         }),
       ),
     ));

@@ -122,7 +122,8 @@
  * {@link SwitchResult} say what each refuses. The two screen
  * columns are the member's and the merchant's label; "(none)" means that
  * screen never offers the verb. Undo and Reopen are two words for one
- * verb on purpose: the member takes back their own Done, the merchant
+ * verb on purpose: on the bench it takes back a Done, usually one's own,
+ * and the whole team may press it, as it may Put back; the merchant
  * reopens someone's record. "done" is the verb "mark done", the state it
  * leaves the task in; the identifiers say `markTaskDone`.
  *
@@ -1967,28 +1968,19 @@ export type RunTaskId = typeof RunTaskId.Type;
  * `state = 'open'`. The fifth view, Done or closed, holds done tasks and closed
  * runs, a closed run with its reason ({@link RecentItem}).
  *
- * What each state allows. The gate column is the rule; the enforcing write
- * refuses with `RunTerminalError` when it fails. Which buttons a page shows
- * is {@link runActions} and {@link taskActions}, which read these same
- * predicates. `pnpm spec check` does not read this table: it names
- * the predicate per action, not a result per state, and the action matrices
- * pin each result it describes.
+ * What each state means to reconcile and the data model. Who may do each
+ * verb in each state, and which page offers it, is {@link runActions} and
+ * {@link taskActions}; `RunTerminalError` is the repository's refusal under
+ * them. `pnpm spec check` does not read this table: it names the predicate
+ * per rule, not a result per state.
  *
- * | action                                                                  | gate                                                                            |
- * | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
- * | Start                                                                   | {@link runIsOpen}, task ready, not {@link runIsBlocked}                         |
- * | Done                                                                    | {@link runIsOpen}, task ready or started, not {@link runIsBlocked}              |
- * | note                                                                    | always (a note is a record)                                                     |
- * | Block, Unblock, edit reason                                             | {@link runIsOpen}; Unblock and edit reason only while {@link runIsBlocked}      |
- * | Put back                                                                | {@link runIsOpen}, task started, not blocked                                    |
- * | assign a task's team                                                    | {@link runIsOpen}, task open                                                    |
- * | Cancel (close, `merchant_cancelled`)                                    | {@link runIsOpen}, order open ({@link orderIsOpen})                             |
- * | Reopen a done task                                                      | {@link runIsOpen} or {@link runIsDone}, order open; see {@link reopenBlockedBy} |
- * | reconcile resizes                                                       | {@link runIsOpen}; the badge is the rule on {@link Run} `quantityChangedFrom`   |
- * | reconcile closes                                                        | {@link runIsOpen}                                                               |
- * | holds its item: one run per item (the data model on `initializeSchema`) | always, `done` and `closed` included                                            |
- * | replaced by a manual attach                                             | {@link runIsOpen} or {@link runIsClosed}; a `done` run is a record              |
- * | counts against the shop ceiling                                         | {@link runIsOpen}                                                               |
+ * | rule                                                                    | gate                                                                                                    |
+ * | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+ * | reconcile resizes                                                       | {@link runIsOpen}; the badge is the rule on {@link Run} `quantityChangedFrom`                           |
+ * | reconcile closes                                                        | {@link runIsOpen}                                                                                       |
+ * | holds its item: one run per item (the data model on `initializeSchema`) | always, `done` and `closed` included                                                                    |
+ * | replaced by a manual attach                                             | {@link runIsOpen} or {@link runIsClosed}; a `done` run is a record                                      |
+ * | counts against the open-run ceiling                                     | {@link runIsOpen}; Reopen does not read the ceiling and may go one over it ({@link taskActions})        |
  *
  * A `done` run holds its item — a done item is not rerouted — but
  * is not open: done work does not count against
@@ -2050,6 +2042,27 @@ export const runIsUnstarted = (
   }[],
 ) => tasks.every((task) => task.startedAt === null && task.doneAt === null);
 
+/**
+ * The run carries a record a replacement would lose: a task started or
+ * done, a block, or a note. Change workflow inserts the new run fresh from
+ * its definition, so all four go with the old row, and its modal names
+ * them as the `confirm` slot (the controls row "a verb that replaces a run
+ * with a record on it", on `Control` in `Screen.ts`). A run with none of
+ * them loses nothing, and the modal says nothing. A run has a record when
+ * a task is started or done, the run is blocked, or it has a note.
+ */
+export const runHasRecord = (
+  run: { readonly blockedAt: number | null; readonly note: string | null },
+  tasks: readonly {
+    readonly startedAt: number | null;
+    readonly doneAt: number | null;
+  }[],
+) => !runIsUnstarted(tasks) || runIsBlocked(run) || runHasNote(run);
+
+/** The run's note has text; an empty note is no note. */
+export const runHasNote = (run: { readonly note: string | null }) =>
+  run.note !== null && run.note.length > 0;
+
 /** Work can still be recorded: Start, Done, Block, team assignment, cancel. */
 export const runIsOpen = (run: { readonly state: RunState }) =>
   run.state === "open";
@@ -2070,16 +2083,16 @@ export const runIsDone = (run: { readonly state: RunState }) =>
  * per rule, not a result per state, and the action matrices pin each result
  * it describes.
  *
- * | rule                                                              | enforcer                                  |
- * | ----------------------------------------------------------------- | ----------------------------------------- |
- * | Start, Done and Put back are refused; Reopen and the note are not | `RunBlockedError`, {@link taskActions}     |
- * | Unblock and edit reason are offered; Block is not                 | {@link runActions}                         |
- * | a blocked run holds no team ("waiting on") and shows no Now line  | `OrderRepository.listOrders`, the order page |
- * | counted as `blocked`, open runs only                              | {@link runCounts}                          |
- * | the run's row is on the Blocked view                              | {@link viewOf}                             |
+ * | rule                                                                    | enforcer                                     |
+ * | ----------------------------------------------------------------------- | -------------------------------------------- |
+ * | which verbs a block refuses and which it leaves: the `blocked yes` rows | {@link taskActions}, {@link runActions}      |
+ * | a blocked run holds no team ("waiting on") and shows no Now line        | `OrderRepository.listOrders`, the order page |
+ * | counted as `blocked`, open runs only                                    | {@link runCounts}                            |
+ * | the run's row is on the Blocked view                                    | {@link viewOf}                               |
  *
- * Reopen is not stopped because it takes work back rather than doing more,
- * and a held run is the one somebody needs to write on.
+ * Assign is left under a block on purpose: moving a held task to the team
+ * that can unstick it is a fix. Why Reopen and Put back fall where they do
+ * is on their bullets under {@link taskActions}.
  */
 export const runIsBlocked = (run: { readonly blockedAt: number | null }) =>
   run.blockedAt !== null;
@@ -3094,10 +3107,25 @@ const holdsCurrentTask = (
 
 /**
  * What an actor may do to one run, as the page and the server both read it.
- * The page renders a run-level button only when its field is true, and the
- * `ShopAgent` callable for that write computes the same object from the same
- * inputs and refuses with `NotAllowed` when the field is false, so a stale
- * tab or a second admin cannot write what the page would not offer. The
+ * The set is an upper bound. No screen offers a verb whose field is false;
+ * every `ShopAgent` callable for a run or task write computes the same
+ * object from the same inputs, read fresh inside the write, and refuses with
+ * `NotAllowed` when the field is false, so a stale tab or a second admin
+ * cannot write what no page would offer.
+ *
+ * A screen may offer fewer verbs than the set allows, and says why in its
+ * own JSDoc. Three do: the member's workflows list offers Start and not Done
+ * on a ready task (the row menu); the same list's Blocked view offers
+ * Unblock alone; the member's workflow page draws no Undo when `reopen`
+ * carries a blocker.
+ *
+ * A filled cell means the set allows the write; the repository may still
+ * refuse for a reason the set does not read. Three such refusals: a
+ * downstream start on Reopen (`ReopenBlocked`, the `blocker` cell on
+ * {@link taskActions}); the attach results on Change workflow
+ * (`OrderClosed`, `NothingToMake`, `ItemDone`, the `changeWorkflow` bullet
+ * below); a race between the render and the click (`NotBlocked`,
+ * `NotReady`, `Terminal`), whose toasts the order page carries. The
  * repository keeps its own guards underneath; they protect the write from
  * every caller, reconcile and tests included.
  *
@@ -3108,32 +3136,47 @@ const holdsCurrentTask = (
  *
  * "M" is the merchant. "m" is a member whose team holds a current
  * task on the run ({@link currentTasks}, {@link taskIsOnTeams}), the team gate
- * `RunRepository` applies to Block, Edit reason and Unblock; for the
- * note it is a member who can see the run ({@link runIsVisibleTo}). Blank is
- * never. Each state column is one input; a row is one fixture, and a word
+ * `RunRepository` applies to Block, Edit reason and Unblock. "v" is a
+ * member whose teams hold a task of the run ({@link runIsVisibleTo}) but no
+ * current one. Blank is never. Each state column is one input; a row is one fixture, and a word
  * such as "closed" under `order` stands for every state it names; `pnpm
- * spec check` refuses a table that leaves a state without a row. A done
+ * spec check` refuses a table that leaves a state without a row, or two
+ * rows that share one. A done
  * run is never blocked (the data model on `initializeSchema`,
  * `ShopAgentSchema.ts`), so "any" under `blocked` beside "open or done"
  * names a block on the open run only.
  *
- * | order  | run          | blocked | units | note | block | editReason | unblock | cancel | changeWorkflow |
- * | ------ | ------------ | ------- | ----- | ---- | ----- | ---------- | ------- | ------ | -------------- |
- * | open   | open         | no      | some  | M m  | M m   |            |         | M      | M              |
- * | open   | open         | yes     | some  | M m  |       | M m        | M m     | M      | M              |
- * | open   | open         | no      | none  | M m  | M m   |            |         | M      |                |
- * | open   | open         | yes     | none  | M m  |       | M m        | M m     | M      |                |
- * | open   | done         | no      | any   | M m  |       |            |         |        |                |
- * | open   | closed       | no      | any   | M m  |       |            |         |        |                |
- * | closed | open or done | any     | any   | M m  |       |            |         |        |                |
- * | closed | closed       | no      | any   | M m  |       |            |         |        |                |
+ * A row is checked against one task, on "m"'s team, current when the run is
+ * open, with the item at `units`; `scripts/lib/spec.ts` (`expand`) builds it.
+ * The `units` column exists for `changeWorkflow` alone. Cancel on an item at
+ * zero units is offered, and reconcile would close that run as
+ * `item_removed` anyway; both are closes.
+ *
+ * A member whose teams hold no task of the run gets nothing, the note
+ * included, and cannot open the run page (`RunRepository.getRunPage`
+ * answers `None`).
+ *
+ * | order  | run          | blocked | units | note  | block | editReason | unblock | cancel | changeWorkflow |
+ * | ------ | ------------ | ------- | ----- | ----- | ----- | ---------- | ------- | ------ | -------------- |
+ * | open   | open         | no      | some  | M m v | M m   |            |         | M      | M              |
+ * | open   | open         | yes     | some  | M m v |       | M m        | M m     | M      | M              |
+ * | open   | open         | no      | none  | M m v | M m   |            |         | M      |                |
+ * | open   | open         | yes     | none  | M m v |       | M m        | M m     | M      |                |
+ * | open   | done         | no      | any   | M m v |       |            |         |        |                |
+ * | open   | closed       | no      | any   | M m v |       |            |         |        |                |
+ * | closed | open or done | any     | any   | M m v |       |            |         |        |                |
+ * | closed | closed       | no      | any   | M m v |       |            |         |        |                |
  *
  * Why a cell is blank where it might not be:
  *
  * - `note` is never blank: a note is a record, not work.
  * - `block` is blank on a blocked run: it is already held, and a second
  *   Block would overwrite who held it. On a done or closed run there is no
- *   work left to hold.
+ *   work left to hold. Block, Edit reason and Unblock are the current
+ *   team's as a whole, so a teammate may lift a hold they did not set, and
+ *   a member whose team is later in the workflow writes a note instead: the
+ *   team doing the work is the team that stops it, and widening Block would
+ *   widen who the merchant has to ask.
  * - `editReason` and `unblock` need {@link runIsBlocked}. Closing a run
  *   clears its block, so a closed run is never blocked. A blocked run on a
  *   closed order is one reconcile has not yet closed; the order's close
@@ -3146,9 +3189,13 @@ const holdsCurrentTask = (
  *   work behind it, and reconcile would close it as `item_removed` on its
  *   next pass. A done run is a record ({@link RunState}). A closed item
  *   takes a new workflow from its picker instead ({@link lineItemState}).
+ *   The field is read by `merchantAttachWorkflow` alone, over a run that is
+ *   not closed, and never through the run gate (`requireRunAction` passes
+ *   no item). Its refusals are the attach results: `OrderClosed` and
+ *   `NothingToMake` before the field is read, `ItemDone` when it is false.
  *   Reading it needs the item, which only the merchant's callers
- *   hold, so `item` is optional and its absence answers false: member
- *   pages never offer Change workflow.
+ *   hold, so `item` is optional and its absence answers false: a member's
+ *   result is always false, and member pages never offer Change workflow.
  * - There is no member `cancel` or `changeWorkflow`: those are the
  *   merchant's decisions about what the shop makes.
  */
@@ -3160,6 +3207,7 @@ export const runActions = (
     readonly teamId: string | null;
     readonly current: boolean;
   }[],
+  /** Read for `changeWorkflow` alone, by the attach callable; absent, that field is false (the `changeWorkflow` bullet). */
   item?: Pick<OrderLineItem, "currentQuantity">,
 ): RunActions => {
   const merchant = actor.role === "merchant";
@@ -3196,11 +3244,28 @@ export type TaskActions = typeof TaskActions.Type;
  * What an actor may do to one task, by the same contract as
  * {@link runActions}: the page draws a button only when its field is true,
  * the `ShopAgent` callable refuses with `NotAllowed` when it is false, and
- * the test reads this table. "M" is the merchant, "m" a member whose team
- * the task is on ({@link taskIsOnTeams}). `pnpm spec check` refuses a table
- * that leaves a state the object can hold without a row; a `done` run with
- * a task not done is not one, and `-` under `downstream` is a state whose
- * blocker is never asked because Reopen is not offered there.
+ * the test reads this table; the upper bound, the screens that offer less
+ * and the refusals the set does not read are on {@link runActions}. "M" is
+ * the merchant, "m" a member whose team the task is on
+ * ({@link taskIsOnTeams}). A member whose teams hold no task of the run gets
+ * nothing, the note included, and cannot open the run page. `pnpm spec
+ * check` refuses a table that leaves a state the object can hold without a
+ * row, or two rows that share one; a `done` run with a task not done is not
+ * one, and `-` under `downstream` is a state whose blocker is never asked
+ * because Reopen is not offered there.
+ *
+ * Under `downstream`, `none` is no later task started or done; `started` is
+ * a later task started or done, since Done records a start
+ * (`markTaskDone` backfills `startedAt`); `-` is a state Reopen is never
+ * asked in. On a done run every task but the last has a started
+ * downstream, so the only reopenable task on a done run is its last one,
+ * which is the point of offering Reopen there.
+ *
+ * The task set reads the run and the order, never the item. An item at zero
+ * units under an open run is reconcile's to close (`item_removed`, the
+ * actions table on `reconcileItem`), and a Done that lands before that pass
+ * stands: a Done on an open run whose item is at zero units stands, and
+ * reconcile then leaves the done run alone.
  *
  * | order  | run          | blocked | task     | downstream | start | done | putBack | reopen  | assign |
  * | ------ | ------------ | ------- | -------- | ---------- | ----- | ---- | ------- | ------- | ------ |
@@ -3214,23 +3279,45 @@ export type TaskActions = typeof TaskActions.Type;
  * | closed | open or done | any     | any      | -          |       |      |         |         |        |
  * | closed | closed       | no      | any      | -          |       |      |         |         |        |
  *
- * `blocker` under `reopen` is the button with a sentence: the started
- * downstream task ({@link reopenBlockedBy}) is carried so the merchant page
- * can say what stands in the way.
+ * `reopen` has three values: `null` when it is not offered, `{ blockedBy:
+ * null }` when it is the button, `{ blockedBy }` when it is the sentence.
+ * `blocker` under `reopen` is the third value, for "M" and "m" alike: the
+ * started downstream task ({@link reopenBlockedBy}) is carried so a page
+ * can say what stands in the way, and which of them draws it is the
+ * screen's (the member's workflow page draws nothing, the merchant's order
+ * page the sentence).
  *
  * - `start` is member only. "Started" records that a worker picked the task
  *   up, and a merchant marking it started on their behalf would put a name
- *   on work nobody has begun.
+ *   on work nobody has begun. A Done without a Start records the actor as
+ *   the starter too, so a merchant's Done names the merchant twice and no
+ *   worker once.
  * - `done` and `putBack` stop under a block: a block means stop
- *   ({@link runIsBlocked}). Put back goes to the whole team, not only the
- *   starter (`RunRepository.putBackTask`).
+ *   ({@link runIsBlocked}). Put back is refused under a hold because a held
+ *   task is the one someone needs to write on, and clearing who has it
+ *   loses the one name the merchant needs. Put back goes to the whole team,
+ *   not only the starter: Start is a record, not a lock, and the inverse of
+ *   a verb is as open as the verb.
  * - `reopen` is offered under a block because it takes work back rather
  *   than doing more, and on a done run because reopening its last task is
  *   the point. Not on a closed run: closed is final ({@link RunState}),
- *   and reopening a task would put work back on a run that can never be done.
+ *   and reopening a task would put work back on a run that can never be
+ *   done. "m" is the task's team, not who pressed Done, for the reason on
+ *   `putBack`: a Done pressed by a teammate who has gone home is the case
+ *   Undo is for. Undo is offered to the task's whole team, not only to who
+ *   pressed Done. Reopen is allowed at the open-run ceiling and takes the
+ *   shop one over it: the ceiling bounds what reconcile creates
+ *   (`ShopLimits.maxOpenRuns`), and a correction refused because the shop
+ *   is busy would leave the merchant nothing to do but cancel something.
  * - `assign` is blank on a done task: it keeps the team that did it
  *   (`TaskDoneError`). One verb for a task with no team and for moving
- *   one that has a team.
+ *   one that has a team. Assign answers `Assigned`, not `Ok`, because it
+ *   carries `TeamNotFound`, which no other run write has; the test allows
+ *   for it.
+ * - A task on no team, or on a team that no longer exists
+ *   ({@link runTaskIsUnassigned}), is nobody's: every member cell is blank
+ *   and every merchant cell holds, so the merchant can finish or move work
+ *   no member can reach.
  * - Everything is blank on a closed order ({@link orderIsOpen}) and a
  *   closed run: Shopify, or the merchant, says the work is over.
  *
