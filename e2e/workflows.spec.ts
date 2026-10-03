@@ -352,7 +352,7 @@ test("turning on a workflow creates runs on the open orders already stored", asy
      because another item's picker on the same page lists every workflow by
      name. */
   await clickHoisted(appNavLink(page, "Orders"));
-  await frame.getByRole("link", { name: "#9101" }).click();
+  await frame.getByRole("link", { name: "#9101", exact: true }).click();
   await expect(frame.locator('s-page[heading="#9101"]')).toBeVisible();
   const band = frame.locator("s-section").filter({
     has: frame.getByRole("heading", { name: "E2E Band", exact: true }),

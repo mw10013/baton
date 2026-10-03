@@ -47,8 +47,6 @@ const rowOf = (page: Domain.OrdersPage, name: string) =>
   page.orders.find((row) => row.order.name === name);
 const flagged = (page: Domain.OrdersPage, field: "unassigned") =>
   page.orders.filter((row) => row[field]).map((row) => row.order.name);
-const waitingOf = (page: Domain.OrdersPage, name: string) =>
-  rowOf(page, name)?.waitingOn;
 
 const anOrder = (
   overrides: Partial<Domain.ShopOrder> = {},
@@ -1008,14 +1006,12 @@ describe("OrderRepository.listOrders team issues", () => {
 });
 
 /**
- * `Domain.OrderRow.waitingOn`: the teams with a current task on an open run,
- * through the same `currentWhere` the member's workflows list runs on, so the cell and the
- * filter are one fact rendered two ways. The fixture reuses `seedStates`'
- * runs and hangs tasks off them; on #1003 and #1004, `run-N-0` is done and
- * `run-N-1` is open.
+ * `Domain.ListOrdersInput.team`: the orders with a current task on the team
+ * on an open run, through the same `currentWhere` the member's workflows list
+ * runs on. The fixture reuses `seedStates`' runs and hangs tasks off them; on
+ * #1003 and #1004, `run-N-0` is done and `run-N-1` is open.
  */
-describe("OrderRepository.listOrders waitingOn", () => {
-  /** Ids ascend cut → pack → polish while names ascend Anodize → Cut → Pack, so the two orders disagree. */
+describe("OrderRepository.listOrders team", () => {
   const teams = Schema.decodeUnknownSync(
     Schema.Array(Domain.TeamWithMemberCount),
   )([
@@ -1047,9 +1043,9 @@ describe("OrderRepository.listOrders waitingOn", () => {
           ${doneAt === null ? null : "merchant"})
       `;
     };
-    /* #1003: two open item runs both current on Cut, so the id is distinct
-       across runs; the done run's task is on Cut too, and a run that is over
-       holds nobody up. */
+    /* #1003: two open item runs both current on Cut, so the order is listed
+       once; the done run's task is on Cut too, and a run that is over holds
+       nobody up. */
     yield* sql`
       insert into Run (
         id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
@@ -1064,8 +1060,7 @@ describe("OrderRepository.listOrders waitingOn", () => {
     yield* task("s3a", "run-3-1", 1, "team-cut");
     yield* task("s3b", "run-3-0", 1, "team-cut");
     yield* task("s3e", "run-3-2", 1, "team-cut");
-    /* #1004: current on Cut, with a later step on Anodize that is not current.
-       Anodize sorts first by name, so it would show if it counted. */
+    /* #1004: current on Cut, with a later step on Anodize that is not current. */
     yield* task("s4a", "run-4-1", 1, "team-cut");
     yield* task("s4b", "run-4-1", 2, "team-polish");
     const list = (team: Domain.TeamId | null = null, filter: Filter = null) =>
@@ -1085,8 +1080,8 @@ describe("OrderRepository.listOrders waitingOn", () => {
    * `#1007` is fulfilled and `#1006` cancelled. Reconcile closes every open
    * run on a closed order, but the rule does not lean on that: each is given
    * a leftover open run with an unassigned current task and a current task on
-   * Cut, and neither order has an issue or waits on anyone, in the cell or
-   * under the filter, whichever position is chosen.
+   * Cut, and neither order has an issue or waits on anyone under the
+   * filter, whichever position is chosen.
    */
   it("a fulfilled or cancelled order has no issues and waits on no team", async () => {
     const { all, cut, issues } = await runInRepository(
@@ -1105,7 +1100,6 @@ describe("OrderRepository.listOrders waitingOn", () => {
       }),
     );
     for (const name of ["#1007", "#1006"]) {
-      deepStrictEqual(waitingOf(all, name), []);
       const row = rowOf(all, name);
       strictEqual(row === undefined ? null : Domain.orderIssues(row).length, 0);
       strictEqual(names(issues).includes(name), false);
@@ -1113,57 +1107,27 @@ describe("OrderRepository.listOrders waitingOn", () => {
     deepStrictEqual(names(cut), ["#1004", "#1003"]);
   });
 
-  it("names each team once, only for current tasks on open runs", async () => {
-    const page = await runInRepository(
-      Effect.gen(function* () {
-        const { list } = yield* waitingFixture;
-        return yield* list();
-      }),
-    );
-    deepStrictEqual(waitingOf(page, "#1003"), [aTeamId("team-cut")]);
-    deepStrictEqual(waitingOf(page, "#1004"), [aTeamId("team-cut")]);
-    // Every run done: nobody is holding it.
-    deepStrictEqual(waitingOf(page, "#1001"), []);
-  });
-
   /**
    * A blocked run's current task still satisfies `currentWhere` (the workflows list keeps
-   * showing it), but the team cannot move it, so the cell and the filter both
-   * leave the team out; `RunCounts.blocked` is where that run is counted.
+   * showing it), but the team cannot move it, so the filter leaves the order
+   * out; `RunCounts.blocked` is where that run is counted.
    */
   it("leaves out a blocked run, which is counted as blocked instead", async () => {
-    const { page, filtered } = await runInRepository(
+    const filtered = await runInRepository(
       Effect.gen(function* () {
         const { sql, list } = yield* waitingFixture;
         yield* sql`update Run set blockedAt = 1, blockedBy = '{"role":"merchant"}' where id = 'run-4-1'`;
-        return {
-          page: yield* list(),
-          filtered: yield* list(aTeamId("team-cut")),
-        };
+        return yield* list(aTeamId("team-cut"));
       }),
     );
-    deepStrictEqual(waitingOf(page, "#1004"), []);
-    deepStrictEqual(waitingOf(page, "#1003"), [aTeamId("team-cut")]);
     strictEqual(rowOf(filtered, "#1004"), undefined);
     strictEqual(rowOf(filtered, "#1003")?.order.name, "#1003");
   });
 
-  it("leaves out a team that was deleted, which is unassigned instead", async () => {
-    const page = await runInRepository(
-      Effect.gen(function* () {
-        const { sql, list } = yield* waitingFixture;
-        yield* sql`update RunTask set teamId = 'team-gone' where id in ('s3a', 's3e')`;
-        return yield* list();
-      }),
-    );
-    deepStrictEqual(waitingOf(page, "#1003"), []);
-    strictEqual(rowOf(page, "#1003")?.unassigned, true);
-  });
-
   /**
-   * The filter is the column's membership test as a `where`, so the filtered
-   * page is exactly the rows whose cell names the team — and the counts are
-   * narrowed to it, as `Domain.OrderCounts` says.
+   * #1003 has two open runs current on Cut and is listed once; #1001's runs
+   * are all done; Anodize's task on #1004 is a later step. The counts are
+   * narrowed to the filter, as `Domain.OrderCounts` says.
    */
   it("keeps exactly the rows waiting on that team, and narrows the counts to it", async () => {
     const { all, cut, polish, unknown } = await runInRepository(
@@ -1178,12 +1142,6 @@ describe("OrderRepository.listOrders waitingOn", () => {
         };
       }),
     );
-    deepStrictEqual(
-      all.orders
-        .filter((row) => row.waitingOn.includes(aTeamId("team-cut")))
-        .map((row) => row.order.name),
-      names(cut),
-    );
     deepStrictEqual(names(cut), ["#1004", "#1003"]);
     deepStrictEqual(names(polish), []);
     deepStrictEqual(names(unknown), []);
@@ -1197,22 +1155,6 @@ describe("OrderRepository.listOrders waitingOn", () => {
     deepStrictEqual(cut.counts, { ...none, open: 2, making: 2 });
     deepStrictEqual(unknown.counts, none);
     strictEqual(all.counts.making, 4);
-  });
-
-  it("sorts by team name, not by id", async () => {
-    const page = await runInRepository(
-      Effect.gen(function* () {
-        const { task, list } = yield* waitingFixture;
-        yield* task("s3c", "run-3-1", 1, "team-pack");
-        yield* task("s3d", "run-3-1", 1, "team-polish");
-        return yield* list();
-      }),
-    );
-    deepStrictEqual(waitingOf(page, "#1003"), [
-      aTeamId("team-polish"),
-      aTeamId("team-cut"),
-      aTeamId("team-pack"),
-    ]);
   });
 });
 

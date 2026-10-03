@@ -444,7 +444,7 @@ const make = Effect.gen(function* () {
     return Effect.gen(function* () {
       const repository = yield* OrderRepository;
       /* One read of the teams for both consumers: the repository derives
-         `unassigned` and `waitingOn` from it, and
+         `unassigned` from it, and
          `OrdersIndexData` carries it so the route can name the ids it gets
          back. */
       const teams = yield* readTeams();

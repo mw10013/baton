@@ -94,7 +94,7 @@ const RUSH = "Rush";
 export const RETIRED_TEAM_EMPTY = "Retired team (empty)";
 /**
  * Exactly 32 characters, `Domain.TEAM_NAME_MAX_LENGTH`: the longest team name
- * the app accepts, so the Orders screen's Waiting on badges are judged at
+ * the app accepts, so the screens that print a team name are judged at
  * their widest.
  */
 const AT_CAP_TEAM = "Hand stitching and edge painting";

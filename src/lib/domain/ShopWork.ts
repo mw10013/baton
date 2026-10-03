@@ -80,9 +80,9 @@
  *
  * "In progress" is the run's screen word and only the run's: a started
  * task reads Started so the merchant never reads one word for two facts
- * on one card. "waiting" is a code word; the orders index's "Waiting on"
- * column means teams holding a current task, a fact about orders, and the
- * two never render together.
+ * on one card. "waiting" is a code word; the team filter's "waiting on"
+ * ({@link ListOrdersInput} `team`) means a team holding a current task, a
+ * fact about orders, and the two never render together.
  *
  * Workflow states, shop work:
  *
@@ -396,8 +396,8 @@ export type TeamId = typeof TeamId.Type;
 /**
  * The length of a trimmed team name: half of {@link NAME_MAX_LENGTH}. The
  * schema check and the Create and Rename fields read this. A team name is a
- * label: the Orders screen's Waiting on column puts up to two of them in one
- * table cell, one per line, and the member screens print one beside a task.
+ * label: the Orders screen's team filter and chip show one, and the member
+ * screens print one beside a task.
  * 32 still admits the names a shop gives a bench or a crew ("Leather
  * finishing, bench 3"); 24 would refuse some of them. Task and workflow
  * names keep 64 because they sit on their own line of a card, where they
@@ -1454,8 +1454,8 @@ export type OrderIssue = typeof OrderIssue.Type;
  * which they allow ({@link Workflow}). The workflows index shows each as a
  * badge and the workflow page as a banner ({@link WORKFLOW_FAULT_LABEL}).
  * Only `unassigned` is also an {@link OrderIssue}: a run task on no team
- * stops its order, while a team with no members is fixed on the team page
- * and the orders index's Waiting on column already names it.
+ * stops its order, while a team with no members is fixed on the team page,
+ * which says so.
  */
 export const WorkflowFault = Schema.Literals(["unassigned", "empty_team"]);
 export type WorkflowFault = typeof WorkflowFault.Type;
@@ -1599,11 +1599,20 @@ export const ListOrdersInput = Schema.Struct({
    */
   issues: Schema.Boolean,
   /**
-   * `null` is any team; an id keeps only orders waiting on that team
-   * ({@link OrderRow} `waitingOn`, open orders only) — the workflows list's own
-   * predicate for which tasks are current, not "owns a task somewhere in the run". The looser reading pulls in orders the team
-   * done days ago and orders it will not touch for two more steps, so
-   * the label carries the predicate.
+   * `null` is any team; an id keeps only orders waiting on that team: an
+   * open order with an open, unblocked run whose current task is on the
+   * team. "Current" is the workflows list's own predicate
+   * (`currentWhere`), not "owns a task somewhere in the run". The looser
+   * reading pulls in orders the team did days ago and orders it will not
+   * touch for two more steps, so the label carries the predicate.
+   *
+   * **Only an open order waits on a team**: under Fulfilled the filter
+   * matches nothing, because reconcile closed every open run on a fulfilled
+   * or cancelled order and only open runs have current tasks
+   * ({@link currentTasks}). A blocked run holds no team: its team cannot
+   * move it, and `RunCounts.blocked` is its alarm. A team with no members
+   * still matches, so the team page's drill-in shows the orders that team
+   * needs a member for.
    *
    * Always send the key. `subscribeOrders` parses with
    * `onExcessProperty: "error"`, and an omitted key is a different failure
@@ -1654,31 +1663,6 @@ export const OrderRow = Schema.Struct({
    * current. Remedy: Assign team on the order page.
    */
   unassigned: Schema.Boolean,
-  /**
-   * Teams with a current task on an open run of this order, distinct, as ids:
-   * "who is holding it", answered at the altitude the list grows with — a
-   * shop has a handful of teams, while its runs are a cross product of line
-   * items and matching workflows.
-   *
-   * **Only an open order waits on a team**: a fulfilled or cancelled
-   * order's list is empty by the state rule, because reconcile closed every
-   * open run on it and only open runs have current tasks ({@link currentTasks}).
-   * This is the same line {@link OrderIssue} draws: issues are open-only too.
-   *
-   * An unassigned current task contributes nothing, and neither does a team
-   * that no longer exists: both are `unassigned`, and rendering one fault
-   * in two cells makes it look like two alarms. A blocked run contributes
-   * nothing either: its team cannot move it, and `RunCounts.blocked` is its
-   * alarm. A team that exists with no members does contribute: the Waiting
-   * on cell names the team the merchant has to add a member to. So an order
-   * being made with an empty list is exactly an
-   * order whose every current task is unassigned, which is when the Needs a
-   * team badge is showing.
-   *
-   * Ids, not names: the Durable Object has no team names. The route resolves
-   * them through `OrdersIndexData.teams`, the teams the page was read against.
-   */
-  waitingOn: Schema.Array(TeamId),
   /**
    * How many of the order's items are **multi-match** ({@link multiMatchItems}).
    * Derived per read like {@link RunCounts}, never stored, so a Change
@@ -1877,8 +1861,7 @@ export const OrdersIndexData = Schema.Struct({
   syncState: OrdersSyncStatus,
   /**
    * The shop's teams, read live from D1 the page was read against — the same list
-   * `unassigned` and `OrderRow.waitingOn` were derived from,
-   * carried so the route can name the waiting-on ids and fill the team
+   * `unassigned` was derived from, carried so the route can fill the team
    * filter without a second read.
    */
   teams: Schema.Array(TeamWithMemberCount),

@@ -360,7 +360,7 @@ export class OrderRepository extends Context.Service<
       readonly issues: boolean;
       /** `null` is any team; an id is `Domain.ListOrdersInput.team` — waiting on that team. */
       readonly team: Domain.TeamId | null;
-      /** The shop's teams, read live from D1: what `unassigned` and `waitingOn` are derived against (`Domain.OrderRow`). */
+      /** The shop's teams, read live from D1: what `unassigned` is derived against (`Domain.OrderRow`). */
       readonly teams: Domain.EligibleContext["teams"];
     }) => Effect.Effect<
       Domain.OrdersPage,
@@ -989,12 +989,10 @@ export class OrderRepository extends Context.Service<
           )`;
           const unassignedRun = runWithTask(unassigned);
           /**
-           * The waiting-on column's membership test as a `where`, so a
-           * filtered page is exactly the rows whose cell names the team —
-           * nothing to explain about why a row matched. It restates
-           * `Domain.OrderRow.waitingOn` term for term, the open-order gate
-           * included, and must move with `waitingRows` below. Aliased `wr`
-           * for the same reason as `waitingRows`: `currentWhere` binds `r`.
+           * `Domain.ListOrdersInput.team`, whose JSDoc carries the rules, as
+           * a `where`. The outer run is aliased `wr` because `currentWhere`
+           * binds `r` for the task's own run inside its subqueries (see its
+           * JSDoc).
            */
           const teamFilter =
             team === null
@@ -1176,62 +1174,6 @@ export class OrderRepository extends Context.Service<
                     and not exists (${sql.literal(RUN_FOR_ITEM)})
                   group by li.orderId
                 `.values;
-          /**
-           * `Domain.OrderRow.waitingOn`, whose JSDoc carries the rules: a
-           * fourth per-page read rather than a term on the page query, for
-           * the reason the comment above gives for the other aggregates — the
-           * `ShopOrder` decoder wants exactly its own columns, and this one
-           * returns several rows per order anyway. Gated on `liveIds` because
-           * a task pointing at a deleted team is `unassigned`, and the outer
-           * run is aliased `wr`: `currentWhere` binds `r` for the task's own
-           * run inside its subqueries (see its JSDoc). `teamFilter` above
-           * restates this read as a `where` and must move with it.
-           */
-          const waitingRows =
-            ids.length === 0 || liveIds.length === 0
-              ? []
-              : yield* sql`
-                  select distinct wr.orderId, s.teamId
-                  from RunTask s
-                  join Run wr on wr.id = s.runId
-                  join ShopOrder o on o.id = wr.orderId
-                  where ${sql.in("wr.orderId", ids)}
-                    and ${sql.literal(openAs("o"))}
-                    and wr.state = 'open'
-                    and wr.blockedAt is null
-                    and ${sql.in("s.teamId", liveIds)}
-                    and ${sql.literal(CurrentWhere.currentWhere("s"))}
-                `.values;
-          /**
-           * Grouped through the teams rather than by re-branding the stored
-           * string, and sorted here by team name rather than in the route:
-           * the cell collapses past three teams, so an unstable order would
-           * move which ones hide behind the `+N` between refreshes of a
-           * subscribed page.
-           */
-          const teamsById = new Map<
-            string,
-            Domain.EligibleContext["teams"][number]
-          >(teams.map((team) => [team.id, team]));
-          const waiting = waitingRows.reduce<
-            Map<string, Domain.EligibleContext["teams"][number][]>
-          >((byOrder, row) => {
-            const team = teamsById.get(String(row[1]));
-            if (team === undefined) return byOrder;
-            const orderId = String(row[0]);
-            return byOrder.set(orderId, [
-              ...(byOrder.get(orderId) ?? []),
-              team,
-            ]);
-          }, new Map());
-          const waitingOn = new Map(
-            [...waiting].map(([orderId, teams]) => [
-              orderId,
-              teams
-                .toSorted((a, b) => a.name.localeCompare(b.name))
-                .map(({ id }) => id),
-            ]),
-          );
           const unassignedIds = new Set(
             unassignedRows.map((row) => String(row[0])),
           );
@@ -1333,7 +1275,6 @@ export class OrderRepository extends Context.Service<
                 closed: 0,
               },
               unassigned: unassignedIds.has(order.id),
-              waitingOn: waitingOn.get(order.id) ?? [],
               multiMatchItems: multiMatch.get(order.id) ?? 0,
             })),
             limit,

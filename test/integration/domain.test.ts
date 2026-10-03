@@ -31,7 +31,6 @@ const row = (
   itemUnits: 1,
   runs: { ...NONE, ...runs },
   unassigned: false,
-  waitingOn: [],
   multiMatchItems,
 });
 

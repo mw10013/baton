@@ -207,8 +207,6 @@ test("the team page drills in to the orders waiting on that team", async ({
     .toBe(team);
 
   await expect(
-    frame
-      .locator("s-table-row", { hasText: "#9401" })
-      .getByText(DRILL_TEAM, { exact: true }),
+    frame.getByRole("link", { name: "#9401", exact: true }),
   ).toBeVisible();
 });

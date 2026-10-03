@@ -95,12 +95,10 @@ test("orders screen syncs open orders and lists them", async ({ page }) => {
 });
 
 /**
- * The waiting-on column on the orders index: the team holding each open
- * order, read from the same `currentWhere` the member's workflows list runs on.
+ * Each row of the orders index opens the order in the Shopify admin through
+ * an icon button whose accessible name says where it goes.
  */
-test("the orders index names the team an open order is waiting on", async ({
-  page,
-}) => {
+test("the orders index links each order to Shopify", async ({ page }) => {
   test.setTimeout(120_000);
 
   const MEMBER = "e2e.orders@example.com";
@@ -127,20 +125,13 @@ test("the orders index names the team an open order is waiting on", async ({
   const frame = await gotoApp(page);
   await clickHoisted(appNavLink(page, "Orders"));
 
-  /* The waiting-on column, on the way past: the seeded run's first task is on
-     E2E Bench, so the row names the team that is holding the order. Located
-     inside the row, because the filter control on the same page carries the
-     same words. */
-  await expect(
-    frame.locator("s-table-header", { hasText: "Waiting on" }),
-  ).toBeVisible();
   await expect(
     frame
       .locator("s-table-row", { hasText: "#9201" })
-      .getByText(TEAM, { exact: true }),
+      .getByRole("link", { name: "Open #9201 in Shopify" }),
   ).toBeVisible();
 
-  await frame.getByRole("link", { name: "#9201" }).click();
+  await frame.getByRole("link", { name: "#9201", exact: true }).click();
   await expect(frame.locator('s-page[heading="#9201"]')).toBeVisible();
 });
 
@@ -218,14 +209,18 @@ test("the orders index searches by order number and clears back to the list", as
 
   const frame = await gotoApp(page);
   await clickHoisted(appNavLink(page, "Orders"));
-  await expect(frame.getByRole("link", { name: "#9302" })).toBeVisible();
+  await expect(
+    frame.getByRole("link", { name: "#9302", exact: true }),
+  ).toBeVisible();
 
   /* Under Made, where neither making order is listed. The chosen cell says
      so in its accessible name, since `aria-current` never reaches the
      native button. */
   await expect(stripChosen(frame, "Open")).toBeVisible();
   await stripCell(frame, "Made").click();
-  await expect(frame.getByRole("link", { name: "#9302" })).toHaveCount(0);
+  await expect(
+    frame.getByRole("link", { name: "#9302", exact: true }),
+  ).toHaveCount(0);
   await expect(stripChosen(frame, "Made")).toBeVisible();
   await expect(stripChosen(frame, "Open")).toHaveCount(0);
 
@@ -235,8 +230,12 @@ test("the orders index searches by order number and clears back to the list", as
   const search = searchField(frame);
   await search.fill("9301");
   await search.press("Enter");
-  await expect(frame.getByRole("link", { name: "#9301" })).toBeVisible();
-  await expect(frame.getByRole("link", { name: "#9302" })).toHaveCount(0);
+  await expect(
+    frame.getByRole("link", { name: "#9301", exact: true }),
+  ).toBeVisible();
+  await expect(
+    frame.getByRole("link", { name: "#9302", exact: true }),
+  ).toHaveCount(0);
   await expect(searchField(frame)).toHaveValue("9301");
   await expect(
     frame.getByText("1 order matches #9301", { exact: true }),
@@ -249,28 +248,40 @@ test("the orders index searches by order number and clears back to the list", as
   await expect(searchField(frame)).toHaveValue("");
   await expect(stripCell(frame, "Made")).toBeVisible();
   await expect(statusSelect(frame)).toHaveValue("made");
-  await expect(frame.getByRole("link", { name: "#9302" })).toHaveCount(0);
+  await expect(
+    frame.getByRole("link", { name: "#9302", exact: true }),
+  ).toHaveCount(0);
 
   await stripCell(frame, "Open").click();
-  await expect(frame.getByRole("link", { name: "#9302" })).toBeVisible();
+  await expect(
+    frame.getByRole("link", { name: "#9302", exact: true }),
+  ).toBeVisible();
 
   /* An item word finds both, by title. */
   await searchField(frame).fill("e2e band");
   await searchField(frame).press("Enter");
-  await expect(frame.getByRole("link", { name: "#9301" })).toBeVisible();
-  await expect(frame.getByRole("link", { name: "#9302" })).toBeVisible();
+  await expect(
+    frame.getByRole("link", { name: "#9301", exact: true }),
+  ).toBeVisible();
+  await expect(
+    frame.getByRole("link", { name: "#9302", exact: true }),
+  ).toBeVisible();
   await searchField(frame).fill("");
   await expect(stripCell(frame, "Open")).toBeVisible();
 
   const search2 = searchField(frame);
   await search2.fill("9301");
   await search2.press("Enter");
-  await expect(frame.getByRole("link", { name: "#9302" })).toHaveCount(0);
+  await expect(
+    frame.getByRole("link", { name: "#9302", exact: true }),
+  ).toHaveCount(0);
 
   /* Emptying the field is the search cleared, with no Enter: the list comes
      back. */
   await searchField(frame).fill("");
-  await expect(frame.getByRole("link", { name: "#9302" })).toBeVisible();
+  await expect(
+    frame.getByRole("link", { name: "#9302", exact: true }),
+  ).toBeVisible();
 
   /* A number no order carries: the empty state names it rather than falling
      back to a filter's copy, and offers Clear search. */
@@ -280,14 +291,20 @@ test("the orders index searches by order number and clears back to the list", as
     frame.getByRole("heading", { name: "No order matches #9999" }),
   ).toBeVisible();
   await frame.getByRole("button", { name: "Clear search" }).click();
-  await expect(frame.getByRole("link", { name: "#9302" })).toBeVisible();
+  await expect(
+    frame.getByRole("link", { name: "#9302", exact: true }),
+  ).toBeVisible();
 
   /* A bare order number typed into the URL is the search (`ListSearchParam`
      in `searchParams.ts`): the router parses `q=9301` as a number, and it
      reads as the digits rather than being dropped as an unreadable key. */
   const typed = await gotoApp(page, "app/orders?q=9301");
-  await expect(typed.getByRole("link", { name: "#9301" })).toBeVisible();
-  await expect(typed.getByRole("link", { name: "#9302" })).toHaveCount(0);
+  await expect(
+    typed.getByRole("link", { name: "#9301", exact: true }),
+  ).toBeVisible();
+  await expect(
+    typed.getByRole("link", { name: "#9302", exact: true }),
+  ).toHaveCount(0);
   await expect(searchField(typed)).toHaveValue("9301");
 });
 
@@ -336,7 +353,7 @@ test("the merchant marks a task done, reopens it, and blocks the run", async ({
 
   const frame = await gotoApp(page);
   await clickHoisted(appNavLink(page, "Orders"));
-  await frame.getByRole("link", { name: "#9301" }).click();
+  await frame.getByRole("link", { name: "#9301", exact: true }).click();
   await expect(frame.locator('s-page[heading="#9301"]')).toBeVisible();
 
   /* Collapsed, the run offers nothing to click but the disclosure: the trail
@@ -439,7 +456,7 @@ test("the merchant puts back a task a member started", async ({ page }) => {
 
   const frame = await gotoApp(page);
   await clickHoisted(appNavLink(page, "Orders"));
-  await frame.getByRole("link", { name: "#9304" }).click();
+  await frame.getByRole("link", { name: "#9304", exact: true }).click();
   await frame.getByRole("button", { name: "Manage" }).click();
 
   /* Read the task's line rather than its Started badge: team, who
@@ -494,7 +511,7 @@ test("the merchant cannot reopen a task whose next step is done", async ({
 
   const frame = await gotoApp(page);
   await clickHoisted(appNavLink(page, "Orders"));
-  await frame.getByRole("link", { name: "#9302" }).click();
+  await frame.getByRole("link", { name: "#9302", exact: true }).click();
   await frame.getByRole("button", { name: "Manage" }).click();
 
   /* Cut offers no Reopen and the page names no one (`Domain.taskActions`);
@@ -544,7 +561,7 @@ test("the merchant blocks a run with a reason, notes the run, and unblocks it", 
 
   const frame = await gotoApp(page);
   await clickHoisted(appNavLink(page, "Orders"));
-  await frame.getByRole("link", { name: "#9303" }).click();
+  await frame.getByRole("link", { name: "#9303", exact: true }).click();
   await frame.getByRole("button", { name: "Manage" }).click();
   /* No reason field on the card: the only one is in the closed modal. */
   await expect(frame.getByRole("textbox", { name: "Reason" })).toBeHidden();
@@ -651,7 +668,7 @@ test("the order card puts the run's badges on the title line, Manage above its d
 
   const frame = await gotoApp(page);
   await clickHoisted(appNavLink(page, "Orders"));
-  await frame.getByRole("link", { name: "#9311" }).click();
+  await frame.getByRole("link", { name: "#9311", exact: true }).click();
   const item = frame.locator("s-section").filter({
     has: frame.getByRole("heading", { name: "E2E Board", exact: true }),
   });
@@ -779,9 +796,11 @@ test("an item matching two workflows waits for the merchant to choose, then chan
   await expect
     .poll(() => new URL(page.url()).searchParams.get("issues"))
     .toBe("1");
-  await expect(frame.getByRole("link", { name: "#9401" })).toBeVisible();
+  await expect(
+    frame.getByRole("link", { name: "#9401", exact: true }),
+  ).toBeVisible();
 
-  await frame.getByRole("link", { name: "#9401" }).click();
+  await frame.getByRole("link", { name: "#9401", exact: true }).click();
   await expect(frame.locator('s-page[heading="#9401"]')).toBeVisible();
 
   /* An item with no run carries the picker at rest, and on a multi-match one it
@@ -1171,13 +1190,17 @@ test("each count is what choosing it shows, given the team", async ({
   }
   await stripCell(frame, "Open").click();
   await stripCell(frame, "Issues").click();
-  await expect(frame.getByRole("link", { name: "#9501" })).toBeVisible();
+  await expect(
+    frame.getByRole("link", { name: "#9501", exact: true }),
+  ).toBeVisible();
 
   /* A search reads every stored order, team or not, and moves no count:
      Clear search shows the same strip. */
   await searchField(frame).fill("9503");
   await searchField(frame).press("Enter");
-  await expect(frame.getByRole("link", { name: "#9503" })).toBeVisible();
+  await expect(
+    frame.getByRole("link", { name: "#9503", exact: true }),
+  ).toBeVisible();
   await frame.getByRole("button", { name: "Clear search" }).click();
   for (const [label, n] of counted)
     await expect(
@@ -1252,7 +1275,9 @@ test("Making and Issues combine, and a chip removes its filter", async ({
     })
     .toEqual(["making", "1"]);
   await expect(rows).toHaveCount(1);
-  await expect(frame.getByRole("link", { name: "#9701" })).toBeVisible();
+  await expect(
+    frame.getByRole("link", { name: "#9701", exact: true }),
+  ).toBeVisible();
 
   /* Three chips: Making, Issues and the team. Removing Issues keeps Making. */
   const chips = frame.locator("s-clickable-chip");

@@ -427,7 +427,7 @@ function RouteComponent() {
           suspicion that prompts it — "is this team backed up?" — rather than
           from browsing a picker. `?team=` means waiting on: the orders whose
           current task is this team's right now (open orders only, see
-          `Domain.OrderRow.waitingOn`), not every order it ever touched. Order positions stay on Orders; this page is the team's members
+          `Domain.ListOrdersInput.team`), not every order it ever touched. Order positions stay on Orders; this page is the team's members
           (`UsedByCard` below is configuration, not run state). */}
       <s-button
         slot="secondary-actions"

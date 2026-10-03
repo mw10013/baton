@@ -25,14 +25,6 @@ import { SocketBanner } from "@/lib/SocketBanner";
 import { useSubscribedQuery } from "@/lib/useSubscribedQuery";
 
 const ORDERS_PAGE_SIZE = 25;
-/**
- * Caps the Waiting on cell at two team names and a `+n`. The names sit one
- * per line, so the cap bounds the row's height, not its width (the width is
- * bounded by the names wrapping; see {@link waitingOnNames}). Three or more
- * current teams on one order is a parallel step across three teams, rare
- * enough that a count serves it.
- */
-const WAITING_ON_LIMIT = 2;
 
 /** The `?issues=` value a patch writes: `1` on, `undefined` off, the old value when the patch leaves it out. */
 const issuesKeyOf = (next: boolean | undefined, prev: 1 | undefined) => {
@@ -425,36 +417,9 @@ function RouteComponent() {
    * `renderOrders` all branch on it.
    */
   const neverStored = orders.length === 0 && !filtered;
-  /**
-   * `OrderRow.waitingOn` is ids — the Durable Object has no team names — and
-   * these are the teams it was derived against, carried in the same read.
-   */
+  /** The team filter's select and chip name the team its id points at. */
   const teamName = new Map(
     (data?.teams ?? []).map(({ id, name }) => [id, name]),
-  );
-
-  /**
-   * Who is holding the order: the teams with a current task on one of its open
-   * runs, one name per line, capped by {@link WAITING_ON_LIMIT}. Text, not
-   * badges: a badge is one state word (`CopySlot`'s controls table), and a
-   * team name is a name. Text also wraps, so the column's floor is a name's
-   * longest word, where a badge never wraps or truncates and a 32-character
-   * name made the column 200px wide, which at a 1024px viewport (an 800px
-   * iframe, 752px for the card) pushed the last columns past the card's edge
-   * into a scroll the admin gives no scrollbar for. `"Deleted team"` should
-   * never render — the repository only emits ids that were among the teams it
-   * read — but the lookup is nullable and a blank line is worse than a named
-   * gap.
-   */
-  const waitingOnNames = (ids: readonly Domain.TeamId[]) => (
-    <s-stack direction="block" gap="small-300">
-      {ids.slice(0, WAITING_ON_LIMIT).map((id) => (
-        <s-text key={id}>{teamName.get(id) ?? "Deleted team"}</s-text>
-      ))}
-      {ids.length > WAITING_ON_LIMIT && (
-        <s-text color="subdued">{`+${String(ids.length - WAITING_ON_LIMIT)}`}</s-text>
-      )}
-    </s-stack>
   );
 
   /**
@@ -529,9 +494,9 @@ function RouteComponent() {
    * because it is one axis now; Issues is not one of its values, it is the
    * strip's last cell and a chip. Team is a select rather than buttons: the
    * team list is unbounded. The primary way in is the drill-in from the team
-   * page, which sets `?team=`. It keeps the orders the Waiting on column names
-   * the team for. Under Fulfilled it can only match nothing, because a closed
-   * order waits on no team (`Domain.OrderRow.waitingOn`); that reads as an
+   * page, which sets `?team=`. It keeps the orders waiting on the team
+   * ({@link Domain.ListOrdersInput} `team`). Under Fulfilled it can only match nothing, because a closed
+   * order waits on no team; that reads as an
    * empty list with its text, which is better than a control that disappears.
    * Options are names only: a count per option would be a new per-team
    * aggregate on every refresh of a subscribed page, which is the cost
@@ -711,7 +676,6 @@ function RouteComponent() {
           <s-table-header listSlot="inline">Payment</s-table-header>
           <s-table-header listSlot="inline">Status</s-table-header>
           <s-table-header listSlot="inline">Issues</s-table-header>
-          <s-table-header listSlot="labeled">Waiting on</s-table-header>
           <s-table-header listSlot="labeled" format="numeric">
             Items
           </s-table-header>
@@ -744,28 +708,20 @@ function RouteComponent() {
                   {issueBadges(row)}
                 </s-stack>
               </s-table-cell>
-              {/* No placeholder for an empty cell. On an order with
-                  open runs, empty means every current task is unassigned
-                  (a team with no members still shows, so the merchant knows
-                  which team needs a member), and the Needs a team badge
-                  beside it already says so. A dash would flatten that into
-                  "nothing to see". A fulfilled or cancelled order is always
-                  empty (`Domain.OrderRow.waitingOn`). */}
-              <s-table-cell>{waitingOnNames(row.waitingOn)}</s-table-cell>
               <s-table-cell>{formatNumber(row.itemUnits)}</s-table-cell>
-              {/* The packer's handoff: a made order is fulfilled in the
-                  Shopify admin, never here, so the Made row links
-                  straight to it. Other rows get the same link under a
-                  neutral label. */}
+              {/* The order in the Shopify admin, where a made order is
+                  fulfilled. An icon, not "View in Shopify" on every row:
+                  the header already says where it goes, and the same three
+                  words down the column were noise. The label carries the
+                  link copy for a screen reader (`CopySlot` link row). */}
               <s-table-cell>
-                <s-link
+                <s-button
+                  icon="external"
+                  variant="tertiary"
                   href={adminOrderUrl(row.order)}
                   target={resourceLinkTarget}
-                >
-                  {Domain.orderPosition(row) === "made"
-                    ? "Fulfill in Shopify"
-                    : "View in Shopify"}
-                </s-link>
+                  accessibilityLabel={`Open ${row.order.name} in Shopify`}
+                />
               </s-table-cell>
             </s-table-row>
           ))}
