@@ -21,8 +21,8 @@ import type {
  *
  * The shop is a fictional made-to-order gift maker — engraved boards, leather
  * journals, signet rings, embroidered blankets — so every screen reads the way
- * a merchant's would: a worker at Engraving sees "Engrave · Signet ring ·
- * #1002", not "Task 2a · Workflow 03". Realism is what makes UX judgments
+ * a merchant's would: a worker at Engraving sees "Signet ring · #1002" over
+ * "Engrave crest", not "Task 2a · Workflow 03". Realism is what makes UX judgments
  * about the member area honest; the abstract names it replaced only proved
  * the plumbing.
  *
@@ -180,10 +180,11 @@ const AT_CAP_WORKFLOW =
  * with the first team returning, a parallel first step, instructions with a
  * pending draft, the off / unassigned / no-tasks rows, and one at the caps.
  *
- * Named after the process, not the product ("Stamp and bind" for the leather
- * journal): the member's row and workflow page print the item beside its
- * workflow, and a workflow named like its product reads as the item said
- * twice. The comment on each says which product it is for.
+ * Named the way merchants name them: after the process ("Stamp and bind" for
+ * the leather journal) or after the product. "Signet ring" is the
+ * product-named one, so the screens are seen under the simplest setup, where
+ * a workflow's name is its product's and the member's row prints it under the
+ * item it repeats. The comment on each says which product it is for.
  */
 export const workflows: readonly SeedWorkflow[] = [
   {
@@ -218,7 +219,7 @@ export const workflows: readonly SeedWorkflow[] = [
   },
   {
     // the signet ring: linear; instructions on every task; Jewelry starts and returns
-    name: "Cast and engrave",
+    name: "Signet ring",
     tag: TAG.ring,
     tasks: [
       task("Cast", JEWELRY, {
@@ -382,7 +383,10 @@ const item = (
   quantity: number,
   properties: Record<string, string | null> = {},
   extra: Partial<
-    Pick<SeedLineItem, "currentQuantity" | "progress" | "workflow">
+    Pick<
+      SeedLineItem,
+      "currentQuantity" | "progress" | "variantTitle" | "workflow"
+    >
   > = {},
 ): SeedLineItem => ({
   title,
@@ -433,12 +437,19 @@ const floorOrders: readonly SeedOrder[] = [
   },
   {
     // two items, each one task in, and both next tasks started at
-    // Engraving: "Started" over "Engraving · lead@m.com · since …" on two cards
+    // Engraving: "Started" over "Engraving · lead@m.com · since …" on two
+    // cards; the ring has a variant, "Signet ring · Sterling silver"
     n: 1002,
     advance: 1,
     started: true,
     lineItems: [
-      item("Signet ring", TAG.ring, 1, { Size: "9", Metal: "Sterling silver" }),
+      item(
+        "Signet ring",
+        TAG.ring,
+        1,
+        { Size: "9", Metal: "Sterling silver" },
+        { variantTitle: "Sterling silver" },
+      ),
       item("Leather journal", TAG.journal, 1, { Initials: "J.R.M." }),
     ],
   },
@@ -505,12 +516,18 @@ const floorOrders: readonly SeedOrder[] = [
   },
   {
     // blocked by a worker with a reason: the Blocked banner, with Unblock,
-    // on the card
+    // on the card; two rings of one variant, "Signet ring · Gold ×2"
     n: 1008,
     advance: 1,
     blocked: "Crest file missing from the order — asked the customer.",
     lineItems: [
-      item("Signet ring", TAG.ring, 1, { Size: "10", Metal: "Gold" }),
+      item(
+        "Signet ring",
+        TAG.ring,
+        2,
+        { Size: "10", Metal: "Gold" },
+        { variantTitle: "Gold" },
+      ),
     ],
   },
   {

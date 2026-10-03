@@ -12,6 +12,15 @@
  */
 import { Schema, SchemaGetter, Struct } from "effect";
 
+/**
+ * A count as every screen prints one: digits grouped the en-US way
+ * ("1,200"), no fraction. One rule for every number a screen shows, so the
+ * orders strip, the quotas and a row's `×n` agree; the row's `×n`
+ * ({@link itemPiece}) is the one the domain itself prints.
+ */
+export const formatNumber = (value: number) =>
+  value.toLocaleString("en-US", { maximumFractionDigits: 0 });
+
 export const SqliteBoolean = Schema.Number.pipe(
   Schema.decodeTo(Schema.Boolean, {
     decode: SchemaGetter.transform((n) => n === 1),

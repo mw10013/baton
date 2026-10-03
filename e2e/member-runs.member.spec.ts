@@ -51,23 +51,28 @@ const BAND_ORDER = "#9403";
 /** The band order's item, which heads its workflow page. */
 const BAND_ITEM = "E2E Cuff";
 const BAND_TAG = "e2e-runs-band";
-/** A run's row names the task and nothing else: progress is the workflow page's. */
+/** Cut and Pack in one parallel step on two teams; seeded only for the parallel-row test. */
+const SPLIT_ORDER = "#9405";
+const SPLIT_TAG = "e2e-runs-split";
+/** A row's task line opens with the task's name (`Domain.runRowLines`). */
 const CUT_TASK = "Cut";
 /**
  * The workflow page's started line. The badge beside the task name states the
  * state, so the line under it is team, actor and when, with no "Started" in
- * it. A teammate's row says `Started · <who>` instead.
+ * it. A teammate's row says `Started by <who>` instead.
  */
 const STARTED = `${CUT_TEAM} · ${MAKER} · since`;
 /** The same line for a done task: the `Done` badge carries the verb. */
 const FINISHED = `${CUT_TEAM} · ${MAKER}`;
 /**
- * A row's line two where the reader holds the task themselves: where it
- * is in the run, not "Started · you", which would be true of every row
- * under a pressed Started by you. The ring workflow has one task, and the maker is on
- * one team, so no team name follows it either.
+ * The ring row's last line, the recipe: the workflow name and where the item
+ * is in it (`Domain.runRowLines`). It is on every open row whatever its
+ * state; a task line under Started by you says nothing more than the task,
+ * because "Started by you" would be true of every row there.
  */
-const MINE_STATE = "Step 1 of 1";
+const RING_RECIPE = "E2E Runs Ring · Step 1 of 1";
+/** What a teammate's task line says after the task: who has it. */
+const STARTED_BY_MAKER = `${Domain.TASK_STATE_LABEL.started} by ${MAKER}`;
 /** Per-state empty text (`STATE_EMPTY` in `src/lib/workflowsListStates.ts`). */
 const EMPTY_MINE = "Nothing started by you.";
 const EMPTY_TEAMMATES = "Nothing started by others.";
@@ -111,6 +116,11 @@ const seedRuns = (
     /** Adds the two-step band order, for the tests about downstream work. */
     readonly withBand?: boolean;
     /**
+     * Adds the split order: one step of two parallel tasks, Cut and Pack, so
+     * the mate, on both teams, sees one row with two task lines.
+     */
+    readonly withSplit?: boolean;
+    /**
      * Seeds the band order with its first step already done **by the
      * merchant** — the state an intervention on the order page leaves behind,
      * reached here without an admin session (`SeedOrder.byMerchant`).
@@ -142,6 +152,18 @@ const seedRuns = (
         tag: BOX_TAG,
         tasks: [{ name: "Pack", team: PACK_TEAM }],
       },
+      ...(options.withSplit === true
+        ? [
+            {
+              name: "E2E Runs Split",
+              tag: SPLIT_TAG,
+              tasks: [
+                { name: "Cut", team: CUT_TEAM, step: 1 },
+                { name: "Pack", team: PACK_TEAM, step: 1 },
+              ],
+            },
+          ]
+        : []),
       ...(options.withBand === true
         ? [
             {
@@ -180,6 +202,16 @@ const seedRuns = (
               ...(options.bandDoneByMerchant === true
                 ? { advance: 1, byMerchant: true }
                 : {}),
+            },
+          ]
+        : []),
+      ...(options.withSplit === true
+        ? [
+            {
+              n: 9405,
+              lineItems: [
+                { title: "E2E Split", quantity: 2, tags: [SPLIT_TAG] },
+              ],
             },
           ]
         : []),
@@ -378,6 +410,14 @@ const card = (page: Page, orderName: string) =>
     .last();
 
 /**
+ * A row's lines, top to bottom, as a reader sees them: each line is a few
+ * elements (a name, the team, the state), so a line is read by its whole
+ * text rather than by one element's.
+ */
+const rowLines = (page: Page, orderName: string) =>
+  card(page, orderName).locator(".run-line");
+
+/**
  * A row's kebab: every verb a row offers is inside the menu it opens, which
  * is the shape Polaris's own resource list gives a row. It carries the gate
  * the bare buttons used to — `useMemberRunActions` holds `pending` true until
@@ -453,7 +493,15 @@ test("a member starts and completes their team's current task over the socket", 
   const page = await openRuns(browser, config, makerState, "ready");
 
   await expect(rowLink(page, RING_ORDER)).toBeVisible();
-  await expect(page.getByText(`${CUT_TASK} · ${MINE_STATE}`)).toBeVisible();
+  /* One task line and the recipe: Ready is the chosen state, so the task
+     line says the task and nothing the strip already says. */
+  await expect(
+    card(page, RING_ORDER).getByText(CUT_TASK, { exact: true }),
+  ).toBeVisible();
+  await expect(
+    rowLines(page, RING_ORDER).filter({ hasText: RING_RECIPE }),
+  ).toBeVisible();
+  await expect(card(page, RING_ORDER).getByText(READY)).toHaveCount(0);
   await markDocument(page);
 
   await rowAction(page, RING_ORDER, "Start");
@@ -470,7 +518,10 @@ test("a member starts and completes their team's current task over the socket", 
   /* The row says where it is in the run and not that it is the reader's own,
      which the pressed state already said; what changed is the verb in its menu,
      where Start has given way to Done. */
-  await expect(page.getByText(MINE_STATE)).toBeVisible();
+  await expect(
+    rowLines(page, RING_ORDER).filter({ hasText: RING_RECIPE }),
+  ).toBeVisible();
+  await expect(card(page, RING_ORDER).getByText(STARTED_BY_YOU)).toHaveCount(0);
   await clickWhenEnabled(rowMenu(page, RING_ORDER));
   const ring = card(page, RING_ORDER);
   await expect(
@@ -557,9 +608,7 @@ test("a task one member marks done lands on another member's workflows list with
   /* The mate's row says who has it; the start time is on the workflow page the
      row links to, which is one tap away and not on the list. */
   await selectState(mate, "started_by_others", STARTED_BY_OTHERS);
-  await expect(
-    mate.getByText(`${Domain.TASK_STATE_LABEL.started} · ${MAKER}`),
-  ).toBeVisible();
+  await expect(mate.getByText(STARTED_BY_MAKER)).toBeVisible();
 
   await selectState(maker, "started_by_you", STARTED_BY_YOU);
   await rowAction(maker, RING_ORDER, "Done");
@@ -637,9 +686,7 @@ test("a started card moves to Started by you for the starter and Started by othe
   await expect(stateCount(mate, STARTED_BY_OTHERS, 1)).toBeVisible();
   await expect(stateCount(mate, READY, 1)).toBeVisible();
   await selectState(mate, "started_by_others", STARTED_BY_OTHERS);
-  await expect(
-    mate.getByText(`${Domain.TASK_STATE_LABEL.started} · ${MAKER}`),
-  ).toBeVisible();
+  await expect(mate.getByText(STARTED_BY_MAKER)).toBeVisible();
 
   /* The other side of that fact, on the starter's own page: the only started
      task is theirs, so their Started by others state is empty and says so in three
@@ -745,14 +792,20 @@ test("a row names its team only for a member on several teams looking at all of 
   const config = seedConfig();
   await seedRuns(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
   const mate = await openRuns(browser, config, mateState, "ready");
-  await expect(card(mate, RING_ORDER).getByText(CUT_TEAM)).toHaveCount(1);
+  await expect(card(mate, RING_ORDER).getByText(`(${CUT_TEAM})`)).toHaveCount(
+    1,
+  );
 
   await teamSelect(mate).selectOption({ label: CUT_TEAM });
   await expect(mate).toHaveURL((url) => url.searchParams.has("team"));
-  await expect(card(mate, RING_ORDER).getByText(CUT_TEAM)).toHaveCount(0);
+  await expect(card(mate, RING_ORDER).getByText(`(${CUT_TEAM})`)).toHaveCount(
+    0,
+  );
 
   const maker = await openRuns(browser, config, makerState, "ready");
-  await expect(card(maker, RING_ORDER).getByText(CUT_TEAM)).toHaveCount(0);
+  await expect(card(maker, RING_ORDER).getByText(`(${CUT_TEAM})`)).toHaveCount(
+    0,
+  );
 });
 
 /**
@@ -771,6 +824,61 @@ test("line one shows the variant title", async ({ browser }) => {
   await expect(
     card(mate, RING_ORDER).getByText(RING_ITEM, { exact: true }),
   ).toBeVisible();
+});
+
+/**
+ * A parallel step is one row with a line per task, each with its own state
+ * (`Domain.runRowLines`): the mate started Pack, so the row is in their
+ * Started by you, and the maker started Cut, which the same row says by
+ * name. The quantity is on line one, and the team after each task, because
+ * the mate is on both teams and looking at all of them.
+ */
+test("a parallel row has a line per task, each with its own state", async ({
+  browser,
+}) => {
+  const config = seedConfig();
+  await seedRuns(config, {
+    cutMembers: [MAKER, MATE],
+    keepIdentities: true,
+    withSplit: true,
+  });
+  const maker = await openRuns(browser, config, makerState, "ready");
+  await rowAction(maker, SPLIT_ORDER, "Start");
+
+  /* A started task puts the row in the mate's Started by others
+     (`Domain.listStateOf`); starting Pack moves it to their Started by you. */
+  const mate = await openRuns(browser, config, mateState, "started_by_others");
+  await rowAction(mate, SPLIT_ORDER, "Start · Pack");
+  await selectState(mate, "started_by_you", STARTED_BY_YOU);
+  await expect(rowLines(mate, SPLIT_ORDER)).toHaveText([
+    "E2E Split ×2",
+    `Cut (${CUT_TEAM}) · ${STARTED_BY_MAKER}`,
+    `Pack (${PACK_TEAM})`,
+    "E2E Runs Split · Step 1 of 1",
+  ]);
+});
+
+/**
+ * A search ignores the state (`Domain.RunQuery`), so rows of every state mix
+ * under one and each task line says its state, which the strip no longer
+ * says for it.
+ */
+test("under a search every task line prints its state", async ({ browser }) => {
+  const config = seedConfig();
+  await seedRuns(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
+  const mate = await openRuns(browser, config, mateState, "ready");
+  await expect(
+    card(mate, RING_ORDER).getByText(READY, { exact: true }),
+  ).toHaveCount(0);
+
+  const search = mate.getByRole("searchbox", { name: "Search" });
+  await search.fill(RING_ORDER.slice(1));
+  await search.press("Enter");
+  await expect(rowLines(mate, RING_ORDER)).toHaveText([
+    RING_ITEM,
+    `Cut (${CUT_TEAM}) · ${READY}`,
+    RING_RECIPE,
+  ]);
 });
 
 /**
@@ -1166,7 +1274,9 @@ test("put back returns a started task to Ready for everyone", async ({
   const maker = await openRuns(browser, config, makerState, "ready");
   await rowAction(maker, RING_ORDER, "Start");
   await selectState(maker, "started_by_you", STARTED_BY_YOU);
-  await expect(maker.getByText(MINE_STATE)).toBeVisible();
+  await expect(
+    rowLines(maker, RING_ORDER).filter({ hasText: RING_RECIPE }),
+  ).toBeVisible();
 
   /* The mate is on Cut and Pack: the box order stays in their Ready, the
      ring order is a teammate's while the maker has it. */
@@ -1682,7 +1792,7 @@ test("a merchant's completion reads as Merchant on the workflows list and the wo
   /* The maker takes it back, and Cut is ready again. Start is offered because
      Undo returns the task to Ready (`RunRepository.reopenTask`),
      clearing the merchant's backfilled start along with everything else — the
-     task is nobody's, not "Started · Merchant". */
+     task is nobody's, not "Started by Merchant". */
   await clickWhenEnabled(page.getByRole("button", { name: "Undo" }));
   await expect(page.getByRole("button", { name: "Start" })).toBeVisible();
   await expect(

@@ -388,29 +388,100 @@ const runListItem = (
   order: { cancelledAt: null, fulfillmentStatus: "UNFULFILLED" },
 });
 
+/**
+ * A row at step 2 of 3 of workflow "Signet ring", one entry per task:
+ * `[name, team, starter]`, the starter an email local part, `"merchant"`, a
+ * starter with no known actor (`"?"`), or absent for a ready task.
+ */
+const starterOf = (
+  startedBy: string | undefined,
+): Pick<
+  Domain.RunListTask,
+  "startedAt" | "startedByEmail" | "startedByRole"
+> => {
+  if (startedBy === undefined)
+    return { startedAt: null, startedByEmail: null, startedByRole: null };
+  if (startedBy === "?")
+    return { startedAt: 1, startedByEmail: null, startedByRole: null };
+  if (startedBy === "merchant")
+    return { startedAt: 1, startedByEmail: null, startedByRole: "merchant" };
+  return {
+    startedAt: 1,
+    startedByEmail: Schema.decodeUnknownSync(Domain.Email)(
+      `${startedBy}@example.com`,
+    ),
+    startedByRole: "member",
+  };
+};
+
 const withTasks = (
-  tasks: readonly (readonly [name: string, team: string])[],
+  tasks: readonly (readonly [name: string, team: string, startedBy?: string])[],
+  block: { readonly reason: string | null } | null = null,
 ): Domain.RunListItem => {
-  const item = runListItem("1", 0);
+  const item = runListItem("1", 0, { blocked: block !== null });
   const [base] = item.tasks;
-  const [first, ...rest] = tasks.map(([name, team], index) => ({
+  const [first, ...rest] = tasks.map(([name, team, startedBy], index) => ({
     ...base,
     id: Schema.decodeUnknownSync(Domain.RunTaskId)(`t${String(index)}`),
     position: index + 2,
     step: 2,
     name: Schema.decodeUnknownSync(Domain.TaskName)(name),
     teamName: Schema.decodeUnknownSync(Domain.TeamName)(team),
+    ...starterOf(startedBy),
   }));
   if (first === undefined) throw new Error("withTasks: no tasks");
-  return { ...item, tasks: [first, ...rest], stepCount: 3 };
-};
-const line = (item: Domain.RunListItem, showTeam: boolean) => {
-  const { names, step } = Domain.runRowLine(item, showTeam);
-  return `${names} · ${step}`;
+  return {
+    ...item,
+    run: {
+      ...item.run,
+      workflowName: Schema.decodeUnknownSync(Domain.WorkflowName)(
+        "Signet ring",
+      ),
+      blockReason:
+        block?.reason === null || block === null
+          ? null
+          : Schema.decodeUnknownSync(Domain.BlockReason)(block.reason),
+    },
+    tasks: [first, ...rest],
+    stepCount: 3,
+  };
 };
 
-describe("Domain.runRowLine", () => {
-  it("a member row lists every current task by name, then step k of n, and names a team per task only when they differ", () => {
+const ME = Schema.decodeUnknownSync(Domain.Email)("me@example.com");
+
+/** The task lines as the row prints them: `Name (Team) · State`. */
+const taskLines = (
+  item: Domain.RunListItem,
+  showTeam: boolean,
+  state: Domain.WorkflowsListState | null,
+) =>
+  Domain.runRowLines(item, { memberEmail: ME, showTeam, state }).tasks.map(
+    (task) =>
+      `${task.name}${task.team === null ? "" : ` (${task.team})`}${task.state === null ? "" : ` · ${task.state}`}`,
+  );
+
+const blockOf = (
+  item: Domain.RunListItem,
+  state: Domain.WorkflowsListState | null,
+) =>
+  Domain.runRowLines(item, { memberEmail: ME, showTeam: false, state }).block;
+
+describe("Domain.runRowLines", () => {
+  it("a row has one line per current task, in position order", () => {
+    deepStrictEqual(
+      taskLines(
+        withTasks([
+          ["Stamp monogram", "Engraving"],
+          ["Engrave initials", "Engraving"],
+        ]),
+        false,
+        "ready",
+      ),
+      ["Stamp monogram", "Engrave initials"],
+    );
+  });
+
+  it("a task's team is printed after it when the list shows teams or when the row's tasks are on more than one team", () => {
     const one = withTasks([["Stamp monogram", "Engraving"]]);
     const shared = withTasks([
       ["Stamp monogram", "Engraving"],
@@ -420,31 +491,141 @@ describe("Domain.runRowLine", () => {
       ["Stamp monogram", "Engraving"],
       ["Engrave initials", "Finishing"],
     ]);
-    strictEqual(line(one, false), "Stamp monogram · Step 2 of 3");
-    strictEqual(line(one, true), "Stamp monogram · Step 2 of 3 · Engraving");
+    deepStrictEqual(taskLines(one, false, "ready"), ["Stamp monogram"]);
+    deepStrictEqual(taskLines(one, true, "ready"), [
+      "Stamp monogram (Engraving)",
+    ]);
+    deepStrictEqual(taskLines(shared, false, "ready"), [
+      "Stamp monogram",
+      "Engrave initials",
+    ]);
+    deepStrictEqual(taskLines(shared, true, "ready"), [
+      "Stamp monogram (Engraving)",
+      "Engrave initials (Engraving)",
+    ]);
+    deepStrictEqual(taskLines(split, false, "ready"), [
+      "Stamp monogram (Engraving)",
+      "Engrave initials (Finishing)",
+    ]);
+  });
+
+  it("a task line never repeats the state the filter already says", () => {
+    const mine = withTasks([["Cut", "Cutting", "me"]]);
+    const theirs = withTasks([["Cut", "Cutting", "them"]]);
+    const merchant = withTasks([["Cut", "Cutting", "merchant"]]);
+    const unknown = withTasks([["Cut", "Cutting", "?"]]);
+    const ready = withTasks([["Cut", "Cutting"]]);
+    deepStrictEqual(taskLines(mine, false, "started_by_you"), ["Cut"]);
+    deepStrictEqual(taskLines(theirs, false, "started_by_others"), [
+      "Cut · Started by them@example.com",
+    ]);
+    deepStrictEqual(taskLines(merchant, false, "started_by_others"), [
+      "Cut · Started by Merchant",
+    ]);
+    deepStrictEqual(taskLines(unknown, false, "started_by_others"), [
+      "Cut · Started",
+    ]);
+    deepStrictEqual(taskLines(ready, false, "ready"), ["Cut"]);
+  });
+
+  it("each task on a parallel step prints its own state", () => {
+    const row = withTasks([
+      ["Stamp monogram", "Engraving", "them"],
+      ["Stitch spine", "Engraving", "me"],
+      ["Emboss cover", "Engraving"],
+    ]);
+    deepStrictEqual(taskLines(row, false, "started_by_you"), [
+      "Stamp monogram · Started by them@example.com",
+      "Stitch spine",
+      "Emboss cover · Ready",
+    ]);
+  });
+
+  it("under a search every task line prints its state", () => {
+    const row = withTasks([
+      ["Stamp monogram", "Engraving", "them"],
+      ["Stitch spine", "Engraving", "me"],
+      ["Emboss cover", "Engraving"],
+      ["Gild edges", "Engraving", "?"],
+    ]);
+    deepStrictEqual(taskLines(row, false, null), [
+      "Stamp monogram · Started by them@example.com",
+      "Stitch spine · Started by you",
+      "Emboss cover · Ready",
+      "Gild edges · Started",
+    ]);
+  });
+
+  it("a block is the run's, said once: its tasks print no state, and the block line drops what the Blocked filter says", () => {
+    const reason = withTasks(
+      [
+        ["Cut", "Cutting", "me"],
+        ["Polish", "Cutting"],
+      ],
+      {
+        reason: "Waiting on stone",
+      },
+    );
+    const bare = withTasks([["Cut", "Cutting"]], { reason: null });
+    deepStrictEqual(taskLines(reason, false, null), ["Cut", "Polish"]);
+    strictEqual(blockOf(reason, null), "Blocked · Waiting on stone");
+    strictEqual(blockOf(reason, "blocked"), "Waiting on stone");
+    strictEqual(blockOf(bare, null), "Blocked");
+    strictEqual(blockOf(bare, "blocked"), null);
+    strictEqual(blockOf(withTasks([["Cut", "Cutting"]]), null), null);
+  });
+
+  it("the recipe line is the workflow name and step k of n, on every open row whatever its state", () => {
+    const recipe = (item: Domain.RunListItem) =>
+      Domain.runRowLines(item, {
+        memberEmail: ME,
+        showTeam: false,
+        state: null,
+      }).recipe;
+    const joined = (item: Domain.RunListItem) => {
+      const { workflow, step } = recipe(item);
+      return `${workflow} · ${step}`;
+    };
     strictEqual(
-      line(shared, true),
-      "Stamp monogram · Engrave initials · Step 2 of 3 · Engraving",
+      joined(withTasks([["Cut", "Cutting"]])),
+      "Signet ring · Step 2 of 3",
     );
     strictEqual(
-      line(shared, false),
-      "Stamp monogram · Engrave initials · Step 2 of 3",
+      joined(withTasks([["Cut", "Cutting"]], { reason: "x" })),
+      "Signet ring · Step 2 of 3",
     );
-    strictEqual(
-      line(split, true),
-      "Stamp monogram (Engraving) · Engrave initials (Finishing) · Step 2 of 3",
-    );
-    strictEqual(
-      line(split, false),
-      "Stamp monogram (Engraving) · Engrave initials (Finishing) · Step 2 of 3",
-    );
+  });
+});
+
+describe("Domain.rowShowsTeam", () => {
+  const TEAM = Schema.decodeUnknownSync(Domain.TeamId)("t");
+  const Q = Schema.decodeUnknownSync(Domain.ListSearch)("ring");
+  it("a row names its team when the member is on more than one team and the list is not narrowed to one, or the list is a search", () => {
+    strictEqual(Domain.rowShowsTeam(1, null, null), false);
+    strictEqual(Domain.rowShowsTeam(1, null, Q), false);
+    strictEqual(Domain.rowShowsTeam(2, null, null), true);
+    strictEqual(Domain.rowShowsTeam(2, TEAM, null), false);
+    strictEqual(Domain.rowShowsTeam(2, TEAM, Q), true);
+  });
+});
+
+const item = (variantTitle: string | null, quantity: number) => ({
+  lineItemTitle: "Signet ring",
+  variantTitle,
+  quantity,
+});
+
+describe("Domain.itemTitle", () => {
+  it("line one is the item title, then the variant, then ×n when there is more than one to make", () => {
+    strictEqual(Domain.itemTitle(item(null, 1)), "Signet ring");
+    strictEqual(Domain.itemTitle(item("Gold", 1)), "Signet ring · Gold");
+    strictEqual(Domain.itemTitle(item("Gold", 2)), "Signet ring · Gold ×2");
+    strictEqual(Domain.itemTitle(item(null, 1200)), "Signet ring ×1,200");
   });
 });
 
 const runIds = (items: readonly Domain.RunListItem[]) =>
   items.map((item) => item.run.id).join(",");
-
-const ME = Schema.decodeUnknownSync(Domain.Email)("me@example.com");
 
 describe("Domain.listStateOf", () => {
   it("a blocked run is in blocked; then started by you, then started by others, then ready", () => {

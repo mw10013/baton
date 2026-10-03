@@ -1,3 +1,5 @@
+import * as React from "react";
+
 import {
   createFileRoute,
   useNavigate,
@@ -160,17 +162,66 @@ const insideRow = (event: {
 };
 
 /**
- * Line one's item: the title, then the variant when the item has one
- * ("Signet ring · Gold"), so two variants of one product on one order read as
- * two pieces. A search matches the variant too (`Domain.searchTerm`).
+ * Line one of every row: the piece ({@link Domain.itemPiece}), its name
+ * clamped to two lines and `×n` beside it outside the clamp, and the order
+ * number in a cell of its own at the end. The count and the order number sit
+ * outside the clamp because a clamp never reaches them: a long title ends in
+ * an ellipsis and both stay on screen. The workflow name is not here. The
+ * simple setup names a workflow after its product, so beside the item it
+ * read as the item said twice, and the item already says which workflow the
+ * row is; the name is line three's, beside the step.
+ *
+ * No Blocked badge: under Blocked it would repeat the filter, and elsewhere
+ * the block line says it.
  */
-const itemTitle = (run: {
-  readonly lineItemTitle: string;
-  readonly variantTitle: string | null;
-}) =>
-  run.variantTitle === null
-    ? run.lineItemTitle
-    : `${run.lineItemTitle} · ${run.variantTitle}`;
+function PieceLine({ run }: { readonly run: Domain.RunListRun | Domain.Run }) {
+  const piece = Domain.itemPiece(run);
+  return (
+    <s-grid
+      gridTemplateColumns="minmax(0, 1fr) auto"
+      gap="small-300"
+      alignItems="start"
+    >
+      <s-stack direction="inline" gap="small-300" alignItems="center">
+        <div className="run-line">
+          {/* `.run-title-clip` in `styles.css` cuts it to two lines. */}
+          <div className="run-title-clip">
+            <s-text type="strong">{piece.name}</s-text>
+          </div>
+          {piece.quantity !== null && (
+            <Keep>
+              <s-text type="strong">{` ${piece.quantity}`}</s-text>
+            </Keep>
+          )}
+        </div>
+      </s-stack>
+      <div className="run-order">
+        <s-text color="subdued">{run.orderName}</s-text>
+      </div>
+    </s-grid>
+  );
+}
+
+/**
+ * A line of the row other than the first, in one line: its {@link Clip}
+ * parts are the free-length names (a task, a team, a reason, a workflow),
+ * cut with an ellipsis, and its {@link Keep} parts are the short fixed words
+ * (a state, the step, who did it), which are never cut. So a long name never
+ * pushes the row taller and never pushes the fixed words off it.
+ */
+function RowLine({ children }: { readonly children: React.ReactNode }) {
+  return <div className="run-line">{children}</div>;
+}
+
+/** The part of a {@link RowLine} that ends in an ellipsis when the line is full. */
+function Clip({ children }: { readonly children: React.ReactNode }) {
+  return <div className="run-line-clip">{children}</div>;
+}
+
+/** The part of a {@link RowLine} that is never cut; it keeps its leading space. */
+function Keep({ children }: { readonly children: React.ReactNode }) {
+  return <div className="run-line-keep">{children}</div>;
+}
 
 /**
  * Who did a Done or closed task entry, spelled as the waiting rows spell an actor:
@@ -327,17 +378,7 @@ function RouteComponent() {
   const workflowLocation = (runId: string) =>
     ({ to: "/shop/$shop/workflows/$runId", params: { shop, runId } }) as const;
 
-  /**
-   * Whether a row names its team. The team name is on the row for the one
-   * reader it tells something: a member on several teams looking at all of
-   * them, for whom it is which bench to walk to. Narrow to a team and every
-   * row of the list is that team, so the word is printed on each of them and
-   * discriminates nothing; a member on one team never had a second team for
-   * it to sort against. The same two facts decide whether the filter exists
-   * at all, so the reader who has the filter is the reader who gets the name.
-   * A search ignores the team, so under one the rows span teams again.
-   */
-  const showTeam = teams.length > 1 && (team === null || q !== null);
+  const showTeam = Domain.rowShowsTeam(teams.length, team, q);
 
   /**
    * One row per run: the whole row is one link to the workflow page, and
@@ -347,42 +388,22 @@ function RouteComponent() {
    * expanded row used to and the run history, the editors and a printable
    * ticket besides, for the same single tap.
    *
-   * Line one is the item's title and variant ({@link itemTitle}), then its
-   * workflow and order: what the row is. The item leads because it is what to make; the workflow name is
-   * the noun the merchant's order page uses for the same run, so the two
-   * sides can talk about one thing; the order is the qualifier.
-   * Line two is what to do on it ({@link Domain.runRowLine}): every current task
-   * by name, then the one thing the reader needs and no more — why it
-   * stopped, who has it, or where it is in the run. Every name rather than
-   * the first and a `+n`, because a count says there is more work without
-   * saying what it is.
+<   * Three parts, one kind of fact each. Line one is the piece
+   * ({@link PieceLine}): what to make, and for which order. Then the work:
+   * one line per current task, `Task (Team) · <state>`, then the block when
+   * there is one. Last the recipe: `<workflow> · Step k of n`. What each line
+   * prints, and when, is {@link Domain.runRowLines}; the row only lays it out.
    */
   const renderItem = (item: Domain.RunListItem, first: boolean) => {
     const { run, tasks } = item;
     const blocked = Domain.runIsBlocked(run);
-    const [task, ...rest] = tasks;
-    const started = task.startedAt !== null;
-    const startedBy = Domain.taskStartedBy(task);
+    const [, ...rest] = tasks;
     const menuId = `run-actions-${run.id}`;
-    const line = Domain.runRowLine(item, showTeam);
-    /**
-     * A row you started says where it is in the run, not "Started · you".
-     * Starting a task is what puts the row in Started by you ({@link Domain.listStateOf}),
-     * and Put back is the inverse that takes it out again, so those words are true of every row in that state and so
-     * distinguish none of them. A row a teammate started says who instead,
-     * which is the whole of what Started by others is for. The test is the
-     * starter rather than the chosen state because a run can have several current
-     * tasks on the member's teams and `tasks[0]` is the lowest-positioned
-     * one, not necessarily theirs.
-     */
-    const detailLine = () => {
-      if (blocked) return run.blockReason ?? line.step;
-      if (!started) return line.step;
-      if (startedBy === null) return Domain.RUN_STATE_LABEL.open;
-      return Domain.actorIsMember(startedBy, memberEmail)
-        ? line.step
-        : `${Domain.TASK_STATE_LABEL.started} · ${Domain.actorLabel(startedBy)}`;
-    };
+    const lines = Domain.runRowLines(item, {
+      memberEmail,
+      showTeam,
+      state: q === null ? state : null,
+    });
     /**
      * Every verb the row offers, inside the row's menu — the shape Polaris's
      * own resource list gives a row
@@ -404,8 +425,8 @@ function RouteComponent() {
      * there: the row walks the member through the task one verb at a time,
      * and Done straight from the list is one tap on the workflow page.
      *
-     * A single current task gives the bare verb: the task is named on line two
-     * of the row this menu belongs to. Several give one item each, because a
+     * A single current task gives the bare verb: the task is named on its own
+     * line of the row this menu belongs to. Several give one item each, because a
      * single verb would act on the first and say nothing about the rest.
      *
      * A started task also gets Put back, the one-press fix for a Start
@@ -505,7 +526,7 @@ function RouteComponent() {
       <s-box key={run.id} borderWidth={first ? "none" : "base none none none"}>
         <s-clickable
           href={router.buildLocation(workflowLocation(run.id)).href}
-          accessibilityLabel={`Open ${run.lineItemTitle} on ${run.orderName}`}
+          accessibilityLabel={`Open ${Domain.itemTitle(run)} on ${run.orderName}`}
           padding="small-100 base"
           onClick={(event) => {
             event.preventDefault();
@@ -513,22 +534,42 @@ function RouteComponent() {
           }}
         >
           <s-grid
-            gridTemplateColumns="1fr auto"
+            gridTemplateColumns="minmax(0, 1fr) auto"
             gap="small-300"
             alignItems="center"
           >
             <s-stack gap="small-500">
-              <s-stack direction="inline" gap="small-300" alignItems="center">
-                <s-text type="strong">{itemTitle(run)}</s-text>
-                <s-text color="subdued">{`${run.workflowName} · ${run.orderName}`}</s-text>
-                {/* No Blocked badge: it would read "Blocked" under a chosen
-                    Blocked state, beside an Unblock item, above the reason as
-                    typed — one fact said four times. */}
-              </s-stack>
-              {/* `.run-detail-line` in `styles.css` cuts it to two lines. */}
-              <div className="run-detail-line">
-                <s-text color="subdued">{`${line.names} · ${detailLine()}`}</s-text>
-              </div>
+              <PieceLine run={run} />
+              {lines.tasks.map((each) => (
+                <RowLine key={each.id}>
+                  <Clip>
+                    <s-text>{each.name}</s-text>
+                    {each.team !== null && (
+                      <s-text color="subdued">{` (${each.team})`}</s-text>
+                    )}
+                  </Clip>
+                  {each.state !== null && (
+                    <Keep>
+                      <s-text color="subdued">{` · ${each.state}`}</s-text>
+                    </Keep>
+                  )}
+                </RowLine>
+              ))}
+              {lines.block !== null && (
+                <RowLine>
+                  <Clip>
+                    <s-text color="subdued">{lines.block}</s-text>
+                  </Clip>
+                </RowLine>
+              )}
+              <RowLine>
+                <Clip>
+                  <s-text color="subdued">{lines.recipe.workflow}</s-text>
+                </Clip>
+                <Keep>
+                  <s-text color="subdued">{` · ${lines.recipe.step}`}</s-text>
+                </Keep>
+              </RowLine>
             </s-stack>
             {items.length > 0 && (
               <s-button
@@ -563,11 +604,13 @@ function RouteComponent() {
     }).reopen;
 
   /**
-   * A done task's row, the same shape as a waiting one: the row is a link
-   * to the workflow page and a kebab beside it holds Undo. Line one leads
-   * with the task, because the entry is the task that was done, and names
-   * its run the way every run row does ({@link renderItem}): the item, its
-   * workflow and order. Line two is who did it and when.
+   * A done task's row, the same shape as an open one: the row is a link
+   * to the workflow page and a kebab beside it holds Undo. Line one is the
+   * piece, as on every row ({@link PieceLine}), so a member scanning Done or
+   * closed for the thing they marked by mistake reads the same column they
+   * read everywhere else. Line two is the task and who did it when; line
+   * three the workflow name alone, without the step: a done task's step is
+   * history, and a {@link Domain.RecentItem} carries no step count.
    *
    * The kebab is there only while Undo is allowed. The rule used to be the
    * other way — a disabled button beside the clause naming its blocker, on
@@ -593,7 +636,7 @@ function RouteComponent() {
       >
         <s-clickable
           href={router.buildLocation(workflowLocation(entry.run.id)).href}
-          accessibilityLabel={`Open ${entry.run.lineItemTitle} on ${entry.run.orderName}`}
+          accessibilityLabel={`Open ${Domain.itemTitle(entry.run)} on ${entry.run.orderName}`}
           padding="small-100 base"
           onClick={(event) => {
             event.preventDefault();
@@ -601,22 +644,36 @@ function RouteComponent() {
           }}
         >
           <s-grid
-            gridTemplateColumns="1fr auto"
+            gridTemplateColumns="minmax(0, 1fr) auto"
             gap="small-300"
             alignItems="center"
           >
             <s-stack gap="small-500">
-              <s-stack direction="inline" gap="small-300" alignItems="center">
-                <s-text type="strong">{entry.task.name}</s-text>
-                <s-text color="subdued">{`${itemTitle(entry.run)} · ${entry.run.workflowName} · ${entry.run.orderName}`}</s-text>
-              </s-stack>
-              <div className="run-detail-line">
-                <s-text color="subdued">
-                  {`by ${doneActorLabel(entry.task, memberEmail)} at `}
-                  <LocalDateTime value={entry.task.doneAt ?? 0} format="time" />
-                  {entry.run.note === null ? "" : ` · Note: ${entry.run.note}`}
-                </s-text>
-              </div>
+              <PieceLine run={entry.run} />
+              <RowLine>
+                <Clip>
+                  <s-text>{entry.task.name}</s-text>
+                </Clip>
+                <Keep>
+                  <s-text color="subdued">
+                    {` · ${Domain.TASK_STATE_LABEL.done} by ${doneActorLabel(entry.task, memberEmail)} at `}
+                    <LocalDateTime
+                      value={entry.task.doneAt ?? 0}
+                      format="time"
+                    />
+                  </s-text>
+                </Keep>
+                {entry.run.note !== null && (
+                  <Clip>
+                    <s-text color="subdued">{` · Note: ${entry.run.note}`}</s-text>
+                  </Clip>
+                )}
+              </RowLine>
+              <RowLine>
+                <Clip>
+                  <s-text color="subdued">{entry.run.workflowName}</s-text>
+                </Clip>
+              </RowLine>
             </s-stack>
             {reopenable && (
               <s-button
@@ -650,8 +707,8 @@ function RouteComponent() {
 
   /**
    * A closed run's Done or closed row ({@link Domain.RecentItem}): line one is the
-   * item, its workflow and order, as on every run row ({@link renderItem}),
-   * then "Closed · <reason> · <time>" ({@link ClosedLine}). A link to
+   * piece, as on every row ({@link PieceLine}), line two "Closed · <reason> ·
+   * <time>" ({@link ClosedLine}), line three the workflow name. A link to
    * the workflow page and nothing else: closing is a notice, not a to-do, and a
    * closed run offers no verb but the note.
    */
@@ -665,7 +722,7 @@ function RouteComponent() {
     >
       <s-clickable
         href={router.buildLocation(workflowLocation(entry.run.id)).href}
-        accessibilityLabel={`Open ${entry.run.lineItemTitle} on ${entry.run.orderName}`}
+        accessibilityLabel={`Open ${Domain.itemTitle(entry.run)} on ${entry.run.orderName}`}
         padding="small-100 base"
         onClick={(event) => {
           event.preventDefault();
@@ -673,13 +730,17 @@ function RouteComponent() {
         }}
       >
         <s-stack gap="small-500">
-          <s-stack direction="inline" gap="small-300" alignItems="center">
-            <s-text type="strong">{itemTitle(entry.run)}</s-text>
-            <s-text color="subdued">{`${entry.run.workflowName} · ${entry.run.orderName}`}</s-text>
-          </s-stack>
-          <div className="run-detail-line">
-            <ClosedLine run={entry.run} viewer="member" prefix />
-          </div>
+          <PieceLine run={entry.run} />
+          <RowLine>
+            <Clip>
+              <ClosedLine run={entry.run} viewer="member" prefix />
+            </Clip>
+          </RowLine>
+          <RowLine>
+            <Clip>
+              <s-text color="subdued">{entry.run.workflowName}</s-text>
+            </Clip>
+          </RowLine>
         </s-stack>
       </s-clickable>
     </s-box>

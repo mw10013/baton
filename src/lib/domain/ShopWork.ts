@@ -48,8 +48,9 @@
  * the run without naming it), and the member has the item's workflow and
  * its tasks. `scripts/rules-lint.ts` refuses "run", "line item" and the
  * other retired words in screen strings. The run's screen word is
- * "workflow" with the item beside it ("Brass hinge ×2 · Finishing",
- * "Finishing workflow · #1001"). On the merchant's Workflows pages a bare
+ * "workflow" with the item beside it: the member's row is the item ("Brass
+ * hinge ×2") over its tasks and then "Finishing · Step 2 of 3", the workflow
+ * page heads "Finishing workflow · #1001". On the merchant's Workflows pages a bare
  * workflow name is the definition; on the member's Workflows list, which
  * never shows a definition, every row is a run and names its item.
  *
@@ -186,6 +187,7 @@ import {
   BoundedId,
   ConnectionRole,
   Email,
+  formatNumber,
   Shop,
   SqliteBoolean,
   SubscriberIdInput,
@@ -1188,7 +1190,7 @@ const SeedProgressFields = {
    * done, step 2 up next". `done` is the limit of this.
    */
   advance: Schema.optionalKey(Schema.Number.check(Schema.isInt())),
-  /** After `advance`, Start what is ready so the workflows list shows "Started · <seed member>" on a teammate's list. */
+  /** After `advance`, Start what is ready so the workflows list shows "Started by <seed member>" on a teammate's list. */
   started: Schema.optionalKey(Schema.Boolean),
   /**
    * Record the `done` / `advance` / `blocked` progress as the **merchant**
@@ -2623,15 +2625,17 @@ export type RunListTask = typeof RunListTask.Type;
 /**
  * The run behind a row, cut the same way. `orderProcessedAt` and
  * `lineItemId` stay although nothing prints them: they are two thirds of
- * {@link byAge}, which is the order every state is in. The block columns
- * stay because a blocked row prints its reason and who. `workflowName` stays because the row
- * names the item's workflow, the noun both sides use for a run.
+ * {@link byAge}, which is the order every state is in. `quantity` stays
+ * because line one prints `×n` when there is more than one to make
+ * ({@link itemPiece}), and the block columns stay because a blocked row
+ * prints its reason and who. `workflowName` stays because line three
+ * names the recipe the item follows ({@link runRowLines}).
  *
  * `variantTitle` and `sku` stay because a search matches them and line one
  * prints the variant ("Signet ring · Gold").
  *
  * What goes is everything only the workflow page reads — the order id, the
- * quantity, the timestamps, and `lineItemProperties`, which is the one that matters: a JSON blob on every row of every read, parsed on
+ * timestamps, and `lineItemProperties`, which is the one that matters: a JSON blob on every row of every read, parsed on
  * arrival, to render nothing. The run `note` stays:
  * the row prints it.
  */
@@ -2639,7 +2643,6 @@ export const RunListRun = Schema.Struct(
   Struct.omit(Run.fields, [
     "workflowId",
     "orderId",
-    "quantity",
     "lineItemProperties",
     "createdAt",
     "updatedAt",
@@ -2651,7 +2654,7 @@ export type RunListRun = typeof RunListRun.Type;
 
 /**
  * One row of a member's workflows list: a run with every *current* task
- * ({@link currentTasks}) that belongs to one of the member's teams. `stepCount` is the run's last step, for "Step k of n" ({@link runRowLine}).
+ * ({@link currentTasks}) that belongs to one of the member's teams. `stepCount` is the run's last step, for "Step k of n" ({@link runRowLines}).
  *
  * The order's live note is not here. It is the workflow page's, along with the
  * task instructions and the item's attributes: the row is a list entry that
@@ -2668,36 +2671,151 @@ export const RunListItem = Schema.Struct({
 export type RunListItem = typeof RunListItem.Type;
 
 /**
- * Line two of a member's run row, in two parts so the row can swap the second
- * for a block or "Started · <who>" and keep the first. `names` is every current task
- * in `position` order, so a parallel step shows all of its tasks rather than
- * one name and a count. `step` is `Step k of n`, where k is the step the current
- * tasks share and n is {@link RunListItem}'s `stepCount`.
+ * Line one of a member's row, the piece: the item's title, then its variant
+ * when it has one ("Signet ring · Gold"), so two variants of one product on
+ * one order read as two pieces, then `×n` when there is more than one to make
+ * ("Signet ring · Gold ×2"), written as the vocabulary writes a run ("Brass
+ * hinge ×2"). One unit says no number: the quantity is news only above one.
+ * The digits are grouped as every count on a screen is ({@link formatNumber}).
  *
- * The team is printed only where it tells the reader something. When the
- * listed tasks are on different teams each name carries its team in
- * parentheses and `step` carries none. When they share one team it follows
- * `step`, and only if `showTeam`: the row decides that from the member's team
- * count and filter.
+ * In two parts because the row clamps `name` and never `quantity`; a long
+ * title ends in an ellipsis and the count stays. {@link itemTitle} is the
+ * two joined, for the row's accessible label, which is never clamped.
  */
-export const runRowLine = (
-  { tasks, stepCount }: RunListItem,
-  showTeam: boolean,
-): { readonly names: string; readonly step: string } => {
-  const [first] = tasks;
+export const itemPiece = (run: {
+  readonly lineItemTitle: string;
+  readonly variantTitle: string | null;
+  readonly quantity: number;
+}): { readonly name: string; readonly quantity: string | null } => ({
+  name:
+    run.variantTitle === null
+      ? run.lineItemTitle
+      : `${run.lineItemTitle} · ${run.variantTitle}`,
+  quantity: run.quantity > 1 ? `×${formatNumber(run.quantity)}` : null,
+});
+
+/** {@link itemPiece} as one string: `Signet ring · Gold ×2`. */
+export const itemTitle = (run: Parameters<typeof itemPiece>[0]) => {
+  const { name, quantity } = itemPiece(run);
+  return quantity === null ? name : `${name} ${quantity}`;
+};
+
+/**
+ * Whether every row of a member's workflows list names its tasks' teams. The
+ * team is on the row for the one reader it tells something: a member on
+ * several teams looking at all of them, for whom it is which bench to walk
+ * to. Narrow to a team and every row of the list is that team, so the word is
+ * printed on each of them and discriminates nothing; a member on one team
+ * never had a second team for it to sort against. The same two facts decide
+ * whether the Team filter exists at all, so the reader who has the filter is
+ * the reader who gets the name. A search ignores the team ({@link RunQuery}),
+ * so under one the rows span teams again.
+ *
+ * This is the list's half; a row whose tasks are on different teams names
+ * them whatever this says ({@link runRowLines}).
+ */
+export const rowShowsTeam = (
+  teamCount: number,
+  team: TeamId | null,
+  q: ListSearch | null,
+) => teamCount > 1 && (team === null || q !== null);
+
+/**
+ * Lines two and three of a member's open row, as data: the route renders
+ * them, this decides them. Line one is the piece ({@link itemTitle}); line
+ * two is the work, one entry of `tasks` per current task on the member's
+ * teams in `position` order, then `block`; line three, `recipe`, is the
+ * recipe the item follows. One kind of fact per line, so a reader learns the
+ * layout once: the names on a row are of four kinds (item, task, team,
+ * workflow), all chosen by someone else, and nothing but their place says
+ * which is which.
+ *
+ * Every current task gets its own line rather than the first and a `+n`,
+ * because a count says there is more work without saying what it is, and
+ * its own state, because on a parallel step one task can be the reader's and
+ * the other a teammate's.
+ *
+ * **The team is printed after its task, `(Team)`, when `showTeam` is true or
+ * when the row's tasks are on more than one team** ({@link rowShowsTeam});
+ * otherwise `team` is null. Always in the same place, so it never reads as a
+ * task or a workflow.
+ *
+ * **The filter's state is never repeated.** A task line's `state` is:
+ * - started by the reader: `Started by you`, null under Started by you;
+ * - started by someone else: `Started by <who>` ({@link actorLabel}),
+ *   always, because who is the news even under Started by others;
+ * - started with no known starter: `Started`. Not the run's `In progress`,
+ *   which is the run's word ({@link RUN_STATE_LABEL});
+ * - ready: `Ready`, null under Ready.
+ *
+ * Under a search (`state` null), which ignores the state ({@link RunQuery}),
+ * rows of every state mix, so every task line prints its state.
+ *
+ * **A block is the run's, said once.** A blocked row's task lines print no
+ * state; `block` is `Blocked · <reason>`, the reason alone under Blocked,
+ * and `Blocked` when there is no reason, except under Blocked, where it is
+ * null because the filter already says it. An open row's `block` is null.
+ *
+ * **The recipe line is `<workflow> · Step k of n`** on every open row
+ * whatever its state: k is the step the current tasks share and n is
+ * {@link RunListItem}'s `stepCount`. In two parts, `workflow` and `step`,
+ * because the row clamps the name and never the step; for the same reason a
+ * task's `state` is apart from its name and team.
+ */
+export const runRowLines = (
+  { run, tasks, stepCount }: RunListItem,
+  context: {
+    readonly memberEmail: Email;
+    readonly showTeam: boolean;
+    /** The chosen state, or null under a search, which ignores it. */
+    readonly state: WorkflowsListState | null;
+  },
+): {
+  readonly tasks: readonly {
+    readonly id: RunTaskId;
+    readonly name: string;
+    readonly team: string | null;
+    readonly state: string | null;
+  }[];
+  readonly block: string | null;
+  readonly recipe: { readonly workflow: string; readonly step: string };
+} => {
+  const { memberEmail, showTeam, state } = context;
+  const blocked = runIsBlocked(run);
   const teams = new Set(tasks.map((task) => task.teamName));
-  const names = tasks
-    .map((task) =>
-      teams.size > 1 ? `${task.name} (${task.teamName})` : task.name,
-    )
-    .join(" · ");
-  const position = `Step ${String(first.step)} of ${String(stepCount)}`;
+  const named = showTeam || teams.size > 1;
+  const taskState = (task: RunListTask): string | null => {
+    if (blocked) return null;
+    if (task.startedAt === null)
+      return state === "ready" ? null : TASK_STATE_LABEL.ready;
+    const startedBy = taskStartedBy(task);
+    if (startedBy === null) return TASK_STATE_LABEL.started;
+    if (actorIsMember(startedBy, memberEmail))
+      return state === "started_by_you"
+        ? null
+        : `${TASK_STATE_LABEL.started} by you`;
+    return `${TASK_STATE_LABEL.started} by ${actorLabel(startedBy)}`;
+  };
+  const block = () => {
+    if (!blocked) return null;
+    if (state === "blocked") return run.blockReason;
+    return run.blockReason === null
+      ? RUN_STATE_LABEL.blocked
+      : `${RUN_STATE_LABEL.blocked} · ${run.blockReason}`;
+  };
+  const [first] = tasks;
   return {
-    names,
-    step:
-      showTeam && teams.size === 1
-        ? `${position} · ${first.teamName}`
-        : position,
+    tasks: tasks.map((task) => ({
+      id: task.id,
+      name: task.name,
+      team: named ? task.teamName : null,
+      state: taskState(task),
+    })),
+    block: block(),
+    recipe: {
+      workflow: run.workflowName,
+      step: `Step ${String(first.step)} of ${String(stepCount)}`,
+    },
   };
 };
 

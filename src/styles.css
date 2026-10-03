@@ -218,15 +218,50 @@ details[open] > .live-value-summary .live-value-preview {
  */
 
 /*
- * Line two of a run row, cut to two lines with an ellipsis: a blocked reason
- * can be a paragraph, and the row is not where it is read — the workflow page the
- * row links to shows the whole thing in its banner. `-webkit-box` is still the
- * only clamp Safari honours.
+ * A row's item title, cut to two lines with an ellipsis: Shopify allows a
+ * 255-character title, and the row is not where it is read — the workflow
+ * page the row links to heads with the whole thing. `-webkit-box` is still
+ * the only clamp Safari honours.
  */
-.run-detail-line {
+.run-title-clip {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   line-clamp: 2;
   overflow: hidden;
+  min-inline-size: 0;
+}
+
+/*
+ * The order number at the end of a row's line one: on the cell's end edge, so
+ * `#1015` and `#1008` line up down the list, and never wrapped.
+ */
+.run-order {
+  display: flex;
+  justify-content: flex-end;
+  white-space: nowrap;
+}
+
+/*
+ * A row's line, as parts: `.run-line-clip` holds the free-length names and
+ * shrinks, ending in an ellipsis; `.run-line-keep` holds the fixed words (a
+ * state, the step, the count) and never shrinks. `pre` keeps the leading
+ * space a kept part opens with, which a block would otherwise drop.
+ */
+.run-line {
+  display: flex;
+  align-items: baseline;
+  min-inline-size: 0;
+}
+
+.run-line-clip {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-line-keep {
+  flex: none;
+  white-space: pre;
 }

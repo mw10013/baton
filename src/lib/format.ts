@@ -58,8 +58,7 @@ export const formatTime = (value: number) =>
 export const formatStatus = (value: string) =>
   value.charAt(0) + value.slice(1).toLowerCase().replaceAll("_", " ");
 
-export const formatNumber = (value: number) =>
-  value.toLocaleString("en-US", { maximumFractionDigits: 0 });
+export { formatNumber } from "@/lib/Domain";
 
 /**
  * Coarse age for a run row's "ordered 3d ago": minutes under an hour,
