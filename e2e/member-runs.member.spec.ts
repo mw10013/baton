@@ -1210,8 +1210,8 @@ test("a done run's workflow page offers Undo on its last task", async ({
   ).toHaveCount(0);
 
   await clickWhenEnabled(page.getByRole("button", { name: "Undo" }));
-  await expect(page.getByText(`Reopened by ${MAKER}`)).toBeVisible();
-  /* Undo returns the task to Ready: no starter, so Start is back. */
+  /* Undo returns the task to Ready and records nothing: no starter, so
+     Start is back. */
   await expect(page.locator('s-badge:has-text("Ready")')).toBeVisible();
   await expect(page.getByText(STARTED)).toHaveCount(0);
   await expect(
@@ -1391,9 +1391,8 @@ test("the workflow page shows the task history and takes a note, a block, and Do
 
   /* The block, and what a block means: the banner heading says Blocked, the
      body is the reason with no prefix, and Done is gone until the hold is
-     lifted. Block and the reason edit share one modal: Edit reason reopens it under
-     "Block reason" on the text there now, and Save rewrites it — two lines,
-     kept as typed — without touching the hold. */
+     lifted. The banner offers Unblock and no Edit reason: a new reason is
+     Unblock, then Block. */
   const blockModal = page.locator("s-modal#run-block");
   await clickWhenEnabled(
     page.getByRole("button", { name: "Block", exact: true }),
@@ -1419,23 +1418,11 @@ test("the workflow page shows the task history and takes a note, a block, and Do
     page.getByRole("button", { name: "Done", exact: true }),
   ).toHaveCount(0);
 
-  await clickWhenEnabled(
+  await expect(
     page
       .locator('s-banner[heading="Blocked"]')
       .getByRole("button", { name: "Edit reason", exact: true }),
-  );
-  await expect(blockModal.getByText("Block reason")).toBeVisible();
-  await expect(blockModal.getByRole("textbox", { name: "Reason" })).toHaveValue(
-    "Waiting on stones",
-  );
-  await blockModal
-    .getByRole("textbox", { name: "Reason" })
-    .fill("Waiting on stones\nCalled the supplier");
-  await clickWhenEnabled(
-    blockModal.getByRole("button", { name: "Save", exact: true }),
-  );
-  await expect(page.getByText("Called the supplier")).toBeVisible();
-  await expect(page.locator('s-banner[heading="Blocked"]')).toBeVisible();
+  ).toHaveCount(0);
 
   /* The same hold as the workflows list reads it: the card carries its one action
      inside the banner and offers no task buttons at all, which is the whole
@@ -1670,9 +1657,7 @@ test("task buttons are all secondary and the advancing one comes first", async (
  * `merchantMarkTaskDone` would. `e2e/orders.spec.ts` drives the merchant's own
  * buttons; this is the other end of the wire.
  *
- * The Undo here is the *member's*, which is the point of the second half: the
- * "Reopened by …" line is one rendering, and a merchant reopen exercising it
- * is asserted on the order page instead.
+ * The Undo here is the *member's*, which is the point of the second half.
  */
 test("a merchant's completion reads as Merchant on the workflows list and the workflow page", async ({
   browser,
@@ -1694,13 +1679,11 @@ test("a merchant's completion reads as Merchant on the workflows list and the wo
   await expect(page.locator(`s-page[heading="${BAND_ITEM}"]`)).toBeVisible();
   await expect(page.getByText(`${CUT_TEAM} · Merchant`)).toBeVisible();
 
-  /* The maker takes it back: the same line the merchant's reopen writes, with
-     the member as the actor, and Cut is ready again. Start is offered because
+  /* The maker takes it back, and Cut is ready again. Start is offered because
      Undo returns the task to Ready (`RunRepository.reopenTask`),
      clearing the merchant's backfilled start along with everything else — the
      task is nobody's, not "Started · Merchant". */
   await clickWhenEnabled(page.getByRole("button", { name: "Undo" }));
-  await expect(page.getByText(`Reopened by ${MAKER}`)).toBeVisible();
   await expect(page.getByRole("button", { name: "Start" })).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Done", exact: true }),

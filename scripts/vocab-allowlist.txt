@@ -115,7 +115,5 @@ url
 value
 write
 # mechanism words: the map in src/lib/Domain.ts says a mechanism column
-# (webhookId, ...) names no concept and has no row; a delivery is one webhook
-# (`WebhookDelivery`)
+# (idempotencyKey, ...) names no concept and has no row
 webhook
-delivery

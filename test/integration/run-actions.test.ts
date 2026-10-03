@@ -54,31 +54,20 @@ const run = (state: Domain.RunState, blocked = false) => ({
   blockedAt: blocked ? 1 : null,
 });
 
-const BLOCKER: Domain.ReopenBlocker = {
-  taskName: Schema.decodeUnknownSync(Domain.TaskName)("Polish"),
-  teamName: Schema.decodeUnknownSync(Domain.TeamName)("Finishing"),
-};
-
-/** Whether a cell offers the action to "M", "m" or "v". `blocker` is offered to "M" and "m" ("v" is never in a `taskActions` cell). */
+/** Whether a cell offers the action to "M", "m" or "v". */
 const offered = (cell: ActionTable.Cell | undefined, who: "M" | "m" | "v") =>
-  cell === "blocker" || (cell ?? "").split(" ").includes(who);
-
-/** The `reopen` field a cell says `who` gets: `null` when not offered, otherwise the blocker, `null` meaning the button. */
-const reopenOf = (cell: ActionTable.Cell | undefined, who: "M" | "m" | "v") => {
-  if (!offered(cell, who)) return null;
-  return { blockedBy: cell === "blocker" ? BLOCKER : null };
-};
+  (cell ?? "").split(" ").includes(who);
 
 /** The result object a row's cells say `who` gets. */
 const expectedOf = (row: ActionTable.Row, who: "M" | "m" | "v") =>
   Object.fromEntries(
     Object.entries(row.cells).map(([field, cell]) => [
       field,
-      field === "reopen" ? reopenOf(cell, who) : offered(cell, who),
+      offered(cell, who),
     ]),
   );
 
-const CONTEXT = { teamId: T, blocker: BLOCKER };
+const CONTEXT = { teamId: T };
 
 describe("Domain.runActions matrix", () => {
   for (const row of RUN_ROWS)
@@ -122,7 +111,7 @@ const NOTHING: Domain.TaskActions = {
   start: false,
   done: false,
   putBack: false,
-  reopen: null,
+  reopen: false,
   assign: false,
 };
 
@@ -142,7 +131,7 @@ const task = (
   overrides: Partial<
     Pick<
       Domain.RunTaskRow,
-      "current" | "startedAt" | "doneAt" | "reopenBlockedBy"
+      "current" | "startedAt" | "doneAt" | "laterStepStarted"
     >
   > = {},
 ) => ({
@@ -150,7 +139,7 @@ const task = (
   current: true,
   startedAt: null,
   doneAt: null,
-  reopenBlockedBy: null,
+  laterStepStarted: false,
   ...overrides,
 });
 
@@ -239,7 +228,6 @@ const detailOf = (
     blockedAt: null,
     blockReason: null,
     blockedBy: null,
-    quantityChangedFrom: null,
     note: null,
     createdAt: 0,
     updatedAt: 0,
@@ -305,32 +293,17 @@ describe("Domain.reconcileItem actions", () => {
                     state: fixture.run.state,
                     quantity: fixture.run.quantity,
                   },
-                  tasks: [
-                    {
-                      startedAt: fixture.run.started ? 1 : null,
-                      doneAt: null,
-                    },
-                  ],
                 },
           matched: MATCHED.slice(0, fixture.matched),
-          atCeiling: fixture.atCeiling,
         });
         const where = JSON.stringify(fixture);
         strictEqual(action._tag, row.action.tag, where);
         if (action._tag === "close" && row.action.tag === "close")
           strictEqual(action.reason, row.action.reason, where);
-        if (action._tag === "resize") {
+        if (action._tag === "resize")
           strictEqual(action.units, fixture.units, where);
-          strictEqual(action.badge, fixture.run?.started, where);
-        }
         if (action._tag === "create")
           strictEqual(action.workflowId, MATCHED[0], where);
-        if (action._tag === "nothing")
-          strictEqual(
-            action.declined,
-            row.action.note.startsWith("declined"),
-            where,
-          );
       }
     });
 });
@@ -349,12 +322,8 @@ const plan = (fixture: PostFixture, run: FixtureRun, units: number) =>
     run:
       run === null
         ? null
-        : {
-            run: { state: run.state, quantity: run.quantity },
-            tasks: [{ startedAt: run.started ? 1 : null, doneAt: null }],
-          },
+        : { run: { state: run.state, quantity: run.quantity } },
     matched: POST_MATCHED.slice(0, fixture.matched),
-    atCeiling: fixture.atCeiling,
   });
 
 /** The run an action leaves on the item; `units` is what a create copies. */
@@ -365,11 +334,7 @@ const apply = (
 ): FixtureRun =>
   Match.value(action).pipe(
     Match.tagsExhaustive({
-      create: (): FixtureRun => ({
-        state: "open",
-        started: false,
-        quantity: units,
-      }),
+      create: (): FixtureRun => ({ state: "open", quantity: units }),
       close: (): FixtureRun =>
         run === null ? null : { ...run, state: "closed" },
       resize: ({ units: resized }): FixtureRun =>
@@ -405,28 +370,20 @@ const CLAUSES = {
     (after !== null) ===
       (Domain.orderCanCreateRuns(fixture.order) &&
         fixture.units > 0 &&
-        fixture.matched === 1 &&
-        !fixture.atCeiling),
+        fixture.matched === 1),
 };
 
 /**
  * A pass over a stored run whose item is not stored: read as an item at
- * zero units with no match, unless the order's items were truncated, when
- * no pass reads it (`RunRepository.reconcileOrder`).
+ * zero units with no match (`RunRepository.reconcileOrder`).
  */
 const orphanPass = (
   fixture: PostFixture,
   run: FixtureRun,
-  truncated: boolean,
-): Domain.ReconcileAction =>
-  truncated
-    ? { _tag: "nothing", declined: false }
-    : plan({ ...fixture, matched: 0 }, run, 0);
+): Domain.ReconcileAction => plan({ ...fixture, matched: 0 }, run, 0);
 
-const orphan = (before: FixtureRun, after: FixtureRun, truncated: boolean) =>
-  truncated
-    ? same(after, before)
-    : before?.state !== "open" || after?.state === "closed";
+const orphan = (before: FixtureRun, after: FixtureRun) =>
+  before?.state !== "open" || after?.state === "closed";
 
 /**
  * The post-condition on `Domain.reconcileItem` ("What a pass guarantees"),
@@ -447,24 +404,16 @@ describe("Domain.reconcileItem post-condition", () => {
         strictEqual(holds(fixture, after), true, `${clause}: ${where}`);
       deepStrictEqual(
         plan(fixture, after, fixture.units),
-        {
-          _tag: "nothing",
-          declined: first._tag === "nothing" && first.declined,
-        },
+        { _tag: "nothing" },
         `second pass: ${where}`,
       );
-      for (const truncated of fixture.run === null ? [] : [false, true]) {
-        const action = orphanPass(fixture, fixture.run, truncated);
-        const left = apply(fixture.run, action, 0);
-        strictEqual(
-          orphan(fixture.run, left, truncated),
-          true,
-          `orphan (truncated ${String(truncated)}): ${where}`,
-        );
+      if (fixture.run !== null) {
+        const left = apply(fixture.run, orphanPass(fixture, fixture.run), 0);
+        strictEqual(orphan(fixture.run, left), true, `orphan: ${where}`);
         deepStrictEqual(
-          orphanPass(fixture, left, truncated),
-          { _tag: "nothing", declined: false },
-          `orphan second pass (truncated ${String(truncated)}): ${where}`,
+          orphanPass(fixture, left),
+          { _tag: "nothing" },
+          `orphan second pass: ${where}`,
         );
       }
     }
@@ -522,8 +471,8 @@ describe("Domain.lineItemState", () => {
       offered: readonly Domain.Workflow[] = workflows,
     ) => kindOf(item, runs, offered);
     strictEqual(kind(lineItemOf(), [detailOf("open")]), "open");
-    strictEqual(kind(lineItemOf(), [detailOf("done")]), "done");
-    strictEqual(kind(lineItemOf(), [detailOf("closed")]), "closed");
+    strictEqual(kind(lineItemOf(), [detailOf("done")]), "ended");
+    strictEqual(kind(lineItemOf(), [detailOf("closed")]), "ended");
     // A run is the news even when the line went to zero under it.
     strictEqual(
       kind(lineItemOf({ currentQuantity: 0 }), [detailOf("open")]),
@@ -546,26 +495,28 @@ describe("Domain.lineItemState", () => {
       ["Polish", "Engrave", "Rush"],
     );
 
-    // A closed item keeps its run's tasks as the record and offers every
-    // workflow, the closed one included.
-    const closedDetail = detailOf("closed");
-    const closed = stateOf(lineItemOf(), [closedDetail], workflows);
-    if (closed.kind !== "closed") throw new Error(closed.kind);
-    strictEqual(closed.run.id, closedDetail.run.id);
-    deepStrictEqual(closed.tasks, []);
-    deepStrictEqual(
-      closed.options.map((workflow) => workflow.id),
-      [polish.id, engrave.id],
-    );
-    strictEqual(closed.attachable, true);
-    // Nothing left to make: the closed run stands, and no workflow starts.
-    const emptied = stateOf(
-      lineItemOf({ currentQuantity: 0 }),
-      [detailOf("closed")],
-      workflows,
-    );
-    if (emptied.kind !== "closed") throw new Error(emptied.kind);
-    strictEqual(emptied.attachable, false);
+    // A done or closed item keeps its run's tasks as the record and offers
+    // every workflow, its own included.
+    for (const state of ["done", "closed"] as const) {
+      const detail = detailOf(state);
+      const ended = stateOf(lineItemOf(), [detail], workflows);
+      if (ended.kind !== "ended") throw new Error(ended.kind);
+      strictEqual(ended.run.id, detail.run.id);
+      deepStrictEqual(ended.tasks, []);
+      deepStrictEqual(
+        ended.options.map((workflow) => workflow.id),
+        [polish.id, engrave.id],
+      );
+      strictEqual(ended.attachable, true);
+      // Nothing left to make: the run stands, and no workflow starts.
+      const emptied = stateOf(
+        lineItemOf({ currentQuantity: 0 }),
+        [detailOf(state)],
+        workflows,
+      );
+      if (emptied.kind !== "ended") throw new Error(emptied.kind);
+      strictEqual(emptied.attachable, false);
+    }
   });
 });
 
@@ -625,7 +576,6 @@ const seedOrder = (shop: string) =>
               fulfillmentStatus: "UNFULFILLED",
               fullyPaid: true,
               note: null,
-              lineItemsTruncated: false,
               syncedAt: now,
             },
             lineItems: [lineItemOf({ id: LINE_ITEM_ID, orderId: ORDER_ID })],
@@ -667,20 +617,20 @@ interface LiveRun {
  * done run is Polish: Cut's downstream is done there, which is started.
  */
 const tasksFor = (
-  fixture: ActionTable.Fixture<Domain.TeamId, Domain.ReopenBlocker>,
+  fixture: ActionTable.Fixture<Domain.TeamId>,
 ): {
   readonly target: "cut" | "polish";
   readonly cut: Progress;
   readonly polish: Progress;
 } => {
-  const { current, startedAt, doneAt, reopenBlockedBy } = fixture.task;
+  const { current, startedAt, doneAt, laterStepStarted } = fixture.task;
   const runDone = Domain.runIsDone(fixture.run);
   const done = { startedAt: 1, doneAt: 2 };
   if (doneAt === null)
     return current
       ? { target: "cut", cut: { startedAt, doneAt }, polish: IDLE }
       : { target: "polish", cut: IDLE, polish: IDLE };
-  if (reopenBlockedBy !== null)
+  if (laterStepStarted)
     return {
       target: "cut",
       cut: done,
@@ -702,7 +652,7 @@ const reset = (
   shop: string,
   live: LiveRun,
   teamId: string,
-  fixture: ActionTable.Fixture<Domain.TeamId, Domain.ReopenBlocker>,
+  fixture: ActionTable.Fixture<Domain.TeamId>,
   tasks: { readonly cut: Progress; readonly polish: Progress },
 ) =>
   runInDurableObject(
@@ -723,7 +673,7 @@ const reset = (
         LINE_ITEM_ID,
       );
       sql.exec(
-        "update Run set state = ?, blockedAt = ?, blockedBy = ?, blockReason = null, closedAt = ?, closedReason = ?, quantityChangedFrom = null where id = ?",
+        "update Run set state = ?, blockedAt = ?, blockedBy = ?, blockReason = null, closedAt = ?, closedReason = ? where id = ?",
         target.state,
         target.blockedAt,
         target.blockedAt === null ? null : JSON.stringify(MERCHANT),
@@ -738,7 +688,7 @@ const reset = (
         const started = progress.startedAt !== null;
         const done = progress.doneAt !== null;
         sql.exec(
-          "update RunTask set teamId = ?, startedAt = ?, startedByEmail = ?, startedByRole = ?, doneAt = ?, doneByEmail = ?, doneByRole = ?, reopenedAt = null, reopenedByRole = null, reopenedByEmail = null where id = ?",
+          "update RunTask set teamId = ?, startedAt = ?, startedByEmail = ?, startedByRole = ?, doneAt = ?, doneByEmail = ?, doneByRole = ? where id = ?",
           teamId,
           progress.startedAt,
           started ? "m1@example.com" : null,
@@ -876,10 +826,6 @@ describe("ShopAgent refuses what the action set refuses", () => {
         M: () => ctx.merchant.blockRun({ runId, reason: null }),
         m: () => ctx.member.blockRun({ runId, reason: null }),
       },
-      editReason: {
-        M: () => ctx.merchant.setBlockReason({ runId, reason: "x" }),
-        m: () => ctx.member.setBlockReason({ runId, reason: "x" }),
-      },
       unblock: {
         M: () => ctx.merchant.unblockRun({ runId }),
         m: () => ctx.member.unblockRun({ runId }),
@@ -895,13 +841,13 @@ describe("ShopAgent refuses what the action set refuses", () => {
 
   /**
    * Change workflow answers with the attach result, not `NotAllowed`:
-   * `ItemDone`, `OrderClosed` or `NothingToMake` on a blank cell. A
-   * successful attach replaces the run, so the live ids are re-read and the
-   * fixture applied to the new run.
+   * `OrderClosed` or `NothingToMake` on a blank cell. A successful attach
+   * replaces the run, reported as `replaced` unless it was closed, so the
+   * live ids are re-read and the fixture applied to the new run.
    */
   const checkChangeWorkflow = async (
     row: ActionTable.Row,
-    fixture: ActionTable.Fixture<Domain.TeamId, Domain.ReopenBlocker>,
+    fixture: ActionTable.Fixture<Domain.TeamId>,
     tasks: { readonly cut: Progress; readonly polish: Progress },
   ) => {
     const attached = await ctx.agent.merchantAttachWorkflow({
@@ -910,13 +856,13 @@ describe("ShopAgent refuses what the action set refuses", () => {
     });
     const label = `changeWorkflow by M on ${JSON.stringify(fixture)}`;
     if (!offered(row.cells.changeWorkflow, "M")) {
-      expect(["ItemDone", "OrderClosed", "NothingToMake"], label).toContain(
-        attached._tag,
-      );
+      expect(["OrderClosed", "NothingToMake"], label).toContain(attached._tag);
       return;
     }
     expect(attached._tag, label).toBe(OK);
-    expect(attached._tag === "Ok" && attached.replaced, label).not.toBe(null);
+    expect(attached._tag === "Ok" && attached.replaced !== null, label).toBe(
+      !Domain.runIsClosed(fixture.run),
+    );
     ctx.live = await ctx.readLive();
     await reset(ctx.shop, ctx.live, ctx.team.id, fixture, tasks);
   };
@@ -924,7 +870,6 @@ describe("ShopAgent refuses what the action set refuses", () => {
   const checkRunRow = async (row: ActionTable.Row) => {
     for (const fixture of ActionTable.expand("runActions", row, {
       teamId: ctx.team.id,
-      blocker: BLOCKER,
     })) {
       const tasks = Domain.runIsDone(fixture.run)
         ? {
@@ -941,10 +886,7 @@ describe("ShopAgent refuses what the action set refuses", () => {
         ).toBe(offered(row.cells[cell], who) ? OK : NOT_ALLOWED);
         await reset(ctx.shop, ctx.live, ctx.team.id, fixture, tasks);
       }
-      // On a closed run attach is the closed item's picker, whose rule is
-      // `Domain.lineItemState`, not this table, so it is not called there.
-      if (!Domain.runIsClosed(fixture.run))
-        await checkChangeWorkflow(row, fixture, tasks);
+      await checkChangeWorkflow(row, fixture, tasks);
     }
   };
 
@@ -977,23 +919,12 @@ describe("ShopAgent refuses what the action set refuses", () => {
       },
     });
 
-  /**
-   * The tag a filled task cell's callable answers. Two are not `Ok`:
-   * `assign` answers `Assigned`, and a `blocker` cell under `reopen` answers
-   * `ReopenBlocked`, because the table says the button is drawn with that
-   * sentence and the callable refuses for the downstream start rather than
-   * the action set.
-   */
-  const taskOk = (cell: string, value: ActionTable.Cell | undefined) => {
-    if (cell === "assign") return "Assigned";
-    if (value === "blocker") return "ReopenBlocked";
-    return OK;
-  };
+  /** The tag a filled task cell's callable answers: `Ok`, but `Assigned` for `assign`. */
+  const taskOk = (cell: string) => (cell === "assign" ? "Assigned" : OK);
 
   const checkTaskRow = async (row: ActionTable.Row) => {
     for (const fixture of ActionTable.expand("taskActions", row, {
       teamId: ctx.team.id,
-      blocker: BLOCKER,
     })) {
       const tasks = tasksFor(fixture);
       await reset(ctx.shop, ctx.live, ctx.team.id, fixture, tasks);
@@ -1002,11 +933,7 @@ describe("ShopAgent refuses what the action set refuses", () => {
         expect(
           result._tag,
           `${cell} by ${who} on ${tasks.target} in ${JSON.stringify(fixture)}`,
-        ).toBe(
-          offered(row.cells[cell], who)
-            ? taskOk(cell, row.cells[cell])
-            : NOT_ALLOWED,
-        );
+        ).toBe(offered(row.cells[cell], who) ? taskOk(cell) : NOT_ALLOWED);
         await reset(ctx.shop, ctx.live, ctx.team.id, fixture, tasks);
       }
     }
@@ -1023,7 +950,6 @@ describe("ShopAgent refuses what the action set refuses", () => {
       rowWhere(TASK_ROWS, state),
       {
         teamId: ctx.team.id,
-        blocker: BLOCKER,
       },
     ).find(
       ({ order, run: target }) =>
@@ -1045,7 +971,6 @@ describe("ShopAgent refuses what the action set refuses", () => {
       {
         note: false,
         block: false,
-        editReason: false,
         unblock: false,
         cancel: false,
         changeWorkflow: false,

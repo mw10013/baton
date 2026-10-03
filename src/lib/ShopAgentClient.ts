@@ -111,9 +111,6 @@ export class ShopAgentClient extends Context.Service<
       shop: string,
       input: Domain.TeamIdInput,
     ) => Effect.Effect<readonly Domain.TeamWorkflow[], ShopAgentClientError>;
-    readonly countTasksByTeam: (
-      shop: string,
-    ) => Effect.Effect<readonly Domain.TeamTaskCounts[], ShopAgentClientError>;
     readonly listAllTeamWorkflows: (
       shop: string,
     ) => Effect.Effect<
@@ -172,23 +169,6 @@ export class ShopAgentClient extends Context.Service<
     readonly setBillingCycle: (
       shop: string,
       input: Domain.BillingCycleInput,
-    ) => Effect.Effect<void, ShopAgentClientError>;
-    /**
-     * Reports the member count after a member add (`ShopAgent.recordMemberCount`).
-     * Answers the units queued.
-     */
-    readonly recordMemberCount: (
-      shop: string,
-      input: Domain.RecordMemberCountInput,
-    ) => Effect.Effect<number, ShopAgentClientError>;
-    /**
-     * Hands the object Shopify's own meter quantities so the divergence from the
-     * local count is observable (`ShopAgent.checkMeters`, which says why
-     * nothing is corrected from it).
-     */
-    readonly checkMeters: (
-      shop: string,
-      input: Domain.MeterQuantitiesInput,
     ) => Effect.Effect<void, ShopAgentClientError>;
     /**
      * Drains the object's usage-event outbox now rather than on the next order
@@ -251,7 +231,6 @@ export class ShopAgentClient extends Context.Service<
       const workflowsListData = Schema.toType(Domain.WorkflowsListData);
       const runPageData = Schema.toType(Schema.NullOr(Domain.RunPageData));
       const teamWorkflows = Schema.toType(Schema.Array(Domain.TeamWorkflow));
-      const teamTaskCounts = Schema.toType(Schema.Array(Domain.TeamTaskCounts));
       const teamWorkflowsByTeam = Schema.toType(
         Schema.Array(Domain.TeamWorkflowByTeam),
       );
@@ -279,12 +258,6 @@ export class ShopAgentClient extends Context.Service<
           (shop: string, input: Domain.TeamIdInput) =>
             call("listTeamWorkflows", teamWorkflows, shop, (stub) =>
               stub.listTeamWorkflows(input),
-            ),
-        ),
-        countTasksByTeam: Effect.fn("ShopAgentClient.countTasksByTeam")(
-          (shop: string) =>
-            call("countTasksByTeam", teamTaskCounts, shop, (stub) =>
-              stub.countTasksByTeam(),
             ),
         ),
         listAllTeamWorkflows: Effect.fn("ShopAgentClient.listAllTeamWorkflows")(
@@ -337,18 +310,6 @@ export class ShopAgentClient extends Context.Service<
           (shop: string, input: Domain.BillingCycleInput) =>
             call("setBillingCycle", Schema.Void, shop, (stub) =>
               stub.setBillingCycle(input),
-            ),
-        ),
-        recordMemberCount: Effect.fn("ShopAgentClient.recordMemberCount")(
-          (shop: string, input: Domain.RecordMemberCountInput) =>
-            call("recordMemberCount", Schema.Number, shop, (stub) =>
-              stub.recordMemberCount(input),
-            ),
-        ),
-        checkMeters: Effect.fn("ShopAgentClient.checkMeters")(
-          (shop: string, input: Domain.MeterQuantitiesInput) =>
-            call("checkMeters", Schema.Void, shop, (stub) =>
-              stub.checkMeters(input),
             ),
         ),
         flushUsageEvents: Effect.fn("ShopAgentClient.flushUsageEvents")(

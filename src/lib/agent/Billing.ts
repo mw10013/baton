@@ -1,23 +1,11 @@
-import { Clock, Context, Effect, Layer } from "effect";
+import type * as Domain from "@/lib/Domain";
 
-import * as Domain from "@/lib/Domain";
+import { Context, Effect, Layer } from "effect";
+
 import { causeToErrorMessage } from "@/lib/LayerEx";
 import { OrderRepository } from "@/lib/OrderRepository";
 
 import { ShopAgentHost } from "./Host.ts";
-
-/**
- * Records the shop's billing cycle (`OrderRepository.setBillingCycle`).
- *
- * Does not flush, though a new cycle queues its first seat event: the
- * revalidation checks the meters next, against quantities taken before this
- * push, and a flush here would drain the pending units that explain the
- * gap. {@link checkMeters} flushes after its check.
- */
-const setBillingCycle = (cycle: Domain.BillingCycleInput) =>
-  Effect.gen(function* () {
-    yield* (yield* OrderRepository).setBillingCycle(cycle);
-  });
 
 const make = Effect.gen(function* () {
   const host = yield* ShopAgentHost;
@@ -39,8 +27,8 @@ const make = Effect.gen(function* () {
    * edit through `ShopWorkAgent` ("turning a workflow on
    * sends the usage events for the orders it counted"), Sync from Shopify ("syncing
    * one order sends the usage queue, even when the sync fails") and the seed. A
-   * cycle push is sent by the meter check that follows it
-   * ({@link checkMeters}). Never inside a transaction: it does
+   * cycle push sends it after its own write ({@link setBillingCycle}). Never
+   * inside a transaction: it does
    * network I/O. The rows survive a failure, so the next
    * order's flush retries them, and `ShopUsage.pendingUsageEvents` is what makes
    * a queue that never drains visible on the admin page.
@@ -103,65 +91,14 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Reports the D1 member count after a member add
-   * (`OrderRepository.recordMemberCount`), then sends the queue. The caller is
-   * the members page's add, and the members are D1's, so the object cannot
-   * count it. Answers the units queued.
+   * Records the shop's billing cycle (`OrderRepository.setBillingCycle`),
+   * then sends the queue: a new cycle's first seat event, a rise in the seat
+   * mark, and anything queued before the shop had a `shopGid` go out now
+   * rather than at the next order.
    */
-  const recordMemberCount = (count: Domain.RecordMemberCountInput) =>
+  const setBillingCycle = (cycle: Domain.BillingCycleInput) =>
     Effect.gen(function* () {
-      const queued = yield* (yield* OrderRepository).recordMemberCount(
-        count,
-        yield* Clock.currentTimeMillis,
-      );
-      yield* flushUsageEvents();
-      return queued;
-    });
-
-  /**
-   * Stores Shopify's quantity per meter beside the local counts and compares
-   * each with the local counter plus the pending units: a meter whose two
-   * disagree by more than the outbox can explain diverges and is logged.
-   * Orders compare `ordersThisCycle`, members compare `seatsThisCycle`, each
-   * by {@link Domain.meterDiverges}.
-   *
-   * Nothing is corrected. The App Events API answers `202` to an event it will
-   * later refuse, so a divergence is the *only* evidence that a shop's usage
-   * is not being billed, and quietly moving the local number to match would
-   * erase it.
-   *
-   * Flushes after the check, not before: the quantities predate anything sent
-   * now, so the check needs the pending units still queued. This is what
-   * sends a new cycle's first seat event without waiting for the next order
-   * or member add, and what first sends events queued before the shop had a
-   * `shopGid`.
-   */
-  const checkMeters = (quantities: Domain.MeterQuantitiesInput) =>
-    Effect.gen(function* () {
-      const shop = host.shop();
-      const usage = yield* (yield* OrderRepository).checkMeters(quantities);
-      const meters = [
-        {
-          meter: Domain.USAGE_METER_ORDER,
-          local: usage.ordersThisCycle,
-          shopify: quantities.orders,
-          pending: usage.pendingOrderUnits,
-        },
-        {
-          meter: Domain.USAGE_METER_MEMBER,
-          local: usage.seatsThisCycle,
-          shopify: quantities.members,
-          pending: usage.pendingMemberUnits,
-        },
-      ];
-      for (const { meter, local, shopify, pending } of meters)
-        if (
-          shopify !== null &&
-          Domain.meterDiverges({ local, shopify, pending })
-        )
-          yield* Effect.logWarning(
-            `ShopAgent.checkMeters: shop=${shop} meter=${meter} local=${String(local)} shopify=${String(shopify)} pending=${String(pending)}: meter diverges`,
-          ).pipe(Effect.annotateLogs({ shop, meter, local, shopify, pending }));
+      yield* (yield* OrderRepository).setBillingCycle(cycle);
       yield* flushUsageEvents();
     });
 
@@ -169,14 +106,12 @@ const make = Effect.gen(function* () {
     flushUsageEvents: flushUsageEvents(),
     getUsage,
     setBillingCycle,
-    recordMemberCount,
-    checkMeters,
   };
 });
 
 /**
- * The object's billing: usage, the billing cycle, the member count and the
- * usage-event flush. The object map is on {@link ShopAgentHost}.
+ * The object's billing: usage, the billing cycle and the usage-event
+ * flush. The object map is on {@link ShopAgentHost}.
  */
 export class BillingAgent extends Context.Service<
   BillingAgent,

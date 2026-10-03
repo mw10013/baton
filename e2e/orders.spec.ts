@@ -381,7 +381,6 @@ test("the merchant marks a task done, reopens it, and blocks the run", async ({
   await expect(doneByMerchant).toBeVisible();
 
   await frame.getByRole("button", { name: "Reopen" }).click();
-  await expect(frame.getByText("Reopened by Merchant")).toBeVisible();
   await expect(doneByMerchant).toBeHidden();
   await expect(frame.getByText("Ready", { exact: true })).toBeVisible();
 
@@ -454,14 +453,10 @@ test("the merchant puts back a task a member started", async ({ page }) => {
 });
 
 /**
- * Reopen is not offered once someone downstream has moved — the same rule the
- * worker's Undo obeys (`Domain.reopenBlockedBy`), but this is the only screen
- * that puts the blocker into words, because it is the only one that can act
- * on it. The assertion is the whole rendered sentence, which is what pins the
- * wording now that it lives inline in the route rather than in `Domain`:
- * task first, team parenthetical, and the verb supplied by the prefix. Both
- * steps are done from this page, so Polish is the blocker on Cut's
- * row.
+ * Reopen is not offered once a later step has a task started or done — the
+ * same rule the worker's Undo obeys (`Domain.laterStepStarted`) — and no
+ * screen names the task in the way. Both steps are done, so Cut offers
+ * nothing and Polish, the last step, offers Reopen.
  */
 test("the merchant cannot reopen a task whose next step is done", async ({
   page,
@@ -502,27 +497,26 @@ test("the merchant cannot reopen a task whose next step is done", async ({
   await frame.getByRole("link", { name: "#9302" }).click();
   await frame.getByRole("button", { name: "Manage" }).click();
 
-  await expect(
-    frame.getByText(
-      `Can’t reopen: Polish (${POLISH_TEAM}) already started. Put it back or reopen it first.`,
-    ),
-  ).toBeVisible();
-  /* Polish itself is the last step, so exactly one Reopen is on the page. */
+  /* Cut offers no Reopen and the page names no one (`Domain.taskActions`);
+     Polish itself is the last step, so exactly one Reopen is on the page. */
+  await expect(frame.getByText("Can’t reopen", { exact: false })).toHaveCount(
+    0,
+  );
   await expect(frame.getByRole("button", { name: "Reopen" })).toHaveCount(1);
 });
 
 /**
- * Block from the disclosure, then edit the reason and unblock from the red
- * banner the block raises on the card — the `BlockBanner` the member page shows too. Block
- * and the reason edit share one modal, keyed on whether the run is blocked.
- * The reason is merchant prose, so it renders as the banner's body rather
+ * Block from the disclosure, then unblock from the red banner the block
+ * raises on the card — the `BlockBanner` the member page shows too. The
+ * banner offers no Edit reason: a new reason is Unblock, then Block. The
+ * reason is merchant prose, so it renders as the banner's body rather
  * than inside the badge, and the Now line still says where the run is.
  * `Unblock` is on the page once, in the banner: the Manage row drops Block
  * while blocked and never repeats Unblock. Nothing in the Manage row is red.
  * The run note is always on the card, blank as its "Edit note" button alone,
  * with no placeholder word and no Add note.
  */
-test("the merchant blocks a run with a reason, edits it, notes the run, and unblocks it", async ({
+test("the merchant blocks a run with a reason, notes the run, and unblocks it", async ({
   page,
 }) => {
   test.setTimeout(120_000);
@@ -581,22 +575,11 @@ test("the merchant blocks a run with a reason, edits it, notes the run, and unbl
   ).toHaveCount(0);
   await expect(item.locator('s-button[tone="critical"]')).toHaveCount(0);
 
-  await banner
-    .getByRole("button", { name: "Edit reason", exact: true })
-    .click();
-  await expect(blockModal.getByText("Block reason")).toBeVisible();
-  await expect(blockModal.getByRole("textbox", { name: "Reason" })).toHaveValue(
-    "Out of walnut stock",
-  );
-  await blockModal
-    .getByRole("textbox", { name: "Reason" })
-    .fill("Walnut arrives Friday");
-  await blockModal.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(banner.getByText("Walnut arrives Friday")).toBeVisible();
-  await expect(banner.getByText("Merchant", { exact: false })).toBeVisible();
+  await expect(
+    banner.getByRole("button", { name: "Edit reason", exact: true }),
+  ).toHaveCount(0);
 
-  /* The blank note is its one button, which names the note: the banner's
-     Edit reason sits a few lines above it. */
+  /* The blank note is its one button, which names the note. */
   await expect(item.getByText("Note", { exact: true })).toHaveCount(0);
   const editNote = item.getByRole("button", { name: "Edit note", exact: true });
   await expect(editNote).toHaveCount(1);
@@ -1014,15 +997,6 @@ test("each order-page state draws the controls its action set allows", async ({
           },
         ],
       },
-      {
-        // started, then the quantity dropped: resized, with the badge
-        n: 9507,
-        started: true,
-        after: { lineItems: [{ position: 1, currentQuantity: 1 }] },
-        lineItems: [
-          { title: "E2E Shrunk", quantity: 2, tags: ["e2e-state-a"] },
-        ],
-      },
     ],
   );
 
@@ -1073,8 +1047,7 @@ test("each order-page state draws the controls its action set allows", async ({
   await expect(
     resized.getByText("Done", { exact: true }).first(),
   ).toBeVisible();
-  /* A done run is never resized: no badge, nothing to dismiss. */
-  await expect(resized.getByText(/^Quantity changed/u)).toHaveCount(0);
+  /* A done run is never resized: nothing to dismiss. */
   await expect(button(resized, "Dismiss")).toHaveCount(0);
   await button(resized, "Manage").click();
   await expect(button(resized, "Reopen")).toBeVisible();
@@ -1083,7 +1056,6 @@ test("each order-page state draws the controls its action set allows", async ({
   );
 
   const held = await open(9504, "E2E Held");
-  await expect(button(held, "Edit reason")).toBeVisible();
   await expect(button(held, "Unblock")).toBeVisible();
   await button(held, "Manage").click();
   await expect(button(held, Domain.VERB_LABEL.done.merchant)).toHaveCount(0);
@@ -1110,15 +1082,6 @@ test("each order-page state draws the controls its action set allows", async ({
   await button(stopped, "Manage").click();
   await expect(stopped.getByText("E2E State A one")).toBeVisible();
   await expect(button(stopped, "Reopen")).toHaveCount(0);
-
-  /* The quantity badge is a notice with no button: the next Done clears it. */
-  const shrunk = await open(9507, "E2E Shrunk");
-  await expect(
-    shrunk.getByText("Quantity changed · 2 → 1", { exact: true }),
-  ).toBeVisible();
-  await button(shrunk, "Manage").click();
-  await button(shrunk, Domain.VERB_LABEL.done.merchant).first().click();
-  await expect(shrunk.getByText(/^Quantity changed/u)).toHaveCount(0);
 });
 
 /**
@@ -1481,8 +1444,9 @@ test("a bad filter value reads as no filter", async ({ page }) => {
  * where the alarm colour is. The sandbox holds real orders, so the team
  * select keeps this test to its own: `#9601` waits on a team with a member
  * and has an item matching two workflows, a Multiple workflows match issue;
- * `#9602`'s only task is on a team with no members, a Team has no members
- * issue; `#9603` has an unassigned task on a later step, a Needs a team
+ * `#9603` has an unassigned task on a later step, a Needs a team issue.
+ * `#9602`'s only task is on a team with no members, which is a workflow
+ * fault and no order issue (`Domain.WorkflowFault`), so its team shows no
  * issue. The Issues count honours the team (`Domain.OrderCounts`), so each
  * team shows its own order.
  *
@@ -1588,7 +1552,6 @@ test("every issue kind counts in the Issues filter and its badge is critical", a
   const team = frame.getByRole("combobox", { name: "Team" });
   const cases = [
     [TEAM, "#9601", "Multiple workflows match"],
-    [EMPTY_TEAM, "#9602", "Team has no members"],
     [ORPHAN_TEAM, "#9603", "Needs a team"],
   ] as const;
   for (const [teamName, order, issue] of cases) {
@@ -1603,4 +1566,7 @@ test("every issue kind counts in the Issues filter and its badge is critical", a
         .locator("s-badge", { hasText: issue }),
     ).toHaveAttribute("tone", "critical");
   }
+  await team.selectOption({ label: EMPTY_TEAM });
+  await expect(frame.getByRole("button", { name: "Issues, 0" })).toBeVisible();
+  await expect(frame.locator("s-table-row")).toHaveCount(0);
 });

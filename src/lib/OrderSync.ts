@@ -45,18 +45,9 @@ export type LineItemNode = typeof LineItemNode.Type;
 export const toShopOrder = ({
   node,
   syncedAt,
-  lineItemsTruncated,
 }: {
   readonly node: OrderNode;
   readonly syncedAt: number;
-  /**
-   * Whether this fetch stored less than the order has: another page on the
-   * single-order path, more lines than
-   * {@link Domain.ShopLimits.maxLineItemsPerOrder} on the bulk one. Both mean
-   * the same thing to the merchant and neither changes how the write
-   * behaves — see {@link OrderRepository.upsertOrder}.
-   */
-  readonly lineItemsTruncated: boolean;
 }): Domain.ShopOrder => ({
   id: node.id,
   legacyId: node.legacyResourceId,
@@ -67,7 +58,6 @@ export const toShopOrder = ({
   fulfillmentStatus: node.displayFulfillmentStatus,
   fullyPaid: node.fullyPaid,
   note: node.note,
-  lineItemsTruncated,
   syncedAt,
 });
 

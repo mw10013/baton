@@ -303,33 +303,11 @@ function FoundShop({
                 )
               }
             />
-            {/* The two halves of each usage meter's only observable: what this
-                object counted, and what Shopify says it was told. A gap wider
-                than the outbox is a billing bug, and nothing else surfaces
-                it — the App Events API answers 202 to events it refuses. */}
+            {/* Non-zero for long is a queue that is not draining: an
+                operator signal (`Domain.ShopUsage.pendingUsageEvents`). */}
             <Field
               label="Usage events pending"
               value={formatNumber(usage.pendingUsageEvents)}
-            />
-            <Field
-              label="Usage events expired"
-              value={formatNumber(usage.expiredUsageEvents)}
-            />
-            <Field
-              label="Shopify metered orders"
-              value={
-                usage.meterQuantityOrders === null
-                  ? null
-                  : formatNumber(usage.meterQuantityOrders)
-              }
-            />
-            <Field
-              label="Shopify metered members"
-              value={
-                usage.meterQuantityMembers === null
-                  ? null
-                  : formatNumber(usage.meterQuantityMembers)
-              }
             />
             <Field
               label="Orders limited"
@@ -362,14 +340,6 @@ function FoundShop({
               value={
                 usage.lastSweepAt === null ? null : (
                   <LocalDateTime value={usage.lastSweepAt} />
-                )
-              }
-            />
-            <Field
-              label="Open runs limited"
-              value={
-                usage.openRunsLimitedAt === null ? null : (
-                  <LocalDateTime value={usage.openRunsLimitedAt} />
                 )
               }
             />

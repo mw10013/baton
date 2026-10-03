@@ -143,29 +143,19 @@ describe("action table parser", () => {
     );
   });
 
-  it("a cell that is not letters M m v in order, blank or blocker fails", () => {
-    for (const cell of ["Mm", "m M", "M M"])
+  it("a cell that is not letters M m v in order, or blank, fails", () => {
+    for (const cell of ["Mm", "m M", "M M", "blocker"])
       expect(
         parseError(
           sourceOf(`| open | open | no | ready | - | ${cell} | | | | |`),
         ),
       ).toBe(
-        `taskActions, line 14: cell "${cell}" under start; expected letters M m v in order, blank, or blocker`,
+        `taskActions, line 14: cell "${cell}" under start; expected letters M m v in order, or blank`,
       );
     expect(
       parseError(sourceOf("| open | open | no | ready | - | v | | | | |")),
     ).toBe(
       'taskActions, line 14: cell "v" under start; v is only a runActions letter',
-    );
-  });
-
-  it("blocker is refused outside the reopen column", () => {
-    expect(
-      parseError(
-        sourceOf("| open | open | no | ready | - | | blocker | | | |"),
-      ),
-    ).toBe(
-      'taskActions, line 14: cell "blocker" under done; it is only a reopen cell',
     );
   });
 
@@ -176,7 +166,7 @@ describe("action table parser", () => {
     if (row === undefined) throw new Error("row");
     // 2 closed orders × (open run × 2 blocked + done run × 1) × 4 tasks.
     expect(
-      ActionTable.expand("taskActions", row, { teamId: "t", blocker: "b" }),
+      ActionTable.expand("taskActions", row, { teamId: "t" }),
     ).toHaveLength(24);
   });
 
@@ -185,10 +175,7 @@ describe("action table parser", () => {
       sourceOf("| open | open or done | any | done | none | | | | M m | |"),
     );
     if (row === undefined) throw new Error("row");
-    const fixtures = ActionTable.expand("taskActions", row, {
-      teamId: "t",
-      blocker: "b",
-    });
+    const fixtures = ActionTable.expand("taskActions", row, { teamId: "t" });
     expect(fixtures.map((fixture) => fixture.run)).toEqual([
       { state: "open", blockedAt: null },
       { state: "open", blockedAt: 1 },
@@ -310,6 +297,7 @@ describe("action table parser", () => {
       workflowStates: Domain.WORKFLOW_STATE_LABEL,
       orderPositions: Domain.ORDER_POSITION_LABEL,
       orderIssues: Domain.ORDER_ISSUE_LABEL,
+      workflowFaults: Domain.WORKFLOW_FAULT_LABEL,
       verbs: Domain.VERB_LABEL,
     };
 
@@ -468,35 +456,35 @@ describe("action table parser", () => {
 
   describe("the order issue table", () => {
     const TEAM_ROW =
-      "| `unassigned`  | {@link OrderRow} `unassigned`                                                    | Assign team on the order page       |";
-    const EMPTY_TEAM_ROW =
-      "| `empty_team`  | {@link OrderRow} `emptyTeam`                                                     | add a member on the team page       |";
+      "| `unassigned`  | {@link OrderRow} `unassigned`  | Assign team on the order page       |";
+    const BLOCKED_ROW =
+      "| `blocked`     | `runs.blocked > 0`             | the order page                      |";
 
     it("ShopWork.ts passes", () => {
       expect(shopWorkSource).toContain(TEAM_ROW);
-      expect(shopWorkSource).toContain(EMPTY_TEAM_ROW);
+      expect(shopWorkSource).toContain(BLOCKED_ROW);
       expect(checkOrderIssues(shopWorkSource)).toEqual([]);
     });
 
     it("each order issue has one remedy", () => {
       const doctored = shopWorkSource.replace(
-        EMPTY_TEAM_ROW,
-        "| `empty_team`  | {@link OrderRow} `emptyTeam`                                                     | assign a team, or add a member      |",
+        BLOCKED_ROW,
+        "| `blocked`     | `runs.blocked > 0`             | unblock it, or cancel it            |",
       );
       expect(doctored).not.toBe(shopWorkSource);
       expect(checkOrderIssues(doctored)).toEqual([
-        "OrderIssue `empty_team`: a remedy names one action; this one says or",
+        "OrderIssue `blocked`: a remedy names one action; this one says or",
       ]);
     });
 
     it("the Issue column is the OrderIssue literals, in order", () => {
       const doctored = shopWorkSource.replace(
-        `${TEAM_ROW}\n * ${EMPTY_TEAM_ROW}`,
-        `${EMPTY_TEAM_ROW}\n * ${TEAM_ROW}`,
+        `${TEAM_ROW}\n * ${BLOCKED_ROW}`,
+        `${BLOCKED_ROW}\n * ${TEAM_ROW}`,
       );
       expect(doctored).not.toBe(shopWorkSource);
       expect(checkOrderIssues(doctored)).toEqual([
-        "OrderIssue: the Issue column is multi_match, empty_team, unassigned, blocked; the literals are multi_match, unassigned, empty_team, blocked",
+        "OrderIssue: the Issue column is multi_match, blocked, unassigned; the literals are multi_match, unassigned, blocked",
       ]);
     });
   });
@@ -596,10 +584,7 @@ describe("action table parser", () => {
     it("an about word that is neither a vocabulary noun nor a table is refused", () => {
       expect(
         dataModelError(
-          schemaSource.replace(
-            "| `SyncState`       |",
-            "| singleton         |",
-          ),
+          schemaSource.replace("| `SyncState`  |", "| singleton    |"),
         ),
       ).toMatch(/unknown about "singleton"/u);
     });
@@ -732,16 +717,16 @@ describe("triggers table parser", () => {
     expect(
       triggerError(
         billingSource.replace(
-          "| first run on an order                           | +1          |",
-          "| first run on an order                           | plus one    |",
+          "| first run on an order                | +1          |",
+          "| first run on an order                | plus one    |",
         ),
       ),
     ).toMatch(/unknown order count "plus one"/u);
     expect(
       triggerError(
         billingSource.replace(
-          "| first count past the cycle end                  | recounted   | → 0                     |",
-          "| first count past the cycle end                  | recounted   | reset                   |",
+          "| first count past the cycle end       | recounted   | → 0                     |",
+          "| first count past the cycle end       | recounted   | reset                   |",
         ),
       ),
     ).toMatch(/unknown seat mark "reset"/u);
@@ -751,8 +736,8 @@ describe("triggers table parser", () => {
     expect(
       triggerError(
         billingSource.replace(
-          "| a seeded order is never counted                                                                                                           |",
-          "|                                                                                                                                           |",
+          "| Manage plan sends the usage queue before the plan can change                                  |",
+          "|                                                                                               |",
         ),
       ),
     ).toMatch(/empty pinned by/u);
@@ -836,7 +821,7 @@ describe("reconcile actions table parser", () => {
         rows.flatMap(ActionTable.expandReconcileAction).length,
     );
     expect(gaps).toContainEqual(
-      expect.objectContaining({ run: null, matched: 2, atCeiling: false }),
+      expect.objectContaining({ run: null, matched: 2 }),
     );
     const twice = [...rows, ...rows];
     expect(ActionTable.reconcileActionOverlaps(twice)).toHaveLength(1);
@@ -874,8 +859,8 @@ describe("reconcile actions table parser", () => {
       note: "Shopify ended it",
     });
     expect(row && ActionTable.expandReconcileAction(row)).toHaveLength(
-      // paid, units, run, and matches with the open-run ceiling as its fourth value.
-      2 * 3 * 2 * 4,
+      // paid, units, run, and matches.
+      2 * 3 * 1 * 3,
     );
   });
 
@@ -1156,10 +1141,10 @@ describe("reconcile effects table parser", () => {
       reconcileError(
         ActionTable.parseReconcileEffects,
         shopWorkWith(/^ \* \| action +\| run row .*$/mu, (line) =>
-          line.replace("open-run ceiling flag", "flag                 "),
+          line.replace("queue", "flush"),
         ),
       ),
-    ).toMatch(/header is action, run row, counted order, queue, flag/u);
+    ).toMatch(/header is action, run row, counted order, flush/u);
   });
 
   it("an action that is not a row exactly once is refused", () => {
@@ -1189,7 +1174,7 @@ describe("reconcile pass rules table parser", () => {
     expect(
       reconcileError(
         ActionTable.parseReconcilePassRules,
-        shopWorkWith(/^ \* \| 9\. a pass is idempotent: [^|]*/mu, (cell) =>
+        shopWorkWith(/^ \* \| 5\. a pass is idempotent: [^|]*/mu, (cell) =>
           " * | ".padEnd(cell.length),
         ),
       ),
@@ -1200,7 +1185,7 @@ describe("reconcile pass rules table parser", () => {
     expect(
       reconcileError(
         ActionTable.parseReconcilePassRules,
-        shopWorkWith(/^ \* \| 9\. a pass is idempotent: .*$/mu, (line) =>
+        shopWorkWith(/^ \* \| 5\. a pass is idempotent: .*$/mu, (line) =>
           line.replace("`reconcileItem`", "the planner  "),
         ),
       ),

@@ -504,8 +504,8 @@ const floorOrders: readonly SeedOrder[] = [
     ],
   },
   {
-    // blocked by a worker with a reason: the Blocked banner, with Unblock
-    // and Edit reason, on the card
+    // blocked by a worker with a reason: the Blocked banner, with Unblock,
+    // on the card
     n: 1008,
     advance: 1,
     blocked: "Crest file missing from the order — asked the customer.",
@@ -675,7 +675,7 @@ const floorOrders: readonly SeedOrder[] = [
   },
   {
     // one of the two units refunded after the work started: the run is
-    // resized to ×1 and wears "Quantity changed · 2 → 1" until the next Done
+    // resized to ×1
     n: 1021,
     started: true,
     after: { lineItems: [{ position: 1, currentQuantity: 1 }] },
@@ -785,8 +785,8 @@ const floorOrders: readonly SeedOrder[] = [
     lineItems: [item("Leather journal", TAG.journal, 2, { Initials: "Q.C." })],
   },
   {
-    // blocked before anyone started: Not started plus Blocked, Edit reason
-    // and Unblock in the banner, Assign team in Manage, no Done
+    // blocked before anyone started: Not started plus Blocked, Unblock in
+    // the banner, Assign team in Manage, no Done
     n: 1033,
     blocked: "Waiting on the customer's photo.",
     lineItems: [item("Wall clock", TAG.clock, 1, { Numerals: "Arabic" })],

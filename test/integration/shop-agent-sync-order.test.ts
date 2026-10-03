@@ -33,6 +33,8 @@ const adminRequests: string[] = [];
 let shopifyHasOrder = true;
 /** The product tags Shopify answers for the order's one item. */
 let productTags = ["engraved"];
+/** The order's `updatedAt` Shopify answers; null is the time of the request. */
+let orderUpdatedAt: string | null = null;
 const realFetch = globalThis.fetch;
 setAbstractFetchFunc(async (input, init) => {
   const request = new Request(input, init);
@@ -41,6 +43,7 @@ setAbstractFetchFunc(async (input, init) => {
   adminRequests.push(url.hostname);
   if (!shopifyHasOrder) return Response.json({ data: { order: null } });
   const now = new Date().toISOString();
+  const updatedAt = orderUpdatedAt ?? now;
   return Response.json({
     data: {
       order: {
@@ -48,7 +51,7 @@ setAbstractFetchFunc(async (input, init) => {
         legacyResourceId: "1",
         name: "#1001",
         processedAt: now,
-        updatedAt: now,
+        updatedAt,
         cancelledAt: null,
         displayFulfillmentStatus: "UNFULFILLED",
         fullyPaid: true,
@@ -114,6 +117,7 @@ afterEach(async () => {
   adminRequests.length = 0;
   shopifyHasOrder = true;
   productTags = ["engraved"];
+  orderUpdatedAt = null;
   await env.D1.exec("delete from Team");
   await env.D1.exec("delete from ShopSession");
 });
@@ -148,26 +152,9 @@ const storedOrder = (shop: string) =>
       .toArray(),
   );
 
-/** `Domain.ShopLimits.maxOpenRuns` lowered for one test; the object shares this isolate. */
-const withMaxOpenRuns = async <A>(limit: number, body: () => Promise<A>) => {
-  const limits = Domain.ShopLimits as { maxOpenRuns: number };
-  const original = limits.maxOpenRuns;
-  limits.maxOpenRuns = limit;
-  try {
-    return await body();
-  } finally {
-    limits.maxOpenRuns = original;
-  }
-};
-
-/** Runs a statement on the object's SQLite. */
-const exec = (shop: string, query: string, ...bindings: unknown[]) =>
-  runInDurableObject(env.SHOP_AGENT.getByName(shop), (object) => {
-    (object as unknown as { ctx: DurableObjectState }).ctx.storage.sql.exec(
-      query,
-      ...bindings,
-    );
-  });
+/** What the order page shows of each run: which run, its state, its quantity and how many tasks. */
+const runsAsShown = (runs: readonly Domain.RunDetail[]) =>
+  runs.map(({ run, tasks }) => [run.id, run.state, run.quantity, tasks.length]);
 
 const runCount = async (
   agent: Awaited<ReturnType<typeof getAgentByName<Cloudflare.Env, ShopAgent>>>,
@@ -176,37 +163,7 @@ const runCount = async (
   return runs.length;
 };
 
-const openRunsLimitedAt = (shop: string) =>
-  runInDurableObject(
-    env.SHOP_AGENT.getByName(shop),
-    (object) =>
-      (object as unknown as { ctx: DurableObjectState }).ctx.storage.sql
-        .exec("select openRunsLimitedAt from ShopUsage where id = 1")
-        .one().openRunsLimitedAt,
-  );
-
 describe("ShopAgent one-order sync", () => {
-  it("at the open-run ceiling a pass declines, the webhook answers 2xx and the order is stored without its run", async () => {
-    const shop = "sync-order-open-run-ceiling.myshopify.com";
-    const team = await seedShop(shop);
-    const agent = await getAgentByName(env.SHOP_AGENT, shop);
-    await turnOnEngraving(agent, team.id);
-    await withMaxOpenRuns(0, async () => {
-      // Resolving is the 2xx: the route answers with what this returns, and
-      // a failure here would be a 5xx Shopify retries for hours.
-      await agent.syncOrderWebhook({
-        orderId: ORDER_ID,
-        topic: "orders/paid",
-        webhookId: "wh-open-run-ceiling",
-        updatedAt: null,
-      });
-      const stored = await storedOrder(shop);
-      strictEqual(stored.length, 1);
-      strictEqual(await runCount(agent), 0);
-      strictEqual(typeof (await openRunsLimitedAt(shop)), "number");
-    });
-  });
-
   it("a product retagged in Shopify changes nothing until its order syncs again", async () => {
     const shop = "sync-order-retag.myshopify.com";
     const team = await seedShop(shop);
@@ -254,67 +211,6 @@ describe("ShopAgent one-order sync", () => {
       runs.map(({ run }) => [run.id, run.state]),
       [[created?.run.id, "open"]],
     );
-  });
-
-  it("the retention sweep releases the open-run ceiling when its deletes make room", async () => {
-    const shop = "sync-order-sweep-release.myshopify.com";
-    const team = await seedShop(shop);
-    const agent = await getAgentByName(env.SHOP_AGENT, shop);
-    await turnOnEngraving(agent, team.id);
-    // An order past retention holding the shop's one open run, written
-    // straight to SQL: a year-old order is never stored by a sync.
-    const expired =
-      Date.now() - (Domain.ShopLimits.orderRetentionDays + 1) * 86_400_000;
-    await exec(
-      shop,
-      `insert into ShopOrder (id, legacyId, name, processedAt, updatedAt,
-         fulfillmentStatus, fullyPaid, syncedAt)
-       values ('gid://shopify/Order/9', '9', '#9', ?, ?, 'UNFULFILLED', 1, ?)`,
-      expired,
-      expired,
-      expired,
-    );
-    await exec(
-      shop,
-      `insert into Run (id, workflowId, workflowName, orderId, orderName,
-         orderProcessedAt, lineItemId, lineItemTitle, quantity,
-         lineItemProperties, state, createdAt, updatedAt)
-       values ('run-9', 'wf', 'Engraving', 'gid://shopify/Order/9', '#9', ?,
-         'gid://shopify/LineItem/9', 'Ring', 1, '[]', 'open', ?, ?)`,
-      expired,
-      expired,
-      expired,
-    );
-    await withMaxOpenRuns(1, async () => {
-      // Swept recently: this webhook declines the order's run at the
-      // open-run ceiling and does not sweep.
-      await exec(
-        shop,
-        "update ShopUsage set lastSweepAt = ? where id = 1",
-        Date.now(),
-      );
-      await agent.syncOrderWebhook({
-        orderId: ORDER_ID,
-        topic: "orders/paid",
-        webhookId: "wh-sweep-1",
-        updatedAt: null,
-      });
-      strictEqual(await runCount(agent), 0);
-      strictEqual(typeof (await openRunsLimitedAt(shop)), "number");
-      // Due again: the sweep deletes the old order with its open run, which
-      // makes room, and the reconcile all creates the declined run.
-      await exec(shop, "update ShopUsage set lastSweepAt = null where id = 1");
-      await agent.syncOrderWebhook({
-        orderId: ORDER_ID,
-        topic: "orders/updated",
-        webhookId: "wh-sweep-2",
-        updatedAt: null,
-      });
-      strictEqual(await openRunsLimitedAt(shop), null);
-      const runs = await agent.merchantListRunsForOrder({ orderId: ORDER_ID });
-      strictEqual(runs.length, 1);
-      strictEqual(runs[0]?.run.state, "open");
-    });
   });
 
   it("the one-order sync stores the order and creates its run", async () => {
@@ -370,7 +266,6 @@ describe("ShopAgent one-order sync", () => {
     await agent.syncOrderWebhook({
       orderId: ORDER_ID,
       topic: "orders/cancelled",
-      webhookId: "wh-cancelled",
       updatedAt: null,
     });
     const [row] = await storedOrder(shop);
@@ -380,6 +275,37 @@ describe("ShopAgent one-order sync", () => {
     strictEqual(runs[0]?.run.workflowId, workflowId);
     strictEqual(runs[0]?.run.state, "open");
   });
+  it("a redelivered webhook rewrites the same version and changes nothing a screen shows", async () => {
+    const shop = "sync-order-redelivered.myshopify.com";
+    const team = await seedShop(shop);
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    await turnOnEngraving(agent, team.id);
+    orderUpdatedAt = "2026-09-02T12:00:00.000Z";
+    // An edit carries no version, so each delivery fetches; Shopify answers
+    // the same version both times.
+    const deliver = () =>
+      agent.syncOrderWebhook({
+        orderId: ORDER_ID,
+        topic: "orders/edited",
+        updatedAt: null,
+      });
+    await deliver();
+    const firstRuns = await agent.merchantListRunsForOrder({
+      orderId: ORDER_ID,
+    });
+    const [first] = await storedOrder(shop);
+    await deliver();
+    strictEqual(adminRequests.length, 2);
+    const [second] = await storedOrder(shop);
+    strictEqual(second?.updatedAt, first?.updatedAt);
+    strictEqual(second?.cancelledAt, first?.cancelledAt);
+    const secondRuns = await agent.merchantListRunsForOrder({
+      orderId: ORDER_ID,
+    });
+    deepStrictEqual(runsAsShown(secondRuns), runsAsShown(firstRuns));
+    strictEqual(firstRuns.length, 1);
+  });
+
   it("the order ceiling is read at the cycle the sync lands in: a sync after the cycle end is not refused at the old count", async () => {
     /** A shop whose stored cycle ended at 10s past the epoch, counted at the ceiling. */
     const atOldCeiling = async (shop: string) => {
@@ -406,7 +332,6 @@ describe("ShopAgent one-order sync", () => {
       await webhookAgent.syncOrderWebhook({
         orderId: ORDER_ID,
         topic: "orders/create",
-        webhookId: "wh-cycle",
         updatedAt: null,
       });
       const stored = await storedOrder(webhookShop);

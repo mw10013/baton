@@ -161,7 +161,7 @@ export const unassignedLine = (
 };
 
 /**
- * The `empty_team` issue's sentence for a workflow page banner: the teams
+ * The `empty_team` fault's sentence for a workflow page banner: the teams
  * nobody is on. `null` when every assigned team has a member.
  */
 export const emptyTeamLine = (

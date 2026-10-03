@@ -10,11 +10,7 @@ import * as Domain from "@/lib/Domain";
 import { makeEnvLayer } from "@/lib/LayerEx";
 import { Repository } from "@/lib/Repository";
 import { ShopAgentClient, ShopAgentClientError } from "@/lib/ShopAgentClient";
-import {
-  meterQuantity,
-  ShopifyPartner,
-  ShopifyPartnerError,
-} from "@/lib/ShopifyPartner";
+import { ShopifyPartner, ShopifyPartnerError } from "@/lib/ShopifyPartner";
 import {
   revalidateStalePlans,
   SubscriptionPlan,
@@ -67,7 +63,7 @@ const seedShopSession = (
     });
   });
 
-/** An app subscription with no boundary and no meter, which is what most cases are about. */
+/** An app subscription with no boundary, which is what most cases are about. */
 const appSubscription = (
   overrides: Partial<Domain.AppSubscription> & {
     readonly handle: Domain.PlanHandle;
@@ -75,7 +71,6 @@ const appSubscription = (
 ): Domain.AppSubscription => ({
   boundaryAt: null,
   cycleStartAt: null,
-  usage: { orders: null, members: null },
   ...overrides,
 });
 
@@ -95,7 +90,6 @@ const subscribedTo = (
 interface Pushes {
   readonly revoked: Ref.Ref<readonly string[]>;
   readonly cycles: Ref.Ref<readonly Domain.BillingCycleInput[]>;
-  readonly checked: Ref.Ref<readonly Domain.MeterQuantitiesInput[]>;
   readonly flushed: Ref.Ref<readonly string[]>;
 }
 
@@ -103,7 +97,6 @@ const makePushes = Effect.gen(function* () {
   return {
     revoked: yield* Ref.make<readonly string[]>([]),
     cycles: yield* Ref.make<readonly Domain.BillingCycleInput[]>([]),
-    checked: yield* Ref.make<readonly Domain.MeterQuantitiesInput[]>([]),
     flushed: yield* Ref.make<readonly string[]>([]),
   } satisfies Pushes;
 });
@@ -111,7 +104,7 @@ const makePushes = Effect.gen(function* () {
 /**
  * The object-facing hooks are observed through a recording stub rather than a
  * socket or a real Durable Object: what this file owns is *when*
- * `SubscriptionPlan` decides to revoke, push a cycle, or check the meters, and
+ * `SubscriptionPlan` decides to revoke or push a cycle, and
  * `shop-agent-connections.test.ts` owns what `revokeAllConnections` does to a
  * live connection.
  */
@@ -163,11 +156,6 @@ const run = <A, E>(
                 pushes === undefined
                   ? Effect.void
                   : Ref.update(pushes.cycles, (cycles) => [...cycles, input]);
-            if (name === "checkMeters")
-              return (_shop: string, input: Domain.MeterQuantitiesInput) =>
-                pushes === undefined
-                  ? Effect.void
-                  : Ref.update(pushes.checked, (seen) => [...seen, input]);
             if (name === "flushUsageEvents")
               return (flushedShop: string) =>
                 pushes === undefined
@@ -203,22 +191,6 @@ const failedAppSubscription = () =>
   );
 
 afterEach(() => env.D1.exec("delete from ShopSession"));
-
-describe("ShopifyPartner.meterQuantity", () => {
-  it("reports each meter's quantity by handle, null when the app subscription lacks the item", () => {
-    const items = [
-      { handle: "baton-basic", usage: null },
-      { handle: Domain.USAGE_METER_ORDER, usage: { quantity: 21 } },
-      { handle: Domain.USAGE_METER_MEMBER, usage: { quantity: 4 } },
-    ];
-    assert.strictEqual(meterQuantity(items, Domain.USAGE_METER_ORDER), 21);
-    assert.strictEqual(meterQuantity(items, Domain.USAGE_METER_MEMBER), 4);
-    assert.strictEqual(
-      meterQuantity(items.slice(0, 2), Domain.USAGE_METER_MEMBER),
-      null,
-    );
-  });
-});
 
 describe("SubscriptionPlan", () => {
   it.effect(
@@ -553,68 +525,34 @@ describe("SubscriptionPlan", () => {
     }),
   );
 
-  it.effect(
-    "revalidate pushes the member count with the cycle and both meter quantities",
-    () =>
-      Effect.gen(function* () {
-        yield* TestClock.setTime(1000);
-        const pushes = yield* makePushes;
-        yield* run(
-          () =>
-            Effect.succeed(
-              Option.some(
-                appSubscription({
-                  handle: "baton-pro",
-                  cycleStartAt: 500,
-                  usage: { orders: 42, members: 5 },
-                }),
-              ),
+  it.effect("revalidate pushes the member count with the cycle", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(1000);
+      const pushes = yield* makePushes;
+      yield* run(
+        () =>
+          Effect.succeed(
+            Option.some(
+              appSubscription({ handle: "baton-pro", cycleStartAt: 500 }),
             ),
-          Effect.gen(function* () {
-            yield* seedShopSession("baton-pro", 500);
-            const repository = yield* Repository;
-            for (const email of ["a@example.com", "b@example.com"])
-              yield* repository.addMember({
-                shop,
-                email: Schema.decodeUnknownSync(Domain.Email)(email),
-              });
-            yield* (yield* SubscriptionPlan).resolve(shop);
-          }),
-          { pushes },
-        );
-        assert.deepStrictEqual(
-          (yield* Ref.get(pushes.cycles)).map((cycle) => cycle.memberCount),
-          [2],
-        );
-        assert.deepStrictEqual(yield* Ref.get(pushes.checked), [
-          { orders: 42, members: 5 },
-        ]);
-      }),
-  );
-
-  it.effect(
-    "pushes null quantities when the app subscription carries no meter, so stale quantities clear",
-    () =>
-      Effect.gen(function* () {
-        yield* TestClock.setTime(1000);
-        const pushes = yield* makePushes;
-        yield* run(
-          () =>
-            Effect.succeed(
-              Option.some(
-                appSubscription({ handle: "baton-pro", cycleStartAt: 500 }),
-              ),
-            ),
-          Effect.gen(function* () {
-            yield* seedShopSession("baton-pro", 500);
-            yield* (yield* SubscriptionPlan).resolve(shop);
-          }),
-          { pushes },
-        );
-        assert.deepStrictEqual(yield* Ref.get(pushes.checked), [
-          { orders: null, members: null },
-        ]);
-      }),
+          ),
+        Effect.gen(function* () {
+          yield* seedShopSession("baton-pro", 500);
+          const repository = yield* Repository;
+          for (const email of ["a@example.com", "b@example.com"])
+            yield* repository.addMember({
+              shop,
+              email: Schema.decodeUnknownSync(Domain.Email)(email),
+            });
+          yield* (yield* SubscriptionPlan).resolve(shop);
+        }),
+        { pushes },
+      );
+      assert.deepStrictEqual(
+        (yield* Ref.get(pushes.cycles)).map((cycle) => cycle.memberCount),
+        [2],
+      );
+    }),
   );
 
   it.effect("clamps expiry to a future boundary plus skew", () =>

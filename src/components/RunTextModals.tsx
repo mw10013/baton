@@ -172,12 +172,10 @@ export function RunNoteModal({
 }
 
 /**
- * Block, and the edit of a standing block's reason, in one modal driven by
- * {@link Domain.runIsBlocked}. Not blocked, it sets the hold: the heading
- * asks the question, naming the run as the member's row does ("Block <item>
- * on <order>?"), and the primary is a critical Block. Blocked, it rewrites
- * the reason and nothing else: there is no Block to press on a run that is
- * already held. The field has no placeholder: it is free text and the label
+ * Block: the heading asks the question, naming the run as the member's row
+ * does ("Block <item> on <order>?"), and the primary is a critical Block.
+ * A standing block's reason is not edited: Unblock, then Block with the new
+ * reason ({@link Domain.runActions}). The field has no placeholder: it is free text and the label
  * says what goes in, so a placeholder could only ask a question or give an
  * instruction, and both are filler (`scripts/lib/rules-lint.ts` refuses a
  * placeholder on any `s-text-area`).
@@ -187,34 +185,24 @@ export function BlockModal({
   run,
   pending,
   onBlock,
-  onSaveReason,
 }: {
   readonly id: string;
-  readonly run: Pick<
-    Domain.Run,
-    "lineItemTitle" | "orderName" | "blockedAt" | "blockReason"
-  >;
+  readonly run: Pick<Domain.Run, "lineItemTitle" | "orderName">;
   readonly pending: boolean;
   readonly onBlock: (reason: string) => Promise<string | null>;
-  readonly onSaveReason: (reason: string) => Promise<string | null>;
 }) {
-  const blocked = Domain.runIsBlocked(run);
   return (
     <TextModal
       id={id}
-      heading={
-        blocked
-          ? "Block reason"
-          : `Block ${run.lineItemTitle} on ${run.orderName}?`
-      }
+      heading={`Block ${run.lineItemTitle} on ${run.orderName}?`}
       label="Reason"
-      saved={blocked ? (run.blockReason ?? "") : ""}
+      saved=""
       maxLength={Domain.BLOCK_REASON_MAX_LENGTH}
       pending={pending}
-      submitLabel={blocked ? "Save" : Domain.VERB_LABEL.block.member}
-      critical={!blocked}
-      allowUnchanged={!blocked}
-      onSubmit={blocked ? onSaveReason : onBlock}
+      submitLabel={Domain.VERB_LABEL.block.member}
+      critical
+      allowUnchanged
+      onSubmit={onBlock}
     />
   );
 }

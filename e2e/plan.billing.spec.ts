@@ -178,8 +178,6 @@ const ADMIN_FIELDS = [
   "Billing cycle",
   "Orders this billing cycle",
   "Usage events pending",
-  "Shopify metered orders",
-  "Shopify metered members",
 ] as const;
 
 test("a paid-to-paid downgrade applies at once, and the usage outbox drains", async ({

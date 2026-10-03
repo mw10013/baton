@@ -126,7 +126,6 @@ const order = (
   fulfillmentStatus: "UNFULFILLED",
   fullyPaid: true,
   note: "Gift wrap please",
-  lineItemsTruncated: false,
   syncedAt: PROCESSED_AT,
   ...overrides,
 });
@@ -276,7 +275,6 @@ const upsertAndReconcile = (
       resized: 0,
       closed: 0,
       multiMatch: 0,
-      ceilingReleased: false,
     });
     yield* orders.upsertOrder({
       order: shopOrder,
@@ -367,7 +365,6 @@ describe("RunRepository one row per item", () => {
           resized: 0,
           closed: 0,
           multiMatch: 1,
-          ceilingReleased: false,
         });
         strictEqual((yield* runsForOrder()).length, 0);
         deepStrictEqual(yield* matchedIds(ITEM_1), [a.id, rival.id].toSorted());
@@ -391,7 +388,6 @@ describe("RunRepository one row per item", () => {
           resized: 0,
           closed: 0,
           multiMatch: 0,
-          ceilingReleased: false,
         });
         const runs = yield* runsForOrder();
         strictEqual(runs.length, 1);
@@ -417,7 +413,6 @@ describe("RunRepository one row per item", () => {
           resized: 0,
           closed: 0,
           multiMatch: 0,
-          ceilingReleased: false,
         });
         const runs = yield* runsForOrder();
         strictEqual(runs.length, 1);
@@ -457,30 +452,37 @@ describe("RunRepository one row per item", () => {
       }),
     ));
 
-  it("setRun over a done run is refused, naming the done workflow", () =>
+  it("setRun over a done run replaces it and reports it as replaced", () =>
     runInRepository(
       Effect.gen(function* () {
-        const { a, b } = yield* seed;
+        const { a } = yield* seed;
         const runs = yield* RunRepository;
         const items = [lineItem(1, ["a"])];
         yield* upsertAndReconcile(order(), items);
-        const [detail] = yield* runsForOrder();
-        if (detail === undefined) throw new Error("no run");
-        strictEqual(detail.run.workflowId, a.id);
-        yield* complete(detail, 1, [TEAM_A.id]);
-        yield* complete(detail, 2, [TEAM_B.id]);
-        const refused = yield* runs
-          .setRun({
-            workflow: yield* savedDetail(b.id),
+        const [before] = yield* runsForOrder();
+        if (before === undefined) throw new Error("no run");
+        yield* complete(before, 1, [TEAM_A.id]);
+        yield* complete(before, 2, [TEAM_B.id]);
+        strictEqual((yield* runsForOrder())[0]?.run.state, "done");
+        // The same workflow again: a done run is replaced like any other,
+        // and the new run starts from the definition.
+        const set = Option.getOrThrow(
+          yield* runs.setRun({
+            workflow: yield* savedDetail(a.id),
             teams: TEAMS,
             order: order(),
             lineItem: items[0] ?? lineItem(1, ["a"]),
-          })
-          .pipe(Effect.flip);
-        strictEqual(refused._tag, "RunNotOpenError");
-        if (refused._tag === "RunNotOpenError")
-          strictEqual(refused.workflowName, detail.run.workflowName);
-        strictEqual((yield* runsForOrder()).length, 1);
+          }),
+        );
+        strictEqual(set.replaced?.id, before.run.id);
+        strictEqual(set.run.workflowId, a.id);
+        strictEqual(set.run.state, "open");
+        const after = yield* runsForOrder();
+        deepStrictEqual(
+          after.map((d) => d.run.id),
+          [set.run.id],
+        );
+        strictEqual(Domain.runIsUnstarted(after[0]?.tasks ?? []), true);
       }),
     ));
 
@@ -591,7 +593,6 @@ describe("RunRepository.reconcileOrder", () => {
           resized: 0,
           closed: 0,
           multiMatch: 0,
-          ceilingReleased: false,
         });
         const runs = yield* runsForOrder();
         strictEqual(runs.length, 2);
@@ -641,7 +642,6 @@ describe("RunRepository.reconcileOrder", () => {
           resized: 0,
           closed: 0,
           multiMatch: 0,
-          ceilingReleased: false,
         });
         strictEqual((yield* runsForOrder()).length, 2);
       }),
@@ -779,7 +779,6 @@ describe("RunRepository.reconcileOrder", () => {
           resized: 0,
           closed: 2,
           multiMatch: 0,
-          ceilingReleased: false,
         });
         const after = yield* runsForOrder();
         const p = after.find((d) => d.run.id === unstartedRun.run.id);
@@ -804,7 +803,6 @@ describe("RunRepository.reconcileOrder", () => {
           resized: 0,
           closed: 0,
           multiMatch: 0,
-          ceilingReleased: false,
         });
         const gone = yield* runsForOrder();
         strictEqual(gone.length, 2);
@@ -862,36 +860,6 @@ describe("RunRepository.reconcileOrder", () => {
       }),
     ));
 
-  it("on a truncated order a run whose item is not stored is left alone", () =>
-    runInRepository(
-      Effect.gen(function* () {
-        yield* seed;
-        yield* upsertAndReconcile(order(), [
-          lineItem(1, ["a"]),
-          lineItem(2, ["b"]),
-        ]);
-        // Stored short: item 2 may still exist past the kept items, so its
-        // run is not read as an item at zero units.
-        yield* (yield* OrderRepository).upsertOrder({
-          order: order({
-            updatedAt: PROCESSED_AT + 1,
-            lineItemsTruncated: true,
-          }),
-          lineItems: [lineItem(1, ["a"])],
-          afterWrite: Effect.void,
-        });
-        const counts = yield* (yield* RunRepository).reconcileOrder({
-          ...(yield* loadEligibleContext),
-          orderId: ORDER_ID,
-        });
-        strictEqual(counts.closed, 0);
-        deepStrictEqual(
-          (yield* runsForOrder()).map(({ run }) => run.state),
-          ["open", "open"],
-        );
-      }),
-    ));
-
   it("a pass that fails leaves neither the order nor its runs", () =>
     runInRepository(
       Effect.gen(function* () {
@@ -937,107 +905,11 @@ describe("RunRepository.reconcileOrder", () => {
           resized: 1,
           closed: 0,
           multiMatch: 0,
-          ceilingReleased: false,
         });
         const [p] = yield* runsForOrder();
         strictEqual(p?.run.state, "open");
         strictEqual(Domain.runIsUnstarted(p?.tasks ?? []), true);
         strictEqual(p?.run.quantity, 3);
-        strictEqual(p?.run.quantityChangedFrom, null);
-      }),
-    ));
-
-  it("a quantity change resizes an open run and records the original quantity once; completing a task clears it", () =>
-    runInRepository(
-      Effect.gen(function* () {
-        yield* seed;
-        yield* upsertAndReconcile(order(), [lineItem(1, ["a"])]);
-        const [run] = yield* runsForOrder();
-        if (run === undefined) throw new Error("no run");
-        yield* complete(run, 1, [TEAM_A.id]);
-        const first = yield* upsertAndReconcile(
-          order({ updatedAt: PROCESSED_AT + 1 }),
-          [lineItem(1, ["a"], { currentQuantity: 3 })],
-        );
-        strictEqual(first.resized, 1);
-        const once = (yield* runsForOrder())[0];
-        strictEqual(once?.run.state, "open");
-        strictEqual(once?.run.quantity, 3);
-        strictEqual(once?.run.quantityChangedFrom, 2);
-        // A second change keeps the original "from": that is the number the
-        // maker worked to.
-        yield* upsertAndReconcile(order({ updatedAt: PROCESSED_AT + 2 }), [
-          lineItem(1, ["a"], { currentQuantity: 4 }),
-        ]);
-        const twice = (yield* runsForOrder())[0];
-        strictEqual(twice?.run.quantity, 4);
-        strictEqual(twice?.run.quantityChangedFrom, 2);
-        // It is never a gate: the next Done goes through, and clears it.
-        yield* complete(run, 2, [TEAM_B.id]);
-        const cleared = (yield* runsForOrder())[0];
-        strictEqual(cleared?.run.state, "done");
-        strictEqual(cleared?.run.quantity, 4);
-        strictEqual(cleared?.run.quantityChangedFrom, null);
-      }),
-    ));
-
-  it("a resize back to the original clears the badge, and a Done clears it", () =>
-    runInRepository(
-      Effect.gen(function* () {
-        yield* seed;
-        yield* upsertAndReconcile(order(), [lineItem(1, ["a"])]);
-        const [run] = yield* runsForOrder();
-        if (run === undefined) throw new Error("no run");
-        yield* complete(run, 1, [TEAM_A.id]);
-        yield* upsertAndReconcile(order({ updatedAt: PROCESSED_AT + 1 }), [
-          lineItem(1, ["a"], { currentQuantity: 3 }),
-        ]);
-        yield* upsertAndReconcile(order({ updatedAt: PROCESSED_AT + 2 }), [
-          lineItem(1, ["a"]),
-        ]);
-        const back = (yield* runsForOrder())[0];
-        strictEqual(back?.run.quantity, 2);
-        strictEqual(back?.run.quantityChangedFrom, null);
-        yield* upsertAndReconcile(order({ updatedAt: PROCESSED_AT + 3 }), [
-          lineItem(1, ["a"], { currentQuantity: 3 }),
-        ]);
-        strictEqual((yield* runsForOrder())[0]?.run.quantityChangedFrom, 2);
-        yield* complete(run, 2, [TEAM_B.id]);
-        strictEqual((yield* runsForOrder())[0]?.run.quantityChangedFrom, null);
-      }),
-    ));
-
-  it("a resize on an unstarted run clears the quantity badge", () =>
-    runInRepository(
-      Effect.gen(function* () {
-        yield* seed;
-        const runs = yield* RunRepository;
-        yield* upsertAndReconcile(order(), [lineItem(1, ["a"])]);
-        const [run] = yield* runsForOrder();
-        const cut = run?.tasks[0]?.id ?? "";
-        yield* runs.startTask({
-          runTaskId: cut,
-          actor: memberActor("m1"),
-          teamIds: [TEAM_A.id],
-        });
-        yield* upsertAndReconcile(order({ updatedAt: PROCESSED_AT + 1 }), [
-          lineItem(1, ["a"], { currentQuantity: 3 }),
-        ]);
-        strictEqual((yield* runsForOrder())[0]?.run.quantityChangedFrom, 2);
-        // Put back: nobody is working to the old number any more.
-        yield* runs.putBackTask({
-          runTaskId: cut,
-          actor: memberActor("m1"),
-          teamIds: [TEAM_A.id],
-        });
-        const unstarted = (yield* runsForOrder())[0];
-        strictEqual(Domain.runIsUnstarted(unstarted?.tasks ?? []), true);
-        yield* upsertAndReconcile(order({ updatedAt: PROCESSED_AT + 2 }), [
-          lineItem(1, ["a"], { currentQuantity: 4 }),
-        ]);
-        const resized = (yield* runsForOrder())[0];
-        strictEqual(resized?.run.quantity, 4);
-        strictEqual(resized?.run.quantityChangedFrom, null);
       }),
     ));
 
@@ -1066,12 +938,10 @@ describe("RunRepository.reconcileOrder", () => {
           resized: 0,
           closed: 0,
           multiMatch: 0,
-          ceilingReleased: false,
         });
         const unchanged = (yield* runsForOrder())[0];
         strictEqual(unchanged?.run.state, "done");
         strictEqual(unchanged?.run.quantity, 2);
-        strictEqual(unchanged?.run.quantityChangedFrom, null);
         strictEqual(unchanged?.tasks.length, 2);
 
         // The units reaching zero is the ordinary end of a done run — the
@@ -1085,7 +955,6 @@ describe("RunRepository.reconcileOrder", () => {
           resized: 0,
           closed: 0,
           multiMatch: 0,
-          ceilingReleased: false,
         });
         const after = (yield* runsForOrder())[0];
         strictEqual(after?.run.state, "done");
@@ -1107,7 +976,6 @@ describe("RunRepository.reconcileOrder", () => {
           resized: 0,
           closed: 0,
           multiMatch: 0,
-          ceilingReleased: false,
         });
         strictEqual((yield* runsForOrder()).length, 2);
       }),
@@ -1143,7 +1011,6 @@ describe("RunRepository.reconcileOrder", () => {
             resized: 0,
             closed: 0,
             multiMatch: 0,
-            ceilingReleased: false,
           });
           const during = yield* runsForOrder();
           strictEqual(during.length, 2);
@@ -1190,7 +1057,6 @@ describe("RunRepository.reconcileOrder", () => {
             resized: 0,
             closed: 2,
             multiMatch: 0,
-            ceilingReleased: false,
           });
           const after = yield* runsForOrder();
           deepStrictEqual(
@@ -1202,7 +1068,7 @@ describe("RunRepository.reconcileOrder", () => {
   });
 
   describe("units to make", () => {
-    it("a refund that lowers currentQuantity reads like an edit: unstarted resized silently, started resized with the badge", () =>
+    it("a refund that lowers currentQuantity reads like an edit: started or not, the run is resized", () =>
       runInRepository(
         Effect.gen(function* () {
           yield* seed;
@@ -1227,15 +1093,12 @@ describe("RunRepository.reconcileOrder", () => {
             resized: 2,
             closed: 0,
             multiMatch: 0,
-            ceilingReleased: false,
           });
           const after = yield* runsForOrder();
           const p = after.find((d) => d.run.id === unstartedRun.run.id);
           const a = after.find((d) => d.run.id === startedRun.run.id);
           strictEqual(p?.run.quantity, 1);
-          strictEqual(p?.run.quantityChangedFrom, null);
           strictEqual(a?.run.quantity, 1);
-          strictEqual(a?.run.quantityChangedFrom, 2);
         }),
       ));
 
@@ -1262,7 +1125,6 @@ describe("RunRepository.reconcileOrder", () => {
             resized: 0,
             closed: 2,
             multiMatch: 0,
-            ceilingReleased: false,
           });
           deepStrictEqual(
             (yield* runsForOrder()).map((d) => [
@@ -1331,7 +1193,6 @@ describe("RunRepository.reconcileOrder", () => {
             resized: 0,
             closed: 2,
             multiMatch: 0,
-            ceilingReleased: false,
           });
           const after = yield* runsForOrder();
           strictEqual(after.length, 3);
@@ -1376,15 +1237,12 @@ describe("RunRepository.reconcileOrder", () => {
             resized: 0,
             closed: 0,
             multiMatch: 0,
-            ceilingReleased: false,
           });
           const after = yield* runsForOrder();
           const shipped = after.find((d) => d.run.id === shippedRun.run.id);
           strictEqual(shipped?.run.state, "open");
-          strictEqual(shipped?.run.quantityChangedFrom, null);
           const other = after.find((d) => d.run.id === otherRun.run.id);
           strictEqual(other?.run.state, "open");
-          strictEqual(other?.run.quantityChangedFrom, null);
         }),
       ));
   });
@@ -1418,7 +1276,6 @@ describe("RunRepository.reconcileOrder", () => {
           resized: 0,
           closed: 2,
           multiMatch: 0,
-          ceilingReleased: false,
         });
         const after = yield* runsForOrder();
         for (const open of [unstartedRun, startedRun]) {
@@ -2269,11 +2126,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
             teamIds: [TEAM_B.id],
           })
           .pipe(Effect.flip);
-        strictEqual(blocked._tag, "TaskReopenBlockedError");
-        if (blocked._tag === "TaskReopenBlockedError") {
-          strictEqual(blocked.taskName, "Produce");
-          strictEqual(blocked.teamName, "Team C");
-        }
+        strictEqual(blocked._tag, "RunNotAllowedError");
 
         // Reopening the last task turns a done run back to open.
         yield* complete(detail, 3, [TEAM_C.id]);
@@ -2339,7 +2192,6 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         strictEqual(task?.startedAt, null);
         strictEqual(task?.startedByEmail, null);
         strictEqual(task?.startedByRole, null);
-        strictEqual(task?.reopenedAt, null);
         // The only started task put back: the run is untouched again.
         strictEqual(after.run.state, "open");
         strictEqual(Domain.runIsUnstarted(after.tasks), true);
@@ -2429,7 +2281,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
       }),
     ));
 
-  it("listRecent lists the team's recent completions newest first with the undo verdict; getRunPage decorates every task", () =>
+  it("listRecent lists the team's recent completions newest first with whether a later step started; getRunPage decorates every task", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seedStepped;
@@ -2457,7 +2309,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         strictEqual(teamA.items.length, 1);
         strictEqual(taskItems(teamA.items)[0]?.task.name, "Artwork");
         strictEqual(teamA.items[0]?.run.id, detail.run.id);
-        strictEqual(taskItems(teamA.items)[0]?.reopenBlockedBy, null);
+        strictEqual(taskItems(teamA.items)[0]?.laterStepStarted, false);
         // Collapsed: the count without the rows.
         const collapsed = yield* runs.listRecent({
           teamIds: [TEAM_A.id],
@@ -2491,11 +2343,11 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         deepStrictEqual(
           taskItems(both.items).map((entry) => [
             entry.task.name,
-            entry.reopenBlockedBy?.taskName,
+            entry.laterStepStarted,
           ]),
           [
-            [taskName("Materials"), taskName("Produce")],
-            [taskName("Artwork"), taskName("Produce")],
+            [taskName("Materials"), true],
+            [taskName("Artwork"), true],
           ],
         );
 
@@ -2509,13 +2361,13 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
           view.tasks.map((task) => [
             task.name,
             task.current,
-            task.reopenBlockedBy?.teamName ?? null,
+            task.laterStepStarted,
           ]),
           [
-            ["Artwork", false, "Team C"],
-            ["Materials", false, "Team C"],
-            ["Produce", true, null],
-            ["Inspect", false, null],
+            ["Artwork", false, true],
+            ["Materials", false, true],
+            ["Produce", true, false],
+            ["Inspect", false, false],
           ],
         );
         // No task on the caller's teams, or no such run: the same None.
@@ -2859,7 +2711,6 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
           resized: 0,
           closed: 1,
           multiMatch: 0,
-          ceilingReleased: false,
         });
         const after = Option.getOrThrow(
           yield* runs.getRun({ runId: detail.run.id }),
@@ -2880,70 +2731,6 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
    * the merchant reading the workflows list is chasing the person who blocked it, not
    * whoever last fixed a typo.
    */
-  it("setBlockReason rewrites the reason, keeps by, and refuses anything that is not a standing block", () =>
-    runInRepository(
-      Effect.gen(function* () {
-        yield* seedStepped;
-        const runs = yield* RunRepository;
-        const detail = yield* steppedRun();
-        const blockOf = () =>
-          runs.getRun({ runId: detail.run.id }).pipe(
-            Effect.map((run) => {
-              const { blockReason, blockedBy, blockedAt } =
-                Option.getOrThrow(run).run;
-              return { reason: blockReason, by: blockedBy, at: blockedAt };
-            }),
-          );
-
-        const unflagged = yield* runs
-          .setBlockReason({
-            runId: detail.run.id,
-            teamIds: [TEAM_B.id],
-            reason: reason("too early"),
-          })
-          .pipe(Effect.flip);
-        // Its own tag: the caller's teams were fine, the hold was the thing
-        // missing, and the page says so rather than crying team.
-        strictEqual(unflagged._tag, "RunNotBlockedError");
-
-        yield* runs.blockRun({
-          runId: detail.run.id,
-          actor: memberActor("m1"),
-          teamIds: [TEAM_A.id],
-          reason: reason("Waiting on stones"),
-        });
-        const by = { role: "member", email: "m1@example.com" };
-        const at = (yield* blockOf()).at;
-
-        const wrongTeam = yield* runs
-          .setBlockReason({
-            runId: detail.run.id,
-            teamIds: [TEAM_C.id],
-            reason: reason("nope"),
-          })
-          .pipe(Effect.flip);
-        strictEqual(wrongTeam._tag, "RunNotAllowedError");
-
-        // A teammate, not the blocker, and the text keeps its line breaks.
-        yield* runs.setBlockReason({
-          runId: detail.run.id,
-          teamIds: [TEAM_B.id],
-          reason: reason("Waiting on stones\nCalled the supplier"),
-        });
-        deepStrictEqual<unknown>(yield* blockOf(), {
-          reason: "Waiting on stones\nCalled the supplier",
-          by,
-          at,
-        });
-
-        // The merchant passes no teams and is refused by nothing.
-        yield* runs.setBlockReason({
-          runId: detail.run.id,
-          reason: null,
-        });
-        deepStrictEqual<unknown>(yield* blockOf(), { reason: null, by, at });
-      }),
-    ));
 
   it("a Done without a Start records the actor as the starter too", () =>
     runInRepository(
@@ -3020,7 +2807,6 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         strictEqual(reopened.startedAt, null);
         strictEqual(reopened.startedByRole, null);
         strictEqual(Domain.taskStartedBy(reopened), null);
-        strictEqual(reopened.reopenedByRole, "merchant");
 
         yield* runs.startTask({
           runTaskId: artwork,
@@ -3038,59 +2824,6 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         strictEqual(ready.startedByEmail, null);
         strictEqual(ready.startedByRole, null);
         strictEqual(ready.doneAt, null);
-        strictEqual(ready.reopenedByRole, "merchant");
-      }),
-    ));
-
-  it("undo records the reopener and the next Done clears it, for a member and for the merchant", () =>
-    runInRepository(
-      Effect.gen(function* () {
-        yield* seedStepped;
-        const runs = yield* RunRepository;
-        const detail = yield* steppedRun();
-        const artwork = detail.tasks[0]?.id ?? "";
-        const taskNow = () =>
-          Effect.map(runs.getRun({ runId: detail.run.id }), (run) => {
-            const [task] = Option.getOrThrow(run).tasks;
-            if (task === undefined) throw new Error("no task");
-            return task;
-          });
-        yield* runs.markTaskDone({
-          runTaskId: artwork,
-          actor: memberActor("m1"),
-          teamIds: [TEAM_A.id],
-        });
-        yield* runs.reopenTask({
-          runTaskId: artwork,
-          actor: memberActor("m2"),
-          teamIds: [TEAM_A.id],
-        });
-        const byMember = yield* taskNow();
-        strictEqual(byMember.reopenedByRole, "member");
-        strictEqual(byMember.reopenedByEmail, "m2@example.com");
-        strictEqual(typeof byMember.reopenedAt, "number");
-        deepStrictEqual<unknown>(Domain.taskReopenedBy(byMember), {
-          role: "member",
-          email: "m2@example.com",
-        });
-
-        yield* runs.markTaskDone({
-          runTaskId: artwork,
-          actor: memberActor("m1"),
-          teamIds: [TEAM_A.id],
-        });
-        const redone = yield* taskNow();
-        strictEqual(redone.reopenedAt, null);
-        strictEqual(redone.reopenedByRole, null);
-        strictEqual(redone.reopenedByEmail, null);
-        strictEqual(Domain.taskReopenedBy(redone), null);
-
-        yield* runs.reopenTask({ runTaskId: artwork, actor: MERCHANT });
-        const byMerchant = yield* taskNow();
-        strictEqual(byMerchant.reopenedByRole, "merchant");
-        strictEqual(byMerchant.reopenedByEmail, null);
-        strictEqual(byMerchant.doneAt, null);
-        strictEqual(byMerchant.doneByRole, null);
       }),
     ));
 
@@ -3123,15 +2856,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         const blocked = yield* runs
           .reopenTask({ runTaskId: artwork, actor: MERCHANT })
           .pipe(Effect.flip);
-        strictEqual(blocked._tag, "TaskReopenBlockedError");
-        strictEqual(
-          blocked._tag === "TaskReopenBlockedError" ? blocked.taskName : null,
-          "Produce",
-        );
-        strictEqual(
-          blocked._tag === "TaskReopenBlockedError" ? blocked.teamName : null,
-          TEAM_C.name,
-        );
+        strictEqual(blocked._tag, "RunNotAllowedError");
 
         // A closed run takes no more work, from the merchant either.
         yield* runs.cancelRun({ runId: detail.run.id });
@@ -3142,7 +2867,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
       }),
     ));
 
-  it("setRunNote records no author: last write wins, the same rule as setBlockReason", () =>
+  it("setRunNote records no author: last write wins", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seedStepped;
@@ -3574,279 +3299,6 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
     ));
 });
 
-/**
- * The ceiling is 5,000 open runs, which no test can reach by creating runs, so
- * these lower the constant for the duration. It is a plain object behind a
- * `readonly` type, and the alternative — threading a limit through
- * `reconcileOrder` and `setRun` for nobody but this file — would put a test
- * seam in the production signature.
- */
-const withMaxOpenRuns = <A>(limit: number, body: () => Promise<A>) => {
-  const limits = Domain.ShopLimits as { maxOpenRuns: number };
-  const original = limits.maxOpenRuns;
-  limits.maxOpenRuns = limit;
-  return body().finally(() => {
-    limits.maxOpenRuns = original;
-  });
-};
-
-const usageRow = () =>
-  SqlClient.SqlClient.pipe(
-    Effect.flatMap(
-      (sql) => sql`select openRunsLimitedAt from ShopUsage where id = 1`.values,
-    ),
-    Effect.map((rows) => rows[0]?.[0] ?? null),
-  );
-
-describe("RunRepository open-run ceiling", () => {
-  it("the open-run ceiling is counted once per pass, each create spends one and a close refunds nothing", () =>
-    withMaxOpenRuns(2, () =>
-      runInRepository(
-        Effect.gen(function* () {
-          yield* seed;
-          yield* upsertAndReconcile(order(), [lineItem(1, ["a"])]);
-          // One open run, room for one more. Item 1 drops to zero and two
-          // single matches arrive: the close refunds nothing, item 2 spends
-          // the one room, and item 3, after it in stored order, is declined.
-          const counts = yield* upsertAndReconcile(
-            order({ updatedAt: PROCESSED_AT + 1 }),
-            [
-              lineItem(1, ["a"], { currentQuantity: 0 }),
-              lineItem(2, ["a"]),
-              lineItem(3, ["b"]),
-            ],
-          );
-          strictEqual(counts.closed, 1);
-          strictEqual(counts.created, 1);
-          strictEqual(typeof (yield* usageRow()), "number");
-          deepStrictEqual(
-            (yield* runsForOrder()).map(({ run }) => [
-              run.lineItemId,
-              run.state,
-            ]),
-            [
-              [lineItem(1, []).id, "closed"],
-              [lineItem(2, []).id, "open"],
-            ],
-          );
-        }),
-      ),
-    ));
-
-  it("Reopen is allowed at the open-run ceiling and takes the shop one over it", () =>
-    withMaxOpenRuns(1, () =>
-      runInRepository(
-        Effect.gen(function* () {
-          yield* seed;
-          const runs = yield* RunRepository;
-          const sql = yield* SqlClient.SqlClient;
-          const openRuns = () =>
-            sql<{
-              readonly n: number;
-            }>`select count(*) as n from Run where state = 'open'`.pipe(
-              Effect.map((rows) => rows[0]?.n ?? 0),
-            );
-          yield* upsertAndReconcile(order(), [lineItem(1, ["a"])]);
-          const [first] = yield* runsForOrder();
-          if (first === undefined) throw new Error("no run");
-          yield* complete(first, 1, [TEAM_A.id]);
-          yield* complete(first, 2, [TEAM_B.id]);
-          // The done run frees the one room; item 2's run takes it.
-          yield* upsertAndReconcile(order({ updatedAt: PROCESSED_AT + 1 }), [
-            lineItem(1, ["a"]),
-            lineItem(2, ["b"]),
-          ]);
-          strictEqual(yield* openRuns(), Domain.ShopLimits.maxOpenRuns);
-          yield* runs.reopenTask({
-            runTaskId: first.tasks[1]?.id ?? "",
-            actor: MERCHANT,
-          });
-          strictEqual(yield* openRuns(), Domain.ShopLimits.maxOpenRuns + 1);
-        }),
-      ),
-    ));
-
-  it("a declined run raises the open-run ceiling flag and the run's last Done clears it", () =>
-    withMaxOpenRuns(1, () =>
-      runInRepository(
-        Effect.gen(function* () {
-          yield* seed;
-          // Two matching items, room for one run.
-          const counts = yield* upsertAndReconcile(order(), [
-            lineItem(1, ["a"]),
-            lineItem(2, ["b"]),
-          ]);
-          strictEqual(counts.created, 1);
-          const limitedAt = yield* usageRow();
-          strictEqual(typeof limitedAt, "number");
-          // Take the one run to done: both tasks done takes it out of
-          // `open`, which is what releases the flag.
-          const [detail] = yield* runsForOrder();
-          if (detail === undefined) throw new Error("no run");
-          yield* complete(detail, 1, [TEAM_A.id]);
-          yield* complete(detail, 2, [TEAM_B.id]);
-          strictEqual(yield* usageRow(), null);
-        }),
-      ),
-    ));
-
-  it("the write that releases the open-run ceiling creates the runs that were declined", () =>
-    withMaxOpenRuns(1, () =>
-      runInRepository(
-        Effect.gen(function* () {
-          const { b } = yield* seed;
-          const runs = yield* RunRepository;
-          const counts = yield* upsertAndReconcile(order(), [
-            lineItem(1, ["a"]),
-            lineItem(2, ["b"]),
-          ]);
-          strictEqual(counts.created, 1);
-          const [detail] = yield* runsForOrder();
-          if (detail === undefined) throw new Error("no run");
-          const first = yield* complete(detail, 1, [TEAM_A.id]);
-          strictEqual(first.ceilingReleased, false);
-          // The run's last Done takes it out of `open`: the write says the
-          // ceiling released, and the reconcile all its caller runs creates
-          // the run reconcile declined.
-          const last = yield* complete(detail, 2, [TEAM_B.id]);
-          strictEqual(last.ceilingReleased, true);
-          yield* runs.reconcileAll(yield* loadEligibleContext);
-          const after = yield* runsForOrder();
-          deepStrictEqual(
-            after.map(({ run }) => [run.workflowId, run.state]),
-            [
-              [detail.run.workflowId, "done"],
-              [b.id, "open"],
-            ],
-          );
-        }),
-      ),
-    ));
-
-  it("Cancel workflow releases the ceiling", () =>
-    withMaxOpenRuns(1, () =>
-      runInRepository(
-        Effect.gen(function* () {
-          yield* seed;
-          const runs = yield* RunRepository;
-          yield* upsertAndReconcile(order(), [
-            lineItem(1, ["a"]),
-            lineItem(2, ["b"]),
-          ]);
-          strictEqual(typeof (yield* usageRow()), "number");
-          const [detail] = yield* runsForOrder();
-          if (detail === undefined) throw new Error("no run");
-          const cancelled = yield* runs.cancelRun({ runId: detail.run.id });
-          strictEqual(cancelled.ceilingReleased, true);
-          strictEqual(yield* usageRow(), null);
-        }),
-      ),
-    ));
-
-  it("a close by reconcile releases the open-run ceiling and says so", () =>
-    withMaxOpenRuns(1, () =>
-      runInRepository(
-        Effect.gen(function* () {
-          yield* seed;
-          yield* upsertAndReconcile(order(), [
-            lineItem(1, ["a"]),
-            lineItem(2, ["b"]),
-          ]);
-          strictEqual(typeof (yield* usageRow()), "number");
-          // The order is cancelled: the pass closes its one run, which is
-          // the write that brings the shop under the ceiling.
-          const counts = yield* upsertAndReconcile(
-            order({
-              cancelledAt: PROCESSED_AT + 1,
-              updatedAt: PROCESSED_AT + 1,
-            }),
-            [lineItem(1, ["a"]), lineItem(2, ["b"])],
-          );
-          strictEqual(counts.closed, 1);
-          strictEqual(counts.ceilingReleased, true);
-          strictEqual(yield* usageRow(), null);
-          // A pass with nothing to close never says it released.
-          const again = yield* upsertAndReconcile(
-            order({
-              cancelledAt: PROCESSED_AT + 1,
-              updatedAt: PROCESSED_AT + 2,
-            }),
-            [lineItem(1, ["a"]), lineItem(2, ["b"])],
-          );
-          strictEqual(again.ceilingReleased, false);
-        }),
-      ),
-    ));
-
-  it("a pass that closes and declines reports released and raises the flag again", () =>
-    withMaxOpenRuns(1, () =>
-      runInRepository(
-        Effect.gen(function* () {
-          yield* seed;
-          // Room for one run: item 1 gets it, item 2 is declined.
-          yield* upsertAndReconcile(order(), [
-            lineItem(1, ["a"]),
-            lineItem(2, ["b"]),
-          ]);
-          strictEqual(typeof (yield* usageRow()), "number");
-          // Item 1 drops to zero units: the pass closes its run, which
-          // releases the ceiling, and still declines item 2, because the
-          // budget was counted before the close.
-          const counts = yield* upsertAndReconcile(
-            order({ updatedAt: PROCESSED_AT + 1 }),
-            [lineItem(1, ["a"], { currentQuantity: 0 }), lineItem(2, ["b"])],
-          );
-          strictEqual(counts.closed, 1);
-          strictEqual(counts.created, 0);
-          strictEqual(counts.ceilingReleased, true);
-          strictEqual(typeof (yield* usageRow()), "number");
-        }),
-      ),
-    ));
-
-  it("manual attach fails at the ceiling rather than silently doing nothing", () =>
-    withMaxOpenRuns(1, () =>
-      runInRepository(
-        Effect.gen(function* () {
-          const { a, b } = yield* seed;
-          const runs = yield* RunRepository;
-          const orders = yield* OrderRepository;
-          yield* upsertAndReconcile(order(), [lineItem(1, ["a"])]);
-          const target = Option.getOrThrow(
-            yield* orders.getLineItem("gid://shopify/LineItem/1"),
-          );
-          // Attaching a *different* workflow to an item that already has a run
-          // cancels the incumbent first, so it still fits under the ceiling.
-          const replaced = yield* runs.setRun({
-            workflow: yield* savedDetail(b.id),
-            teams: TEAMS,
-            order: target.order,
-            lineItem: target.lineItem,
-          });
-          strictEqual(Option.isSome(replaced), true);
-          // A second item has nowhere to go.
-          yield* orders.upsertOrder({
-            order: order({ updatedAt: PROCESSED_AT + 1 }),
-            lineItems: [lineItem(1, ["a"]), lineItem(2, [])],
-            afterWrite: Effect.void,
-          });
-          const second = Option.getOrThrow(
-            yield* orders.getLineItem("gid://shopify/LineItem/2"),
-          );
-          const refused = yield* Effect.flip(
-            runs.setRun({
-              workflow: yield* savedDetail(a.id),
-              teams: TEAMS,
-              order: second.order,
-              lineItem: second.lineItem,
-            }),
-          );
-          strictEqual(refused._tag, "RunLimitError");
-        }),
-      ),
-    ));
-});
-
 /** The outbox as the meter left it: one row per order billed, newest last. */
 const usageEvents = () =>
   Effect.gen(function* () {
@@ -3910,7 +3362,6 @@ describe("RunRepository metering", () => {
         strictEqual(yield* countedAt(), counted);
         deepStrictEqual(yield* usageEvents(), events);
         strictEqual((yield* usage()).ordersThisCycle, 1);
-        strictEqual((yield* usage()).openRunsLimitedAt, null);
       }),
     ));
 

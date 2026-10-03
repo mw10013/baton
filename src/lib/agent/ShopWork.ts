@@ -14,7 +14,6 @@ import {
   type RunBlockedError,
   type RunOrderClosedError,
   type TaskNotReadyError,
-  type TaskReopenBlockedError,
   RunRepository,
   type RunRepositoryError,
 } from "@/lib/RunRepository";
@@ -244,10 +243,14 @@ const taskResult = <R>(
 
 /**
  * Same shape as {@link workflowResult}: expected run failures become values.
+ * Every repository refusal under the action set is a race between the
+ * render and the click, so each answers `NotAllowed` ({@link Domain.RunResult}).
  * `WorkflowRepositoryError` and `SchemaError` ride along because the actions
  * that can create a run load the start context (the workflows that are on, from this
  * object, teams from D1) first.
  */
+const NOT_ALLOWED = Effect.succeed<Domain.RunResult>({ _tag: "NotAllowed" });
+
 const runResult = <R>(
   effect: Effect.Effect<
     void,
@@ -258,7 +261,6 @@ const runResult = <R>(
     | RunNotAllowedError
     | RunNotBlockedError
     | TaskNotReadyError
-    | TaskReopenBlockedError
     | SqlError.SqlError
     | RunRepositoryError
     | WorkflowRepositoryError
@@ -280,24 +282,12 @@ const runResult = <R>(
     Effect.catchTags({
       RunNotFoundError: () =>
         Effect.succeed<Domain.RunResult>({ _tag: "NotFound" }),
-      RunTerminalError: () =>
-        Effect.succeed<Domain.RunResult>({ _tag: "Terminal" }),
-      RunBlockedError: () =>
-        Effect.succeed<Domain.RunResult>({ _tag: "Blocked" }),
-      RunOrderClosedError: () =>
-        Effect.succeed<Domain.RunResult>({ _tag: "Terminal" }),
-      RunNotAllowedError: () =>
-        Effect.succeed<Domain.RunResult>({ _tag: "NotAllowed" }),
-      RunNotBlockedError: () =>
-        Effect.succeed<Domain.RunResult>({ _tag: "NotBlocked" }),
-      TaskNotReadyError: () =>
-        Effect.succeed<Domain.RunResult>({ _tag: "NotReady" }),
-      TaskReopenBlockedError: ({ taskName, teamName }) =>
-        Effect.succeed<Domain.RunResult>({
-          _tag: "ReopenBlocked",
-          taskName,
-          teamName,
-        }),
+      RunTerminalError: () => NOT_ALLOWED,
+      RunBlockedError: () => NOT_ALLOWED,
+      RunOrderClosedError: () => NOT_ALLOWED,
+      RunNotAllowedError: () => NOT_ALLOWED,
+      RunNotBlockedError: () => NOT_ALLOWED,
+      TaskNotReadyError: () => NOT_ALLOWED,
     }),
   );
 
@@ -436,25 +426,6 @@ const listAllTeamWorkflows = () =>
     Effect.flatMap((repository) => repository.listAllTeamWorkflows()),
   );
 
-/** The delete dialogs' counts, read by the team pages' loaders. */
-const countTasksByTeam = () =>
-  WorkflowRepository.pipe(
-    Effect.flatMap((repository) => repository.countTasksByTeam()),
-  );
-
-/**
- * Whether a retention sweep that deleted `runs` runs released the open-run
- * ceiling ({@link RunRepository}'s `releaseOpenRunLimit`): pass rule 11 on
- * {@link Domain.reconcileItem}. The sweep runs in `OrderRepository`, which
- * cannot reach the run repository, so its caller asks here and runs
- * `afterCeilingReleased` on `true`.
- */
-const sweepReleasedCeiling = (runs: number) =>
-  Effect.gen(function* () {
-    if (runs === 0) return false;
-    return yield* (yield* RunRepository).releaseOpenRunLimit();
-  });
-
 const make = Effect.gen(function* () {
   const host = yield* ShopAgentHost;
   const env = yield* CloudflareEnv;
@@ -473,7 +444,7 @@ const make = Effect.gen(function* () {
     return Effect.gen(function* () {
       const repository = yield* OrderRepository;
       /* One read of the teams for both consumers: the repository derives
-         `unassigned`, `emptyTeam` and `waitingOn` from it, and
+         `unassigned` and `waitingOn` from it, and
          `OrdersIndexData` carries it so the route can name the ids it gets
          back. */
       const teams = yield* readTeams();
@@ -852,7 +823,7 @@ const make = Effect.gen(function* () {
    * transaction: the repository owns that one and Durable Object SQLite
    * refuses to nest, but the Durable Object serialises callables so nothing
    * interleaves. Returns nothing: the pass logs its counts, and no count
-   * reaches a screen (pass rule 10 on {@link Domain.reconcileItem}).
+   * reaches a screen (pass rule 6 on {@link Domain.reconcileItem}).
    *
    * Unconditional, because a workflow turning off creates runs too: one item
    * matched by two workflows that are on is a multi-match and carries no run, so
@@ -861,27 +832,18 @@ const make = Effect.gen(function* () {
    * {@link removeWorkflow} call this directly rather than through
    * {@link reconcileAllIfOn}.
    *
-   * Runs a second time, once, when the pass's own closes released the
-   * open-run ceiling (`ReconcileCounts.ceilingReleased`): pass rule 7 on
-   * {@link Domain.reconcileItem}, which says why once.
-   *
    * Sends the usage queue after the pass ({@link flushUsageEvents}), whether
-   * or not it finished: pass rule 8 on {@link Domain.reconcileItem}.
+   * or not it finished: pass rule 4 on {@link Domain.reconcileItem}.
    */
   const reconcileAllNow = (caller: string, id: string) => {
     const shop = host.shop();
-    const pass = (again: boolean) =>
-      Effect.gen(function* () {
-        const counts = yield* (yield* RunRepository).reconcileAll(
-          yield* eligibleContext(),
-        );
-        yield* Effect.logInfo(
-          `ShopAgent.reconcileAll: shop=${shop} caller=${caller} id=${id} again=${String(again)} orders=${String(counts.orders)} created=${String(counts.created)} multiMatch=${String(counts.multiMatch)} ceilingReleased=${String(counts.ceilingReleased)}`,
-        ).pipe(Effect.annotateLogs({ shop, caller, id, again, ...counts }));
-        return counts.ceilingReleased;
-      });
     return Effect.gen(function* () {
-      if (yield* pass(false)) yield* pass(true);
+      const counts = yield* (yield* RunRepository).reconcileAll(
+        yield* eligibleContext(),
+      );
+      yield* Effect.logInfo(
+        `ShopAgent.reconcileAll: shop=${shop} caller=${caller} id=${id} orders=${String(counts.orders)} created=${String(counts.created)} multiMatch=${String(counts.multiMatch)}`,
+      ).pipe(Effect.annotateLogs({ shop, caller, id, ...counts }));
     }).pipe(Effect.ensuring(flushUsageEvents));
   };
 
@@ -899,23 +861,6 @@ const make = Effect.gen(function* () {
       yield* run();
     });
   };
-
-  /**
-   * The open-run ceiling released: a Done, a Cancel workflow, a close by
-   * reconcile or the retention sweep brought the shop back under `ShopLimits.maxOpenRuns` while
-   * reconcile had declined runs ({@link RunRepository}'s
-   * `releaseOpenRunLimit`). Reconciles every stored order once, outside the
-   * write's transaction, so the declined runs are created now rather than at
-   * each order's next webhook, and publishes to everyone, since the runs
-   * land on any order. The class's sync wiring calls it for the webhook, the
-   * one-order sync and the open-orders sync; the task and run callables call it themselves.
-   * The rule is pass rule 7 on {@link Domain.reconcileItem}.
-   */
-  const afterCeilingReleased = (id: string) =>
-    Effect.gen(function* () {
-      yield* reconcileAllNow("ceilingReleased", id);
-      yield* host.publish("all");
-    });
 
   const reconciler = () => {
     const shop = host.shop();
@@ -938,7 +883,6 @@ const make = Effect.gen(function* () {
               }),
             ),
           ),
-          Effect.map(({ ceilingReleased }) => ({ ceilingReleased })),
         );
     });
   };
@@ -1005,9 +949,11 @@ const make = Effect.gen(function* () {
    *
    * An item holds at most one run, so attaching over one is a replace: the
    * incumbent is deleted in the same transaction and comes back as
-   * `replaced` for the toast. The same workflow again is `AlreadyExists`.
+   * `replaced` for the toast. The same workflow again on an open run is
+   * `AlreadyExists`.
    * Over a closed run it is a fresh start, the closed workflow included, and
-   * `replaced` is null (`Domain.RunState`). An item with no
+   * `replaced` is null (`Domain.RunState`); over a done run it is a replace
+   * like an open one. An item with no
    * units to make is `NothingToMake`, the same rule as `changeWorkflow` on
    * `Domain.runActions`. Confirmation is the UI's job, not this one's — the
    * server cannot know whether the merchant has seen the trail of work
@@ -1044,31 +990,10 @@ const make = Effect.gen(function* () {
       // an item with no run too: nothing to make, nothing to start.
       if (Domain.unitsToMake(target.value.lineItem) === 0)
         return { _tag: "NothingToMake" } satisfies Domain.AttachResult;
-      // Over a run this is Change workflow, gated by the same action set as
-      // every run write but read here, with the item, rather than through
-      // {@link requireRunAction}; the only way `changeWorkflow` is false on
-      // an open order with units to make is a done run. Over a closed run it is the
-      // picker at rest, which the order gate above covers.
-      const repository = yield* RunRepository;
-      const incumbent = (yield* repository.listRunsForOrder({
-        orderId: target.value.order.id,
-      })).find(({ run }) => run.lineItemId === lineItemId);
-      if (
-        incumbent !== undefined &&
-        !Domain.runIsClosed(incumbent.run) &&
-        !Domain.runActions(
-          MERCHANT,
-          target.value.order,
-          incumbent.run,
-          Domain.runTaskRows(incumbent.run, incumbent.tasks),
-          target.value.lineItem,
-        ).changeWorkflow
-      )
-        return {
-          _tag: "ItemDone",
-          workflowName: incumbent.run.workflowName,
-        } satisfies Domain.AttachResult;
-      const set = yield* repository.setRun({
+      // Over a run this is Change workflow: `changeWorkflow` on
+      // {@link Domain.runActions} reads the order and the units, and both
+      // refusals above are its, so a run in any state is replaced here.
+      const set = yield* (yield* RunRepository).setRun({
         workflow: detail,
         teams: shopTeams,
         order: target.value.order,
@@ -1082,18 +1007,7 @@ const make = Effect.gen(function* () {
         run: set.value.run,
         replaced: set.value.replaced,
       } satisfies Domain.AttachResult;
-    }).pipe(
-      Effect.catchTags({
-        RunLimitError: ({ limit }) =>
-          Effect.succeed<Domain.AttachResult>({ _tag: "RunLimit", limit }),
-        RunNotOpenError: ({ workflowName }) =>
-          Effect.succeed<Domain.AttachResult>({
-            _tag: "ItemDone",
-            workflowName,
-          }),
-      }),
-      Effect.ensuring(flushUsageEvents),
-    );
+    }).pipe(Effect.ensuring(flushUsageEvents));
   };
 
   /**
@@ -1111,13 +1025,10 @@ const make = Effect.gen(function* () {
       const result = yield* runResult(
         Effect.gen(function* () {
           yield* requireRunAction(runId, MERCHANT, "cancel");
-          const { ceilingReleased } = yield* (yield* RunRepository).cancelRun({
-            runId,
-          });
+          yield* (yield* RunRepository).cancelRun({ runId });
           yield* Effect.logInfo(
             `ShopAgent.merchantCancelRun: shop=${shop} runId=${runId}`,
           ).pipe(Effect.annotateLogs({ shop, runId }));
-          if (ceilingReleased) yield* afterCeilingReleased(runId);
         }),
       );
       if (result._tag === "Ok") yield* publish(teams);
@@ -1136,7 +1047,7 @@ const make = Effect.gen(function* () {
    * which is the entire permission difference (`Domain.MarkTaskDoneCommand`):
    * the task's team need not be one of the caller's, because the merchant has
    * none, and an unassigned task is exactly the case they are here to fix.
-   * Step order, the run's state, and the downstream reopen guard still apply.
+   * Step order, the run's state, and the later-step reopen guard still apply.
    *
    * They publish with {@link publishToTeams}, not `publish("all")`: the
    * merchant's own order page is subscribed by order and the workers by team,
@@ -1156,14 +1067,13 @@ const make = Effect.gen(function* () {
     return runResult(
       Effect.gen(function* () {
         yield* requireTaskAction(runTaskId, MERCHANT, ({ done }) => done);
-        const { ceilingReleased } = yield* (yield* RunRepository).markTaskDone({
+        yield* (yield* RunRepository).markTaskDone({
           runTaskId,
           actor: { role: "merchant" },
         } satisfies Domain.MarkTaskDoneCommand);
         yield* Effect.logInfo(
           `ShopAgent.merchantMarkTaskDone: shop=${shop} task=${runTaskId}`,
         ).pipe(Effect.annotateLogs({ shop, task: runTaskId }));
-        if (ceilingReleased) yield* afterCeilingReleased(runTaskId);
       }),
     ).pipe(Effect.tap(() => publish(runTaskId)));
   };
@@ -1175,11 +1085,7 @@ const make = Effect.gen(function* () {
     const publish = (runTaskId: string) => publishToTeams({ runTaskId });
     return runResult(
       Effect.gen(function* () {
-        yield* requireTaskAction(
-          runTaskId,
-          MERCHANT,
-          ({ reopen }) => reopen !== null,
-        );
+        yield* requireTaskAction(runTaskId, MERCHANT, ({ reopen }) => reopen);
         yield* (yield* RunRepository).reopenTask({
           runTaskId,
           actor: { role: "merchant" },
@@ -1248,26 +1154,6 @@ const make = Effect.gen(function* () {
         } satisfies Domain.BlockRunCommand);
         yield* Effect.logInfo(
           `ShopAgent.merchantBlockRun: shop=${shop} runId=${runId}`,
-        ).pipe(Effect.annotateLogs({ shop, runId }));
-      }),
-    ).pipe(Effect.tap(() => publish(runId)));
-  };
-
-  const merchantSetBlockReason = ({
-    runId,
-    reason,
-  }: typeof Domain.SetBlockReasonInput.Type) => {
-    const shop = host.shop();
-    const publish = (runId: string) => publishToTeams({ runId });
-    return runResult(
-      Effect.gen(function* () {
-        yield* requireRunAction(runId, MERCHANT, "editReason");
-        yield* (yield* RunRepository).setBlockReason({
-          runId,
-          reason,
-        } satisfies Domain.SetBlockReasonCommand);
-        yield* Effect.logInfo(
-          `ShopAgent.merchantSetBlockReason: shop=${shop} runId=${runId}`,
         ).pipe(Effect.annotateLogs({ shop, runId }));
       }),
     ).pipe(Effect.tap(() => publish(runId)));
@@ -1531,28 +1417,6 @@ const make = Effect.gen(function* () {
     ).pipe(Effect.tap(() => publish(runId)));
   };
 
-  const memberSetBlockReason = (
-    { runId, reason }: typeof Domain.SetBlockReasonInput.Type,
-    { memberId, memberEmail, teamIds }: Domain.MemberConnectionState,
-  ) => {
-    const shop = host.shop();
-    const publish = (runId: string) => publishToTeams({ runId });
-    return runResult(
-      Effect.gen(function* () {
-        const actor = memberActor({ memberId, memberEmail, teamIds });
-        yield* requireRunAction(runId, actor, "editReason");
-        yield* (yield* RunRepository).setBlockReason({
-          runId,
-          teamIds,
-          reason,
-        } satisfies Domain.SetBlockReasonCommand);
-        yield* Effect.logInfo(
-          `ShopAgent.memberSetBlockReason: shop=${shop} runId=${runId} memberId=${memberId}`,
-        ).pipe(Effect.annotateLogs({ shop, runId, memberId }));
-      }),
-    ).pipe(Effect.tap(() => publish(runId)));
-  };
-
   const memberMarkTaskDone = (
     { runTaskId }: typeof Domain.MarkTaskDoneInput.Type,
     { memberId, memberEmail, teamIds }: Domain.MemberConnectionState,
@@ -1563,12 +1427,11 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const actor = memberActor({ memberId, memberEmail, teamIds });
         yield* requireTaskAction(runTaskId, actor, ({ done }) => done);
-        const { ceilingReleased } = yield* (yield* RunRepository).markTaskDone({
+        yield* (yield* RunRepository).markTaskDone({
           runTaskId,
           actor: { role: "member", memberId, email: memberEmail },
           teamIds,
         } satisfies Domain.MarkTaskDoneCommand);
-        if (ceilingReleased) yield* afterCeilingReleased(runTaskId);
         yield* Effect.logInfo(
           `ShopAgent.memberMarkTaskDone: shop=${shop} task=${runTaskId} memberId=${memberId}`,
         ).pipe(Effect.annotateLogs({ shop, task: runTaskId, memberId }));
@@ -1589,11 +1452,7 @@ const make = Effect.gen(function* () {
     return runResult(
       Effect.gen(function* () {
         const actor = memberActor({ memberId, memberEmail, teamIds });
-        yield* requireTaskAction(
-          runTaskId,
-          actor,
-          ({ reopen }) => reopen !== null,
-        );
+        yield* requireTaskAction(runTaskId, actor, ({ reopen }) => reopen);
         yield* (yield* RunRepository).reopenTask({
           runTaskId,
           actor: { role: "member", memberId, email: memberEmail },
@@ -2173,7 +2032,6 @@ const make = Effect.gen(function* () {
           fulfillmentStatus: seed.fulfillmentStatus ?? "UNFULFILLED",
           fullyPaid: seed.unpaid !== true,
           note: seed.note ?? null,
-          lineItemsTruncated: false,
           syncedAt: now,
         };
         /** `changed` is the `after` block's quantities, by 1-based position; without it this is the order as placed. */
@@ -2279,7 +2137,6 @@ const make = Effect.gen(function* () {
     merchantPutBackTask,
     merchantSetRunNote,
     merchantBlockRun,
-    merchantSetBlockReason,
     merchantUnblockRun,
     listRuns,
     subscribeRuns,
@@ -2287,7 +2144,6 @@ const make = Effect.gen(function* () {
     memberPutBackTask,
     memberSetRunNote,
     memberBlockRun,
-    memberSetBlockReason,
     memberMarkTaskDone,
     memberReopenTask,
     memberGetRun,
@@ -2307,17 +2163,12 @@ const make = Effect.gen(function* () {
     listTeamWorkflows,
     listWorkflows,
     listAllTeamWorkflows,
-    countTasksByTeam,
     /**
      * For the class's sync wiring, which passes it to `OrdersAgent`'s
      * `fetchAndUpsertOrder` as its `reconciler`; the function it yields is the
      * store's `afterWrite`.
      */
     reconciler,
-    /** For the class's sync wiring, when the store's `afterWrite` says the reconcile released the open-run ceiling. */
-    afterCeilingReleased,
-    /** For the class's retention sweeps: whether the sweep's deletes released the open-run ceiling. */
-    sweepReleasedCeiling,
     /** The teams with an open task on the target, for the class's webhook publish. */
     orderTeamIds,
   };

@@ -32,7 +32,6 @@ const CALLABLE_ROLES = {
   memberMarkTaskDone: "member",
   memberSetRunNote: "member",
   memberBlockRun: "member",
-  memberSetBlockReason: "member",
   memberUnblockRun: "member",
   memberReopenTask: "member",
   memberPutBackTask: "member",
@@ -60,7 +59,6 @@ const CALLABLE_ROLES = {
   merchantPutBackTask: "merchant",
   merchantSetRunNote: "merchant",
   merchantBlockRun: "merchant",
-  merchantSetBlockReason: "merchant",
   merchantUnblockRun: "merchant",
   addStep: "merchant",
   addTask: "merchant",
@@ -127,7 +125,7 @@ describe("ShopAgent callable role gate", () => {
 
   /**
    * The Worker-only RPCs stay off the socket. Each carries an input a browser
-   * must never supply — a billing cycle, a member count, Shopify's meter reading, a revoke —
+   * must never supply — a billing cycle with its member count, a revoke —
    * and the first test would catch a stray decorator by set equality, but
    * naming them here is what says the omission is deliberate.
    */
@@ -138,8 +136,6 @@ describe("ShopAgent callable role gate", () => {
     const callables = await decoratedCallables(shop);
     for (const name of [
       "setBillingCycle",
-      "recordMemberCount",
-      "checkMeters",
       "flushUsageEvents",
       "revokeAllConnections",
       "onOrdersStream",
@@ -249,7 +245,6 @@ describe("ShopAgent run callable names", () => {
     "merchantPutBackTask",
     "merchantSetRunNote",
     "merchantBlockRun",
-    "merchantSetBlockReason",
     "merchantUnblockRun",
     "merchantAssignRunTaskTeam",
     "memberStartTask",
@@ -258,7 +253,6 @@ describe("ShopAgent run callable names", () => {
     "memberPutBackTask",
     "memberSetRunNote",
     "memberBlockRun",
-    "memberSetBlockReason",
     "memberUnblockRun",
   ] as const;
 

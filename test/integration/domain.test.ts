@@ -17,7 +17,6 @@ const order = (
   fulfillmentStatus: "UNFULFILLED",
   fullyPaid: true,
   note: null,
-  lineItemsTruncated: false,
   syncedAt: 0,
   ...overrides,
 });
@@ -32,7 +31,6 @@ const row = (
   itemUnits: 1,
   runs: { ...NONE, ...runs },
   unassigned: false,
-  emptyTeam: false,
   waitingOn: [],
   multiMatchItems,
 });
@@ -102,35 +100,22 @@ describe("Domain.orderIssues", () => {
     deepStrictEqual(Domain.orderIssues(row(NONE, {}, 1)), ["multi_match"]);
   });
 
-  it("multi-match: an item two workflows match, on an order that can create runs", () => {
+  it("multi-match: an item two workflows match", () => {
     deepStrictEqual(Domain.orderIssues(row({ open: 1 }, {}, 1)), [
       "multi_match",
     ]);
-    deepStrictEqual(Domain.orderIssues(row(NONE, { fullyPaid: false }, 1)), []);
+  });
+
+  it("a multi-match item on an unpaid order is an issue", () => {
+    deepStrictEqual(Domain.orderIssues(row(NONE, { fullyPaid: false }, 1)), [
+      "multi_match",
+    ]);
   });
 
   it("unassigned: an open run has an unassigned open task", () => {
     deepStrictEqual(
       Domain.orderIssues({ ...row({ open: 1 }), unassigned: true }),
       ["unassigned"],
-    );
-  });
-
-  it("empty team: an open run has a current task on a team with no members", () => {
-    deepStrictEqual(
-      Domain.orderIssues({ ...row({ open: 1 }), emptyTeam: true }),
-      ["empty_team"],
-    );
-  });
-
-  it("an order with both team faults carries both issues, unassigned first", () => {
-    deepStrictEqual(
-      Domain.orderIssues({
-        ...row({ open: 2 }),
-        unassigned: true,
-        emptyTeam: true,
-      }),
-      ["unassigned", "empty_team"],
     );
   });
 
@@ -154,7 +139,6 @@ describe("Domain.orderIssues", () => {
     const troubled = (overrides: Partial<Domain.ShopOrder>) => ({
       ...row({ open: 1, blocked: 1 }, overrides, 1),
       unassigned: true,
-      emptyTeam: true,
     });
     deepStrictEqual(
       Domain.orderIssues(troubled({ fulfillmentStatus: "FULFILLED" })),
@@ -185,7 +169,6 @@ const run = (state: Domain.RunState, blocked = false): Domain.Run => ({
   blockedAt: blocked ? 1 : null,
   blockReason: null,
   blockedBy: null,
-  quantityChangedFrom: null,
   note: null,
   createdAt: 0,
   updatedAt: 0,
@@ -266,8 +249,6 @@ const runOn = (lineItemId: string, state: Domain.RunState): Domain.Run => ({
   lineItemId,
 });
 
-const PAID = { fullyPaid: true, cancelledAt: null };
-
 describe("Domain.multiMatchItems", () => {
   /**
    * The same three conditions `OrderRepository`'s `MULTI_MATCH_ITEM` spells out
@@ -281,7 +262,7 @@ describe("Domain.multiMatchItems", () => {
     const multiMatchItems = (
       lineItems: readonly Domain.OrderLineItem[],
       runs: readonly Domain.Run[],
-    ) => Domain.multiMatchItems(PAID, lineItems, runs, DETAILS, TEAMS).length;
+    ) => Domain.multiMatchItems(lineItems, runs, DETAILS, TEAMS).length;
     strictEqual(
       multiMatchItems([lineItem("a", ["w1", "w2"])], []),
       1,
@@ -325,7 +306,6 @@ describe("Domain.multiMatchItems", () => {
     ];
     strictEqual(
       Domain.multiMatchItems(
-        PAID,
         [lineItem("a", ["w1", "w2", "w3"])],
         [],
         details,
@@ -338,26 +318,6 @@ describe("Domain.multiMatchItems", () => {
         ({ workflow }) => workflow.tag,
       ),
       ["w1"],
-    );
-  });
-
-  it("multi-match counts only on an order that can create runs", () => {
-    const items = [lineItem("a", ["w1", "w2"])];
-    strictEqual(
-      Domain.multiMatchItems(PAID, items, [], DETAILS, TEAMS).length,
-      1,
-      "paid",
-    );
-    strictEqual(
-      Domain.multiMatchItems(
-        { fullyPaid: false, cancelledAt: null },
-        items,
-        [],
-        DETAILS,
-        TEAMS,
-      ).length,
-      0,
-      "unpaid: not choosing until it pays",
     );
   });
 });
@@ -717,18 +677,18 @@ const taskRow = (
   overrides: Partial<
     Pick<
       Domain.RunTaskRow,
-      "teamId" | "current" | "startedAt" | "doneAt" | "reopenBlockedBy"
+      "teamId" | "current" | "startedAt" | "doneAt" | "laterStepStarted"
     >
   > = {},
 ): Pick<
   Domain.RunTaskRow,
-  "teamId" | "current" | "startedAt" | "doneAt" | "reopenBlockedBy"
+  "teamId" | "current" | "startedAt" | "doneAt" | "laterStepStarted"
 > => ({
   teamId: TEAM,
   current: true,
   startedAt: null,
   doneAt: null,
-  reopenBlockedBy: null,
+  laterStepStarted: false,
   ...overrides,
 });
 
@@ -736,7 +696,7 @@ const NOTHING = {
   start: false,
   done: false,
   putBack: false,
-  reopen: null,
+  reopen: false,
   assign: false,
 };
 
@@ -771,15 +731,11 @@ describe("Domain.taskActions", () => {
         taskRow({ current: false, startedAt: 1, doneAt: 2 }),
         [TEAM],
       ),
-      { ...NOTHING, reopen: { blockedBy: null } },
+      { ...NOTHING, reopen: true },
     );
   });
 
-  it("reopening a task is refused once any task in a later step has started, naming the blocker", () => {
-    const blocker: Domain.ReopenBlocker = {
-      taskName: Schema.decodeUnknownSync(Domain.TaskName)("Polish"),
-      teamName: Schema.decodeUnknownSync(Domain.TeamName)("Finishing"),
-    };
+  it("reopening a task is refused once any task in a later step has started", () => {
     deepStrictEqual(
       memberActions(
         run("open"),
@@ -787,11 +743,11 @@ describe("Domain.taskActions", () => {
           current: false,
           startedAt: 1,
           doneAt: 2,
-          reopenBlockedBy: blocker,
+          laterStepStarted: true,
         }),
         [TEAM],
       ),
-      { ...NOTHING, reopen: { blockedBy: blocker } },
+      NOTHING,
     );
   });
 
@@ -805,7 +761,7 @@ describe("Domain.taskActions", () => {
         taskRow({ current: false, startedAt: 1, doneAt: 2 }),
         [TEAM],
       ),
-      { ...NOTHING, reopen: { blockedBy: null } },
+      { ...NOTHING, reopen: true },
     );
   });
 
@@ -825,7 +781,7 @@ describe("Domain.taskActions", () => {
       start: true,
       done: true,
       putBack: false,
-      reopen: null,
+      reopen: false,
       assign: false,
     });
     deepStrictEqual(
@@ -834,7 +790,7 @@ describe("Domain.taskActions", () => {
         start: false,
         done: true,
         putBack: true,
-        reopen: null,
+        reopen: false,
         assign: false,
       },
     );
@@ -914,9 +870,6 @@ const runTask = (
   doneAt: done ? 2 : null,
   doneByEmail: null,
   doneByRole: null,
-  reopenedAt: null,
-  reopenedByRole: null,
-  reopenedByEmail: null,
 });
 
 describe("Domain.runIsVisibleTo", () => {

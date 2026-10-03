@@ -9,7 +9,7 @@ import { Effect, Schema } from "effect";
 import { ListSearchField } from "@/components/ListSearchField";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { MemberBar } from "@/components/MemberBar";
-import { ClosedLine, QuantityBadge } from "@/components/MemberRun";
+import { ClosedLine } from "@/components/MemberRun";
 import * as Domain from "@/lib/Domain";
 import { formatNumber } from "@/lib/format";
 import { requireMember } from "@/lib/MemberAccess";
@@ -347,9 +347,8 @@ function RouteComponent() {
    * expanded row used to and the run history, the editors and a printable
    * ticket besides, for the same single tap.
    *
-   * Line one is the item's title and variant ({@link itemTitle}), then its workflow and order, and the
-   * quantity badge after a Shopify change ({@link QuantityBadge}): what the
-   * row is. The item leads because it is what to make; the workflow name is
+   * Line one is the item's title and variant ({@link itemTitle}), then its
+   * workflow and order: what the row is. The item leads because it is what to make; the workflow name is
    * the noun the merchant's order page uses for the same run, so the two
    * sides can talk about one thing; the order is the qualifier.
    * Line two is what to do on it ({@link Domain.runRowLine}): every current task
@@ -415,7 +414,7 @@ function RouteComponent() {
      *
      * The list sets `current: true` on every task of a row because the query
      * returns current tasks only (`RunRepository.listRuns`), and
-     * `reopenBlockedBy: null` because the row holds no done task; a list that
+     * `laterStepStarted: false` because the row holds no done task; a list that
      * one day carried a waiting task would need `RunListTask` to carry
      * `current`.
      */
@@ -452,7 +451,7 @@ function RouteComponent() {
           ...each,
           current: true,
           doneAt: null,
-          reopenBlockedBy: null,
+          laterStepStarted: false,
         });
         if (can.start)
           return [
@@ -525,7 +524,6 @@ function RouteComponent() {
                 {/* No Blocked badge: it would read "Blocked" under a chosen
                     Blocked state, beside an Unblock item, above the reason as
                     typed — one fact said four times. */}
-                <QuantityBadge run={run} />
               </s-stack>
               {/* `.run-detail-line` in `styles.css` cuts it to two lines. */}
               <div className="run-detail-line">
@@ -561,7 +559,7 @@ function RouteComponent() {
     Domain.taskActions(actor, entry.order, entry.run, {
       ...entry.task,
       current: false,
-      reopenBlockedBy: entry.reopenBlockedBy,
+      laterStepStarted: entry.laterStepStarted,
     }).reopen;
 
   /**
@@ -579,15 +577,15 @@ function RouteComponent() {
    * moment anything downstream starts, so a busy shop's Done or closed list was mostly
    * dead buttons each explaining itself in a third line. When most rows can
    * offer nothing, absence is the norm a reader learns in two rows and the
-   * kebab is the signal. The refusal is not lost — the workflow page the row
-   * links to states it in full, for the reader who went looking.
+   * kebab is the signal. The workflow page the row links to shows the later
+   * step's task started, for the reader who went looking.
    */
   const renderDone = (
     entry: Extract<Domain.RecentItem, { kind: "task" }>,
     first: boolean,
   ) => {
     const menuId = `run-reopen-${entry.task.id}`;
-    const reopenable = reopenOf(entry)?.blockedBy === null;
+    const reopenable = reopenOf(entry);
     return (
       <s-box
         key={entry.task.id}

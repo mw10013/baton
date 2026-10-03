@@ -82,10 +82,9 @@ const getLoaderData = createServerFn({ method: "GET" })
  * primary connection, so a miss cannot happen and is reported as the
  * repository's own invariant failure.
  *
- * The member count after the insert goes to `ShopAgent.recordMemberCount` (the
- * "member added" rows on `Domain.ShopUsage`). Best-effort: a seat event that
- * failed to record is an operator signal, not a reason to fail the add, and
- * the next revalidation's "cycle pushed, same start" row sends it.
+ * The add queues no seat event: the next revalidation raises the seat mark
+ * to the member count (the "revalidation, same cycle start" row on
+ * `Domain.ShopUsage`).
  */
 const addMemberFn = createServerFn({ method: "POST" })
   .validator(Schema.toStandardSchemaV1(AddMemberInput))
@@ -97,16 +96,6 @@ const addMemberFn = createServerFn({ method: "POST" })
         const shop = yield* sessionShop(session.shop);
         const email = yield* decodeEmail(data.email);
         yield* repository.addMember({ shop, email });
-        const shopAgentClient = yield* ShopAgentClient;
-        yield* repository.countMembers(shop).pipe(
-          Effect.flatMap((size) =>
-            shopAgentClient.recordMemberCount(shop, { size }),
-          ),
-          Effect.ignore({
-            log: "Warn",
-            message: `addMember: shop=${shop}: recordMemberCount failed`,
-          }),
-        );
         if (data.teamIds.length === 0) return;
         const member = yield* repository.findMember({ shop, email }).pipe(
           Effect.flatMap(

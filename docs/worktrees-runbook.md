@@ -94,6 +94,7 @@ This runs `git worktree add`, creates branch `wt-NN` from `main` in `~/.herdr/wo
 In the new workspace:
 
 ```bash
+pnpm install                       # a new worktree has no node_modules, and worktree:init needs them to run
 pnpm worktree:init --index NN      # e.g. --index 1 in wt-01: port 3801, sandbox-shop-01
 pnpm dev:start --seed
 ```

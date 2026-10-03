@@ -1,4 +1,4 @@
-import { Clock, Effect, Option, Schedule, Schema, Stream } from "effect";
+import { Clock, Effect, Schedule, Schema, Stream } from "effect";
 import { Ndjson } from "effect/unstable/encoding";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
@@ -47,7 +47,7 @@ type BulkLine = typeof BulkLine.Type;
 interface OrderBuffer {
   readonly order: BulkOrderLine;
   readonly lineItems: readonly BulkLineItemLine[];
-  /** Line items past {@link Domain.ShopLimits.maxLineItemsPerOrder} were dropped. */
+  /** Line items past {@link Domain.ShopLimits.maxLineItemsPerOrder} were not stored; logged. */
   readonly truncated: boolean;
 }
 
@@ -62,12 +62,6 @@ export interface OrdersStreamCounts {
   readonly ordersInserted: number;
   /** New orders refused at `Domain.ShopLimits.maxOrdersPerCycle`; the caller logs the total once. */
   readonly ordersRefused: number;
-  /**
-   * Some order's reconcile closed runs and released the open-run ceiling
-   * (`ReconcileCounts.ceilingReleased`): the caller runs one reconcile all
-   * after the stream, so the runs declined at the ceiling are created.
-   */
-  readonly ceilingReleased: boolean;
 }
 
 /**
@@ -98,8 +92,8 @@ const addLine = (
       return active !== null && line.__parentId === active.order.id
         ? Effect.succeed([
             /**
-             * Past the cap the line is dropped and the order flagged rather
-             * than the stream failed: one pathological order must not cost the
+             * Past the cap the line is not stored and the order is logged
+             * rather than the stream failed: one pathological order must not cost the
              * merchant the whole sync, and the buffer is what bounds this
              * reader's memory — without it a single order with a hundred
              * thousand items is held whole before its transaction opens.
@@ -153,9 +147,7 @@ export const runShopAgentOrdersStream = <E = never>({
 }: {
   readonly url: string;
   /** Composed into each order's upsert transaction; see `OrderUpsert.afterWrite`. */
-  readonly afterWrite?: (
-    order: Domain.ShopOrder,
-  ) => Effect.Effect<{ readonly ceilingReleased: boolean }, E>;
+  readonly afterWrite?: (order: Domain.ShopOrder) => Effect.Effect<unknown, E>;
 }) =>
   Effect.gen(function* () {
     const repository = yield* OrderRepository;
@@ -205,15 +197,10 @@ export const runShopAgentOrdersStream = <E = never>({
           ordersTruncated: 0,
           ordersInserted: 0,
           ordersRefused: 0,
-          ceilingReleased: false,
         }),
         (counts, { order, lineItems, truncated }) =>
           Effect.gen(function* () {
-            const shopOrder = toShopOrder({
-              node: order,
-              syncedAt,
-              lineItemsTruncated: truncated,
-            });
+            const shopOrder = toShopOrder({ node: order, syncedAt });
             if (truncated)
               yield* Effect.logWarning(
                 `ShopAgent.onOrdersStream: orderId=${order.id} lineItems truncated at ${String(Domain.ShopLimits.maxLineItemsPerOrder)}`,
@@ -223,12 +210,7 @@ export const runShopAgentOrdersStream = <E = never>({
                   limit: Domain.ShopLimits.maxLineItemsPerOrder,
                 }),
               );
-            const {
-              written,
-              fresh,
-              refused,
-              afterWrite: after,
-            } = yield* repository.upsertOrder({
+            const { written, fresh, refused } = yield* repository.upsertOrder({
               order: shopOrder,
               lineItems: lineItems.map((item) =>
                 toOrderLineItem(order.id, item),
@@ -243,9 +225,6 @@ export const runShopAgentOrdersStream = <E = never>({
               ordersTruncated: counts.ordersTruncated + (truncated ? 1 : 0),
               ordersInserted: counts.ordersInserted + (fresh ? 1 : 0),
               ordersRefused: counts.ordersRefused + (refused ? 1 : 0),
-              ceilingReleased:
-                counts.ceilingReleased ||
-                Option.exists(after, (result) => result.ceilingReleased),
             };
           }),
       ),

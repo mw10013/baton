@@ -135,7 +135,9 @@ test("teams screen creates, adds members to, renames, and deletes a team", async
 
   await clickMenuItem(frame, "Delete");
   await expect(
-    frame.getByText("No workflow tasks are assigned to it."),
+    frame.getByText(
+      "Tasks on this team become unassigned until you assign another team.",
+    ),
   ).toBeVisible();
   await frame
     .getByRole("button", { name: "Delete", exact: true })

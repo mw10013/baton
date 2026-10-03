@@ -106,7 +106,6 @@ const seedOrder = (shop: string, processedAt: number, tag: string) =>
               fulfillmentStatus: "UNFULFILLED",
               fullyPaid: true,
               note: null,
-              lineItemsTruncated: false,
               syncedAt: processedAt,
             },
             lineItems: [
@@ -206,6 +205,61 @@ afterEach(async () => {
 });
 
 describe("ShopAgent usage flush", () => {
+  it("the flush deletes an event dated before the current cycle and logs it", async () => {
+    const shop = "flush-expired.myshopify.com";
+    await seedTeam(shop);
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    await openCycle(agent);
+    const expiredKey = `${ORDER_ID}#expired`;
+    await runInDurableObject(env.SHOP_AGENT.getByName(shop), (instance) => {
+      (instance as unknown as { ctx: DurableObjectState }).ctx.storage.sql.exec(
+        "insert into UsageEvent (idempotencyKey, eventHandle, orderId, value, occurredAt) values (?, ?, ?, 1, ?)",
+        expiredKey,
+        Domain.USAGE_METER_ORDER,
+        ORDER_ID,
+        Date.now() - 10 * DAY,
+      );
+    });
+    const lines = await capturingConsole(async () => {
+      strictEqual(await agent.flushUsageEvents(), 0);
+    });
+    deepStrictEqual(appEvents, []);
+    const left = await runInDurableObject(
+      env.SHOP_AGENT.getByName(shop),
+      (instance) =>
+        (instance as unknown as { ctx: DurableObjectState }).ctx.storage.sql
+          .exec("select count(*) as n from UsageEvent")
+          .one().n,
+    );
+    strictEqual(left, 0);
+    strictEqual(
+      lines.some(
+        (line) =>
+          line.includes(`idempotencyKey=${expiredKey}`) &&
+          line.includes("expired before it was sent"),
+      ),
+      true,
+    );
+  });
+
+  it("a cycle push sends the seat event it queued", async () => {
+    const shop = "flush-cycle.myshopify.com";
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    const cycleStartAt = Date.now() - 2 * DAY;
+    await agent.setBillingCycle({
+      shopGid,
+      cycleStartAt,
+      cycleEndAt: Date.now() + 28 * DAY,
+      memberCount: 3,
+    });
+    deepStrictEqual(appEvents, [
+      { idempotencyKey: `seat#${String(cycleStartAt)}#3`, value: 3 },
+    ]);
+    const usage = await agent.getUsage();
+    strictEqual(usage.pendingUsageEvents, 0);
+    strictEqual(usage.seatsThisCycle, 3);
+  });
+
   it("attaching a workflow sends the usage event it queued", async () => {
     const shop = "flush-attach.myshopify.com";
     const team = await seedTeam(shop);
@@ -266,32 +320,6 @@ describe("ShopAgent usage flush", () => {
     strictEqual(turnedOn, "failed");
     deepStrictEqual(appEvents, [{ idempotencyKey: countKey, value: 1 }]);
     const usage = await agent.getUsage();
-    strictEqual(usage.pendingUsageEvents, 0);
-  });
-
-  it("a meter check stores Shopify's quantities, logs a divergence and sends the queue", async () => {
-    const shop = "flush-check-meters.myshopify.com";
-    await seedTeam(shop);
-    const agent = await getAgentByName(env.SHOP_AGENT, shop);
-    await openCycle(agent);
-    await queueEvent(shop, countKey);
-
-    // Baton counted no order and holds one unit queued; Shopify reports
-    // five, more than the queue explains.
-    const lines = await capturingConsole(() =>
-      agent.checkMeters({ orders: 5, members: 0 }),
-    );
-    const usage = await agent.getUsage();
-    strictEqual(usage.meterQuantityOrders, 5);
-    strictEqual(usage.meterQuantityMembers, 0);
-    // One warning, for the orders meter; the members meter agrees.
-    const diverged = lines.filter((line) => line.includes("meter diverges"));
-    strictEqual(diverged.length, 1);
-    strictEqual(
-      diverged[0]?.includes(`meter=${Domain.USAGE_METER_ORDER}`),
-      true,
-    );
-    deepStrictEqual(appEvents, [{ idempotencyKey: countKey, value: 1 }]);
     strictEqual(usage.pendingUsageEvents, 0);
   });
 

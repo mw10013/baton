@@ -1,6 +1,6 @@
 import type * as ShopifyApi from "@shopify/shopify-api";
 
-import { Clock, Context, Effect, Layer, Option, Schema } from "effect";
+import { Clock, Context, Effect, Layer, Schema } from "effect";
 
 import { CurrentShopifySession } from "@/lib/CurrentShopifySession";
 import * as Domain from "@/lib/Domain";
@@ -51,19 +51,15 @@ const make = Effect.gen(function* () {
    * `reconciler` loads what the per-order reconcile needs and returns it; it
    * runs after the fetch and before the upsert's transaction opens, and the
    * function it returns is the upsert's `afterWrite`. The caller supplies
-   * it, so this module never reads shop work. `ceilingReleased` is the
-   * reconcile's word that its closes released the open-run ceiling, handed
-   * back for the caller to act on outside the transaction.
+   * it, so this module never reads shop work.
    *
-   * The query asks for one page of 250 items and flags `hasNextPage` as
-   * `lineItemsTruncated` (rule 10 on `Domain.syncOrder`).
+   * The query asks for one page of 250 items and logs `hasNextPage`; the
+   * rest are not stored (rule 10 on `Domain.syncOrder`).
    */
   const fetchAndUpsertOrder = <E, E2, R2>(
     { orderId }: { readonly orderId: string },
     reconciler: Effect.Effect<
-      (
-        order: Domain.ShopOrder,
-      ) => Effect.Effect<{ readonly ceilingReleased: boolean }, E>,
+      (order: Domain.ShopOrder) => Effect.Effect<unknown, E>,
       E2,
       R2
     >,
@@ -83,10 +79,9 @@ const make = Effect.gen(function* () {
         yield* Effect.logWarning(
           `ShopAgent.fetchAndUpsertOrder: shop=${shop} orderId=${orderId}: order not found`,
         ).pipe(Effect.annotateLogs({ shop, orderId }));
-        return { written: false, ceilingReleased: false, gone: true };
+        return { written: false, gone: true };
       }
-      const lineItemsTruncated = order.lineItems.pageInfo.hasNextPage;
-      if (lineItemsTruncated)
+      if (order.lineItems.pageInfo.hasNextPage)
         yield* Effect.logError(
           `ShopAgent.fetchAndUpsertOrder: shop=${shop} orderId=${orderId} limit=${String(Domain.ShopLimits.maxLineItemsPerOrder)}: line items truncated`,
         ).pipe(
@@ -100,27 +95,18 @@ const make = Effect.gen(function* () {
       const shopOrder = toShopOrder({
         node: order,
         syncedAt: yield* Clock.currentTimeMillis,
-        lineItemsTruncated,
       });
-      const { written, afterWrite } =
-        yield* (yield* OrderRepository).upsertOrder({
-          order: shopOrder,
-          lineItems: order.lineItems.nodes.map((node) =>
-            toOrderLineItem(order.id, node),
-          ),
-          afterWrite: reconcile(shopOrder),
-        });
+      const { written } = yield* (yield* OrderRepository).upsertOrder({
+        order: shopOrder,
+        lineItems: order.lineItems.nodes.map((node) =>
+          toOrderLineItem(order.id, node),
+        ),
+        afterWrite: reconcile(shopOrder),
+      });
       yield* Effect.logInfo(
         `ShopAgent.fetchAndUpsertOrder: shop=${shop} orderId=${orderId} written=${String(written)}`,
       ).pipe(Effect.annotateLogs({ shop, orderId, written }));
-      return {
-        written,
-        ceilingReleased: Option.exists(
-          afterWrite,
-          (after) => after.ceilingReleased,
-        ),
-        gone: false,
-      };
+      return { written, gone: false };
     });
 
   return { fetchAndUpsertOrder };

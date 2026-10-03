@@ -62,7 +62,6 @@ const seedOrder = (shop: string) =>
               fulfillmentStatus: "UNFULFILLED",
               fullyPaid: true,
               note: null,
-              lineItemsTruncated: false,
               syncedAt: processedAt,
             },
             lineItems: [

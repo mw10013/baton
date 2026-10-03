@@ -12,7 +12,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { Effect, Schema } from "effect";
 
 import { LocalDateTime } from "@/components/LocalDateTime";
-import { StepFlow, TeamIssueBanners } from "@/components/WorkflowSteps";
+import { StepFlow, TeamFaultBanners } from "@/components/WorkflowSteps";
 import {
   switchResultMessage,
   WorkflowSwitch,
@@ -350,14 +350,14 @@ function RouteComponent() {
           {banner !== null && <s-banner tone="critical">{banner}</s-banner>}
           {showSwitch && !on && blocker !== null && (
             <s-banner tone="info" heading="Turn on is unavailable">
-              {/* Wrapped, like `TeamIssueBanners`' lines: `s-banner` renders
+              {/* Wrapped, like `TeamFaultBanners`' lines: `s-banner` renders
                   its body from elements, and a bare string child never
                   reaches the page. */}
               <s-paragraph>{switchResultMessage(blocker)}</s-paragraph>
             </s-banner>
           )}
 
-          <TeamIssueBanners tasks={tasks} />
+          <TeamFaultBanners tasks={tasks} />
 
           <StepFlow
             tasks={tasks}

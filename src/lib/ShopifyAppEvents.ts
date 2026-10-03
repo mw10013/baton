@@ -97,8 +97,8 @@ export class ShopifyAppEvents extends Context.Service<
      * billable: a handle that matches no meter, a timestamp outside the cycle,
      * and a shop with no app subscription all answer `202` and show up only in
      * the Dev Dashboard log. The caller deletes its outbox row on success for
-     * that reason — there is nothing better to wait for — and the divergence
-     * check against the metered quantity is what catches the rest.
+     * that reason: there is nothing better to wait for, and the Dev Dashboard
+     * log is where a refused event shows.
      */
     readonly send: (
       event: Domain.UsageEvent,

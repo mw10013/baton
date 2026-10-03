@@ -50,10 +50,9 @@ const orderCount = (shop: string) =>
  */
 const CYCLE_END = Date.now() + 86_400_000;
 
-const webhook = (orderId: string, webhookId: string) => ({
+const webhook = (orderId: string) => ({
   orderId,
   topic: "orders/paid",
-  webhookId,
   updatedAt: 1000,
 });
 
@@ -71,7 +70,7 @@ describe("ShopAgent order ceiling", () => {
       await setCount(shop, 2);
       // No Shopify call is made: the refusal lands before the fetch, which is
       // what makes the webhook cheap to refuse and this case hermetic.
-      await agent.syncOrderWebhook(webhook("gid://shopify/Order/1", "wh-1"));
+      await agent.syncOrderWebhook(webhook("gid://shopify/Order/1"));
       strictEqual(await orderCount(shop), 0);
       const usage = await agent.getUsage();
       strictEqual(usage.ordersThisCycle, 2);
@@ -90,7 +89,7 @@ describe("ShopAgent order ceiling", () => {
         memberCount: 0,
       });
       await setCount(shop, 2);
-      await agent.syncOrderWebhook(webhook("gid://shopify/Order/2", "wh-2"));
+      await agent.syncOrderWebhook(webhook("gid://shopify/Order/2"));
       const limited = await agent.getUsage();
       strictEqual(limited.ordersLimitedAt !== null, true);
       await agent.setBillingCycle({

@@ -638,7 +638,7 @@ describe("WorkflowRepository", () => {
       }),
     ));
 
-  it("countTasksByTeam / listTeamWorkflows span workflows and both sides", () =>
+  it("listTeamWorkflows spans workflows and both sides", () =>
     runInRepository(
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
@@ -666,18 +666,6 @@ describe("WorkflowRepository", () => {
           teamId: teamId("t1"),
         });
         yield* repo.applyDraft({ workflowId: b.id, teams: ALL_TEAMS });
-        deepStrictEqual(
-          (yield* repo.countTasksByTeam()).map((row) => [
-            row.teamId,
-            row.workflowTasks,
-            row.draftTasks,
-            row.openRunTasks,
-          ]),
-          [
-            ["t1", 1, 1, 0],
-            ["t2", 0, 1, 0],
-          ],
-        );
         const owned = yield* repo.listTeamWorkflows({ teamId: "t1" });
         deepStrictEqual(
           owned.map((o) => o.workflowName),
@@ -1491,7 +1479,7 @@ describe("WorkflowRepository workflow and draft", () => {
       }),
     ));
 
-  it("countTasksByTeam counts workflow and draft tasks; unassignTeam nulls both sides", () =>
+  it("unassignTeam nulls the team on both sides", () =>
     runInRepository(
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
@@ -1499,27 +1487,9 @@ describe("WorkflowRepository workflow and draft", () => {
           name: name("A"),
           tag: tag("a"),
         });
-        const countT1 = () =>
-          Effect.map(
-            repo.countTasksByTeam(),
-            (rows) => rows.find((row) => row.teamId === T1.id) ?? null,
-          );
         yield* twoTasks(w.id);
-        deepStrictEqual(
-          [(yield* countT1())?.workflowTasks, (yield* countT1())?.draftTasks],
-          [0, 1],
-        );
         yield* repo.applyDraft({ workflowId: w.id, teams: ALL_TEAMS });
-        deepStrictEqual(
-          [(yield* countT1())?.workflowTasks, (yield* countT1())?.draftTasks],
-          [1, 0],
-        );
         yield* repo.createDraft({ workflowId: w.id });
-        // Both sides count: the workflow's Cut and the draft's copy.
-        deepStrictEqual(
-          [(yield* countT1())?.workflowTasks, (yield* countT1())?.draftTasks],
-          [1, 1],
-        );
         // One workflow, not one per side: the team is on both.
         deepStrictEqual(
           (yield* repo.listTeamWorkflows({ teamId: T1.id })).map(
@@ -1528,7 +1498,6 @@ describe("WorkflowRepository workflow and draft", () => {
           [w.id],
         );
         yield* repo.unassignTeam({ teamId: T1.id });
-        strictEqual(yield* countT1(), null);
         const after = yield* found(w.id);
         deepStrictEqual(
           after.tasks.map((s) => s.teamId),

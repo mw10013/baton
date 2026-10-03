@@ -464,16 +464,11 @@ describe("OrdersSyncWorkflow shape", () => {
   });
 
   /**
-   * The SDK never reaps a tracking row, and a callback can be lost. Once the
-   * platform has forgotten the instance too, the stale row leaves the button
-   * enabled, and the click that finds it must clear it.
-   *
-   * The local Workflows binding rejects `get()` on a missing id and also
-   * prints an "uncaught exception ... instance.not_found" line plus a
-   * "code had hung" notice from workerd; both are the shim's, the test itself
-   * completes.
+   * The SDK never reaps a tracking row, and a callback can be lost. A row
+   * older than ten minutes is dead: the button is enabled, and the press that
+   * finds it deletes it without asking Cloudflare and starts a new sync.
    */
-  it("a tracked sync whose instance is gone is cleared on the next click", async () => {
+  it("a tracking row older than ten minutes is deleted on the next press", async () => {
     const shop = "orders-orphan-row.myshopify.com";
     const agent = await getAgentByName(env.SHOP_AGENT, shop);
     // Touch the object first so the SDK has created its tables.
@@ -504,6 +499,15 @@ describe("OrdersSyncWorkflow shape", () => {
     expect(result._tag).toBe("Started");
     const instances = await introspector.get();
     expect(instances.length).toBe(1);
+    const rows = await runInDurableObject(
+      env.SHOP_AGENT.getByName(shop),
+      (instance) =>
+        (instance as unknown as { ctx: DurableObjectState }).ctx.storage.sql
+          .exec("select id from cf_agents_workflows")
+          .toArray()
+          .map((row) => row.id),
+    );
+    expect(rows).not.toContain("row");
   });
 });
 

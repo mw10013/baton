@@ -43,7 +43,6 @@ const activeSubscriptionQuery = `query ActiveSubscription($appId: ID!, $shopId: 
   activeSubscription(appId: $appId, shopId: $shopId) {
     items {
       handle
-      usage { quantity }
     }
     currentBillingCycle {
       startTime
@@ -64,9 +63,6 @@ const partnerError = (message: string) => (cause: unknown) =>
  */
 const SubscriptionItem = Schema.Struct({
   handle: Schema.NullOr(Schema.String),
-  usage: Schema.optional(
-    Schema.NullOr(Schema.Struct({ quantity: Schema.NullOr(Schema.Number) })),
-  ),
 });
 
 const AppSubscriptionResponse = Schema.Struct({
@@ -132,22 +128,6 @@ const matchPlanHandle = Effect.fn("ShopifyPartner.matchPlanHandle")(function* (
   return Option.some(handle);
 });
 
-/**
- * Shopify's own count for the meter `handle` this cycle, read off the meter's
- * item. `null` when the app subscription carries no such item, which is not
- * an error: a plan with no meter configured yet reads as "nothing to check
- * against" rather than as zero usage, and zero would look like a divergence
- * from every local count.
- */
-export const meterQuantity = (
-  items: readonly {
-    readonly handle: string | null;
-    readonly usage?: { readonly quantity: number | null } | null;
-  }[],
-  handle: string,
-): number | null =>
-  items.find((item) => item.handle === handle)?.usage?.quantity ?? null;
-
 export class ShopifyPartner extends Context.Service<
   ShopifyPartner,
   {
@@ -163,8 +143,8 @@ export class ShopifyPartner extends Context.Service<
      * value and must not confuse "could not check" with "not subscribed".
      *
      * The plan is identified by {@link matchPlanHandle}, never by position.
-     * Everything else on the returned value — the boundary, the cycle, the
-     * metered quantity — is display or bookkeeping and never gates access: an
+     * Everything else on the returned value — the boundary and the cycle —
+     * is bookkeeping and never gates access: an
      * app subscription with a plan handle grants that plan's entitlements even
      * if every other field is missing.
      *
@@ -246,16 +226,6 @@ export class ShopifyPartner extends Context.Service<
             cycleStartAt: parseBoundary(
               subscription.currentBillingCycle?.startTime ?? null,
             ),
-            usage: {
-              orders: meterQuantity(
-                subscription.items,
-                Domain.USAGE_METER_ORDER,
-              ),
-              members: meterQuantity(
-                subscription.items,
-                Domain.USAGE_METER_MEMBER,
-              ),
-            },
           } satisfies Domain.AppSubscription);
         },
       );

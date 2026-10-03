@@ -18,31 +18,26 @@ const CONNECTING = "Still connecting. Try again in a moment.";
 export const errorMessage = (error: unknown) =>
   error instanceof Error ? error.message : "Couldn't save. Try again.";
 
-export const runResultMessage = Match.typeTags<
-  Domain.RunResult,
-  string | null
->()({
-  Ok: () => null,
-  NotFound: () => "This workflow no longer exists.",
-  /* The page offers only what `Domain.runActions` and `Domain.taskActions`
-     allow; a refusal is the work changing under the page (closed by Shopify
-     or the merchant while it was open), or another team's task. */
-  NotAllowed: () =>
-    "This changed just now, or belongs to another team. Refresh.",
-  /* Only the reason editor can reach this: somebody unblocked the run while
-     it was open, so the edit has nothing to write on. */
-  NotBlocked: () => "This workflow is no longer blocked.",
-  /* Also a Put back on a task whose Put back or Done by someone else landed just now. */
-  NotReady: () =>
-    "This task or an earlier one changed just now, or this task is waiting on another team. Refresh.",
-  /* A done run, or one Shopify or the merchant closed under the page. */
-  Terminal: () => "This workflow is already done or closed.",
-  /* The page hides Start and Done behind the block; a block that landed
-     after the render is the only way here. */
-  Blocked: () => "This workflow was blocked just now. Unblock it first.",
-  ReopenBlocked: ({ taskName, teamName }) =>
-    `${teamName} already started ${taskName}. Ask them.`,
-});
+/**
+ * A refused write's fact, in the present tense (`CopySlot` in `Screen.ts`):
+ * a modal shows it alone under its field, and {@link useMemberRunActions}'s
+ * `banner` adds the effect on the page, as the `banner` slot's form asks.
+ * `NotAllowed` is a race between the render and the click, or another
+ * team's task ({@link Domain.RunResult}), and the page re-reads either way,
+ * so the fact names what changed: the task for a task verb, the workflow
+ * for a run verb.
+ */
+export const runResultMessage = (
+  result: Domain.RunResult,
+  subject: "task" | "workflow",
+) =>
+  Match.value(result).pipe(
+    Match.tagsExhaustive({
+      Ok: () => null,
+      NotFound: () => "This workflow no longer exists",
+      NotAllowed: () => `The ${subject} changed on another screen`,
+    }),
+  );
 
 /**
  * The member mutations, shared by the workflows list and the workflow page so the two
@@ -114,26 +109,11 @@ export const useMemberRunActions = ({
         stub.memberBlockRun({ runId, reason: textOrNull(reason) }),
       ).then(settle),
   });
-  const setBlockReason = useMutation({
-    mutationFn: ({ runId, reason }: { runId: string; reason: string }) =>
-      call((stub) =>
-        stub.memberSetBlockReason({ runId, reason: textOrNull(reason) }),
-      ).then(settle),
-  });
   const unblock = useMutation({
     mutationFn: (runId: string) =>
       call((stub) => stub.memberUnblockRun({ runId })).then(settle),
   });
-  const mutations = [
-    start,
-    markDone,
-    reopen,
-    putBack,
-    note,
-    block,
-    setBlockReason,
-    unblock,
-  ];
+  const mutations = [start, markDone, reopen, putBack, note, block, unblock];
   /**
    * Disabled while a write is in flight, and while the socket is not
    * identified: these actions have no other transport, so offering them
@@ -143,17 +123,32 @@ export const useMemberRunActions = ({
   const pending =
     mutations.some((mutation) => mutation.isPending) || !identified;
   /**
-   * The refusal the page shows, from the one-tap actions only. The three
-   * text writes (note, block, reason) go through a modal that keeps its own
+   * The refusal the page shows, from the one-tap actions only. The two
+   * text writes (note, block) go through a modal that keeps its own
    * refusal under the field the person is looking at; feeding them here too
    * would print the same sentence twice, once behind the modal and again
    * after it closes, until the next write cleared it.
    */
-  const bannerMutations = [start, markDone, reopen, putBack, unblock];
+  const bannerMutations = [
+    { mutation: start, subject: "task" },
+    { mutation: markDone, subject: "task" },
+    { mutation: reopen, subject: "task" },
+    { mutation: putBack, subject: "task" },
+    { mutation: unblock, subject: "workflow" },
+  ] as const;
   const banner =
-    bannerMutations.find((mutation) => mutation.error)?.error?.message ??
+    bannerMutations.find(({ mutation }) => mutation.error)?.mutation.error
+      ?.message ??
     bannerMutations
-      .map((mutation) => mutation.data && runResultMessage(mutation.data))
+      .map(
+        ({ mutation, subject }) =>
+          mutation.data && runResultMessage(mutation.data, subject),
+      )
+      .map((fact) =>
+        typeof fact === "string"
+          ? `${fact}. This page shows it as it is now.`
+          : fact,
+      )
       .find((message) => typeof message === "string") ??
     null;
   return {
@@ -163,7 +158,6 @@ export const useMemberRunActions = ({
     putBack,
     note,
     block,
-    setBlockReason,
     unblock,
     pending,
     banner,

@@ -47,6 +47,7 @@ const SCREEN_LABELS: ActionTable.ScreenLabels = {
   workflowStates: Domain.WORKFLOW_STATE_LABEL,
   orderPositions: Domain.ORDER_POSITION_LABEL,
   orderIssues: Domain.ORDER_ISSUE_LABEL,
+  workflowFaults: Domain.WORKFLOW_FAULT_LABEL,
   verbs: Domain.VERB_LABEL,
 };
 
@@ -294,7 +295,7 @@ const printCommand = Command.make(
         onSuccess: (rows) =>
           rows.map(
             (row) =>
-              `[${String(ActionTable.expand(name, row, { teamId: "t", blocker: "b" }).length)}] ${ActionTable.renderRow(name, row)}`,
+              `[${String(ActionTable.expand(name, row, { teamId: "t" }).length)}] ${ActionTable.renderRow(name, row)}`,
           ),
       });
       for (const line of lines) yield* Console.log(`  ${line}`);
@@ -346,7 +347,7 @@ const printCommand = Command.make(
         onSuccess: (rows) =>
           rows.map(
             (row) =>
-              `${row.action}: run row ${row.runRow}, counted order ${row.countedOrder}, queue ${row.queue}, ceiling flag ${row.ceilingFlag} — ${row.pinnedBy}`,
+              `${row.action}: run row ${row.runRow}, counted order ${row.countedOrder}, queue ${row.queue} — ${row.pinnedBy}`,
           ),
       },
     );
@@ -456,7 +457,7 @@ const printCommand = Command.make(
         onSuccess: (rows) =>
           rows.map(
             (row) =>
-              `${row.source}: store ${row.store}; reconcile ${row.reconcile}; flush ${row.flush}; release ${row.release}; publish ${row.publish}`,
+              `${row.source}: store ${row.store}; reconcile ${row.reconcile}; flush ${row.flush}; publish ${row.publish}`,
           ),
       },
     );

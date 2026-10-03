@@ -37,37 +37,10 @@ export const deleteTeamResultMessage = Match.typeTags<
   NotFound: () => TEAM_GONE,
 });
 
-export const NO_COUNTS: Domain.TeamDeleteCounts = {
-  workflowTasks: 0,
-  draftTasks: 0,
-  openRunTasks: 0,
-};
-
-export const plural = (count: number, noun: string) =>
-  `${String(count)} ${noun}${count === 1 ? "" : "s"}`;
-
 /**
- * The delete dialog's body, in the merchant copy of `Domain.Team`: what will
- * become unassigned, and what that means. Only true clauses are spoken.
+ * The delete dialog's body, the `confirm` slot (`CopySlot` in `Screen.ts`):
+ * what the delete does, in the merchant copy of `Domain.Team`. One sentence
+ * for every team, so the dialog reads nothing from the object.
  */
-export const deleteTeamWarning = (counts: Domain.TeamDeleteCounts) => {
-  const configured = counts.workflowTasks + counts.draftTasks;
-  const parts = [
-    ...(configured > 0 ? [plural(configured, "workflow task")] : []),
-    ...(counts.openRunTasks > 0
-      ? [plural(counts.openRunTasks, "in-progress task")]
-      : []),
-  ];
-  if (parts.length === 0)
-    return "No workflow tasks are assigned to it. This can't be undone.";
-  const verb = configured + counts.openRunTasks === 1 ? "is" : "are";
-  const consequences = [
-    ...(configured > 0
-      ? ["Workflows with unassigned tasks stop starting for new orders"]
-      : []),
-    ...(counts.openRunTasks > 0
-      ? ["in-progress tasks wait until you assign a team"]
-      : []),
-  ];
-  return `${parts.join(" and ")} ${verb} assigned to it. They will become unassigned. ${consequences.join(", and ")}.`;
-};
+export const DELETE_TEAM_CONFIRM =
+  "Tasks on this team become unassigned until you assign another team.";

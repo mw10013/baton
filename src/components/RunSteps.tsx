@@ -88,9 +88,7 @@ const taskState = (
  *   under a later `Step n` caption already says what it waits on.
  *
  * The buttons are each page's own and arrive through `renderActions`, which
- * returns the button row's contents or null for no row. `renderExtra` is
- * content between the state line and the buttons: the order page's "Can't
- * reopen" sentence and its team picker.
+ * returns the button row's contents or null for no row.
  *
  * `showInstructions` is a prop because the two pages differ on it: the worker
  * reads a task's instructions here, at the bench, while the merchant wrote
@@ -101,19 +99,14 @@ export function RunSteps<T extends RunStepTask>({
   tasks,
   showInstructions,
   renderActions,
-  renderExtra,
 }: {
   readonly tasks: readonly T[];
   readonly showInstructions: boolean;
   readonly renderActions: (task: T) => React.ReactElement | null;
-  readonly renderExtra?: (task: T) => React.ReactNode;
 }) {
   const renderTask = (task: T, first: boolean) => {
     const state = taskState(task);
-    /** Shown only while the `reopened*` columns are set: the next Done clears it (`Domain.RunTask`). */
-    const reopenedBy = Domain.taskReopenedBy(task);
     const actions = renderActions(task);
-    const extra = renderExtra?.(task);
     return (
       <s-box
         key={task.id}
@@ -128,16 +121,9 @@ export function RunSteps<T extends RunStepTask>({
             )}
           </s-stack>
           <s-text color="subdued">{state.text}</s-text>
-          {reopenedBy !== null && task.reopenedAt !== null && (
-            <s-text color="subdued">
-              {`Reopened by ${Domain.actorLabel(reopenedBy)} · `}
-              <LocalDateTime value={task.reopenedAt} format="relative" />
-            </s-text>
-          )}
           {showInstructions && task.instructions !== null && (
             <s-text>{task.instructions}</s-text>
           )}
-          {extra}
           {actions !== null && (
             <s-stack direction="inline" gap="base" alignItems="center">
               {actions}

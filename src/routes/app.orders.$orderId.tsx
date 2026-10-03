@@ -13,7 +13,6 @@ import {
   BlockBanner,
   ClosedLine,
   LineItemProperties,
-  QuantityBadge,
   RunNote,
 } from "@/components/MemberRun";
 import { RunSteps } from "@/components/RunSteps";
@@ -67,12 +66,6 @@ const attachResultMessage = Match.typeTags<
   LineItemNotFound: () => "That item no longer exists.",
   WorkflowNotEligible: () =>
     "That workflow can't start: it's off, has no steps, or has a task with no team.",
-  RunLimit: ({ limit }) =>
-    `${formatNumber(limit)} items are in production, the most Baton tracks at once. Cancel a workflow, or wait until an item is done or closed.`,
-  /* The page offers no change on a done run (`Domain.runActions`); this is
-     the race where the run was done between the render and the click. */
-  ItemDone: ({ workflowName }) =>
-    `This item is done on ${workflowName}. Reopen its last task to change it.`,
   OrderClosed: () =>
     "This order is cancelled or fulfilled in Shopify, so there is no work left to attach.",
   NothingToMake: () =>
@@ -92,31 +85,26 @@ const assignResultMessage = Match.typeTags<
   NotAllowed: () => "That task can no longer be assigned.",
 });
 
-const runResultMessage = Match.typeTags<Domain.RunResult, string | null>()({
-  Ok: () => null,
-  /* Another admin changed the item's workflow, or the order was deleted. */
-  NotFound: () => "That workflow is no longer on this item.",
-  /* The page offers a write only where `Domain.runActions` or
-     `Domain.taskActions` allows it and the server checks the same field, so
-     this is the run changing between the render and the click: another admin
-     cancelled it, or Shopify closed the order. */
-  NotAllowed: () => "That item changed just now, so nothing was done.",
-  /* The reason editor, when a worker unblocked the run while it was open. */
-  NotBlocked: () => "That item is no longer blocked.",
-  /* Also Put back on a task whose Done or Put back by a worker landed just now. */
-  NotReady: () =>
-    "That task changed just now, or a task in an earlier step is still open.",
-  /* A run that was done or closed between the render and the click. */
-  Terminal: () => "That item's workflow is done or closed.",
-  /* Done is hidden while a run is blocked; a block that landed after
-     the render is the only way here. */
-  Blocked: () => "That item is blocked. Unblock it first.",
-  // Reachable from Manage's Reopen: the row hides that button when
-  // `Domain.taskActions` carries a blocker, and this is the race where a
-  // worker started downstream between the render and the click.
-  ReopenBlocked: ({ teamName, taskName }) =>
-    `${teamName} already started ${taskName}.`,
-});
+/**
+ * A refused run write's toast, in the `toast` slot's form (a fact in the
+ * present tense; `CopySlot` in `Screen.ts`). The page offers a write only
+ * where `Domain.runActions` or `Domain.taskActions` allows it and the server
+ * checks the same field, so `NotAllowed` is the run changing between the
+ * render and the click ({@link Domain.RunResult}): the sentence names the
+ * task for a task verb and the workflow for a run verb.
+ */
+const runResultMessage = (
+  result: Domain.RunResult,
+  subject: "task" | "workflow",
+) =>
+  Match.value(result).pipe(
+    Match.tagsExhaustive({
+      Ok: () => null,
+      /* Another admin changed the item's workflow, or the order was deleted. */
+      NotFound: () => "That workflow is no longer on this item",
+      NotAllowed: () => `The ${subject} changed on another screen`,
+    }),
+  );
 
 /**
  * Merchant words, not `Run.state`. An open run nobody has touched
@@ -300,50 +288,8 @@ const unassignedRows = (
     ));
 
 /**
- * The `empty_team` issue on a run: a current task on a team with no members
- * warns, linking to the team so the fix is one click. The remedy is a new
- * member ({@link Domain.OrderIssue}); the warning still offers Assign team,
- * which routes the task around the empty team, and so, like
- * {@link unassignedRows}, it follows {@link Domain.taskActions}' `assign`.
- * `null` when no current task is on an empty team.
- */
-const emptyTeamWarning = (
-  tasks: readonly ActionableTask[],
-  teams: readonly Domain.TeamWithMemberCount[],
-) => {
-  /** The team row, not the snapshot name, so the warning can link to the team page. */
-  const emptyTeams = [
-    ...new Map(
-      tasks
-        .filter(({ actions, current }) => actions.assign && current)
-        .flatMap((task) => {
-          const team = teams.find(
-            (candidate) =>
-              candidate.id === task.teamId && candidate.memberCount === 0,
-          );
-          return team === undefined ? [] : [[team.id, team] as const];
-        }),
-    ).values(),
-  ];
-  if (emptyTeams.length === 0) return null;
-  return (
-    <s-paragraph color="subdued">
-      {"No members on "}
-      {emptyTeams.map((team, index) => (
-        <React.Fragment key={team.id}>
-          {index > 0 && ", "}
-          <s-link href={`/app/teams/${team.id}`}>{team.name}</s-link>
-        </React.Fragment>
-      ))}
-      . Nobody can work this until someone joins, or you assign another team.
-    </s-paragraph>
-  );
-};
-
-/**
- * The team issues of a run, {@link unassignedRows} then
- * {@link emptyTeamWarning}, against the shop's live teams
- * {@link Domain.OrderPageData} carries; `null` when it has neither.
+ * The team issue of a run, {@link unassignedRows}, against the shop's live
+ * teams {@link Domain.OrderPageData} carries; `null` when it has none.
  *
  * They render on the card, outside the Manage disclosure, because they are the
  * one thing that must be acted on and a disclosure would hide it. Every other
@@ -357,14 +303,8 @@ const teamIssueRows = (
   assign: (runTaskId: string) => React.ReactNode,
 ) => {
   const unassigned = unassignedRows(tasks, teams, assign);
-  const emptyTeam = emptyTeamWarning(tasks, teams);
-  if (unassigned.length === 0 && emptyTeam === null) return null;
-  return (
-    <s-stack gap="small-500">
-      {unassigned}
-      {emptyTeam}
-    </s-stack>
-  );
+  if (unassigned.length === 0) return null;
+  return <s-stack gap="small-500">{unassigned}</s-stack>;
 };
 
 const OrderParams = Schema.Struct({ legacyId: Schema.String });
@@ -538,77 +478,71 @@ function RouteComponent() {
    * as the worker's page behaves. `toast` is the acknowledgement, written at
    * the button so the task's own name reaches it ("Cut done").
    */
-  const runWrite = {
+  const runWrite = (subject: "task" | "workflow") => ({
     onSuccess: async (
       result: Domain.RunResult,
       input: { readonly toast: string },
     ) => {
       if (result._tag === "Ok") shopify.toast.show(input.toast);
       else
-        shopify.toast.show(runResultMessage(result) ?? "Nothing changed.", {
-          isError: true,
-        });
+        shopify.toast.show(
+          runResultMessage(result, subject) ?? "Nothing changed",
+          { isError: true },
+        );
       await invalidate();
     },
     onError,
-  };
+  });
   const done = useMutation({
     mutationFn: ({ runTaskId }: TaskWrite) =>
       call((stub) => stub.merchantMarkTaskDone({ runTaskId })).then(
         decodeRunResult,
       ),
-    ...runWrite,
+    ...runWrite("task"),
   });
   const putBack = useMutation({
     mutationFn: ({ runTaskId }: TaskWrite) =>
       call((stub) => stub.merchantPutBackTask({ runTaskId })).then(
         decodeRunResult,
       ),
-    ...runWrite,
+    ...runWrite("task"),
   });
   const reopen = useMutation({
     mutationFn: ({ runTaskId }: TaskWrite) =>
       call((stub) => stub.merchantReopenTask({ runTaskId })).then(
         decodeRunResult,
       ),
-    ...runWrite,
+    ...runWrite("task"),
   });
   const note = useMutation({
     mutationFn: ({ runId, text }: TextWrite) =>
       call((stub) => stub.merchantSetRunNote({ runId, note: text })).then(
         decodeRunResult,
       ),
-    ...runWrite,
+    ...runWrite("workflow"),
   });
   const block = useMutation({
     mutationFn: ({ runId, text }: TextWrite) =>
       call((stub) => stub.merchantBlockRun({ runId, reason: text })).then(
         decodeRunResult,
       ),
-    ...runWrite,
-  });
-  const editReason = useMutation({
-    mutationFn: ({ runId, text }: TextWrite) =>
-      call((stub) => stub.merchantSetBlockReason({ runId, reason: text })).then(
-        decodeRunResult,
-      ),
-    ...runWrite,
+    ...runWrite("workflow"),
   });
   const unblock = useMutation({
     mutationFn: ({ runId }: RunWrite) =>
       call((stub) => stub.merchantUnblockRun({ runId })).then(decodeRunResult),
-    ...runWrite,
+    ...runWrite("workflow"),
   });
   const cancel = useMutation({
     mutationFn: ({ runId }: RunWrite) =>
       call((stub) => stub.merchantCancelRun({ runId })).then(decodeRunResult),
-    ...runWrite,
+    ...runWrite("workflow"),
     onSuccess: async (result: Domain.RunResult, input: RunWrite) => {
       if (result._tag === "Ok") {
         setCancelling(null);
         hideModal(CANCEL_RUN_MODAL);
       }
-      await runWrite.onSuccess(result, input);
+      await runWrite("workflow").onSuccess(result, input);
     },
   });
 
@@ -700,7 +634,6 @@ function RouteComponent() {
     reopen,
     note,
     block,
-    editReason,
     unblock,
     cancel,
     assign,
@@ -712,7 +645,7 @@ function RouteComponent() {
       .then((result) =>
         result._tag === "Ok"
           ? null
-          : (runResultMessage(result) ?? "Nothing changed."),
+          : (runResultMessage(result, "workflow") ?? "Nothing changed"),
       )
       .catch(errorMessage);
   const openModal = (modalId: string, run: Domain.Run) => {
@@ -822,8 +755,7 @@ function RouteComponent() {
             renderActions={(task) => {
               const can = byId.get(task.id);
               if (can === undefined) return null;
-              const canReopen = can.reopen?.blockedBy === null;
-              if (!can.done && !can.putBack && !canReopen && !can.assign)
+              if (!can.done && !can.putBack && !can.reopen && !can.assign)
                 return null;
               return (
                 <>
@@ -855,7 +787,7 @@ function RouteComponent() {
                       {Domain.VERB_LABEL.putBack.merchant}
                     </s-button>
                   )}
-                  {canReopen && (
+                  {can.reopen && (
                     <s-button
                       variant="secondary"
                       disabled={pending}
@@ -892,30 +824,6 @@ function RouteComponent() {
                     </s-button>
                   )}
                 </>
-              );
-            }}
-            renderExtra={(task) => {
-              const blocker = byId.get(task.id)?.reopen?.blockedBy ?? null;
-              if (blocker === null) return null;
-              /* The only screen that names the blocker, and the only one
-                 that can act on it. A member is told nothing
-                 (`Domain.taskActions`): they cannot undo, and the blocking
-                 task is already on their page wearing its own badge. A
-                 merchant can reopen it, so this is an instruction, and it
-                 has to pick out a task that "the first started task in a
-                 later step" does not pick out by eye.
-
-                 Task first, team parenthetical: the other order —
-                 "Finishing started Fit movement" — garden-paths, because a
-                 reader who does not already know the team names takes the
-                 first word as the subject and the second as a verb.
-
-                 Reopen only clears a done blocker; a started one
-                 is cleared with Put back on its own row, hence both verbs. */
-              return (
-                <s-text color="subdued">
-                  {`Can’t reopen: ${blocker.taskName} (${blocker.teamName}) already started. Put it back or reopen it first.`}
-                </s-text>
               );
             }}
           />
@@ -967,9 +875,8 @@ function RouteComponent() {
   };
 
   /**
-   * A run's badges: its state, Blocked while {@link Domain.runIsBlocked},
-   * and, after a Shopify quantity change, the {@link QuantityBadge}; no
-   * buttons. They end the card's facts line, under the title, because the
+   * A run's badges: its state, and Blocked while
+   * {@link Domain.runIsBlocked}; no buttons. They end the card's facts line, under the title, because the
    * badge is the item's state at a glance and belongs next to the item it
    * describes; on a line of their own lower down they read as belonging to
    * whatever sat above them. The Blocked badge stays while the banner shows:
@@ -984,7 +891,6 @@ function RouteComponent() {
       {Domain.runIsBlocked(run) && (
         <s-badge tone="critical">{Domain.RUN_STATE_LABEL.blocked}</s-badge>
       )}
-      <QuantityBadge run={run} />
     </>
   );
 
@@ -992,7 +898,7 @@ function RouteComponent() {
    * One run inside its item's card, below the item's title, facts and
    * properties. Top to bottom: the {@link ClosedLine} on a closed run (why
    * and when it ended), the {@link BlockBanner} while blocked (why it
-   * stopped, with Edit reason and Unblock), the Now line (where it is), the
+   * stopped, with Unblock), the Now line (where it is), the
    * {@link RunNote}, the team issue rows, then Manage and, when open, the
    * disclosure it toggles. The badges are on the facts line
    * ({@link runBadges}). A closed run keeps its tasks as the record, so
@@ -1041,14 +947,21 @@ function RouteComponent() {
     const teamIssues = teamIssueRows(tasks, teams, assignTeam);
     const options = itemWorkflows
       .map(({ workflow }) => workflow)
-      .filter((workflow) => workflow.id !== run.workflowId);
+      .filter(
+        (workflow) => !Domain.runIsOpen(run) || workflow.id !== run.workflowId,
+      );
     /**
      * `Change workflow`, handed to `manageRows`. Absent when the field is
-     * false or when the shop's only workflow that is on is the one the item
-     * already has.
+     * false, when the shop's only workflow that is on is the one an open run
+     * already has, and on a closed run, whose item takes a new workflow from
+     * the picker at rest under it ({@link workflowPicker}). A done run gets
+     * it here rather than the picker because replacing it loses a record, and
+     * the modal is where the `confirm` slot names what ({@link changeWarning}).
      */
     const change =
-      !actions.changeWorkflow || options.length === 0 ? null : (
+      !actions.changeWorkflow ||
+      options.length === 0 ||
+      Domain.runIsClosed(run) ? null : (
         <s-button
           variant="secondary"
           disabled={pending}
@@ -1075,33 +988,20 @@ function RouteComponent() {
           actions={
             /* No `slot` on the buttons, so they sit in the banner body,
                which puts no gap between children; the stack supplies it. */
-            actions.editReason || actions.unblock ? (
+            actions.unblock ? (
               <s-stack direction="inline" gap="small-300">
-                {actions.editReason && (
-                  <s-button
-                    variant="secondary"
-                    disabled={pending}
-                    onClick={() => {
-                      openModal(BLOCK_MODAL, run);
-                    }}
-                  >
-                    {Domain.VERB_LABEL.editReason.merchant}
-                  </s-button>
-                )}
-                {actions.unblock && (
-                  <s-button
-                    variant="secondary"
-                    disabled={pending}
-                    onClick={() => {
-                      unblock.mutate({
-                        runId: run.id,
-                        toast: "Unblocked",
-                      });
-                    }}
-                  >
-                    {Domain.VERB_LABEL.unblock.merchant}
-                  </s-button>
-                )}
+                <s-button
+                  variant="secondary"
+                  disabled={pending}
+                  onClick={() => {
+                    unblock.mutate({
+                      runId: run.id,
+                      toast: "Unblocked",
+                    });
+                  }}
+                >
+                  {Domain.VERB_LABEL.unblock.merchant}
+                </s-button>
               </s-stack>
             ) : null
           }
@@ -1216,7 +1116,7 @@ function RouteComponent() {
   /**
    * One item's card: title, facts, properties, then the body its
    * {@link Domain.lineItemState} kind draws. On a closed order the resting
-   * controls of `attachable`, `unmatched` and `closed` draw nothing: the
+   * controls of `attachable`, `unmatched` and `ended` draw nothing: the
    * sidebar's Fulfillment and Cancelled lines already say why no work can
    * start.
    */
@@ -1263,25 +1163,28 @@ function RouteComponent() {
             </>
           ) : null;
         }
-        /* The run as the record, its reason line first, then what the
-           Cancel workflow modal promised: the picker, for a fresh run. */
-        case "closed": {
+        /* The run as the record. Under a closed run, its reason line
+           first, then what the Cancel workflow modal promised: the picker,
+           for a fresh run. A done run's Change workflow is in Manage, behind
+           the modal that names what it loses. */
+        case "ended": {
           return (
             <>
               {renderRun(item, itemState.run, itemState.tasks)}
-              {orderOpen && itemState.attachable && (
-                <>
-                  <s-paragraph color="subdued">
-                    Nothing starts on this item until you choose a workflow.
-                  </s-paragraph>
-                  {workflowPicker(item, itemState.options, itemState.matched)}
-                </>
-              )}
+              {orderOpen &&
+                itemState.attachable &&
+                Domain.runIsClosed(itemState.run) && (
+                  <>
+                    <s-paragraph color="subdued">
+                      Nothing starts on this item until you choose a workflow.
+                    </s-paragraph>
+                    {workflowPicker(item, itemState.options, itemState.matched)}
+                  </>
+                )}
             </>
           );
         }
-        case "open":
-        case "done": {
+        case "open": {
           return renderRun(item, itemState.run, itemState.tasks);
         }
         default: {
@@ -1290,9 +1193,7 @@ function RouteComponent() {
       }
     })();
     const withRun =
-      itemState.kind === "open" ||
-      itemState.kind === "done" ||
-      itemState.kind === "closed"
+      itemState.kind === "open" || itemState.kind === "ended"
         ? itemState
         : null;
     /* No `accessibilityLabel` on the section: with no `heading`, `s-section`
@@ -1370,7 +1271,7 @@ function RouteComponent() {
       </s-button>
 
       <SocketBanner />
-      {(banner !== null || order.lineItemsTruncated || state === "made") && (
+      {(banner !== null || state === "made") && (
         /* In the main column, not `slot="supplemental-start"`: that slot
            renders above the main column only, so anything in it pushes the
            first card below the top of the aside. Here the banners are the
@@ -1388,14 +1289,6 @@ function RouteComponent() {
                 Fulfill in Shopify
               </s-link>
               .
-            </s-banner>
-          )}
-          {/* One cap, one sentence: every path stores the first 250 and
-              neither pages, so "more than Baton tracks" is the whole of what
-              happened (`OrderRepository.upsertOrder`). */}
-          {order.lineItemsTruncated && (
-            <s-banner tone="warning">
-              {`Baton tracks up to ${formatNumber(Domain.ShopLimits.maxLineItemsPerOrder)} items per order. This order has more; open it in Shopify for the full list.`}
             </s-banner>
           )}
           {banner !== null && <s-banner tone="critical">{banner}</s-banner>}
@@ -1594,12 +1487,7 @@ function RouteComponent() {
           /* The run left the page under an open modal (a socket refresh after
              a Change workflow): the heading names the order and a stand-in for
              the item, and the submit answers that the workflow is gone. */
-          modalRun ?? {
-            lineItemTitle: "this item",
-            orderName: order.name,
-            blockedAt: null,
-            blockReason: null,
-          }
+          modalRun ?? { lineItemTitle: "this item", orderName: order.name }
         }
         pending={pending}
         onBlock={(reason) =>
@@ -1610,17 +1498,6 @@ function RouteComponent() {
                   runId: modalRun.id,
                   text: textOrNull(reason),
                   toast: "Blocked",
-                }),
-              )
-        }
-        onSaveReason={(reason) =>
-          modalRun === null
-            ? Promise.resolve("That workflow is no longer on this item.")
-            : fromModal(
-                editReason.mutateAsync({
-                  runId: modalRun.id,
-                  text: textOrNull(reason),
-                  toast: "Reason saved",
                 }),
               )
         }

@@ -210,8 +210,6 @@ export const memberActions = (socket: AgentSocket) => ({
     socket.call<Domain.RunResult>("memberBlockRun", input),
   unblockRun: (input: typeof Domain.RunIdInput.Encoded) =>
     socket.call<Domain.RunResult>("memberUnblockRun", input),
-  setBlockReason: (input: typeof Domain.SetBlockReasonInput.Encoded) =>
-    socket.call<Domain.RunResult>("memberSetBlockReason", input),
   reopenTask: (input: typeof Domain.ReopenTaskInput.Encoded) =>
     socket.call<Domain.RunResult>("memberReopenTask", input),
   putBackTask: (input: typeof Domain.PutBackTaskInput.Encoded) =>
@@ -235,8 +233,6 @@ export const merchantActions = (socket: AgentSocket) => ({
     socket.call<Domain.RunResult>("merchantBlockRun", input),
   unblockRun: (input: typeof Domain.RunIdInput.Encoded) =>
     socket.call<Domain.RunResult>("merchantUnblockRun", input),
-  setBlockReason: (input: typeof Domain.SetBlockReasonInput.Encoded) =>
-    socket.call<Domain.RunResult>("merchantSetBlockReason", input),
   putBackTask: (input: typeof Domain.PutBackTaskInput.Encoded) =>
     socket.call<Domain.RunResult>("merchantPutBackTask", input),
 });

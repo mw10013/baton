@@ -309,19 +309,6 @@ export class SubscriptionPlan extends Context.Service<
               message: `SubscriptionPlan.revalidate: shop=${shopSession.shop}: billing cycle push failed`,
             }),
           );
-        // Pushed even when both quantities are null: an app subscription that
-        // cannot report (a trial, a pre-meter app subscription) then clears the
-        // quantities the last reporting app subscription left, rather than
-        // showing them as current. Null already means "cannot report" on
-        // `Domain.ShopUsage`.
-        yield* shopAgentClient
-          .checkMeters(shopSession.shop, appSubscription.usage)
-          .pipe(
-            Effect.ignore({
-              log: "Warn",
-              message: `SubscriptionPlan.revalidate: shop=${shopSession.shop}: meter check failed`,
-            }),
-          );
         return subscribed({
           handle: appSubscription.handle,
           boundaryAt: appSubscription.boundaryAt,
@@ -398,9 +385,8 @@ export class SubscriptionPlan extends Context.Service<
  * is, and nothing else does: without it a shop whose orders arrive by webhook
  * alone rolls its cycle forward once on its own and never again, so its
  * order count grows across months and its members meter is never sent a new
- * cycle's member count. The refresh pushes the cycle and the meter quantities
- * (`ShopAgent.setBillingCycle`, `ShopAgent.checkMeters`), and the second
- * sends the usage queue.
+ * cycle's member count. The refresh pushes the cycle
+ * (`ShopAgent.setBillingCycle`), which sends the usage queue.
  *
  * Only stale shops: a fresh entry was read within
  * {@link PLAN_HANDLE_MAX_AGE_MS} and is clamped to its boundary, so it

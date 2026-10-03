@@ -70,8 +70,8 @@ const updatedAtMillis = (updatedAt: string | null | undefined) => {
  * Shopify's own OMS guidance is exactly this: query the full order after each
  * webhook, and reconcile periodically for the ones that never arrived.
  * Rules 1 and 2 on `Domain.syncOrder`: the topic decides nothing, and a
- * delivery is handled once; working from the fetched state is what makes
- * retries and out-of-order delivery safe.
+ * payload version not newer than the row is skipped; working from the
+ * fetched state is what makes retries and out-of-order delivery safe.
  *
  * The Durable Object call is awaited inside Shopify's five-second budget; one
  * `OrderSync` query is comfortably under it.
@@ -86,7 +86,7 @@ export const Route = createFileRoute("/webhooks/orders")({
     handlers: {
       POST: ({ context: { runEffect } }) =>
         runEffect(
-          handleWebhook(({ shop, topic, payload, webhookId }) =>
+          handleWebhook(({ shop, topic, payload }) =>
             Effect.gen(function* () {
               const { orderId, updatedAt } = orderRef(
                 yield* Schema.decodeUnknownEffect(WebhookPayload)(payload),
@@ -96,7 +96,6 @@ export const Route = createFileRoute("/webhooks/orders")({
                 stub.syncOrderWebhook({
                   orderId,
                   topic,
-                  webhookId,
                   updatedAt,
                 }),
               );

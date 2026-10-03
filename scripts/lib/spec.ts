@@ -16,9 +16,9 @@ import { Data, Result, Schema } from "effect";
 const LETTERS: readonly string[] = ["M", "m", "v"];
 
 /**
- * An action cell: blank is never, `blocker` is Reopen offered with the
- * downstream blocker, and otherwise a space-separated list of letters from
- * {@link LETTERS}, in that order, with no repeats (`M`, `m v`, `M m v`, ...).
+ * An action cell: blank is never, and otherwise a space-separated list of
+ * letters from {@link LETTERS}, in that order, with no repeats (`M`, `m v`,
+ * `M m v`, ...).
  */
 export const Cell = Schema.String.check(
   Schema.makeFilter(
@@ -26,10 +26,8 @@ export const Cell = Schema.String.check(
     // letters it names: that refuses an unknown letter, a repeat and a
     // letter out of order alike, and lets blank through.
     (cell) =>
-      cell === "blocker" ||
       LETTERS.filter((letter) => cell.split(" ").includes(letter)).join(" ") ===
-        cell ||
-      "letters M m v in order, blank, or blocker",
+        cell || "letters M m v in order, or blank",
   ),
 );
 export type Cell = typeof Cell.Type;
@@ -52,14 +50,7 @@ export interface Row {
 export const TABLES = {
   runActions: {
     state: ["order", "run", "blocked", "units"],
-    actions: [
-      "note",
-      "block",
-      "editReason",
-      "unblock",
-      "cancel",
-      "changeWorkflow",
-    ],
+    actions: ["note", "block", "unblock", "cancel", "changeWorkflow"],
   },
   taskActions: {
     state: ["order", "run", "blocked", "task", "downstream"],
@@ -147,7 +138,7 @@ const TASKS: Record<typeof TaskWord.Type, readonly TaskState[]> = {
  * `tasks` is the list `runActions` is called with for "M" and "m", `[task]`.
  * The "v" list is the test's to build, because an actor is not a state.
  */
-export interface Fixture<TeamId, Blocker> {
+export interface Fixture<TeamId> {
   readonly order: OrderState;
   readonly run: {
     readonly state: RunState;
@@ -155,7 +146,7 @@ export interface Fixture<TeamId, Blocker> {
   };
   readonly task: TaskState & {
     readonly teamId: TeamId;
-    readonly reopenBlockedBy: Blocker | null;
+    readonly laterStepStarted: boolean;
   };
   readonly tasks?: readonly {
     readonly teamId: TeamId;
@@ -187,9 +178,9 @@ export interface Fixture<TeamId, Blocker> {
  * | task       | done         | `current: false, startedAt: 1, doneAt: 2`                                            |
  * | task       | any open     | ready; started; waiting                                                              |
  * | task       | any          | ready; started; waiting; done                                                        |
- * | downstream | none         | `reopenBlockedBy: null`                                                              |
- * | downstream | started      | `reopenBlockedBy: BLOCKER` (the caller's `blocker`)                                  |
- * | downstream | -            | not applicable; fixture `null`                                                       |
+ * | downstream | none         | `laterStepStarted: false`                                                            |
+ * | downstream | started      | `laterStepStarted: true`                                                             |
+ * | downstream | -            | not applicable; fixture `false`                                                      |
  * | cell letter | M / m       | `tasks: [task]` (runActions)                                                         |
  * | cell letter | v           | `tasks` built by the test: the row's task, not current, plus a current one elsewhere |
  *
@@ -202,11 +193,11 @@ export interface Fixture<TeamId, Blocker> {
  * `blocked` on an "open or done" row expands to a block on the open run
  * only; a blocked done run is not a state and is not a fixture.
  */
-export const expand = <TeamId, Blocker>(
+export const expand = <TeamId>(
   name: TableName,
   row: Row,
-  context: { readonly teamId: TeamId; readonly blocker: Blocker },
-): readonly Fixture<TeamId, Blocker>[] => {
+  context: { readonly teamId: TeamId },
+): readonly Fixture<TeamId>[] => {
   const word = <K extends keyof typeof WORDS>(column: K) =>
     Schema.decodeUnknownSync(WORDS[column])(row.state[column]);
   const states = ORDERS[word("order")].flatMap((order) =>
@@ -229,18 +220,17 @@ export const expand = <TeamId, Blocker>(
           current: run.state === "open",
           startedAt: null,
           doneAt: null,
-          reopenBlockedBy: null,
+          laterStepStarted: false,
         };
         return { order, run, task, tasks: [task], item: { currentQuantity } };
       }),
     );
-  const reopenBlockedBy =
-    word("downstream") === "started" ? context.blocker : null;
+  const laterStepStarted = word("downstream") === "started";
   return states.flatMap(({ order, run }) =>
     TASKS[word("task")].map((task) => ({
       order,
       run,
-      task: { ...task, teamId: context.teamId, reopenBlockedBy },
+      task: { ...task, teamId: context.teamId, laterStepStarted },
     })),
   );
 };
@@ -308,10 +298,8 @@ const decodeRow = (
     const value = values[state.length + index] ?? "";
     if (!isCell(value))
       return fail(
-        `cell "${value}" under ${column}; expected letters M m v in order, blank, or blocker`,
+        `cell "${value}" under ${column}; expected letters M m v in order, or blank`,
       );
-    if (value === "blocker" && column !== "reopen")
-      return fail(`cell "blocker" under ${column}; it is only a reopen cell`);
     if (name !== "runActions" && value.split(" ").includes("v"))
       return fail(
         `cell "${value}" under ${column}; v is only a runActions letter`,
@@ -432,7 +420,7 @@ export const overlaps = (
   const keys = rows.map(
     (row) =>
       new Set(
-        expand(name, row, { teamId: "t", blocker: "b" }).map((fixture) =>
+        expand(name, row, { teamId: "t" }).map((fixture) =>
           JSON.stringify(fixture),
         ),
       ),
@@ -450,20 +438,19 @@ export const overlaps = (
 /**
  * Whether a fixture is a state the object can hold. Two `taskActions`
  * combinations are not: a `done` run whose task is not done (a run is done
- * when its last task is), and a downstream blocker on a task Reopen cannot
+ * when its last task is), and a started later step on a task Reopen cannot
  * be offered on. `-` under `downstream` is the second: Reopen is asked only
  * of a done task on an open order's open or done run, so everywhere else
- * the blocker is not computed and the fixture holds `null`.
+ * the column is not read and the fixture holds `false`.
  */
-const reachable = (fixture: Fixture<string, string>): boolean => {
+const reachable = (fixture: Fixture<string>): boolean => {
   const { order, run, task } = fixture;
   const done = task.doneAt !== null;
   const orderOpen =
     order.cancelledAt === null && order.fulfillmentStatus !== "FULFILLED";
   return (
     (run.state !== "done" || done) &&
-    (task.reopenBlockedBy === null ||
-      (done && orderOpen && run.state !== "closed"))
+    (!task.laterStepStarted || (done && orderOpen && run.state !== "closed"))
   );
 };
 
@@ -473,9 +460,7 @@ const reachable = (fixture: Fixture<string, string>): boolean => {
  * object can hold ({@link reachable}). Deduplicated, so a word that is the
  * union of others (`any`, `any open`) adds nothing.
  */
-export const universe = (
-  name: TableName,
-): readonly Fixture<string, string>[] => {
+export const universe = (name: TableName): readonly Fixture<string>[] => {
   const columns = TABLES[name].state;
   const states = columns.reduce<readonly Readonly<Record<string, string>>[]>(
     (acc, column) =>
@@ -486,7 +471,7 @@ export const universe = (
   );
   const fixtures = new Map(
     states.flatMap((state) =>
-      expand(name, { line: 0, state, cells: {} }, { teamId: "t", blocker: "b" })
+      expand(name, { line: 0, state, cells: {} }, { teamId: "t" })
         .filter(reachable)
         .map((fixture) => [JSON.stringify(fixture), fixture] as const),
     ),
@@ -502,10 +487,10 @@ export const universe = (
 export const gaps = (
   name: TableName,
   rows: readonly Row[],
-): readonly Fixture<string, string>[] => {
+): readonly Fixture<string>[] => {
   const covered = new Set(
     rows.flatMap((row) =>
-      expand(name, row, { teamId: "t", blocker: "b" }).map((fixture) =>
+      expand(name, row, { teamId: "t" }).map((fixture) =>
         JSON.stringify(fixture),
       ),
     ),
@@ -597,6 +582,7 @@ export interface ScreenLabels {
   readonly workflowStates: Readonly<Record<string, string>>;
   readonly orderPositions: Readonly<Record<string, string>>;
   readonly orderIssues: Readonly<Record<string, string>>;
+  readonly workflowFaults: Readonly<Record<string, string>>;
   readonly verbs: Readonly<
     Record<
       string,
@@ -667,8 +653,8 @@ const keyOf = (word: string, constants: Readonly<Record<string, unknown>>) =>
 
 /**
  * **The vocabulary's screen column is the label constant.** Each screen cell in
- * the Task states, Run states, Workflow states, Order positions, Order issues
- * and Verbs tables equals the
+ * the Task states, Run states, Workflow states, Order positions, Order issues,
+ * Workflow faults and Verbs tables equals the
  * constant's value for its word ("(none)" for `null`), every constant key
  * has a row, and every row has a key. A run-state cell is compared up to its
  * first " (" or " ·", because the open row carries the merchant's second
@@ -738,6 +724,11 @@ export const checkScreenColumns = (
       screen(labels.orderPositions),
     ),
     ...compare("Order issues", "Order issues", screen(labels.orderIssues)),
+    ...compare(
+      "Workflow faults",
+      "Workflow faults",
+      screen(labels.workflowFaults),
+    ),
     ...compare("Verbs", "Verbs", labels.verbs),
   ];
 };
@@ -1382,8 +1373,8 @@ export const RECONCILE_ACTION_WORDS = {
   order: ["cancelled", "fulfilled", "closed", "open"],
   paid: ["yes", "no", "any"],
   units: ["0", "changed", "same", "some", "any"],
-  run: ["open", "open, unstarted", "open, started", "done or closed", "none"],
-  matches: ["0", "1", "2+", "1, at the ceiling", "any"],
+  run: ["open", "done or closed", "none"],
+  matches: ["0", "1", "2+", "any"],
 } as const;
 
 /** The action a row names: its tag, the close reason for `close`, and the free text after the colon. */
@@ -1490,10 +1481,9 @@ export const parseReconcileActions = (
       ),
   );
 
-/** The run a reconcile fixture puts on its item: its state, whether a task has started, and its quantity. */
+/** The run a reconcile fixture puts on its item: its state and its quantity. */
 export interface ReconcileFixtureRun {
   readonly state: RunState;
-  readonly started: boolean;
   readonly quantity: number;
 }
 
@@ -1507,7 +1497,6 @@ export interface ReconcileFixture {
   readonly units: number;
   readonly run: ReconcileFixtureRun | null;
   readonly matched: number;
-  readonly atCeiling: boolean;
 }
 
 /** The quantity every fixture run carries; `changed` units are one more, `same` are equal, `some` are both. */
@@ -1517,8 +1506,7 @@ const RUN_QUANTITY = 2;
  * Every fixture a row of the actions table stands for: the cross product of
  * its cells, each word read as the values it covers. `any` covers every
  * value of its column; `closed` under `order` is cancelled or fulfilled;
- * `open` under `run on item` is unstarted or started; `done or closed` is
- * either state.
+ * `done or closed` under `run on item` is either state.
  */
 export const expandReconcileAction = (
   row: ReconcileActionRow,
@@ -1542,27 +1530,20 @@ export const expandReconcileAction = (
     some: [RUN_QUANTITY, RUN_QUANTITY + 1],
     any: [0, RUN_QUANTITY, RUN_QUANTITY + 1],
   }[row.units];
-  const run = (state: RunState, started: boolean): ReconcileFixtureRun => ({
+  const run = (state: RunState): ReconcileFixtureRun => ({
     state,
-    started,
     quantity: RUN_QUANTITY,
   });
   const runs = {
-    open: [run("open", false), run("open", true)],
-    "open, unstarted": [run("open", false)],
-    "open, started": [run("open", true)],
-    "done or closed": [run("done", true), run("closed", false)],
+    open: [run("open")],
+    "done or closed": [run("done"), run("closed")],
     none: [null],
   }[row.run];
   const matches = {
-    "0": [{ matched: 0, atCeiling: false }],
-    "1": [{ matched: 1, atCeiling: false }],
-    "2+": [{ matched: 2, atCeiling: false }],
-    "1, at the ceiling": [{ matched: 1, atCeiling: true }],
-    any: [
-      ...[0, 1, 2].map((matched) => ({ matched, atCeiling: false })),
-      { matched: 1, atCeiling: true },
-    ],
+    "0": [{ matched: 0 }],
+    "1": [{ matched: 1 }],
+    "2+": [{ matched: 2 }],
+    any: [0, 1, 2].map((matched) => ({ matched })),
   }[row.matches];
   return orders.flatMap((order) =>
     paid.flatMap((fullyPaid) =>
@@ -1797,13 +1778,7 @@ export const syncActionOverlaps = (
 
 /** The rows and the fixed words of each effect column of the effects table on `reconcileItem`. */
 export const RECONCILE_EFFECT_WORDS = {
-  action: [
-    "create",
-    "close (any reason)",
-    "resize",
-    "nothing: declined",
-    "nothing (every other reason)",
-  ],
+  action: ["create", "close (any reason)", "resize", "nothing"],
   runRow: [
     "inserted with its tasks",
     "closed",
@@ -1812,7 +1787,6 @@ export const RECONCILE_EFFECT_WORDS = {
   ],
   countedOrder: ["counted if not yet", "—"],
   queue: ["+1 order event", "—"],
-  ceilingFlag: ["raised", "may release", "—"],
 } as const;
 
 /** One parsed row of the effects table on `reconcileItem`. */
@@ -1822,14 +1796,13 @@ export interface ReconcileEffectRow {
   readonly runRow: (typeof RECONCILE_EFFECT_WORDS.runRow)[number];
   readonly countedOrder: (typeof RECONCILE_EFFECT_WORDS.countedOrder)[number];
   readonly queue: (typeof RECONCILE_EFFECT_WORDS.queue)[number];
-  readonly ceilingFlag: (typeof RECONCILE_EFFECT_WORDS.ceilingFlag)[number];
   readonly pinnedBy: string;
 }
 
 /**
  * Read the effects table, the third table in the JSDoc on `reconcileItem`
  * in `source`. The header is `action | run row | counted order | queue |
- * open-run ceiling flag | pinned by`; every cell but `pinned by` is one of its list in
+ * pinned by`; every cell but `pinned by` is one of its list in
  * {@link RECONCILE_EFFECT_WORDS}, and each action is a row exactly once;
  * `pinned by` is one or more test titles separated by `; `
  * ({@link pinnedTitles}), or {@link NONE_YET}, and a row is yielded per
@@ -1842,14 +1815,7 @@ export const parseReconcileEffects = (
     nthTable(
       source,
       "reconcileItem",
-      [
-        "action",
-        "run row",
-        "counted order",
-        "queue",
-        "open-run ceiling flag",
-        "pinned by",
-      ],
+      ["action", "run row", "counted order", "queue", "pinned by"],
       2,
     ),
     ({ body }) =>
@@ -1867,18 +1833,12 @@ export const parseReconcileEffects = (
                   }),
                 );
               const values = cellsOf(text);
-              if (values.length !== 6)
+              if (values.length !== 5)
                 return fail(
-                  `${String(values.length)} cells, expected 6: ${text}`,
+                  `${String(values.length)} cells, expected 5: ${text}`,
                 );
-              const [
-                action,
-                runRow,
-                countedOrder,
-                queue,
-                ceilingFlag,
-                pinnedBy = "",
-              ] = values;
+              const [action, runRow, countedOrder, queue, pinnedBy = ""] =
+                values;
               const pick = <W extends string>(
                 column: string,
                 words: readonly W[],
@@ -1906,11 +1866,6 @@ export const parseReconcileEffects = (
                     countedOrder,
                   ),
                   queue: pick("queue", RECONCILE_EFFECT_WORDS.queue, queue),
-                  ceilingFlag: pick(
-                    "ceiling flag",
-                    RECONCILE_EFFECT_WORDS.ceilingFlag,
-                    ceilingFlag,
-                  ),
                 }),
                 (words) =>
                   pinnedTitles(pinnedBy).map((title) => ({
@@ -2270,14 +2225,13 @@ export interface SyncPipelineRow {
   readonly store: string;
   readonly reconcile: string;
   readonly flush: string;
-  readonly release: string;
   readonly publish: string;
 }
 
 /**
  * Read the sync pipeline table, the second table in the JSDoc on
  * `ShopAgentHost` in `source` (the services table is the first). The header
- * is `source | store | reconcile | flush | release | publish`; every cell is
+ * is `source | store | reconcile | flush | publish`; every cell is
  * non-empty, and `reconcile` is `—` or begins with `reconcile` or
  * `reconcile all` ({@link RECONCILE_SHAPE_WORDS}), so the shape is the
  * triggers table's word. No `pinned by`: the rows are wiring. Fails with a
@@ -2290,7 +2244,7 @@ export const parseSyncPipeline = (
     nthTable(
       source,
       "ShopAgentHost",
-      ["source", "store", "reconcile", "flush", "release", "publish"],
+      ["source", "store", "reconcile", "flush", "publish"],
       1,
     ),
     ({ body }) =>
@@ -2304,23 +2258,21 @@ export const parseSyncPipeline = (
                 }),
               );
             const values = cellsOf(text);
-            if (values.length !== 6)
+            if (values.length !== 5)
               return fail(
-                `${String(values.length)} cells, expected 6: ${text}`,
+                `${String(values.length)} cells, expected 5: ${text}`,
               );
             const [
               rowSource = "",
               store = "",
               reconcile = "",
               flush = "",
-              release = "",
               publish = "",
             ] = values;
             const empty = Object.entries({
               source: rowSource,
               store,
               flush,
-              release,
               publish,
             }).find(([, cell]) => cell === "");
             if (empty !== undefined) return fail(`empty ${empty[0]}`);
@@ -2345,7 +2297,6 @@ export const parseSyncPipeline = (
               store,
               reconcile,
               flush,
-              release,
               publish,
             });
           },

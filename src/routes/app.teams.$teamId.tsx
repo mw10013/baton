@@ -19,11 +19,10 @@ import { SocketBanner } from "@/lib/SocketBanner";
 import {
   decodeDeleteTeamResult,
   decodeName,
+  DELETE_TEAM_CONFIRM,
   deleteTeamResultMessage,
-  deleteTeamWarning,
   failWith,
   NAME_TAKEN,
-  NO_COUNTS,
   sessionShop,
   TEAM_GONE,
 } from "@/lib/teams";
@@ -69,15 +68,14 @@ const decodeMemberIds = Schema.decodeUnknownEffect(
 );
 
 /**
- * `teamWorkflows` and `taskCounts` are Durable Object data joined
- * into a D1 page by the loader — see the loader-versus-socket rule on
+ * `teamWorkflows` is Durable Object data joined into a D1 page by the
+ * loader — see the loader-versus-socket rule on
  * `ShopAgentClient`. `memberTeams` is the hint the Add members
  * dialog shows beside each candidate: where they already work.
  */
 interface TeamLoaderData extends Domain.TeamDetail {
   readonly memberTeams: readonly Domain.MemberTeam[];
   readonly teamWorkflows: readonly Domain.TeamWorkflow[];
-  readonly taskCounts: Domain.TeamDeleteCounts;
 }
 
 const getLoaderData = createServerFn({ method: "GET" })
@@ -98,15 +96,10 @@ const getLoaderData = createServerFn({ method: "GET" })
         const teamWorkflows = yield* client.listTeamWorkflows(shop, {
           teamId: detail.value.team.id,
         });
-        const taskCounts =
-          (yield* client.countTasksByTeam(shop)).find(
-            (row) => row.teamId === detail.value.team.id,
-          ) ?? NO_COUNTS;
         return {
           ...detail.value,
           memberTeams,
           teamWorkflows,
-          taskCounts,
         } satisfies TeamLoaderData;
       }),
     ),
@@ -218,8 +211,7 @@ export const Route = createFileRoute("/app/teams/$teamId")({
  * slot entirely at "large".
  */
 function RouteComponent() {
-  const { team, members, memberTeams, teamWorkflows, taskCounts } =
-    Route.useLoaderData();
+  const { team, members, memberTeams, teamWorkflows } = Route.useLoaderData();
   const router = useRouter();
   const shopify = useAppBridge();
   const renameTeam = useServerFn(renameTeamFn);
@@ -549,7 +541,7 @@ function RouteComponent() {
       </s-modal>
 
       <s-modal id={DELETE_MODAL} heading={`Delete ${team.name}?`}>
-        <s-paragraph>{deleteTeamWarning(taskCounts)}</s-paragraph>
+        <s-paragraph>{DELETE_TEAM_CONFIRM}</s-paragraph>
         <s-button
           slot="secondary-actions"
           commandFor={DELETE_MODAL}

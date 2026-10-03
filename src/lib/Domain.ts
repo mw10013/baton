@@ -5,7 +5,7 @@
  *
  * - A rule is stated once, on the symbol that *is* the concept (a
  *   `Schema.Literals` such as `RunState` in ShopWork) or the function that
- *   enforces it (`reopenBlockedBy`, `currentTasks` in ShopWork). A concept with
+ *   enforces it (`laterStepStarted`, `currentTasks` in ShopWork). A concept with
  *   more than one rule carries a table naming each rule's predicate.
  * - Every other site calls the predicate (`runIsOpen`,
  *   `runIsBlocked` in ShopWork, `userIsAdmin` in Platform, ...) rather than comparing a
@@ -120,8 +120,8 @@
  *   Account, Verification, in D1).
  * - A SQL reserved word takes the noun's symbol form: `ShopOrder`, because
  *   `Order` collides with `order by` in every hand-written query.
- * - A mechanism column (idempotencyKey, attempts, webhookId, lastError,
- *   syncedAt) names no concept, has no row, and is named plainly.
+ * - A mechanism column (idempotencyKey, attempts, lastError, syncedAt)
+ *   names no concept, has no row, and is named plainly.
  *
  * Screens. A JSDoc, a test or a research doc names a screen by its spec
  * name, never by its route segment and never with "run". The heading is

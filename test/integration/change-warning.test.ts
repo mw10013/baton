@@ -27,9 +27,6 @@ const task = (
   doneAt: state === "done" ? 2 : null,
   doneByEmail: null,
   doneByRole: null,
-  reopenedAt: null,
-  reopenedByRole: null,
-  reopenedByEmail: null,
 });
 
 const from = Schema.decodeUnknownSync(Domain.WorkflowName)("Engraving");

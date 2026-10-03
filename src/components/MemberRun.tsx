@@ -68,28 +68,6 @@ export function ClosedLine({
 }
 
 /**
- * The quantity badge ({@link Domain.Run} `quantityChangedFrom`, which
- * states the rule): warning-toned, and the whole change, "Quantity changed ·
- * 3 → 2", because a small "was 3" is easy to miss for the one person it
- * matters to. It has no button: the next done task clears it.
- */
-export function QuantityBadge({
-  run,
-}: {
-  readonly run: {
-    readonly quantity: number;
-    readonly quantityChangedFrom: number | null;
-  };
-}) {
-  if (run.quantityChangedFrom === null) return null;
-  return (
-    <s-badge tone="warning">
-      {`Quantity changed · ${formatNumber(run.quantityChangedFrom)} → ${formatNumber(run.quantity)}`}
-    </s-badge>
-  );
-}
-
-/**
  * Free text exactly as a member typed it: `.member-prose` in `styles.css`
  * keeps the line breaks and says why. A wrapper rather than a class on the
  * Polaris element because `class` is not in these components' JSX props;
@@ -158,7 +136,7 @@ export function LineItemProperties({
  * An item run's own line under the member's workflow page heading: what this
  * run makes, less the title, which is the heading a stride above it: the
  * variant and the units, "A5 · Quantity 2", or "Quantity 2" for an item with
- * no variant. "Quantity" is the word the quantity badge beside it uses.
+ * no variant.
  */
 export function RunItem({ run }: { readonly run: Domain.Run }) {
   return (
@@ -188,7 +166,7 @@ export function RunItem({ run }: { readonly run: Domain.Run }) {
  * (Polaris changed its markup) the text renders in full rather than clipped
  * with no way to expand it.
  *
- * The caller keys it on the text, so an edited reason starts collapsed and is
+ * The caller keys it on the text, so a new reason or note starts collapsed and is
  * measured afresh: a text that goes from three lines to four keeps the same
  * clamped height, and no resize would fire to say it now overflows.
  */
@@ -248,14 +226,12 @@ export function ClampedProse({
  * ({@link Domain.runIsBlocked}): heading "Blocked", body the reason as typed
  * ({@link ClampedProse}, three lines), and under both a subdued line naming
  * who and when. Critical: the work has stopped and someone has to act. The
- * reason is never edited in here: the screens open `BlockModal` for that, so
- * the banner has one shape. The button that does open it reads "Edit reason"
- * on every screen, because the run note's own button sits a few lines below
- * and a bare "Edit" does not say which of the two it opens.
+ * reason is the blocker's words and is not edited: a new reason is Unblock,
+ * then Block.
  *
  * `actions` are rendered as the banner's own children and the caller sets
- * `slot="secondary-actions"` on them; Unblock and Edit reason belong inside
- * the thing that states the block. Each screen reads them from
+ * `slot="secondary-actions"` on them; Unblock belongs inside the thing that
+ * states the block. Each screen reads them from
  * {@link Domain.runActions}.
  */
 export function BlockBanner({
@@ -296,7 +272,6 @@ export function BlockBanner({
  * Edit, because the note is a column that is always there and may be blank
  * ({@link Domain.SetRunNoteCommand}: `null` clears); "Add" would promise a
  * "Remove" that does not exist. The button names its object because the
- * blocked banner's "Edit reason" sits a few lines above it, and because the
  * blank note has no placeholder word to stand beside: a subdued "Note" on its
  * own read as another heading with nothing under it. Where the note is not
  * editable a blank note draws nothing and a written one is read-only. Both

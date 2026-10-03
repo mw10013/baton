@@ -120,14 +120,13 @@ describe("runShopAgentOrdersStream", () => {
     const one = Option.getOrThrow(first);
     strictEqual(one.order.name, "#1001");
     strictEqual(one.order.fullyPaid, true);
-    strictEqual(one.order.lineItemsTruncated, false);
     strictEqual(one.lineItems.length, 2);
     strictEqual(one.lineItems[0]?.productTags[0], "engraved");
     strictEqual(one.lineItems[0]?.properties[0]?.value, "Hello");
     strictEqual(Option.getOrThrow(second).lineItems.length, 1);
   });
 
-  it("caps an order's line items and flags it rather than failing the sync", async () => {
+  it("stores the first 250 line items of an order and does not fail the sync", async () => {
     const over = Domain.ShopLimits.maxLineItemsPerOrder + 1;
     const { counts, detail } = await runInDo(
       ndjson(
@@ -156,7 +155,6 @@ describe("runShopAgentOrdersStream", () => {
       stored.lineItems.length,
       Domain.ShopLimits.maxLineItemsPerOrder,
     );
-    strictEqual(stored.order.lineItemsTruncated, true);
   });
 
   it("fails when a line item names a parent that is not the open order", async () => {
@@ -200,7 +198,7 @@ describe("runShopAgentOrdersStream", () => {
             writes += 1;
             return writes === 2
               ? Effect.fail("reconcile failed" as const)
-              : Effect.succeed({ ceilingReleased: false });
+              : Effect.void;
           },
         }).pipe(Effect.flip);
         const repository = yield* OrderRepository;
@@ -283,7 +281,6 @@ describe("runShopAgentOrdersStream", () => {
             fulfillmentStatus: "FULFILLED",
             fullyPaid: true,
             note: null,
-            lineItemsTruncated: false,
             syncedAt: 0,
           },
           lineItems: [],

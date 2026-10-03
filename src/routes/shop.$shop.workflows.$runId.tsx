@@ -7,7 +7,6 @@ import {
   BlockBanner,
   ClosedLine,
   Prose,
-  QuantityBadge,
   RunItem,
   RunNote,
 } from "@/components/MemberRun";
@@ -135,7 +134,7 @@ function RouteComponent() {
   const taskButtons = (task: Domain.RunTaskRow) => {
     if (page === null) return null;
     const can = Domain.taskActions(actor, page.order, page.run, task);
-    const anyAction = can.done || can.putBack || can.reopen?.blockedBy === null;
+    const anyAction = can.done || can.putBack || can.reopen;
     if (!anyAction) return null;
     return (
       <>
@@ -172,7 +171,7 @@ function RouteComponent() {
             {Domain.VERB_LABEL.putBack.member}
           </s-button>
         )}
-        {can.reopen?.blockedBy === null && (
+        {can.reopen && (
           <s-button
             variant="secondary"
             disabled={actions.pending}
@@ -202,7 +201,7 @@ function RouteComponent() {
     );
 
   const { run } = page;
-  /** Block, the note, Edit reason and Unblock: {@link Domain.runActions}. */
+  /** Block, the note and Unblock: {@link Domain.runActions}. */
   const can = Domain.runActions(actor, page.order, run, page.tasks);
   /**
    * Unblock lifts the hold and nothing else: the run goes back to the state
@@ -217,35 +216,18 @@ function RouteComponent() {
   const reviewNote = (
     <s-text color="subdued">The merchant will review this.</s-text>
   );
-  const blockActions =
-    can.editReason || can.unblock ? (
-      <>
-        {can.editReason && (
-          <s-button
-            slot="secondary-actions"
-            variant="secondary"
-            disabled={actions.pending}
-            onClick={() => {
-              showModal(BLOCK_MODAL);
-            }}
-          >
-            {Domain.VERB_LABEL.editReason.member}
-          </s-button>
-        )}
-        {can.unblock && (
-          <s-button
-            slot="secondary-actions"
-            variant="secondary"
-            disabled={actions.pending}
-            onClick={() => {
-              actions.unblock.mutate(run.id);
-            }}
-          >
-            {Domain.VERB_LABEL.unblock.member}
-          </s-button>
-        )}
-      </>
-    ) : null;
+  const blockActions = can.unblock ? (
+    <s-button
+      slot="secondary-actions"
+      variant="secondary"
+      disabled={actions.pending}
+      onClick={() => {
+        actions.unblock.mutate(run.id);
+      }}
+    >
+      {Domain.VERB_LABEL.unblock.member}
+    </s-button>
+  ) : null;
   const hasNote = run.note !== null && run.note.length > 0;
   const hasOrderNote = page.orderNote !== null && page.orderNote.length > 0;
 
@@ -305,17 +287,13 @@ function RouteComponent() {
               because a member cannot act on it and the workflows list
               carries it. No border, because two bordered blocks on
               one page compete. The Done badge stays: it is the only sign the
-              page is read-only. The quantity badge sits beside it after a
-              Shopify change, until the next Done clears it. */}
+              page is read-only. */}
             <s-stack gap="small-300">
-              {(Domain.runIsDone(run) || run.quantityChangedFrom !== null) && (
+              {Domain.runIsDone(run) && (
                 <s-stack direction="inline" gap="small-300">
-                  {Domain.runIsDone(run) && (
-                    <s-badge tone="neutral">
-                      {Domain.RUN_STATE_LABEL.done}
-                    </s-badge>
-                  )}
-                  <QuantityBadge run={run} />
+                  <s-badge tone="neutral">
+                    {Domain.RUN_STATE_LABEL.done}
+                  </s-badge>
                 </s-stack>
               )}
               <RunItem run={run} />
@@ -359,7 +337,7 @@ function RouteComponent() {
           onSave={(note) =>
             actions.note
               .mutateAsync({ runId: run.id, note })
-              .then(runResultMessage)
+              .then((result) => runResultMessage(result, "workflow"))
               .catch(errorMessage)
           }
         />
@@ -370,13 +348,7 @@ function RouteComponent() {
           onBlock={(reason) =>
             actions.block
               .mutateAsync({ runId: run.id, reason })
-              .then(runResultMessage)
-              .catch(errorMessage)
-          }
-          onSaveReason={(reason) =>
-            actions.setBlockReason
-              .mutateAsync({ runId: run.id, reason })
-              .then(runResultMessage)
+              .then((result) => runResultMessage(result, "workflow"))
               .catch(errorMessage)
           }
         />

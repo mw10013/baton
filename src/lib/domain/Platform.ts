@@ -8,7 +8,7 @@
  * | word    | meaning                                                                                                | symbol                | screen                                                  |
  * | ------- | ------------------------------------------------------------------------------------------------------ | --------------------- | ------------------------------------------------------- |
  * | shop    | one Shopify store, the tenant                                                                          | `ShopSession`, `Shop` | store (Shopify's merchant word); its domain as the name |
- * | ceiling | a per-shop limit the object enforces: `maxOpenRuns`, `maxOrdersPerCycle`, `maxMembers` on `ShopLimits` | `ShopLimits`          | the banner that names what stopped                      |
+ * | ceiling | a per-shop limit the object enforces: `maxOrdersPerCycle`, `maxMembers` on `ShopLimits` | `ShopLimits`          | the banner that names what stopped                      |
  */
 import { Schema, SchemaGetter, Struct } from "effect";
 
@@ -201,13 +201,11 @@ export const WorkflowLimits = {
 export const ShopLimits = {
   /** `Team` rows per shop. */
   maxTeams: 25,
-  /** `Run` rows that are `runIsOpen` in ShopWork per shop; a safety valve, not a product limit. A `done` run still holds its item but no longer counts here. */
-  maxOpenRuns: 5000,
   /** `ShopUsage.ordersThisCycle` in Billing at which syncing of *new* orders stops for the rest of the cycle. Provisional; enterprise fencing, not a tier — see `cycleAtOrderCeiling` in Billing. */
   maxOrdersPerCycle: 100,
   /** Members per shop on any plan; see `membersAtCeiling` in Billing. Provisional; enterprise fencing, not a tier. */
   maxMembers: 12,
-  /** Line items kept per order on the bulk path; the rest are dropped and the order flagged. */
+  /** Line items fetched per order on either path; the rest are not stored. */
   maxLineItemsPerOrder: 250,
   /**
    * An order whose `processedAt` is older than this is deleted on the next
@@ -227,10 +225,6 @@ export const ShopLimits = {
    * a test surface and a failure mode for a shop that has stopped trading.
    */
   orderRetentionDays: 365,
-  /** `WebhookDelivery` rows older than this are deleted; Shopify retries for at most 4 hours. */
-  webhookDeliveryRetentionDays: 7,
-  /** An expired usage event (`usageEventIsExpired` in Billing) dated longer ago than this is deleted by the retention sweep; `OrderRepository.sweepExpiredOrders` says why 60. */
-  expiredUsageEventRetentionDays: 60,
   /** Rows deleted per sweep pass, so no carrier request pays for more than this. */
   sweepBatch: 200,
   /** Minimum gap between retention passes triggered from the webhook path. */

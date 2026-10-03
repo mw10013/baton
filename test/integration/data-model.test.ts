@@ -70,7 +70,6 @@ const order: Domain.ShopOrder = {
   fulfillmentStatus: "UNFULFILLED",
   fullyPaid: true,
   note: null,
-  lineItemsTruncated: false,
   syncedAt: PROCESSED_AT,
 };
 
@@ -164,10 +163,9 @@ const runRow = SqlClient.SqlClient.pipe(
       readonly id: string;
       readonly state: string;
       readonly quantity: number;
-      readonly quantityChangedFrom: number | null;
       readonly closedReason: string | null;
     }>`
-      select id, state, quantity, quantityChangedFrom, closedReason from Run
+      select id, state, quantity, closedReason from Run
       where lineItemId = ${LINE_ITEM_ID}
     `,
   ),
@@ -185,12 +183,9 @@ const actorRow = (taskId: string) =>
         readonly doneAt: number | null;
         readonly doneByRole: string | null;
         readonly doneByEmail: string | null;
-        readonly reopenedAt: number | null;
-        readonly reopenedByRole: string | null;
-        readonly reopenedByEmail: string | null;
       }>`
         select startedAt, startedByRole, startedByEmail, doneAt, doneByRole,
-          doneByEmail, reopenedAt, reopenedByRole, reopenedByEmail
+          doneByEmail
         from RunTask where id = ${taskId}
       `,
     ),
@@ -340,8 +335,7 @@ describe("data model", () => {
         yield* insertRun("r1");
         yield* task("t1", "r1", 1, 1);
         // The constraints that have no row of their own, so they are not
-        // silent: positions and steps start at 1, and a reopen names its
-        // actor's role.
+        // silent: positions and steps start at 1.
         strictEqual(
           (yield* Effect.flip(task("t0", "r1", 0, 1)))._tag,
           "SqlError",
@@ -350,10 +344,6 @@ describe("data model", () => {
           (yield* Effect.flip(task("t0", "r1", 2, 0)))._tag,
           "SqlError",
         );
-        const reopen = yield* Effect.flip(
-          sql`update RunTask set reopenedAt = 1 where id = 't1'`,
-        );
-        strictEqual(reopen._tag, "SqlError");
         strictEqual(yield* count("RunTask"), 1);
         yield* sql`delete from Run where id = 'r1'`;
         strictEqual(yield* count("RunTask"), 0);
@@ -599,7 +589,7 @@ describe("data model", () => {
       }),
     ));
 
-  it("a run task's started, done and reopened times move with their roles, a member's email beside the role, and done implies started", () =>
+  it("a run task's started and done times move with their roles, a member's email beside the role, and done implies started", () =>
     runInRepository(
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
@@ -616,7 +606,6 @@ describe("data model", () => {
           sql`update RunTask set doneAt = 1, doneByRole = 'merchant' where id = ${runTaskId}`,
           sql`update RunTask set startedAt = 1, startedByRole = 'merchant', doneAt = 1 where id = ${runTaskId}`,
           sql`update RunTask set startedAt = 1, startedByRole = 'merchant', doneAt = 1, doneByRole = 'member' where id = ${runTaskId}`,
-          sql`update RunTask set reopenedAt = 1, reopenedByRole = 'member' where id = ${runTaskId}`,
         ];
         for (const write of refused)
           strictEqual((yield* Effect.flip(write))._tag, "SqlError");
@@ -667,40 +656,6 @@ describe("data model", () => {
       }),
     ));
 
-  it("reopen is latest only: a later Done clears reopenedAt, reopenedByRole and reopenedByEmail", () =>
-    runInRepository(
-      Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient;
-        const runs = yield* RunRepository;
-        const { runId } = yield* seedRun;
-        const runTaskId = yield* taskOf(runId);
-        const refused = [
-          sql`update RunTask set reopenedAt = 1 where id = ${runTaskId}`,
-          sql`update RunTask set reopenedByRole = 'merchant' where id = ${runTaskId}`,
-          sql`update RunTask set reopenedByEmail = 'a@x.com' where id = ${runTaskId}`,
-        ];
-        for (const write of refused)
-          strictEqual((yield* Effect.flip(write))._tag, "SqlError");
-        const reopened = () =>
-          actorRow(runTaskId).pipe(
-            Effect.map((row) => [
-              row?.reopenedByRole,
-              row?.reopenedByEmail,
-              typeof row?.reopenedAt,
-            ]),
-          );
-        yield* runs.markTaskDone({ runTaskId, actor: MEMBER });
-        yield* runs.reopenTask({ runTaskId, actor: MERCHANT });
-        deepStrictEqual(yield* reopened(), ["merchant", null, "number"]);
-        yield* runs.markTaskDone({ runTaskId, actor: MERCHANT });
-        yield* runs.reopenTask({ runTaskId, actor: MEMBER });
-        // Latest only: the member's reopen replaced the merchant's.
-        deepStrictEqual(yield* reopened(), ["member", MEMBER.email, "number"]);
-        yield* runs.markTaskDone({ runTaskId, actor: MEMBER });
-        deepStrictEqual(yield* reopened(), [null, null, "object"]);
-      }),
-    ));
-
   it("a merchant act is recorded on the task with the role and no email, and no member row stands for the merchant", () =>
     runInRepository(
       Effect.gen(function* () {
@@ -730,19 +685,6 @@ describe("data model", () => {
           update RunTask set doneByEmail = 'owner@example.com' where id = ${runTaskId}
         `);
         strictEqual(withEmail._tag, "SqlError");
-      }),
-    ));
-
-  it("a webhook delivery is one row per delivery id", () =>
-    runInRepository(
-      Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient;
-        const insert = sql`
-          insert into WebhookDelivery (webhookId, receivedAt) values ('wh-1', 0)
-        `;
-        yield* insert;
-        strictEqual((yield* Effect.flip(insert))._tag, "SqlError");
-        strictEqual(yield* count("WebhookDelivery"), 1);
       }),
     ));
 

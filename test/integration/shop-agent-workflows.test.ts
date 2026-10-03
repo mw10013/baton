@@ -99,20 +99,6 @@ const goLive = async (
   return on.workflow;
 };
 
-/**
- * The open-run ceiling is 5,000, which no test can reach by creating runs, so
- * these lower the constant for the duration; the seam and its reason are on
- * `run-repository.test.ts`'s `withMaxOpenRuns`.
- */
-const withMaxOpenRuns = <A>(limit: number, body: () => Promise<A>) => {
-  const limits = Domain.ShopLimits as { maxOpenRuns: number };
-  const original = limits.maxOpenRuns;
-  limits.maxOpenRuns = limit;
-  return body().finally(() => {
-    limits.maxOpenRuns = original;
-  });
-};
-
 afterEach(async () => {
   await env.D1.exec("delete from TeamMember");
   await env.D1.exec("delete from Team");
@@ -243,15 +229,6 @@ describe("ShopAgent workflow callables", () => {
     await agent.addStep({ workflowId, name: "T", teamId: b.id });
     await goLive(agent, workflowId);
     await agent.createDraft({ workflowId });
-
-    const counts = await agent.countTasksByTeam();
-    expect(
-      counts.map((c) => [c.teamId, c.workflowTasks, c.draftTasks]),
-    ).toEqual(
-      [a, b]
-        .toSorted((x, y) => x.id.localeCompare(y.id))
-        .map((team) => [team.id, 1, 1]),
-    );
 
     expect(await agent.deleteTeam({ teamId: a.id })).toEqual({
       _tag: "Deleted",
@@ -604,7 +581,6 @@ const seedOrder = (
               fulfillmentStatus: "UNFULFILLED",
               fullyPaid: true,
               note: null,
-              lineItemsTruncated: false,
               syncedAt: processedAt,
               ...order,
             },
@@ -1016,6 +992,9 @@ describe("ShopAgent workflow run callables", () => {
       teamId: team.id,
     });
     await goLive(agent, created.workflow.id);
+    // Deleting this one is the trigger for the reconcile all below.
+    const spare = await agent.createWorkflow({ name: "Spare", tag: "spare" });
+    if (spare._tag !== "Ok") throw new Error(spare._tag);
     // Stored without a pass, so the reconcile all below is the first to see
     // them.
     await seedOrder(shop, Date.now(), ["engraved"], {}, {}, 1);
@@ -1065,7 +1044,7 @@ describe("ShopAgent workflow run callables", () => {
             });
             yield* ShopWorkAgent.pipe(
               Effect.flatMap((shopWork) =>
-                shopWork.afterCeilingReleased("snapshot"),
+                shopWork.removeWorkflow({ workflowId: spare.workflow.id }),
               ),
               Effect.provide(
                 ShopWorkAgent.layer.pipe(
@@ -1163,95 +1142,6 @@ describe("ShopAgent workflow run callables", () => {
     });
     expect(runs.map((d) => d.run.workflowId)).toEqual([keeper.id]);
   });
-
-  it("a Done that releases the ceiling creates the declined runs", () =>
-    withMaxOpenRuns(1, async () => {
-      const shop = "wf-ceiling-done.myshopify.com";
-      const team = await seedTeam(shop, "Engraving");
-      const agent = await getAgentByName(env.SHOP_AGENT, shop);
-      const created = await agent.createWorkflow({
-        name: "Engraving",
-        tag: "engraved",
-      });
-      if (created._tag !== "Ok") throw new Error(created._tag);
-      const workflowId = created.workflow.id;
-      await agent.addStep({ workflowId, name: "Engrave", teamId: team.id });
-      const day = 24 * 60 * 60 * 1000;
-      // The pass walks the open index, newest first: order 1 gets the run.
-      await seedOrder(shop, Date.now() - day, ["engraved"], {}, {}, 1);
-      await seedOrder(shop, Date.now() - 2 * day, ["engraved"], {}, {}, 2);
-      // Turn on reconciles all: room for one run, the other is declined.
-      await goLive(agent, workflowId);
-      const first = await agent.merchantListRunsForOrder({
-        orderId: "gid://shopify/Order/1",
-      });
-      expect(first).toHaveLength(1);
-      expect(
-        await agent.merchantListRunsForOrder({
-          orderId: "gid://shopify/Order/2",
-        }),
-      ).toHaveLength(0);
-      // The run's last Done releases the ceiling, and the callable runs the
-      // reconcile all that creates the declined run; nobody asks for it.
-      const done = await agent.merchantMarkTaskDone({
-        runTaskId: first[0]?.tasks[0]?.id ?? "",
-      });
-      if (done._tag !== "Ok") throw new Error(done._tag);
-      const second = await agent.merchantListRunsForOrder({
-        orderId: "gid://shopify/Order/2",
-      });
-      expect(second.map((d) => d.run.state)).toEqual(["open"]);
-    }));
-
-  it("a reconcile all whose own closes release the open-run ceiling runs once more", () =>
-    withMaxOpenRuns(1, async () => {
-      const shop = "wf-ceiling-again.myshopify.com";
-      const team = await seedTeam(shop, "Engraving");
-      const agent = await getAgentByName(env.SHOP_AGENT, shop);
-      const build = async (workflowName: string, tag: string) => {
-        const created = await agent.createWorkflow({ name: workflowName, tag });
-        if (created._tag !== "Ok") throw new Error(created._tag);
-        await agent.addStep({
-          workflowId: created.workflow.id,
-          name: "Do it",
-          teamId: team.id,
-        });
-        return created.workflow.id;
-      };
-      const engraving = await build("Engraving", "engraved");
-      const rush = await build("Rush", "rush");
-      const day = 24 * 60 * 60 * 1000;
-      // Walked first (the open index is newest first): order 1, tagged for
-      // the workflow still off.
-      await seedOrder(shop, Date.now() - day, ["rush"], {}, {}, 1);
-      await seedOrder(shop, Date.now() - 2 * day, ["engraved"], {}, {}, 2);
-      await goLive(agent, engraving);
-      expect(
-        await agent.merchantListRunsForOrder({
-          orderId: "gid://shopify/Order/2",
-        }),
-      ).toHaveLength(1);
-      // The item under the one open run goes to zero units, with no
-      // reconcile: the next pass is what closes the run.
-      await seedOrder(
-        shop,
-        Date.now() - 2 * day,
-        ["engraved"],
-        { updatedAt: Date.now() },
-        { currentQuantity: 0 },
-        2,
-      );
-      // Turn on walks order 1 first and declines it at the ceiling, then
-      // closes order 2's run, which releases the ceiling; the pass runs once
-      // more and creates order 1's run.
-      await goLive(agent, rush);
-      const runs = await agent.merchantListRunsForOrder({
-        orderId: "gid://shopify/Order/1",
-      });
-      expect(runs.map((d) => [d.run.workflowId, d.run.state])).toEqual([
-        [rush, "open"],
-      ]);
-    }));
 
   it("retagging an on workflow reconciles stored orders against the new tag", async () => {
     const shop = "wf-retag.myshopify.com";
@@ -1796,7 +1686,6 @@ describe("ShopAgent seed callables", () => {
     strictEqual(cancelled?.closedReason, "order_cancelled");
     const resized = await runOf(2);
     strictEqual(resized?.quantity, 1);
-    strictEqual(resized?.quantityChangedFrom, 2);
   });
 
   it("reseeding leaves the usage counter unchanged", async () => {
@@ -1838,6 +1727,27 @@ describe("ShopAgent seed callables", () => {
     strictEqual(await countedOrders(), 5);
   });
 
+  it("the seed writes countedAt on every order it inserts", async () => {
+    const shop = "seed-counted.myshopify.com";
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    await agent.seedOrders({
+      ...seedMember,
+      orders: [
+        { n: 1, lineItems: [{ title: "Board", quantity: 1, tags: ["board"] }] },
+        { n: 2, lineItems: [{ title: "Board", quantity: 1, tags: ["board"] }] },
+      ],
+    });
+    const counted = await runInDurableObject(
+      env.SHOP_AGENT.getByName(shop),
+      (instance) =>
+        (instance as unknown as { ctx: DurableObjectState }).ctx.storage.sql
+          .exec("select countedAt from ShopOrder order by id")
+          .toArray()
+          .map((row) => row.countedAt),
+    );
+    deepStrictEqual(counted, [0, 0]);
+  });
+
   it("a reseed reconciles the orders it did not replace", async () => {
     const shop = "seed-reconcile.myshopify.com";
     const team = await seedTeam(shop, "Bench");
@@ -1850,9 +1760,9 @@ describe("ShopAgent seed callables", () => {
       sql.exec(
         `insert or replace into ShopOrder
            (id, legacyId, name, processedAt, updatedAt, cancelledAt,
-            fulfillmentStatus, fullyPaid, note, lineItemsTruncated, syncedAt)
+            fulfillmentStatus, fullyPaid, note, syncedAt)
          values ('gid://shopify/Order/synced-1', 'synced-1', '#5001', 1, 1, null,
-                 'UNFULFILLED', 1, null, 0, 1)`,
+                 'UNFULFILLED', 1, null, 1)`,
       );
       sql.exec(
         `insert or replace into OrderLineItem

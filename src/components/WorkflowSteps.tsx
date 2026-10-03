@@ -18,7 +18,7 @@ import { emptyTeamLine, unassignedLine } from "@/lib/workflowShared";
 /**
  * The team under a task name, or "No team" in its place: a fact, not an
  * alarm. No badge for an unassigned task or an empty team here, because
- * {@link TeamIssueBanners} above the steps already raises each issue under
+ * {@link TeamFaultBanners} above the steps already raises each issue under
  * its label and names the task or team, and a second red mark on the same
  * page for one fault reads as two.
  */
@@ -139,30 +139,30 @@ export function StepFlow({
 }
 
 /**
- * One banner per team issue a workflow carries, the `team` and `empty_team`
- * {@link Domain.OrderIssue}s, headed by the issue's label and toned
+ * One banner per {@link Domain.WorkflowFault} a workflow carries, headed by
+ * the fault's label ({@link Domain.WORKFLOW_FAULT_LABEL}) and toned
  * {@link Domain.ORDER_ISSUE_TONE} so a fault reads the same here as on the
- * indexes. Nothing when the workflow has neither. Two banners rather than one
+ * workflows index. Nothing when the workflow has neither. Two banners rather than one
  * because the faults have different remedies, and one heading over both
  * would name neither.
  */
-export function TeamIssueBanners({
+export function TeamFaultBanners({
   tasks,
 }: {
   readonly tasks: readonly Domain.TaskWithTeamName[];
 }) {
   const banners = [
-    { issue: "unassigned" as const, line: unassignedLine(tasks) },
-    { issue: "empty_team" as const, line: emptyTeamLine(tasks) },
+    { fault: "unassigned" as const, line: unassignedLine(tasks) },
+    { fault: "empty_team" as const, line: emptyTeamLine(tasks) },
   ];
   return (
     <>
-      {banners.map(({ issue, line }) =>
+      {banners.map(({ fault, line }) =>
         line === null ? null : (
           <s-banner
-            key={issue}
+            key={fault}
             tone={Domain.ORDER_ISSUE_TONE}
-            heading={Domain.ORDER_ISSUE_LABEL[issue]}
+            heading={Domain.WORKFLOW_FAULT_LABEL[fault]}
           >
             {/* An element, not a bare string: `s-banner` renders its body
                 from elements, and a bare string child never reaches the page. */}

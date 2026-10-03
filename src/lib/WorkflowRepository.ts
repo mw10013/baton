@@ -454,17 +454,6 @@ export class WorkflowRepository extends Context.Service<
       | WorkflowNotFoundError
       | TaskNotFoundError
     >;
-    /**
-     * What a team delete would change, per team: workflow tasks, draft tasks,
-     * and undone tasks of open runs. The delete also nulls the pointer on done
-     * and closed tasks, but those read their `teamName` snapshot, so nothing
-     * a person sees changes and they are not counted. Feeds the delete
-     * dialogs, never a refusal. Teams that own nothing are absent.
-     */
-    readonly countTasksByTeam: () => Effect.Effect<
-      readonly Domain.TeamTaskCounts[],
-      SqlError.SqlError | WorkflowRepositoryError
-    >;
     readonly listTeamWorkflows: (input: {
       readonly teamId: string;
     }) => Effect.Effect<
@@ -1650,37 +1639,6 @@ export class WorkflowRepository extends Context.Service<
             }),
           );
         }),
-
-        countTasksByTeam: Effect.fn("WorkflowRepository.countTasksByTeam")(
-          function* () {
-            return yield* decode(
-              Schema.Array(Domain.TeamTaskCounts),
-              "Invalid TeamTaskCounts row",
-            )(
-              yield* sql`
-                select teamId,
-                  sum(workflowTasks) as workflowTasks,
-                  sum(draftTasks) as draftTasks,
-                  sum(openRunTasks) as openRunTasks
-                from (
-                  select teamId, 1 as workflowTasks, 0 as draftTasks, 0 as openRunTasks
-                  from WorkflowTask where teamId is not null
-                  union all
-                  select teamId, 0, 1, 0
-                  from WorkflowDraftTask where teamId is not null
-                  union all
-                  select s.teamId, 0, 0, 1
-                  from RunTask s
-                  join Run r on r.id = s.runId
-                  where s.teamId is not null and s.doneAt is null
-                    and r.state = 'open'
-                )
-                group by teamId
-                order by teamId
-              `,
-            );
-          },
-        ),
 
         listTeamWorkflows: Effect.fn("WorkflowRepository.listTeamWorkflows")(
           function* ({ teamId }: { readonly teamId: string }) {
