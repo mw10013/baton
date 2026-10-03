@@ -49,9 +49,9 @@ test("a non-member gets the same confirmation and no link", async ({
 });
 
 /**
- * A member of exactly one shop never sees the picker: the magic link lands
+ * A member of exactly one shop never sees Your stores: the magic link lands
  * them on that shop's workflows list, with the top bar naming the shop and carrying
- * Sign out. The picker at `/shop` still exists for a member of several shops
+ * Sign out. Your stores at `/shop` still exists for a member of several shops
  * and is reachable by URL, which is how the test also proves it lists the
  * shop.
  */

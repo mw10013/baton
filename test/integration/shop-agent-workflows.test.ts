@@ -147,6 +147,9 @@ const runListItems = async (
   return reads.flat();
 };
 
+/** The workflows index's first page, unfiltered, large enough for every test here. */
+const ALL_WORKFLOWS = { limit: 100, cursor: null, q: null, state: null };
+
 describe("ShopAgent workflow callables", () => {
   it("addStep refuses an unknown team, accepts an existing one", async () => {
     const shop = "wf-team-check.myshopify.com";
@@ -161,9 +164,9 @@ describe("ShopAgent workflow callables", () => {
     const fresh = await agent.getWorkflowDetail({
       workflowId: created.workflow.id,
     });
-    expect(fresh?.draft).toBe(null);
+    expect(fresh?.draftTasks).toBe(null);
     expect(fresh?.tasks).toEqual([]);
-    strictEqual(tagOf(fresh?.workflow), "engraving");
+    strictEqual(tagOf(fresh?.workflow), "Engraving");
 
     const unknown = await agent.addStep({
       workflowId: created.workflow.id,
@@ -182,8 +185,8 @@ describe("ShopAgent workflow callables", () => {
     const detail = await agent.getWorkflowDetail({
       workflowId: created.workflow.id,
     });
-    expect(detail?.draft?.tasks.map((s) => s.teamName)).toEqual(["Engraving"]);
-    expect(detail?.draft?.tasks.map((s) => s.memberCount)).toEqual([0]);
+    expect(detail?.draftTasks?.map((s) => s.teamName)).toEqual(["Engraving"]);
+    expect(detail?.draftTasks?.map((s) => s.memberCount)).toEqual([0]);
     expect(detail?.teams.map((t) => [t.id, t.memberCount])).toEqual([
       [team.id, 0],
     ]);
@@ -210,7 +213,7 @@ describe("ShopAgent workflow callables", () => {
     });
     const detail = await agent.getWorkflowDetail({ workflowId });
     expect(detail?.tasks.map((s) => s.teamId)).toEqual([null, null, c.id]);
-    expect(detail?.draft?.tasks.map((s) => s.teamId)).toEqual([
+    expect(detail?.draftTasks?.map((s) => s.teamId)).toEqual([
       null,
       null,
       c.id,
@@ -239,7 +242,7 @@ describe("ShopAgent workflow callables", () => {
       ["S", null, null],
       ["T", b.id, "B"],
     ]);
-    expect(detail?.draft?.tasks.map((s) => s.teamId)).toEqual([null, b.id]);
+    expect(detail?.draftTasks?.map((s) => s.teamId)).toEqual([null, b.id]);
     expect(detail?.teams.map((t) => t.name)).toEqual(["B"]);
     expect(await agent.listTeamWorkflows({ teamId: a.id })).toEqual([]);
     // Off stays off; turning back on names the unassigned task.
@@ -252,7 +255,9 @@ describe("ShopAgent workflow callables", () => {
       _tag: "TaskUnassigned",
       taskNames: ["S"],
     });
-    const [summary] = await agent.listWorkflows();
+    const {
+      workflows: [summary],
+    } = await agent.listWorkflows(ALL_WORKFLOWS);
     strictEqual(summary?.unassigned, true);
 
     // The D1 half succeeded and the object half did not: every read treats
@@ -275,7 +280,7 @@ describe("ShopAgent workflow callables", () => {
 
     // Assigning a team on the draft and applying clears unassigned.
     const c = await seedTeam(shop, "C");
-    for (const task of repaired?.draft?.tasks ?? [])
+    for (const task of repaired?.draftTasks ?? [])
       await agent.updateTask({
         taskId: task.id,
         name: task.name,
@@ -288,7 +293,9 @@ describe("ShopAgent workflow callables", () => {
     // which is a warning, never a refusal.
     const backOn = await agent.setWorkflowOn({ workflowId, on: true });
     strictEqual(backOn._tag, "Ok");
-    const [cleared] = await agent.listWorkflows();
+    const {
+      workflows: [cleared],
+    } = await agent.listWorkflows(ALL_WORKFLOWS);
     strictEqual(cleared?.unassigned, false);
     strictEqual(cleared?.emptyTeam, true);
     expect(await agent.deleteTeam({ teamId: "nope" })).toEqual({
@@ -320,7 +327,7 @@ describe("ShopAgent workflow callables", () => {
     if (result._tag !== "Ok") return;
     strictEqual(Domain.workflowIsOn(result.workflow), true);
     const detail = await agent.getWorkflowDetail({ workflowId });
-    strictEqual(detail?.draft, null);
+    strictEqual(detail?.draftTasks, null);
     expect(detail?.tasks.map((s) => s.name)).toEqual(["S"]);
   });
 
@@ -341,7 +348,7 @@ describe("ShopAgent workflow callables", () => {
     const detail = await agent.getWorkflowDetail({
       workflowId: created.workflow.id,
     });
-    expect(detail?.draft?.tasks[0]?.teamName).toBe(null);
+    expect(detail?.draftTasks?.[0]?.teamName).toBe(null);
     expect(detail?.teams).toEqual([]);
 
     // Names compare exactly: a case variant under a free tag is a second workflow.
@@ -353,10 +360,10 @@ describe("ShopAgent workflow callables", () => {
       name: "w",
     });
     // So is the tag.
-    const dupeTag = await agent.createWorkflow({ name: "Other", tag: "W" });
+    const dupeTag = await agent.createWorkflow({ name: "Other", tag: " w " });
     strictEqual(dupeTag._tag, "TagTaken");
     // Never applied: the list counts saved tasks, and there are none.
-    const list = await agent.listWorkflows();
+    const { workflows: list } = await agent.listWorkflows(ALL_WORKFLOWS);
     expect(
       list.map((w) => `${w.name}:${w.tag}:${String(w.stepCount)}`).toSorted(),
     ).toEqual(["W:w:0", "w:dupe:0"]);
@@ -374,7 +381,7 @@ describe("ShopAgent workflow callables", () => {
     const removeMissing = await agent.removeTask({ taskId: task.task.id });
     strictEqual(removeMissing._tag, "NotFound");
     // The twin is untouched: only the one removed goes.
-    const remaining = await agent.listWorkflows();
+    const { workflows: remaining } = await agent.listWorkflows(ALL_WORKFLOWS);
     expect(remaining.map((w) => w.tag)).toEqual(["dupe"]);
     // Its name and tag are free at once.
     const recreated = await agent.createWorkflow({ name: "W", tag: "w" });
@@ -428,7 +435,7 @@ describe("ShopAgent workflow callables", () => {
     const separated = await agent.separateTask({ taskId: parallel.task.id });
     strictEqual(separated._tag, "Ok");
     const detail = await agent.getWorkflowDetail({ workflowId });
-    expect(detail?.draft?.tasks.map((s) => [s.name, s.step])).toEqual([
+    expect(detail?.draftTasks?.map((s) => [s.name, s.step])).toEqual([
       ["A", 1],
       ["B", 2],
     ]);
@@ -438,7 +445,7 @@ describe("ShopAgent workflow callables", () => {
     const joined = await agent.joinTask({ taskId: parallel.task.id });
     strictEqual(joined._tag, "Ok");
     const rejoined = await agent.getWorkflowDetail({ workflowId });
-    expect(rejoined?.draft?.tasks.map((s) => [s.name, s.step])).toEqual([
+    expect(rejoined?.draftTasks?.map((s) => [s.name, s.step])).toEqual([
       ["A", 1],
       ["B", 1],
     ]);
@@ -479,22 +486,22 @@ describe("ShopAgent workflow callables", () => {
     });
     strictEqual(lazy._tag, "Ok");
     const lazyDetail = await agent.getWorkflowDetail({ workflowId });
-    strictEqual(lazyDetail?.draft?.tasks.length, 1);
+    strictEqual(lazyDetail?.draftTasks?.length, 1);
 
     // Immediate: the tag is on the workflow before Apply, and no draft of
     // its own is involved.
     const tagged = await agent.updateWorkflowTag({ workflowId, tag: "B" });
     strictEqual(tagged._tag, "Ok");
-    if (tagged._tag === "Ok") strictEqual(tagOf(tagged.workflow), "b");
+    if (tagged._tag === "Ok") strictEqual(tagOf(tagged.workflow), "B");
     const applied = await agent.applyDraft({ workflowId });
     if (applied._tag !== "Ok") throw new Error(applied._tag);
-    strictEqual(tagOf(applied.workflow), "b");
+    strictEqual(tagOf(applied.workflow), "B");
     const detail = await agent.getWorkflowDetail({ workflowId });
-    strictEqual(tagOf(detail?.workflow), "b");
+    strictEqual(tagOf(detail?.workflow), "B");
     expect(detail?.tasks.map((s) => [s.name, s.teamName])).toEqual([
       ["S", "T"],
     ]);
-    expect(detail?.draft).toBe(null);
+    expect(detail?.draftTasks).toBe(null);
     expect(await agent.applyDraft({ workflowId })).toEqual({ _tag: "NoDraft" });
     expect(await agent.discardDraft({ workflowId })).toEqual({
       _tag: "NoDraft",
@@ -518,12 +525,12 @@ describe("ShopAgent workflow callables", () => {
     strictEqual(again._tag, "Ok");
     await agent.updateWorkflowTag({ workflowId, tag: "c" });
     const edited = await agent.getWorkflowDetail({ workflowId });
-    expect(edited?.draft?.tasks.map((s) => s.name)).toEqual(["S"]);
+    expect(edited?.draftTasks?.map((s) => s.name)).toEqual(["S"]);
     strictEqual(tagOf(edited?.workflow), "c");
     const discarded = await agent.discardDraft({ workflowId });
     strictEqual(discarded._tag, "Ok");
     const afterDiscard = await agent.getWorkflowDetail({ workflowId });
-    expect(afterDiscard?.draft).toBe(null);
+    expect(afterDiscard?.draftTasks).toBe(null);
     strictEqual(tagOf(afterDiscard?.workflow), "c");
 
     // Team deleted under the workflow's task: turn-on names the task.
@@ -814,7 +821,7 @@ describe("ShopAgent workflow run callables", () => {
 
     // Create: refused under the tag field, naming the holder.
     expect(
-      await agent.createWorkflow({ name: "Third", tag: "Engraved" }),
+      await agent.createWorkflow({ name: "Third", tag: " engraved " }),
     ).toEqual({
       _tag: "TagTaken",
       tag: "engraved",

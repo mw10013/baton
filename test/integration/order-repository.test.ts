@@ -7,7 +7,7 @@ import { SqlClient } from "effect/unstable/sql";
 import { describe, it } from "vitest";
 
 import * as Domain from "@/lib/Domain";
-import { OrderRepository } from "@/lib/OrderRepository";
+import { ITEM_MATCHES, OrderRepository } from "@/lib/OrderRepository";
 import { runShopAgentMigrations } from "@/lib/ShopAgentSchema";
 import {
   ShopifyAppEvents,
@@ -336,6 +336,18 @@ describe("OrderRepository.listOrders", () => {
  * that `json_each` exists in Durable Object SQLite — every `MULTI_MATCH_ITEM`
  * fragment would throw without it.
  */
+/** One workflow's stored `tasks` document: a single task on `teamId`. */
+const taskList = (workflowId: string, teamId: string | null) =>
+  JSON.stringify([
+    {
+      id: `${workflowId}-task`,
+      step: 1,
+      name: "Task",
+      teamId,
+      instructions: null,
+    },
+  ]);
+
 const seedStates = Effect.gen(function* () {
   const repository = yield* OrderRepository;
   const sql = yield* SqlClient.SqlClient;
@@ -369,12 +381,8 @@ const seedStates = Effect.gen(function* () {
   ];
   for (const id of ["w1", "w2"]) {
     yield* sql`
-      insert into Workflow (id, name, tag, state, updatedAt)
-      values (${id}, ${id}, ${id}, 'on', 0)
-    `;
-    yield* sql`
-      insert into WorkflowTask (id, workflowId, position, step, name, teamId)
-      values (${`${id}-task`}, ${id}, 1, 1, 'Task', 'team-cut')
+      insert into Workflow (id, name, tag, state, updatedAt, tasks)
+      values (${id}, ${id}, ${id}, 'on', 0, ${taskList(id, "team-cut")})
     `;
   }
   for (const { n, order, states, matched } of cases) {
@@ -504,12 +512,8 @@ describe("OrderRepository.listOrders multi-match", () => {
         ];
         for (const [id, state, teamId] of cases) {
           yield* sql`
-            insert into Workflow (id, name, tag, state, updatedAt)
-            values (${id}, ${id}, ${id}, ${state}, 0)
-          `;
-          yield* sql`
-            insert into WorkflowTask (id, workflowId, position, step, name, teamId)
-            values (${`${id}-task`}, ${id}, 1, 1, 'Task', ${teamId})
+            insert into Workflow (id, name, tag, state, updatedAt, tasks)
+            values (${id}, ${id}, ${id}, ${state}, 0, ${taskList(id, teamId)})
           `;
         }
         const details = cases.map(([id, state, teamId]) =>
@@ -518,7 +522,6 @@ describe("OrderRepository.listOrders multi-match", () => {
             tasks: [
               {
                 id: `${id}-task`,
-                workflowId: id,
                 position: 1,
                 step: 1,
                 name: "Task",
@@ -534,6 +537,10 @@ describe("OrderRepository.listOrders multi-match", () => {
         const lineItems = [
           aLineItem(1, { productTags: ["w1", "w2", "w3", "w4"] }),
           aLineItem(2, { productTags: ["w1", "w3", "w4"] }),
+          // Tags match exactly: a case variant or a padded tag is another tag.
+          aLineItem(3, { productTags: ["W1", " w2 "] }),
+          // A tag listed twice is one workflow, not two: counted per workflow.
+          aLineItem(4, { productTags: ["w1", "w1"] }),
         ];
         yield* upsert(repository, anOrder({ fullyPaid: true }), lineItems);
         const page = yield* repository.listOrders({
@@ -552,6 +559,57 @@ describe("OrderRepository.listOrders multi-match", () => {
     );
     strictEqual(tsCount, 1);
     strictEqual(sqlCount, tsCount);
+  });
+});
+
+describe("OrderRepository.listOrders by tag", () => {
+  it("an item matches by its own tags: a workflow whose tag no item carries is never evaluated", async () => {
+    const { multiMatchItems, plan } = await runInRepository(
+      Effect.gen(function* () {
+        const repository = yield* OrderRepository;
+        const sql = yield* SqlClient.SqlClient;
+        const insert = (id: string) => sql`
+          insert into Workflow (id, name, tag, state, updatedAt, tasks)
+          values (${id}, ${id}, ${id}, 'on', 0, ${taskList(id, "team-cut")})
+        `;
+        yield* insert("w1");
+        yield* insert("w2");
+        // A thousand on workflows whose tags no item carries.
+        for (let index = 0; index < 1000; index++)
+          yield* insert(`x${String(index)}`);
+        yield* upsert(repository, anOrder({ fullyPaid: true }), [
+          aLineItem(1, { productTags: ["w1", "w2"] }),
+        ]);
+        const page = yield* repository.listOrders({
+          limit: 20,
+          cursor: null,
+          q: null,
+          show: null,
+          team: null,
+          teams: [],
+        });
+        const rows = yield* sql.unsafe<{ readonly detail: string }>(
+          `explain query plan select ${ITEM_MATCHES} from OrderLineItem li`,
+        );
+        return {
+          multiMatchItems: page.orders[0]?.multiMatchItems,
+          plan: rows.map((row) => row.detail),
+        };
+      }),
+    );
+    strictEqual(multiMatchItems, 1);
+    // The probe searches the unique index on Workflow.tag; it never scans
+    // the workflows.
+    strictEqual(
+      plan.some((detail) => detail.startsWith("SEARCH w USING INDEX")),
+      true,
+      plan.join("\n"),
+    );
+    strictEqual(
+      plan.some((detail) => /^SCAN w\b/u.test(detail)),
+      false,
+      plan.join("\n"),
+    );
   });
 });
 

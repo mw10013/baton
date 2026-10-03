@@ -12,6 +12,8 @@ import { RunRepository } from "@/lib/RunRepository";
 import { runShopAgentMigrations } from "@/lib/ShopAgentSchema";
 import { WorkflowRepository } from "@/lib/WorkflowRepository";
 
+import { reconcileContext } from "./reconcile-context.ts";
+
 /**
  * The `schema` and `schema+app` rows of the data-model table on
  * `initializeSchema` (`src/lib/ShopAgentSchema.ts`). Each title is the row's
@@ -105,10 +107,7 @@ const seedRun = Effect.gen(function* () {
     on: true,
     teams: [TEAM],
   });
-  const context = {
-    workflows: yield* workflows.listOnWorkflowDetails(),
-    teams: [TEAM],
-  };
+  const context = yield* reconcileContext([TEAM]);
   yield* orders.upsertOrder({
     order,
     lineItems: [lineItem],
@@ -141,12 +140,8 @@ const insertRun = (id: string) =>
 /** Rewrites the order with `items` under a newer `updatedAt` and reconciles it, as a sync does. */
 const resync = (items: readonly Domain.OrderLineItem[], bump: number) =>
   Effect.gen(function* () {
-    const workflows = yield* WorkflowRepository;
     const runs = yield* RunRepository;
-    const context = {
-      workflows: yield* workflows.listOnWorkflowDetails(),
-      teams: [TEAM],
-    };
+    const context = yield* reconcileContext([TEAM]);
     yield* (yield* OrderRepository).upsertOrder({
       order: { ...order, updatedAt: PROCESSED_AT + bump },
       lineItems: items,
@@ -219,6 +214,16 @@ const count = (table: string) =>
     Effect.map(([row]) => Number(row?.[0])),
   );
 
+/** Every workflow's tasks, counted across the `tasks` documents. */
+const workflowTaskCount = SqlClient.SqlClient.pipe(
+  Effect.flatMap(
+    (sql) =>
+      sql`select coalesce(sum(json_array_length(tasks)), 0) as n from Workflow`
+        .values,
+  ),
+  Effect.map(([row]) => Number(row?.[0])),
+);
+
 describe("data model", () => {
   it("an item has exactly one order and goes with it", () =>
     runInRepository(
@@ -256,35 +261,13 @@ describe("data model", () => {
         const sameName = yield* Effect.flip(insert("w3", "Mugs", "cup"));
         strictEqual(sameName._tag, "SqlError");
         yield* insert("w4", "mugs", "cup");
-        strictEqual(yield* count("Workflow"), 2);
-      }),
-    ));
-
-  it("a workflow has at most one draft; the draft holds tasks only", () =>
-    runInRepository(
-      Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient;
-        yield* sql`
-          insert into Workflow (id, name, tag, state, updatedAt)
-          values ('w1', 'Mugs', 'mug', 'off', 0)
-        `;
-        const draft = sql`
-          insert into WorkflowDraft (workflowId, updatedAt)
-          values ('w1', 0)
-        `;
-        yield* draft;
-        const second = yield* Effect.flip(draft);
-        strictEqual(second._tag, "SqlError");
-        // "Tasks only": the draft has no name, tag or switch of its own to
-        // drift from the workflow's. The one place a column list belongs in a
-        // test, because the rule is about what the draft does not hold.
-        const columns = yield* sql<{
-          readonly name: string;
-        }>`select name from pragma_table_info('WorkflowDraft')`;
-        deepStrictEqual(columns.map((column) => column.name).toSorted(), [
-          "updatedAt",
-          "workflowId",
-        ]);
+        // The tag is compared exactly too: `Mug` is another tag than `mug`.
+        yield* insert("w5", "Cups", "Mug");
+        strictEqual(yield* count("Workflow"), 3);
+        strictEqual(
+          Schema.decodeUnknownSync(Domain.WorkflowTag)(" Mug "),
+          "Mug",
+        );
       }),
     ));
 
@@ -407,40 +390,6 @@ describe("data model", () => {
       }),
     ));
 
-  it("a workflow's tag matches an item's tag regardless of case and surrounding space", () =>
-    runInRepository(
-      Effect.gen(function* () {
-        const workflows = yield* WorkflowRepository;
-        // The tag is decoded trimmed and lowercased, so a second workflow
-        // under a case variant is the same tag and is refused.
-        const workflow = yield* workflows.createWorkflow({
-          name: Schema.decodeUnknownSync(Domain.WorkflowName)("Mugs"),
-          tag: Schema.decodeUnknownSync(Domain.WorkflowTag)(" Mug "),
-        });
-        strictEqual(workflow.tag, "mug");
-        const variant = yield* Effect.flip(
-          workflows.createWorkflow({
-            name: Schema.decodeUnknownSync(Domain.WorkflowName)("Cups"),
-            tag: Schema.decodeUnknownSync(Domain.WorkflowTag)("MUG"),
-          }),
-        );
-        strictEqual(variant._tag, "WorkflowTagTakenError");
-        yield* workflows.addStep({
-          workflowId: workflow.id,
-          name: Schema.decodeUnknownSync(Domain.TaskName)("Glaze"),
-          teamId: TEAM.id,
-        });
-        yield* workflows.applyDraft({ workflowId: workflow.id, teams: [TEAM] });
-        yield* workflows.setWorkflowOn({
-          workflowId: workflow.id,
-          on: true,
-          teams: [TEAM],
-        });
-        yield* resync([{ ...lineItem, productTags: [" MUG "] }], 0);
-        strictEqual((yield* runRow)?.state, "open");
-      }),
-    ));
-
   it("turning a workflow off leaves its open runs open and deletes nothing", () =>
     runInRepository(
       Effect.gen(function* () {
@@ -454,22 +403,19 @@ describe("data model", () => {
         const before = {
           runs: yield* count("Run"),
           runTasks: yield* count("RunTask"),
-          workflowTasks: yield* count("WorkflowTask"),
+          workflowTasks: yield* workflowTaskCount,
         };
         yield* workflows.setWorkflowOn({
           workflowId,
           on: false,
           teams: [TEAM],
         });
-        yield* runs.reconcileAll({
-          workflows: yield* workflows.listOnWorkflowDetails(),
-          teams: [TEAM],
-        });
+        yield* runs.reconcileAll(yield* reconcileContext([TEAM]));
         deepStrictEqual(
           {
             runs: yield* count("Run"),
             runTasks: yield* count("RunTask"),
-            workflowTasks: yield* count("WorkflowTask"),
+            workflowTasks: yield* workflowTaskCount,
           },
           before,
         );

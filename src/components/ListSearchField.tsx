@@ -14,10 +14,11 @@ import * as Domain from "@/lib/Domain";
 const decodeListSearch = Schema.decodeUnknownOption(Domain.ListSearch);
 
 /**
- * The search field of both lists, the orders index and the member's
- * workflows list: label "Search" (hidden, the placeholder says it), the
- * placeholder "Search by order number or item" (the `placeholder` slot's
- * "Search by <field>", `CopySlot`), and what it finds is
+ * The search field of every list: the orders index and the member's
+ * workflows list, whose placeholder is the default "Search by order number
+ * or item", and the workflows index, which searches by name. Label "Search"
+ * (hidden, the placeholder says it), the placeholder the `placeholder`
+ * slot's "Search by <field>" (`CopySlot`), and what it finds is
  * {@link Domain.searchTerm}'s.
  *
  * `value` is the search in the URL; the field's text is the draft on the way
@@ -35,9 +36,12 @@ const decodeListSearch = Schema.decodeUnknownOption(Domain.ListSearch);
  */
 export function ListSearchField({
   value,
+  placeholder = "Search by order number or item",
   onSubmit,
 }: {
   readonly value: Domain.ListSearch | null;
+  /** The `placeholder` slot, "Search by <field>": the field the list's search reads. */
+  readonly placeholder?: string;
   readonly onSubmit: (next: Domain.ListSearch | null) => void;
 }) {
   const [draft, setDraft] = React.useState<string>(value ?? "");
@@ -83,7 +87,7 @@ export function ListSearchField({
       ref={setElement}
       label="Search"
       labelAccessibilityVisibility="exclusive"
-      placeholder="Search by order number or item"
+      placeholder={placeholder}
       value={draft}
       onInput={(event) => {
         const text = event.currentTarget.value;

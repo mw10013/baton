@@ -3,7 +3,7 @@ import type * as Domain from "@/lib/Domain";
 /**
  * The team checklist shared by the members page's Add member and Edit teams
  * dialogs: one component, two entry points, so the two can never drift. Teams
- * are few (tens at most), so a checklist beats a picker here. A team with
+ * are few (tens at most), so a checklist beats a select here. A team with
  * nobody on it is marked so the merchant can see, while choosing, that this
  * member would be its first.
  *

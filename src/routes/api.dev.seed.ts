@@ -131,7 +131,7 @@ const DevSeedInput = Schema.Struct({
  * `migrations/0001_init.sql` — a migration runs before any install exists.
  *
  * Workflows go to the shop's Durable Object last, once teams have ids to point
- * at: `WorkflowTask.teamId` is a D1 `Team.id` with no foreign key, because
+ * at: a `Domain.WorkflowTask`'s `teamId` is a D1 `Team.id` with no foreign key, because
  * SQLite keys do not cross databases. The stub is called directly rather than
  * through `ShopAgentClient`, which exists to decode RPC results against a
  * schema — there is no result here to decode.

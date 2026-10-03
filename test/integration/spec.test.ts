@@ -608,7 +608,8 @@ describe("action table parser", () => {
         [],
       );
       const doctored = rows.map((row) =>
-        row.pinnedBy === "deleteWorkflow cascades its draft and tasks"
+        row.pinnedBy ===
+        "deleteWorkflow removes the workflow with its tasks and its draft"
           ? { ...row, pinnedBy: "deleteWorkflow cascades nothing" }
           : row,
       );

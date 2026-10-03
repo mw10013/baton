@@ -227,7 +227,6 @@ const detailOf = (
     tasks: [
       {
         id: Schema.decodeUnknownSync(Domain.WorkflowTaskId)(`${tag}-task`),
-        workflowId: id,
         position: 1,
         step: 1,
         name: Schema.decodeUnknownSync(Domain.TaskName)("Task"),
@@ -313,10 +312,126 @@ describe("Domain.multiMatchItems", () => {
       0,
     );
     deepStrictEqual(
-      Domain.matchedWorkflows(lineItem("a", ["W1 "]), details, TEAMS).map(
-        ({ workflow }) => workflow.tag,
-      ),
+      Domain.matchedWorkflows(
+        lineItem("a", ["w1", "w2", "w3"]),
+        details,
+        TEAMS,
+      ).map(({ workflow }) => workflow.tag),
       ["w1"],
+    );
+  });
+});
+
+/** A stored `tasks` document of `[id, step]` pairs, every other field fixed. */
+const stored = (
+  ...tasks: readonly (readonly [id: string, step: number])[]
+): string =>
+  JSON.stringify(
+    tasks.map(([id, step]) => ({
+      id,
+      step,
+      name: "Task",
+      teamId: null,
+      instructions: null,
+    })),
+  );
+
+describe("Domain.WorkflowTasks", () => {
+  const decode = Schema.decodeUnknownOption(Domain.WorkflowTasks);
+
+  it("fills position from the index and drops it again on encode", () => {
+    const tasks = Schema.decodeUnknownSync(Domain.WorkflowTasks)(
+      stored(["a", 1], ["b", 1], ["c", 2]),
+    );
+    deepStrictEqual(
+      tasks.map((task) => [task.id, task.position, task.step]),
+      [
+        ["a", 1, 1],
+        ["b", 2, 1],
+        ["c", 3, 2],
+      ],
+    );
+    strictEqual(
+      Schema.encodeSync(Domain.WorkflowTasks)(tasks),
+      stored(["a", 1], ["b", 1], ["c", 2]),
+    );
+  });
+
+  it("refuses a gap, a decrease, a duplicate id and a list past maxTasks", () => {
+    strictEqual(decode(stored(["a", 1], ["b", 3]))._tag, "None", "a gap");
+    strictEqual(
+      decode(stored(["a", 1], ["b", 2], ["c", 1]))._tag,
+      "None",
+      "a decrease",
+    );
+    strictEqual(decode(stored(["a", 2]))._tag, "None", "not from 1");
+    strictEqual(
+      decode(stored(["a", 1], ["a", 2]))._tag,
+      "None",
+      "a duplicate id",
+    );
+    const full = Array.from(
+      { length: Domain.WorkflowLimits.maxTasks + 1 },
+      (_, index) => [`t${String(index)}`, index + 1] as const,
+    );
+    strictEqual(decode(stored(...full))._tag, "None", "past maxTasks");
+    strictEqual(
+      decode(stored(...full.slice(0, Domain.WorkflowLimits.maxTasks)))._tag,
+      "Some",
+    );
+  });
+});
+
+/** A workflow as the Workflow select names it, id and name both `tag`. */
+const nameRow = (tag: string): Domain.WorkflowNameRow => ({
+  id: Schema.decodeUnknownSync(Domain.WorkflowId)(tag),
+  name: Schema.decodeUnknownSync(Domain.WorkflowName)(tag),
+});
+
+describe("Domain.lineItemState options", () => {
+  it("options are the item's matches, then the order's other matches, then the other workflows, each once", () => {
+    const state = Domain.lineItemState(
+      lineItem("a", ["w2"]),
+      [],
+      [detailOf("w1"), detailOf("w2")],
+      [nameRow("w1"), nameRow("w3")],
+      TEAMS,
+    );
+    if (state.kind !== "attachable") throw new Error(state.kind);
+    deepStrictEqual(
+      state.options.map(({ name }) => name),
+      ["w2", "w1", "w3"],
+    );
+    deepStrictEqual(state.matched, [nameRow("w2").id]);
+  });
+});
+
+describe("Domain.TaskInstructions", () => {
+  it("TaskInstructions refuses 501 characters and accepts 500", () => {
+    const decode = Schema.decodeUnknownOption(Domain.TaskInstructions);
+    strictEqual(
+      decode("x".repeat(Domain.TASK_INSTRUCTIONS_MAX_LENGTH))._tag,
+      "Some",
+    );
+    strictEqual(
+      decode("x".repeat(Domain.TASK_INSTRUCTIONS_MAX_LENGTH + 1))._tag,
+      "None",
+    );
+  });
+});
+
+describe("Domain.matchesTag", () => {
+  it("a product tag matches the workflow's tag exactly: case and surrounding space make another tag", () => {
+    const detail = detailOf("engraving");
+    strictEqual(Domain.matchesTag(detail, lineItem("a", ["engraving"])), true);
+    strictEqual(Domain.matchesTag(detail, lineItem("a", ["Engraving"])), false);
+    strictEqual(
+      Domain.matchesTag(detail, lineItem("a", [" engraving "])),
+      false,
+    );
+    strictEqual(
+      Schema.decodeUnknownSync(Domain.WorkflowTag)(" Engraving "),
+      "Engraving",
     );
   });
 });

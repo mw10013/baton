@@ -188,13 +188,22 @@ export const LoginInput = Schema.Struct({ email: Email });
 export type LoginInput = typeof LoginInput.Type;
 
 /**
- * Arbitrary ceilings, enforced in the schemas below and re-checked by
- * `WorkflowRepository` before every insert, so the Durable Object never stores
- * an oversize row and the reorder UI stays a short list. Raise freely; they
- * exist so `position` loops are bounded, not to model a plan tier.
+ * Ceilings on a shop's workflow definitions, checked by `WorkflowRepository`
+ * before every insert, and `maxTasks` by `WorkflowTasks` on every read and
+ * write of a task list.
+ *
+ * `maxWorkflows` is a guard against a runaway seed or script, not a product
+ * promise and not a plan tier. Nothing that runs per order depends on it:
+ * run creation, reconcile, the order page and the orders index's counts all
+ * find workflows by an item's tags (the rule on `itemMatches` in ShopWork),
+ * so their cost is the same at one workflow or a thousand. Only the
+ * workflows index reads every workflow, and it pages.
+ *
+ * `maxTasks` keeps a task list a short document read and written whole, and
+ * the editor's reorder a short list.
  */
 export const WorkflowLimits = {
-  maxWorkflows: 50,
+  maxWorkflows: 1000,
   maxTasks: 20,
 } as const;
 

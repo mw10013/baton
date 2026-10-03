@@ -120,6 +120,26 @@ export interface ReconcileAllCounts {
   readonly multiMatch: number;
 }
 
+/**
+ * The on workflows whose tag is one of `tags`, with their tasks: how a pass
+ * finds the workflows that can match an order, from the order's own tags
+ * (the rule on {@link Domain.itemMatches}). Passed in rather than read here
+ * so the two repositories stay independent: the agent hands over
+ * `WorkflowRepository.listOnWorkflowsByTags`. It runs inside the order's
+ * transaction, so it must be plain statements.
+ */
+export type WorkflowsByTags = (
+  tags: readonly string[],
+) => Effect.Effect<
+  readonly Domain.WorkflowDetail[],
+  SqlError.SqlError | RunRepositoryError
+>;
+
+/** What a pass reads besides the stored order: the pass's teams ({@link Domain.EligibleContext}) and how to find workflows by tag. */
+export interface ReconcileContext extends Domain.EligibleContext {
+  readonly workflowsByTags: WorkflowsByTags;
+}
+
 const json = (value: unknown) => JSON.stringify(value);
 
 /**
@@ -154,7 +174,7 @@ export class RunRepository extends Context.Service<
      * what is actually stored.
      */
     readonly reconcileOrder: (
-      input: Domain.EligibleContext & { readonly orderId: string },
+      input: ReconcileContext & { readonly orderId: string },
     ) => Effect.Effect<ReconcileCounts, SqlError.SqlError | RunRepositoryError>;
     /**
      * `reconcileOrder` over every open, paid order, one transaction each
@@ -172,7 +192,7 @@ export class RunRepository extends Context.Service<
      * request that changed the definition.
      */
     readonly reconcileAll: (
-      input: Domain.EligibleContext,
+      input: ReconcileContext,
     ) => Effect.Effect<
       ReconcileAllCounts,
       SqlError.SqlError | RunRepositoryError
@@ -971,9 +991,9 @@ export class RunRepository extends Context.Service<
       const reconcileOrder = Effect.fn("RunRepository.reconcileOrder")(
         function* ({
           orderId,
-          workflows,
+          workflowsByTags,
           teams,
-        }: Domain.EligibleContext & { readonly orderId: string }) {
+        }: ReconcileContext & { readonly orderId: string }) {
           const now = yield* Clock.currentTimeMillis;
           const [order] = yield* decodeOrders(
             yield* sql`select ${orderColumns} from ShopOrder where id = ${orderId}`,
@@ -996,6 +1016,9 @@ export class RunRepository extends Context.Service<
           const runs = yield* decodeRuns(
             yield* sql`select * from Run where orderId = ${orderId}`,
           );
+          const workflows = yield* workflowsByTags([
+            ...new Set(lineItems.flatMap(({ productTags }) => productTags)),
+          ]);
           const stored = new Set(lineItems.map((lineItem) => lineItem.id));
           const entries = [
             ...lineItems.map((lineItem) => ({
@@ -1117,7 +1140,7 @@ export class RunRepository extends Context.Service<
         reconcileOrder,
 
         reconcileAll: Effect.fn("RunRepository.reconcileAll")(function* (
-          context: Domain.EligibleContext,
+          context: ReconcileContext,
         ) {
           const ids = yield* openOrders.pipe(
             Effect.map((rows) => rows.map((row) => String(row.id))),

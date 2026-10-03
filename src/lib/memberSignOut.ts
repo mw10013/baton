@@ -7,7 +7,7 @@ import { CurrentRequest } from "@/lib/CurrentRequest";
 import { memberServerFnMiddleware } from "@/lib/MemberServerFnMiddleware";
 
 /**
- * Sign out of the member area. Shared by the shop picker (`/shop`) and the
+ * Sign out of the member area. Shared by Your stores (`/shop`) and the
  * top bar every `/shop/$shop/*` page carries (`MemberBar`), so the member
  * area has exactly one sign-out and both surfaces land on the same door.
  */

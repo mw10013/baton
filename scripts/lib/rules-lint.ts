@@ -23,6 +23,7 @@
  * | import, imports, importing | the word is sync: Baton's copy agreeing with Shopify; import is Shopify's word for `orderCreate`          |
  * | resync                     | the word is sync at one-order scope; the button is Sync from Shopify                                      |
  * | needs a workflow           | the fault is that more than one workflow matches; the label is Multiple workflows match                   |
+ * | picker, pickers            | retired; the control is a select, named by its label (the Workflow select, the Assign team select)        |
  *
  * And the copy words that are wrong in every slot, whatever the noun: copy
  * states facts and names the act, so it never pleads, apologises, exclaims
@@ -83,6 +84,7 @@ export const RETIRED: readonly RegExp[] = [
   /\bimport(?:s|ed|ing)?\b/iu,
   /\bre-?sync(?:s|ed|ing)?\b/iu,
   /\bneeds a workflow\b/iu,
+  /\bpickers?\b/iu,
   /\bplease\b/iu,
   /\bsuccessfully\b/iu,
   /\boops\b/iu,
@@ -209,6 +211,7 @@ export const exportedNames = (source: string): readonly ExportedName[] =>
  * | import     | retired; the word is sync                                                            |
  * | resync     | retired; the word is sync                                                            |
  * | ambigu     | retired; the word is multi-match                                                     |
+ * | picker     | retired; the control is a select, named by its label                                 |
  *
  * {@link RESERVED_STEM_ALLOWED} names the exports that keep a stem on
  * purpose.
@@ -225,6 +228,7 @@ export const RESERVED_STEMS: readonly string[] = [
   "resync",
   "ambigu",
   "view",
+  "picker",
 ];
 
 /**
@@ -311,8 +315,11 @@ const resolve = (dir: string, specifier: string) =>
  * **An import follows the map's direction.** `file` is the path under
  * `src/` (`lib/domain/Orders.ts`, `routes/app.index.tsx`). A context file
  * under `lib/domain/` may import only the context files its map row's `may
- * import` cell names ({@link contextImports}); a stem the map has no row for
- * may import none. Any other file imports the barrel (`@/lib/Domain`), never
+ * import` cell names ({@link contextImports}) and packages; a stem the map
+ * has no row for may import none. It never imports a module under `src/`
+ * outside `lib/domain/`, by alias or by relative path: the model depends on
+ * nothing above it, so a rule the model enforces lives in the model. Any
+ * other file imports the barrel (`@/lib/Domain`), never
  * a context file, by alias or by relative path: the barrel is the public
  * surface. The barrel itself (`lib/Domain.ts`) is exempt, since re-exporting
  * the four is its job. Returns each import that breaks the rule.
@@ -336,7 +343,11 @@ export const contextImportHits = (
     return imports.filter(({ specifier }) => intoDomain(specifier));
   const allowed =
     map.get(file.slice("lib/domain/".length, -".ts".length)) ?? [];
+  const outward = (specifier: string) =>
+    specifier.startsWith("@/") ||
+    (specifier.startsWith(".") && !intoDomain(specifier));
   return imports.flatMap(({ line, specifier }) => {
+    if (outward(specifier)) return [{ line, specifier, allowed }];
     if (!intoDomain(specifier)) return [];
     const stem = resolve(dir, specifier)
       .slice("lib/domain/".length)

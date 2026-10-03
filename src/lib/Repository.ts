@@ -296,7 +296,7 @@ export class Repository extends Context.Service<
       void,
       SqlError.SqlError | RepositoryError | TeamNotFoundError
     >;
-    /** The add-members picker's write: several members onto one team at once. */
+    /** The Add members dialog's write: several members onto one team at once. */
     readonly addTeamMembers: (params: {
       readonly shop: Domain.Shop;
       readonly teamId: Domain.TeamId;

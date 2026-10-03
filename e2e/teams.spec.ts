@@ -102,7 +102,7 @@ test("teams screen creates, adds members to, renames, and deletes a team", async
   await frame.getByRole("link", { name: TEAM }).click();
   await expect(frame.locator(`s-page[heading="${TEAM}"]`)).toBeVisible();
 
-  /* Add members is our own `s-modal`, in the frame: App Bridge's picker is
+  /* Add members is our own `s-modal`, in the frame: App Bridge's Picker API is
      rendered by the admin host and gives no control over its layout. The
      empty-team box carries its own Add members button (the title-bar one is
      hoisted). Below six candidates the dialog has no search field, so the one

@@ -14,8 +14,9 @@ import {
   type RunBlockedError,
   type RunOrderClosedError,
   type TaskNotReadyError,
+  type ReconcileContext,
   RunRepository,
-  type RunRepositoryError,
+  RunRepositoryError,
 } from "@/lib/RunRepository";
 import {
   type NoDraftError,
@@ -485,9 +486,10 @@ const make = Effect.gen(function* () {
     });
   };
 
-  const listWorkflows = () =>
+  const listWorkflows = (input: Domain.ListWorkflowsInput) =>
     Effect.gen(function* () {
       return yield* (yield* WorkflowRepository).listWorkflows({
+        ...input,
         teams: yield* teams(),
       });
     });
@@ -498,7 +500,7 @@ const make = Effect.gen(function* () {
    *
    * Joins team names from D1 inside the object rather than in a server fn: the
    * runtime already holds `Repository`, and one round trip returns the tasks,
-   * their resolved team names and member counts, and the teams the picker
+   * their resolved team names and member counts, and the teams the Assign team select
    * needs. Unassigned and empty team are derived here and never stored: a task
    * whose `teamId` is null or names no team resolves to `teamName: null`
    * (unassigned — warned, never blocked in the editor, since the risk is
@@ -530,13 +532,10 @@ const make = Effect.gen(function* () {
       return {
         workflow: detail.value.workflow,
         tasks: withTeamNames(detail.value.tasks),
-        draft:
-          detail.value.draft === null
+        draftTasks:
+          detail.value.draftTasks === null
             ? null
-            : {
-                draft: detail.value.draft.draft,
-                tasks: withTeamNames(detail.value.draft.tasks),
-              },
+            : withTeamNames(detail.value.draftTasks),
         teams: shopTeams,
       } satisfies Domain.WorkflowPageData;
     });
@@ -622,11 +621,11 @@ const make = Effect.gen(function* () {
     return draftResult(
       Effect.gen(function* () {
         const repository = yield* WorkflowRepository;
-        const draft = yield* repository.createDraft({ workflowId });
+        const draftTasks = yield* repository.createDraft({ workflowId });
         yield* Effect.logInfo(
           `ShopAgent.createDraft: shop=${shop} workflowId=${workflowId}`,
         ).pipe(Effect.annotateLogs({ shop, workflowId }));
-        return { _tag: "Ok", draft } satisfies Domain.DraftResult;
+        return { _tag: "Ok", draftTasks } satisfies Domain.DraftResult;
       }),
     );
   };
@@ -636,7 +635,7 @@ const make = Effect.gen(function* () {
    * afterwards: new tasks can make a workflow eligible for an item it was not, and those
    * orders should start now rather than at whatever moment Shopify next edits
    * them. Publishes because the next order starts against the new tasks,
-   * which the order page's workflow pickers reflect.
+   * which the order page's Workflow selects reflect.
    */
   const applyDraft = ({ workflowId }: typeof Domain.ApplyDraftInput.Type) => {
     const shop = host.shop();
@@ -743,7 +742,7 @@ const make = Effect.gen(function* () {
    * SDK base class already has a `deleteWorkflow(workflowId)` that drops a
    * Cloudflare Workflow instance's tracking row (`onWorkflowComplete` calls
    * it), the same collision `getWorkflowDetail` sidesteps. Publishes because
-   * the workflows index and any order page's attach picker — which lists
+   * the workflows index and any order page's Workflow select — which lists
    * workflows — must repaint.
    *
    * Reconciles afterwards for the same reason Turn off does: the deleted
@@ -795,21 +794,33 @@ const make = Effect.gen(function* () {
   };
 
   /**
-   * Loads what creating runs needs — every workflow that is on, with its tasks, and
-   * the shop's teams from D1 — *before* any transaction opens, and
-   * returns a per-order effect the caller hands to `upsertOrder.afterWrite`.
-   * The D1 read is the one await run creation needs that is not storage, and it
-   * cannot happen inside the Durable Object transaction; loading once per
-   * webhook or per bulk stream also bounds the cost for a thousand-order file,
-   * at the accepted price of a snapshot that a mid-stream team delete would
-   * not refresh: pass rule 3 on {@link Domain.reconcileItem}.
+   * Loads what creating runs needs before any transaction opens: the shop's
+   * teams from D1, the one read run creation needs that is not storage and
+   * that cannot happen inside the Durable Object transaction. Loading once
+   * per webhook or per bulk stream also bounds the cost for a
+   * thousand-order file, at the accepted price of a teams snapshot that a
+   * mid-stream team delete would not refresh: pass rule 3 on
+   * {@link Domain.reconcileItem}. The workflows are not loaded here: each
+   * pass reads them by its order's tags inside its own transaction
+   * (`workflowsByTags`, the rule on {@link Domain.itemMatches}), so a pass
+   * reads only the workflows its order can match.
    */
   const eligibleContext = () => {
     return Effect.gen(function* () {
+      const workflows = yield* WorkflowRepository;
       return {
-        workflows: yield* (yield* WorkflowRepository).listOnWorkflowDetails(),
         teams: yield* teams(),
-      } satisfies Domain.EligibleContext;
+        workflowsByTags: (tags) =>
+          workflows
+            .listOnWorkflowsByTags({ tags })
+            .pipe(
+              Effect.catchTag("WorkflowRepositoryError", (cause) =>
+                Effect.fail(
+                  new RunRepositoryError({ message: cause.message, cause }),
+                ),
+              ),
+            ),
+      } satisfies ReconcileContext;
     });
   };
 
@@ -902,14 +913,20 @@ const make = Effect.gen(function* () {
       if (Option.isNone(detail)) return null;
       const { order, lineItems } = detail.value;
       const repository = yield* WorkflowRepository;
-      const workflows = yield* repository.listOnWorkflowDetails();
+      const matched = (yield* repository.listOnWorkflowsByTags({
+        tags: [...new Set(lineItems.flatMap(({ productTags }) => productTags))],
+      })).filter(({ tasks }) => tasks.length > 0);
       const shopTeams = yield* teams();
       return {
         order,
         lineItems,
         runs: yield* runs.listRunsForOrder({ orderId: order.id }),
         teams: shopTeams,
-        itemWorkflows: workflows.filter(({ tasks }) => tasks.length > 0),
+        matchedWorkflows: matched,
+        otherWorkflows: (yield* repository.listOnWorkflowNames()).filter(
+          (workflow) =>
+            !matched.some((detail) => detail.workflow.id === workflow.id),
+        ),
       } satisfies Domain.OrderPageData;
     });
   };

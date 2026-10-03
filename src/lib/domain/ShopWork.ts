@@ -12,28 +12,28 @@
  * Nouns, shop work. "(none)" means no screen says the word; the
  * cell says what a screen shows instead:
  *
- * | word          | meaning                                                                                                    | symbol                                                                                             | screen                                                      |
- * | ------------- | ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
- * | merchant      | the shop's owner, acting from the Shopify admin                                                            | `Actor` role `merchant`                                                                            | "you" to the merchant, "the merchant" to a member           |
- * | member        | a person at the bench, on one or more teams                                                                | `Actor` role `member`, `Member`                                                                    | member (merchant screens); "you" or a name (member screens) |
- * | team          | the group a task is assigned to                                                                            | `Team`                                                                                             | team, or its name                                           |
- * | workflow      | the definition: steps of tasks                                                                             | `Workflow`, `WorkflowTask`                                                                         | workflow, or its name                                       |
- * | step          | a position in a workflow; its tasks are done in parallel                                                   | `WorkflowTask`, `RunTask` field                                                                    | Step k of n                                                 |
- * | run           | one item going through one workflow                                                                        | `Run`                                                                                              | the item's workflow, on both sides; never bare, never "run" |
- * | task          | one unit of work on a run, on one team                                                                     | `RunTask`                                                                                          | task, or its name                                           |
- * | block         | a person's hold on a run                                                                                   | `runIsBlocked`                                                                                     | Blocked                                                     |
- * | note          | free text on a run                                                                                         | `RunNote`                                                                                          | Note                                                        |
- * | draft         | the workflow's edited copy of its tasks, from Edit until Apply or Discard; one or none                     | `WorkflowDraft`                                                                                    | Draft                                                       |
- * | filter        | one axis of a list with a fixed set of values; the list shows the rows matching every chosen filter        | `OrdersShow`, `WorkflowsListState`, `WorkflowsIndexState`, `ListOrdersInput`, `RunQuery`           | the axis name (Show, Team) or the value (Making, Ready)     |
- * | count         | how many rows a filter value would show, given the other filters and never the search                      | `OrderCounts`, `RunListCounts`                                                                     | the number beside the value                                 |
- * | search        | free text matched against a row's order number, item title, variant title and SKU; finds, does not narrow  | `ListSearch`, `searchTerm`                                                                         | Search by order number or item                              |
- * | default       | what a list shows with no filter and no search                                                             | `null` show (Open); `DEFAULT_WORKFLOWS_LIST_STATE`                                                 | Open; Started by you                                        |
- * | reconcile     | make an order's runs agree with the order and the eligible workflows; idempotent                           | `reconcileItem`, `RunRepository.reconcileOrder`                                                    | (none)                                                      |
- * | reconcile all | reconcile every stored open, paid order once, after anything that changes which workflows are eligible     | `ShopWorkAgent.reconcileAllNow`, `RunRepository.reconcileAll`                                      | (none)                                                      |
- * | eligible      | a workflow that is on, has a task, and has every task on a team; only an eligible workflow creates runs    | `workflowIsEligible`, `EligibleContext`                                                            | (none): Needs a team names the fault                        |
- * | match         | an item and an eligible workflow: a product tag equals the workflow's tag and units to make are above zero | `itemMatches`                                                                                      | the order page's picker lists them first                    |
- * | multi-match   | an item two or more eligible workflows match, with units to make and no run in any state                   | `multiMatchItems`, `OrderIssue` `multi_match`                                                      | Multiple workflows match                                    |
- * | units to make | what is left to make on an item: Shopify's current quantity                                                | `unitsToMake`                                                                                      | the quantity on the card                                    |
+ * | word          | meaning                                                                                                    | symbol                                                                                   | screen                                                      |
+ * | ------------- | ---------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+ * | merchant      | the shop's owner, acting from the Shopify admin                                                            | `Actor` role `merchant`                                                                  | "you" to the merchant, "the merchant" to a member           |
+ * | member        | a person at the bench, on one or more teams                                                                | `Actor` role `member`, `Member`                                                          | member (merchant screens); "you" or a name (member screens) |
+ * | team          | the group a task is assigned to                                                                            | `Team`                                                                                   | team, or its name                                           |
+ * | workflow      | the definition: steps of tasks                                                                             | `Workflow`, `WorkflowTask`                                                               | workflow, or its name                                       |
+ * | step          | a position in a workflow; its tasks are done in parallel                                                   | `WorkflowTask`, `RunTask` field                                                          | Step k of n                                                 |
+ * | run           | one item going through one workflow                                                                        | `Run`                                                                                    | the item's workflow, on both sides; never bare, never "run" |
+ * | task          | one unit of work on a run, on one team                                                                     | `RunTask`                                                                                | task, or its name                                           |
+ * | block         | a person's hold on a run                                                                                   | `runIsBlocked`                                                                           | Blocked                                                     |
+ * | note          | free text on a run                                                                                         | `RunNote`                                                                                | Note                                                        |
+ * | draft         | the workflow's edited copy of its tasks, from Edit until Apply or Discard; one or none                     | `Workflow` field `draftTasks`                                                            | Draft                                                       |
+ * | filter        | one axis of a list with a fixed set of values; the list shows the rows matching every chosen filter        | `OrdersShow`, `WorkflowsListState`, `WorkflowsIndexState`, `ListOrdersInput`, `RunQuery` | the axis name (Show, Team) or the value (Making, Ready)     |
+ * | count         | how many rows a filter value would show, given the other filters and never the search                      | `OrderCounts`, `RunListCounts`                                                           | the number beside the value                                 |
+ * | search        | free text matched against a row's order number, item title, variant title and SKU, or a workflow's name; finds, does not narrow | `ListSearch`, `searchTerm`                                                               | Search by order number or item                              |
+ * | default       | what a list shows with no filter and no search                                                             | `null` show (Open); `DEFAULT_WORKFLOWS_LIST_STATE`                                       | Open; Started by you                                        |
+ * | reconcile     | make an order's runs agree with the order and the eligible workflows; idempotent                           | `reconcileItem`, `RunRepository.reconcileOrder`                                          | (none)                                                      |
+ * | reconcile all | reconcile every stored open, paid order once, after anything that changes which workflows are eligible     | `ShopWorkAgent.reconcileAllNow`, `RunRepository.reconcileAll`                            | (none)                                                      |
+ * | eligible      | a workflow that is on, has a task, and has every task on a team; only an eligible workflow creates runs    | `workflowIsEligible`, `EligibleContext`                                                  | (none): Needs a team names the fault                        |
+ * | match         | an item and an eligible workflow: a product tag equals the workflow's tag and units to make are above zero | `itemMatches`                                                                            | the order page's Workflow select lists them first                    |
+ * | multi-match   | an item two or more eligible workflows match, with units to make and no run in any state                   | `multiMatchItems`, `OrderIssue` `multi_match`                                            | Multiple workflows match                                    |
+ * | units to make | what is left to make on an item: Shopify's current quantity                                                | `unitsToMake`                                                                            | the quantity on the card                                    |
  *
  * Each list's main filter is keyed in the URL by its axis's word:
  * `?show=` on the orders index (`OrdersShow`), `?state=` on the
@@ -192,6 +192,7 @@ import {
   SqliteBoolean,
   SubscriberIdInput,
   Subscription,
+  WorkflowLimits,
 } from "./Platform.ts";
 
 /**
@@ -453,7 +454,7 @@ export type TeamSummary = typeof TeamSummary.Type;
 
 /**
  * The shop's teams, read live from D1 as the Durable Object hands it to pages: what the team
- * pickers list and what a workflow's faults ({@link WorkflowFault}) are
+ * Workflow selects list and what a workflow's faults ({@link WorkflowFault}) are
  * computed against. `memberCount` is the `empty_team` fault's input, so the
  * workflow screens need no second read.
  */
@@ -561,8 +562,23 @@ const trimmedText = <B extends string>(brand: B, maxLength: number) =>
     ),
   );
 
-/** Merchant-written how-to for a task, copied onto every run. Trimmed like {@link TaskName}; a blank field is sent as `null`, never as an empty string. */
-export const TaskInstructions = trimmedText("TaskInstructions", 2000);
+/** The cap {@link TaskInstructions} enforces, exported so the editor's field can stop at it. */
+export const TASK_INSTRUCTIONS_MAX_LENGTH = 500;
+
+/**
+ * A task's instructions: a standing reminder for the step, the same for
+ * every item, copied onto every run. Not the procedure: that lives in the
+ * shop's own documents, and a field a member reads at the bench holds a few
+ * lines, so the cap is {@link TASK_INSTRUCTIONS_MAX_LENGTH}; the editor's
+ * field stops at it (`INSTRUCTIONS_HELP` in the workflow editor says why it
+ * does not count down like the run note). Trimmed like
+ * {@link TaskName}; a blank field is sent as `null`, never as an empty
+ * string.
+ */
+export const TaskInstructions = trimmedText(
+  "TaskInstructions",
+  TASK_INSTRUCTIONS_MAX_LENGTH,
+);
 export type TaskInstructions = typeof TaskInstructions.Type;
 
 /**
@@ -605,11 +621,14 @@ export type BlockReason = typeof BlockReason.Type;
  * `OrderLineItem.productTags`, the product's own merchandising facets, which
  * this is matched against.
  *
- * Trimmed *and* lowercased, unlike the names: merchants type `Engraving` and
- * `engraving` interchangeably and Shopify's own admin search is
- * case-insensitive, so folding once at the boundary keeps storage canonical
- * and makes matching plain equality. 255 is Shopify's tag length limit; Baton
- * adds no character rules of its own beyond what Shopify allows in a tag.
+ * Trimmed and compared exactly, like the names. Shopify stores a product tag
+ * as typed and Flow compares tags exactly; only the admin's search folds
+ * case, and a search box is not a match rule. Baton mints the tag and the
+ * merchant copies it onto products, so a case typo on the product is the same
+ * failure as any other typo: the order shows under Not started with the
+ * workflow in the Workflow select. Trimmed because a value Baton stores is
+ * clean when stored. 255 is Shopify's tag length limit; Baton adds no
+ * character rules of its own beyond what Shopify allows in a tag.
  */
 export const WorkflowTag = Schema.String.pipe(
   Schema.decodeTo(
@@ -617,7 +636,7 @@ export const WorkflowTag = Schema.String.pipe(
       Schema.brand("WorkflowTag"),
     ),
     {
-      decode: SchemaGetter.transform((s) => s.trim().toLowerCase()),
+      decode: SchemaGetter.transform((s) => s.trim()),
       encode: SchemaGetter.transform((s) => s),
     },
   ),
@@ -655,7 +674,7 @@ export type WorkflowState = typeof WorkflowState.Type;
  * - a workflow **starts when** an order **contains** a product **tagged with**
  *   its tag;
  * - on an item that no workflow's tag **matches**, the order page says no
- *   workflow can start and offers the picker; the orders index shows the
+ *   workflow can start and offers the Workflow select; the orders index shows the
  *   order under Not started with nothing in Issues;
  * - the order page says a workflow **started for** N items.
  *
@@ -676,7 +695,7 @@ export type WorkflowState = typeof WorkflowState.Type;
  * is self-sufficient, so it needs no confirm counts and the dialog says only
  * what survives. The id is identity, the tag is the key a product carries,
  * and the name is the label people pick a workflow by. Both are unique:
- * members never see the tag, and pickers such as the order page's attach
+ * members never see the tag, and selects such as the order page's Workflow
  * list show only the name, so the name alone has to tell two workflows
  * apart. A rename is immediate and cosmetic because runs snapshot
  * `workflowName`.
@@ -725,17 +744,12 @@ export const Workflow = Schema.Struct({
 });
 export type Workflow = typeof Workflow.Type;
 
-/**
- * The draft side of {@link Workflow}, holding the tasks being edited as
- * `WorkflowDraftTask` rows. One per workflow at most; the data model on
- * `initializeSchema` (`ShopAgentSchema.ts`) says so and the draft holds
- * tasks only. Nothing that creates runs ever reads the draft.
- */
-export const WorkflowDraft = Schema.Struct({
-  workflowId: WorkflowId,
-  updatedAt: Schema.Number,
+/** A workflow as a select names it: what the Workflow select and the Change workflow modal offer. */
+export const WorkflowNameRow = Schema.Struct({
+  id: WorkflowId,
+  name: WorkflowName,
 });
-export type WorkflowDraft = typeof WorkflowDraft.Type;
+export type WorkflowNameRow = typeof WorkflowNameRow.Type;
 
 /**
  * `teamId` is a live pointer to a D1 `Team`, not a snapshot: renaming a team
@@ -746,35 +760,100 @@ export type WorkflowDraft = typeof WorkflowDraft.Type;
  * instance rows snapshot it. The pointer's rule is the data model on
  * `initializeSchema` (`ShopAgentSchema.ts`).
  *
- * Workflow tasks and draft tasks have the same shape but live in two tables
- * (`WorkflowTask`, `WorkflowDraftTask`; why, on the DDL). Only `applyDraft` writes `WorkflowTask`;
- * every editor write targets the draft. Apply carries draft task ids over to
- * the workflow; Edit copies workflow tasks into the draft under new ids.
+ * Stored as one element of its workflow's `tasks` or `draftTasks` document
+ * ({@link WorkflowTasks}); `position` is the element's index from 1, filled
+ * on decode and never stored, so the screens, `stepsOf` and the run copy read
+ * the same field whichever list the task came from. A task has no
+ * `workflowId`: it is inside its workflow's row. Only Apply writes `tasks`;
+ * every editor write lands on `draftTasks`, which the first edit copies from
+ * `tasks`, ids included, so the id the editor sent before the copy names the
+ * same task after it.
  *
  * A workflow is a sequence of numbered steps. Each step holds one or more
  * tasks, and a task is the unit a team starts and marks done: it has a name, a
  * team, and instructions. Along `position` the `step` values are dense `1..m`
  * and non-decreasing (`1 1 2 3 3`), so every task belongs to exactly one step,
  * and a step of one task is the plain linear case. Step k is current when every
- * task of step k-1 is done. The invariant is owned by `WorkflowLayout`, which
- * recomputes the whole layout on every edit. The two nouns exist because
+ * task of step k-1 is done. `WorkflowLayout` recomputes the whole layout on
+ * every edit and {@link WorkflowTasks} refuses a list that breaks it, on read
+ * and on write. The two nouns exist because
  * parallel work needs a wait that is not a task; the member and merchant UI
  * print "task" only when a step has more than one, so a linear shop reads
  * steps alone.
  */
-export const WorkflowTask = Schema.Struct({
+const StoredWorkflowTaskFields = {
   id: WorkflowTaskId,
-  workflowId: WorkflowId,
-  position: Schema.Number,
   step: Schema.Number,
   name: TaskName,
   teamId: Schema.NullOr(TeamId),
   instructions: Schema.NullOr(TaskInstructions),
+};
+
+export const WorkflowTask = Schema.Struct({
+  ...StoredWorkflowTaskFields,
+  position: Schema.Number,
 });
 export type WorkflowTask = typeof WorkflowTask.Type;
 
-export const WorkflowDraftTask = WorkflowTask;
-export type WorkflowDraftTask = typeof WorkflowDraftTask.Type;
+/**
+ * **The step rule, in one place.** Along the list, `position` is `1..n` in
+ * array order, `step` is an integer dense from 1 and non-decreasing by at
+ * most one, and ids are unique. Array order is the rule, not a sort: the
+ * stored document keeps the array and drops `position`, so a list whose
+ * order disagrees with its positions would be stored one way and read back
+ * another. `WorkflowLayout` produces lists that hold this, and
+ * {@link WorkflowTasks} refuses one that does not, on read and on write.
+ */
+export const layoutIsValid = (
+  layout: readonly {
+    readonly id: string;
+    readonly position: number;
+    readonly step: number;
+  }[],
+): boolean => {
+  const ids = new Set(layout.map((p) => p.id));
+  if (ids.size !== layout.length) return false;
+  return layout.every((p, index) => {
+    const previous = layout[index - 1];
+    if (p.position !== index + 1) return false;
+    if (!Number.isInteger(p.step)) return false;
+    if (previous === undefined) return p.step === 1;
+    return p.step === previous.step || p.step === previous.step + 1;
+  });
+};
+
+/**
+ * A workflow's task list as stored: the JSON text of `Workflow.tasks` or
+ * `Workflow.draftTasks`, decoded to {@link WorkflowTask}s with `position`
+ * filled from the index, and encoded with `position` dropped. The checks run
+ * both ways, so a bad list is refused on read and never written: ids unique,
+ * `step` dense from 1 and non-decreasing along the list
+ * ({@link layoutIsValid}, the step rule's one enforcer), at most
+ * `WorkflowLimits.maxTasks` tasks, each name a {@link TaskName} and each
+ * instructions a {@link TaskInstructions} or null.
+ */
+export const WorkflowTasks = Schema.fromJsonString(
+  Schema.toEncoded(Schema.Array(Schema.Struct(StoredWorkflowTaskFields))),
+).pipe(
+  Schema.decodeTo(
+    Schema.Array(WorkflowTask).check(
+      Schema.isMaxLength(WorkflowLimits.maxTasks),
+      Schema.makeFilter(
+        (tasks: readonly WorkflowTask[]) =>
+          layoutIsValid(tasks) ||
+          "steps must be dense from 1 and non-decreasing along the list, positions the list's order, and ids unique",
+      ),
+    ),
+    {
+      decode: SchemaGetter.transform((tasks) =>
+        tasks.map((task, index) => ({ ...task, position: index + 1 })),
+      ),
+      encode: SchemaGetter.transform((tasks) =>
+        tasks.map(({ position: _position, ...task }) => task),
+      ),
+    },
+  ),
+);
 
 /**
  * List row. `tag` and `stepCount` describe the workflow. `unassigned` and
@@ -807,29 +886,16 @@ export const WorkflowDetail = Schema.Struct({
 });
 export type WorkflowDetail = typeof WorkflowDetail.Type;
 
-export const WorkflowDraftTasks = Schema.Struct({
-  draft: WorkflowDraft,
-  tasks: Schema.Array(WorkflowDraftTask),
-});
-export type WorkflowDraftTasks = typeof WorkflowDraftTasks.Type;
-
-/** What `WorkflowRepository.getWorkflow` returns: the workflow with its tasks, and the draft with its tasks when one exists. */
-export const WorkflowWithDraft = Schema.Struct({
-  ...WorkflowDetail.fields,
-  draft: Schema.NullOr(WorkflowDraftTasks),
-});
-export type WorkflowWithDraft = typeof WorkflowWithDraft.Type;
-
 /**
  * A workflow task with its team's live name and headcount, as the merchant's
- * workflow page ({@link WorkflowPageData}) and the workflow editor
- * ({@link WorkflowDraftDetail}) render it. Both warning states are derived here against the live
+ * workflow page and the workflow editor ({@link WorkflowPageData}) render it.
+ * Both warning states are derived here against the live
  * teams and never stored: `teamName` is `null` when the task is unassigned
  * (`teamId` null, or an id no team carries) — a warning, not a block in the
- * editor; the task renders with an empty picker and everything else stays
+ * editor; the task renders with an empty team select and everything else stays
  * editable. `memberCount` is the team's live headcount (`null` when
  * unassigned) so the page can raise the `empty_team` fault. `teams` rides
- * along so the team picker needs no second call.
+ * along so the team select needs no second call.
  */
 const TaskWithTeamName = Schema.Struct({
   ...WorkflowTask.fields,
@@ -839,26 +905,15 @@ const TaskWithTeamName = Schema.Struct({
 export type TaskWithTeamName = typeof TaskWithTeamName.Type;
 
 /**
- * A draft with its tasks: the `*Detail` shape ({@link RunDetail} is a run and
- * its tasks). Not a screen of its own: it is nested in
- * {@link WorkflowPageData} and is what the workflow editor reads.
- */
-export const WorkflowDraftDetail = Schema.Struct({
-  draft: WorkflowDraft,
-  tasks: Schema.Array(TaskWithTeamName),
-});
-export type WorkflowDraftDetail = typeof WorkflowDraftDetail.Type;
-
-/**
- * Everything the merchant's workflow page renders, in one socket round trip:
- * the workflow (read-only, what creates runs) and the draft (what the editor
- * writes), each with its tasks. The suffix is `Data` for the reason on
- * {@link OrdersIndexData}.
+ * Everything the merchant's workflow page and the workflow editor render, in
+ * one socket round trip: the workflow (read-only, what creates runs) with its
+ * tasks, and the draft's tasks (what the editor writes), `null` when there is
+ * no draft. The suffix is `Data` for the reason on {@link OrdersIndexData}.
  */
 export const WorkflowPageData = Schema.Struct({
   workflow: Workflow,
   tasks: Schema.Array(TaskWithTeamName),
-  draft: Schema.NullOr(WorkflowDraftDetail),
+  draftTasks: Schema.NullOr(Schema.Array(TaskWithTeamName)),
   teams: Schema.Array(TeamWithMemberCount),
 });
 export type WorkflowPageData = typeof WorkflowPageData.Type;
@@ -1087,7 +1142,10 @@ export type DiscardResult = typeof DiscardResult.Type;
 
 /** Edit. Idempotent: an existing draft is returned as `Ok`, so a merchant resuming is the same click. */
 export const DraftResult = Schema.Union([
-  Schema.Struct({ _tag: Schema.Literal("Ok"), draft: WorkflowDraft }),
+  Schema.Struct({
+    _tag: Schema.Literal("Ok"),
+    draftTasks: Schema.Array(WorkflowTask),
+  }),
   Schema.Struct({ _tag: Schema.Literal("NotFound") }),
 ]);
 export type DraftResult = typeof DraftResult.Type;
@@ -1423,7 +1481,7 @@ export type OrdersShow = typeof OrdersShow.Type;
  * the shelf, would be a permanent false alarm that teaches the merchant to
  * ignore the count. The accepted risk: a made-to-order product nobody
  * tagged sits in Not started, where the merchant sees it, and its order
- * page offers the workflow picker on the item.
+ * page offers the Workflow select on the item.
  *
  * Unpaid is not an issue: it is a Shopify fact the Payment column already
  * shows, not something the merchant fixes in Baton.
@@ -1683,7 +1741,7 @@ export type OrderRow = typeof OrderRow.Type;
  * counts alone: no open and no done run is `not_started`, any open run is
  * `making`, only done runs is `made`. An order whose runs are all closed
  * reads not started, which is right, because nothing has started and the
- * items may take a new workflow from the picker. Whether that is an issue is
+ * items may take a new workflow from the Workflow select. Whether that is an issue is
  * {@link orderIssues}' question, and the answer is no: a closed run is a
  * decided item. The SQL forms
  * in `OrderRepository.listOrders` restate these branches and must move with
@@ -1839,6 +1897,40 @@ export const SubscribeOrderInput = Schema.Struct({
   subscriberId: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
 });
 export type SubscribeOrderInput = typeof SubscribeOrderInput.Type;
+
+/**
+ * The workflows index's read: one page of workflows in name order.
+ *
+ * - `cursor` is the last name of the page before, `null` for page one. A
+ *   keyset on the name alone, since names are unique ({@link Workflow}).
+ * - `q` is a word prefix of the name ({@link prefixPatterns}, the text as
+ *   typed, not through {@link searchTerm}, since a name has no order
+ *   number); `null` is no search. A search ignores `state`,
+ *   as a search on the orders index ignores its filters
+ *   ({@link ListOrdersInput}).
+ * - `state` is the `?state=` filter ({@link WorkflowsIndexState}); `null` is
+ *   All.
+ */
+export const ListWorkflowsInput = Schema.Struct({
+  limit: Schema.Number.check(
+    Schema.isInt(),
+    Schema.isBetween({ minimum: 1, maximum: 100 }),
+  ),
+  cursor: Schema.NullOr(WorkflowName),
+  q: Schema.NullOr(ListSearch),
+  state: Schema.NullOr(WorkflowsIndexState),
+});
+export type ListWorkflowsInput = typeof ListWorkflowsInput.Type;
+
+/** Everything the workflows index renders, one page of it. The suffix is `Data` for the reason on {@link OrdersIndexData}. */
+export const WorkflowsIndexData = Schema.Struct({
+  workflows: Schema.Array(WorkflowSummary),
+  /** The cursor of the next page ({@link ListWorkflowsInput}), `null` on the last. */
+  nextCursor: Schema.NullOr(WorkflowName),
+  /** How many workflows the search finds, over every page; `null` without a search. The search's answer, as {@link OrdersPage} `matches` is. */
+  matches: Schema.NullOr(Schema.Number),
+});
+export type WorkflowsIndexData = typeof WorkflowsIndexData.Type;
 
 /**
  * Everything the orders index renders, in one socket round trip.
@@ -2001,7 +2093,7 @@ export type RunTaskId = typeof RunTaskId.Type;
  * | reconcile resizes                                                       | {@link runIsOpen}                                                          |
  * | reconcile closes                                                        | {@link runIsOpen}                                                          |
  * | holds its item: one run per item (the data model on `initializeSchema`) | always, `done` and `closed` included                                       |
- * | replaced by a manual attach                                             | always; open and done behind the confirm that names what is lost, closed from the picker with none |
+ * | replaced by a manual attach                                             | always; open and done behind the confirm that names what is lost, closed from the Workflow select with none |
  *
  * A `done` run holds its item — a done item is not rerouted — but
  * is not open: it is never resized or closed by reconcile (it is the
@@ -2010,8 +2102,8 @@ export type RunTaskId = typeof RunTaskId.Type;
  * loses.
  * A closed run holds its item too, so reconcile creates nothing on it: a
  * tag match must not undo a merchant's cancel or restart work Shopify ended
- * on the next webhook. A person replaces it from the picker at rest with no
- * confirm: its tasks are over, and the card above the picker is the record.
+ * on the next webhook. A person replaces it from the Workflow select at rest with no
+ * confirm: its tasks are over, and the card above the select is the record.
  */
 export const RunState = Schema.Literals(["open", "done", "closed"]);
 export type RunState = typeof RunState.Type;
@@ -2296,15 +2388,16 @@ export const unitsToMake = (lineItem: Pick<OrderLineItem, "currentQuantity">) =>
   lineItem.currentQuantity;
 
 /**
- * What run creation reads about the definitions: every workflow that is on,
- * with its tasks, and the shop's teams. The teams live in D1, a network read
- * that cannot happen inside the object's transaction, so the context is
- * loaded once per webhook, open-orders sync or reconcile all, before the transaction,
- * and every order in that pass works from the same snapshot: pass rule 3 on
- * {@link reconcileItem}.
+ * What run creation reads before any transaction: the shop's teams. The teams
+ * live in D1, a network read that cannot happen inside the object's
+ * transaction, so they are loaded once per webhook, open-orders sync or
+ * reconcile all, and every order in that pass works from the same teams, a
+ * snapshot that a team deleted mid-pass does not refresh: pass rule 3 on
+ * {@link reconcileItem}. The workflows are not in it: they are the object's
+ * own rows, read per order, by the order's tags, inside the order's
+ * transaction ({@link itemMatches} says why by tag).
  */
 export interface EligibleContext {
-  readonly workflows: readonly WorkflowDetail[];
   /** The shop's teams, read live from D1: what a task's `teamId` must resolve against, and where `teamName` is snapshotted from. */
   readonly teams: readonly {
     readonly id: TeamId;
@@ -2336,15 +2429,14 @@ export const workflowIsEligible = (
 
 /**
  * The item half of a match: units still to make, and one of the item's
- * product tags, trimmed and lowercased, equal to the workflow's tag. It
+ * product tags equal to the workflow's tag, exactly ({@link WorkflowTag}). It
  * carries no date: an on workflow applies to every stored open paid order.
  */
 export const matchesTag = (
   { workflow }: WorkflowDetail,
   item: Pick<OrderLineItem, "productTags" | "currentQuantity">,
 ) =>
-  unitsToMake(item) > 0 &&
-  item.productTags.some((tag) => workflow.tag === tag.trim().toLowerCase());
+  unitsToMake(item) > 0 && item.productTags.some((tag) => workflow.tag === tag);
 
 /**
  * **A match is an item and an eligible workflow whose tag it carries.** The
@@ -2353,6 +2445,16 @@ export const matchesTag = (
  * task on a team the shop has ({@link workflowIsEligible}). Derived on every
  * read and never stored, so a tag edit, a team delete or a Turn off shows on
  * the next read with no reconcile in between.
+ *
+ * **A workflow is found by its tag, never by scanning.** Every read that asks
+ * which workflows match an item starts from the item's product tags and
+ * probes `Workflow.tag`, which is unique: run creation and reconcile
+ * (`WorkflowRepository.listOnWorkflowsByTags`), the order page, and the
+ * orders index's counts (`ITEM_MATCHES` in `OrderRepository.ts`). The orders
+ * index and run creation run per open item; testing each item against every
+ * on workflow costs items times workflows per order change, millions of
+ * evaluations at a thousand workflows, where the probe costs the item's few
+ * tags.
  *
  * The SQL twin is `MULTI_MATCH_ITEM` in `OrderRepository.ts`, which the orders
  * index reads; it restates this rule and must move with it. SQL cannot ask D1
@@ -2398,8 +2500,8 @@ const NOTHING: ReconcileAction = { _tag: "nothing" };
  * makes retries and out-of-order delivery safe. `RunRepository.reconcileOrder`
  * reads, calls this per item, and executes; the rule is here.
  *
- * **What a pass guarantees.** After a pass over a stored order with an
- * eligible snapshot ({@link EligibleContext}), for every item of the order,
+ * **What a pass guarantees.** After a pass over a stored order with the
+ * pass's teams ({@link EligibleContext}), for every item of the order,
  * with the run on it if there is one:
  *
  * - **Stop.** If the order is cancelled or fulfilled, the run is not open:
@@ -2410,8 +2512,8 @@ const NOTHING: ReconcileAction = { _tag: "nothing" };
  *   instead.
  * - **Record.** Else if the run is `done` or `closed`, it is untouched: the
  *   item is decided.
- * - **Create.** Else, with no run, a run exists from the one workflow in the
- *   snapshot that matches the item, if the order can create runs
+ * - **Create.** Else, with no run, a run exists from the one eligible
+ *   workflow that matches the item, if the order can create runs
  *   ({@link orderCanCreateRuns}), the item has units to make, and exactly
  *   one workflow matches; otherwise there is no run.
  * - **Orphan.** A stored run whose item is not stored is read as an item at
@@ -2529,14 +2631,14 @@ const NOTHING: ReconcileAction = { _tag: "nothing" };
  * symbol that enforces the rule; the rule is stated here and that symbol
  * links it. `pinned by` is one test title, or several separated by `; `.
  *
- * | rule                                                                                                                                                                                                                                                                                    | where                                                       | pinned by                                                                                                                                         |
- * | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
- * | 1. a pass reads the stored order, items and runs, never the caller's copy; a stored run whose item is not stored is read as an item at zero units                                                                                                                                       | `RunRepository.reconcileOrder`                              | a pass reads the stored order, and a run whose item is gone closes as item removed                                                                |
- * | 2. a pass runs inside its order's write: the store and its runs commit together or not at all; reconcile all opens one transaction per order, and a reconcile all that fails partway keeps the orders it walked; the next trigger finishes the rest (rule 5)                            | `OrderRepository.upsertOrder`, `RunRepository.reconcileAll` | a pass that fails leaves neither the order nor its runs                                                                                           |
- * | 3. the eligible workflows and the teams are read once before the transaction and every order in the pass sees the same snapshot; a stream and a reconcile all may interleave, each with its own snapshot; every order ends under the newer one because each pass is idempotent (rule 5) | `ShopWorkAgent.eligibleContext`                             | every order in a pass sees the same eligible snapshot                                                                                             |
- * | 4. the usage queue is sent after a reconcile all whether or not it finished; the stream's flush is rule 12 on `syncOrder`                                                                                                                                                               | `reconcileAllNow`                                           | a reconcile all sends the usage queue even when it fails                                                                                          |
- * | 5. a pass is idempotent: a second pass over the same stored order and the same snapshot writes nothing                                                                                                                                                                                  | `reconcileItem`                                             | a second pass over the same stored order writes nothing; a pass guarantees stop, fit, record, create and orphan, and a second pass writes nothing |
- * | 6. no count a pass makes reaches a screen; the counts are the log line's                                                                                                                                                                                                                | `ReconcileCounts`, `ReconcileAllCounts`                     | no reconcile count reaches a screen                                                                                                               |
+ * | rule                                                                                                                                                                                                                                                                                                                                    | where                                                       | pinned by                                                                                                                                         |
+ * | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+ * | 1. a pass reads the stored order, items and runs, never the caller's copy; a stored run whose item is not stored is read as an item at zero units                                                                                                                                                                                       | `RunRepository.reconcileOrder`                              | a pass reads the stored order, and a run whose item is gone closes as item removed                                                                |
+ * | 2. a pass runs inside its order's write: the store and its runs commit together or not at all; reconcile all opens one transaction per order, and a reconcile all that fails partway keeps the orders it walked; the next trigger finishes the rest (rule 5)                                                                            | `OrderRepository.upsertOrder`, `RunRepository.reconcileAll` | a pass that fails leaves neither the order nor its runs                                                                                           |
+ * | 3. the teams are read once before the transaction and every order in the pass sees the same teams; the workflows are read per order, by its items' tags, inside its transaction; a stream and a reconcile all may interleave, each with its own snapshot; every order ends under the newer one because each pass is idempotent (rule 5) | `ShopWorkAgent.eligibleContext`                             | every order in a pass sees the same eligible snapshot                                                                                             |
+ * | 4. the usage queue is sent after a reconcile all whether or not it finished; the stream's flush is rule 12 on `syncOrder`                                                                                                                                                                                                               | `reconcileAllNow`                                           | a reconcile all sends the usage queue even when it fails                                                                                          |
+ * | 5. a pass is idempotent: a second pass over the same stored order and the same snapshot writes nothing                                                                                                                                                                                                                                  | `reconcileItem`                                             | a second pass over the same stored order writes nothing; a pass guarantees stop, fit, record, create and orphan, and a second pass writes nothing |
+ * | 6. no count a pass makes reaches a screen; the counts are the log line's                                                                                                                                                                                                                                                                | `ReconcileCounts`, `ReconcileAllCounts`                     | no reconcile count reaches a screen                                                                                                               |
  */
 export const reconcileItem = ({
   order,
@@ -3165,7 +3267,7 @@ const holdsCurrentTask = (
  * on a ready task (the row menu); the same list's Blocked view offers
  * Unblock alone; the merchant's order page offers Change workflow only
  * where the item has workflows to pick from, and under a closed run leaves
- * it out of Manage, since the picker at rest under the run is the same verb.
+ * it out of Manage, since the Workflow select at rest under the run is the same verb.
  *
  * A filled cell means the set allows the write; the repository may still
  * refuse for a reason the set does not read: the attach results on Change
@@ -3234,7 +3336,7 @@ const holdsCurrentTask = (
  *   has already closed every open run; there is nothing to cancel.
  * - `changeWorkflow` needs units to make; offered on any run, done and
  *   closed included. On an open or done run it is behind the confirm on
- *   {@link runHasRecord}; on a closed run the order page's picker replaces
+ *   {@link runHasRecord}; on a closed run the order page's Workflow select replaces
  *   with none, since a closed run's tasks are over ({@link RunState}). A new run
  *   on an item Shopify removed or refunded to zero ({@link unitsToMake})
  *   would be a run with no work behind it, and reconcile would close it as
@@ -3405,10 +3507,10 @@ export const taskActions = (
  *
  * - `open`: the item's run is open. Checked first with `ended`, so an item
  *   whose units dropped to zero under a run still shows the work on it. No
- *   picker: Change workflow is a verb on the run card ({@link runActions}).
+ *   Workflow select: Change workflow is a verb on the run card ({@link runActions}).
  * - `ended`: the item's run is `done` or {@link runIsClosed}. The run card
  *   shows with its tasks as the record (a closed one with a line giving the
- *   reason and when). Under a closed run the picker at rest offers every
+ *   reason and when). Under a closed run the Workflow select at rest offers every
  *   workflow, the run's own included, as a fresh run; under a done run
  *   Change workflow is in Manage, behind the confirm, because replacing it
  *   loses a record ({@link runActions}). One kind for both states and every
@@ -3427,7 +3529,7 @@ export const taskActions = (
  * order is not a kind either: the kinds are the same under it, every field
  * of {@link runActions} and {@link taskActions} that does work is false, and
  * the sidebar's Fulfillment and Cancelled lines say why. The one control
- * outside those sets, the picker at rest, is the page's to hide with
+ * outside those sets, the Workflow select at rest, is the page's to hide with
  * {@link orderIsOpen}.
  *
  * `tasks` are decorated as the workflow page's are ({@link RunTaskRow}), from
@@ -3439,7 +3541,7 @@ export const LineItemState = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("unmatched") }),
   Schema.Struct({
     kind: Schema.Literal("attachable"),
-    options: Schema.Array(Workflow),
+    options: Schema.Array(WorkflowNameRow),
     matched: Schema.Array(WorkflowId),
     multiMatch: Schema.Boolean,
   }),
@@ -3447,7 +3549,7 @@ export const LineItemState = Schema.Union([
     kind: Schema.Literal("ended"),
     run: Run,
     tasks: Schema.Array(RunTaskRow),
-    options: Schema.Array(Workflow),
+    options: Schema.Array(WorkflowNameRow),
     matched: Schema.Array(WorkflowId),
     attachable: Schema.Boolean,
   }),
@@ -3475,12 +3577,17 @@ export const runTaskRows = (
 /**
  * Shop work's reading of an order's item, from {@link OrderLineItem} and
  * {@link unitsToMake}: its card on the order page, one of the
- * {@link LineItemState} kinds.
+ * {@link LineItemState} kinds. `details` are the on workflows the order's
+ * tags found, with their tasks ({@link OrderPageData} `matchedWorkflows`);
+ * `other` is every other on workflow with tasks, by name. The options are
+ * the item's own matches, then the rest of `details`, then `other`, each
+ * workflow once.
  */
 export const lineItemState = (
   item: OrderLineItem,
   runs: readonly RunDetail[],
   details: readonly WorkflowDetail[],
+  other: readonly WorkflowNameRow[],
   teams: readonly { readonly id: TeamId }[],
 ): LineItemState => {
   const detail = runs.find(({ run }) => run.lineItemId === item.id);
@@ -3491,6 +3598,9 @@ export const lineItemState = (
   const options = [
     ...matched,
     ...workflows.filter((workflow) => !matched.includes(workflow)),
+    ...other.filter(
+      (workflow) => !workflows.some(({ id }) => id === workflow.id),
+    ),
   ];
   return Match.value({ detail, removed: item.currentQuantity === 0 }).pipe(
     Match.withReturnType<LineItemState>(),
@@ -3560,14 +3670,22 @@ export const OrderPageData = Schema.Struct({
   lineItems: Schema.Array(OrderLineItem),
   runs: Schema.Array(RunDetail),
   /**
-   * Workflows that are on, with at least one task, and their tasks — the
-   * manual-attach picker's choices, and what {@link lineItemState} reads the
-   * matches from ({@link itemMatches} needs the tasks for eligibility).
-   * Carried in the page's data rather than read by a second socket query so
-   * the page has exactly one read, one key, and one push.
+   * The on workflows with tasks whose tag an item of the order carries, with
+   * their tasks: what {@link lineItemState} reads the matches from
+   * ({@link itemMatches} needs the tasks for eligibility), found by the
+   * items' tags. The first options of the Workflow select.
    */
-  itemWorkflows: Schema.Array(WorkflowDetail),
-  /** The shop's live teams: the "Assign team" picker's choices, and what decides which open tasks are unassigned. */
+  matchedWorkflows: Schema.Array(WorkflowDetail),
+  /**
+   * Every other on workflow with tasks, by name: the rest of the Workflow
+   * select's options, after the divider. Names only, since nothing on the
+   * page decides anything about them until one is chosen, and Attach reads
+   * the chosen workflow again. Both lists ride in the page's data rather
+   * than a second socket query so the page has exactly one read, one key,
+   * and one push.
+   */
+  otherWorkflows: Schema.Array(WorkflowNameRow),
+  /** The shop's live teams: the Assign team select's choices, and what decides which open tasks are unassigned. */
   teams: Schema.Array(TeamWithMemberCount),
 });
 export type OrderPageData = typeof OrderPageData.Type;

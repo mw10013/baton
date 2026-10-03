@@ -313,9 +313,16 @@ describe("ShopAgent usage flush", () => {
       );
     });
 
-    const turnedOn = await agent.setWorkflowOn({ workflowId, on: true }).then(
-      () => "ok",
-      () => "failed",
+    // Called on the object, not the stub: a rejection that crosses the RPC
+    // boundary is printed by workerd as "uncaught exception" even when the
+    // caller handles it, and this call is meant to fail.
+    const turnedOn = await runInDurableObject(
+      env.SHOP_AGENT.getByName(shop),
+      (object) =>
+        object.setWorkflowOn({ workflowId, on: true }).then(
+          () => "ok",
+          () => "failed",
+        ),
     );
     strictEqual(turnedOn, "failed");
     deepStrictEqual(appEvents, [{ idempotencyKey: countKey, value: 1 }]);
@@ -340,10 +347,14 @@ describe("ShopAgent usage flush", () => {
     });
 
     // The shop has no offline session, so the fetch fails; the queue is
-    // still sent.
-    const synced = await agent.syncOrder({ orderId: ORDER_ID }).then(
-      () => "ok",
-      () => "failed",
+    // still sent. On the object, not the stub, for the reason above.
+    const synced = await runInDurableObject(
+      env.SHOP_AGENT.getByName(shop),
+      (object) =>
+        object.syncOrder({ orderId: ORDER_ID }).then(
+          () => "ok",
+          () => "failed",
+        ),
     );
     strictEqual(synced, "failed");
     deepStrictEqual(appEvents, [{ idempotencyKey: countKey, value: 1 }]);

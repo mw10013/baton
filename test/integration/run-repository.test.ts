@@ -12,6 +12,8 @@ import { type ReconcileCounts, RunRepository } from "@/lib/RunRepository";
 import { runShopAgentMigrations } from "@/lib/ShopAgentSchema";
 import { WorkflowRepository } from "@/lib/WorkflowRepository";
 
+import { reconcileContext } from "./reconcile-context.ts";
+
 type Services =
   | OrderRepository
   | WorkflowRepository
@@ -256,10 +258,7 @@ const steppedRun = () =>
     return detail;
   });
 
-const loadEligibleContext = Effect.gen(function* () {
-  const workflows = yield* (yield* WorkflowRepository).listOnWorkflowDetails();
-  return { workflows, teams: TEAMS } satisfies Domain.EligibleContext;
-});
+const loadEligibleContext = reconcileContext(TEAMS);
 
 const upsertAndReconcile = (
   shopOrder: Domain.ShopOrder,
@@ -320,13 +319,16 @@ const shape = (items: readonly Domain.RecentItem[]) =>
 
 /** The workflows that match the item now ({@link Domain.matchedWorkflows}), their ids sorted. */
 const matchedIds = (item: Domain.OrderLineItem) =>
-  loadEligibleContext.pipe(
-    Effect.map(({ workflows, teams }) =>
-      Domain.matchedWorkflows(item, workflows, teams)
-        .map(({ workflow }) => workflow.id)
-        .toSorted(),
-    ),
-  );
+  Effect.gen(function* () {
+    const { workflowsByTags, teams } = yield* loadEligibleContext;
+    return Domain.matchedWorkflows(
+      item,
+      yield* workflowsByTags(item.productTags),
+      teams,
+    )
+      .map(({ workflow }) => workflow.id)
+      .toSorted();
+  });
 
 /**
  * One row per item, whatever its state, `closed` included. The invariant is
@@ -580,12 +582,64 @@ describe("RunRepository one row per item", () => {
 });
 
 describe("RunRepository.reconcileOrder", () => {
+  it("reconcile reads only the workflows whose tag an item of the order carries", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const { a } = yield* seed;
+        const workflows = yield* WorkflowRepository;
+        const c = yield* workflows.createWorkflow({
+          name: name("Workflow c"),
+          tag: workflowTag("c"),
+        });
+        yield* workflows.addStep({
+          workflowId: c.id,
+          name: taskName("Cut"),
+          teamId: TEAM_A.id,
+        });
+        yield* goLive(c.id);
+        const context = yield* loadEligibleContext;
+        const asked = yield* Ref.make<readonly (readonly string[])[]>([]);
+        const returned = yield* Ref.make<readonly string[]>([]);
+        yield* (yield* OrderRepository).upsertOrder({
+          order: order(),
+          lineItems: [lineItem(1, ["a", "other"])],
+          afterWrite: (yield* RunRepository)
+            .reconcileOrder({
+              ...context,
+              workflowsByTags: (tags) =>
+                context.workflowsByTags(tags).pipe(
+                  Effect.tap((found) =>
+                    Effect.all([
+                      Ref.update(asked, (all) => [...all, tags]),
+                      Ref.set(
+                        returned,
+                        found.map(({ workflow }) => workflow.id),
+                      ),
+                    ]),
+                  ),
+                ),
+              orderId: ORDER_ID,
+            })
+            .pipe(Effect.asVoid),
+        });
+        // Three workflows are on; the pass asked for the order's tags once
+        // and got back the one workflow that carries one of them.
+        deepStrictEqual(
+          (yield* Ref.get(asked)).map((tags) => tags.toSorted()),
+          [["a", "other"]],
+        );
+        deepStrictEqual(yield* Ref.get(returned), [a.id]);
+        const [run] = yield* runsForOrder();
+        strictEqual(run?.run.workflowId, a.id);
+      }),
+    ));
+
   it("creates one run per matching item with copied tasks and team names", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
         const counts = yield* upsertAndReconcile(order(), [
-          lineItem(1, ["A"]),
+          lineItem(1, ["a"]),
           lineItem(2, ["b", "other"]),
         ]);
         deepStrictEqual(counts, {
@@ -2946,7 +3000,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
           yield* workflows.getWorkflow({ workflowId: a.id }),
         );
         strictEqual(edited.tasks.length, 2);
-        strictEqual(edited.draft?.tasks.length, 3);
+        strictEqual(edited.draftTasks?.length, 3);
         const second = yield* upsertAndReconcile(
           order({ updatedAt: PROCESSED_AT + 1 }),
           [lineItem(1, ["a"]), lineItem(2, ["a"])],
@@ -3190,9 +3244,13 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
             ],
           );
         strictEqual(
-          (yield* workflows.listWorkflows({ teams: TEAMS })).find(
-            (w) => w.id === a.id,
-          )?.unassigned,
+          (yield* workflows.listWorkflows({
+            limit: 100,
+            cursor: null,
+            q: null,
+            state: null,
+            teams: TEAMS,
+          })).workflows.find((w) => w.id === a.id)?.unassigned,
           true,
         );
       }),
@@ -3256,9 +3314,13 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         strictEqual(refused._tag, "RunNotAllowedError");
         // The definition is unassigned too; the workflow cannot create runs.
         strictEqual(
-          (yield* workflows.listWorkflows({ teams: TEAMS })).find(
-            (w) => w.id === a.id,
-          )?.unassigned,
+          (yield* workflows.listWorkflows({
+            limit: 100,
+            cursor: null,
+            q: null,
+            state: null,
+            teams: TEAMS,
+          })).workflows.find((w) => w.id === a.id)?.unassigned,
           true,
         );
         const none = yield* upsertAndReconcile(

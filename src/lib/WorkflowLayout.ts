@@ -2,11 +2,12 @@ import type * as Domain from "@/lib/Domain";
 
 /**
  * Pure layout arithmetic for a workflow's tasks: no Effect, no SQL. The
- * repository projects `WorkflowTask` rows down to `Placed`, applies one of
- * these functions, and writes the result back whole. This module owns the
- * step invariant stated on {@link Domain.WorkflowTask}, plus positions dense
- * `1..n`, so every edit is checked by the same code and the SQL side never has
- * to reason about gaps.
+ * repository hands a draft's task list to one of these functions and writes
+ * the list back whole in the order it returns. This module owns the step
+ * invariant stated on {@link Domain.WorkflowTask}, plus positions dense
+ * `1..n`: every edit is computed here, and `Domain.layoutIsValid` (the
+ * rule's one statement) is what `Domain.WorkflowTasks` checks on every read
+ * and write of a stored list.
  *
  * Every function returns a new normalized array and mutates nothing. A
  * workflow holds at most `WorkflowLimits.maxTasks` tasks, so nothing here
@@ -159,20 +160,6 @@ export const separate = (layout: Layout, id: string): Layout => {
 
 export const remove = (layout: Layout, id: string): Layout =>
   normalize(layout.filter((p) => p.id !== id));
-
-/** The two invariants, plus unique ids. */
-export const layoutIsValid = (layout: Layout): boolean => {
-  const sorted = layout.toSorted((a, b) => a.position - b.position);
-  const ids = new Set(sorted.map((p) => p.id));
-  if (ids.size !== sorted.length) return false;
-  return sorted.every((p, index) => {
-    const previous = sorted[index - 1];
-    if (p.position !== index + 1) return false;
-    if (!Number.isInteger(p.step)) return false;
-    if (previous === undefined) return p.step === 1;
-    return p.step === previous.step || p.step === previous.step + 1;
-  });
-};
 
 /** Tasks grouped by step in step order, each group in position order — the shape the editor and the workflows list render. */
 export const stepsOf = <P extends Placed>(

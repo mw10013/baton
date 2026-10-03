@@ -462,7 +462,7 @@ test.beforeAll(async ({ browser }) => {
     });
     const page = await context.newPage();
     await signIn(page, email);
-    // A one-shop member lands on the workflows list itself, not the picker.
+    // A one-shop member lands on the workflows list itself, not Your stores.
     await expect(
       page.locator('s-section[accessibilityLabel="Workflows"]'),
     ).toBeVisible();

@@ -568,6 +568,13 @@ describe("orders webhooks", () => {
    * `status=fetch` line naming that order, captured from the console this
    * isolate shares with it. A payload that failed to decode answers the same
    * 500 and logs no such line.
+   *
+   * This test prints one "uncaught exception; source = Uncaught (in promise)"
+   * line (`OfflineSessionNotFoundError`). It is not a failure: the route
+   * handles the object's rejection and answers 500, as asserted, but workerd
+   * prints a rejection that crosses its RPC boundary (the route's stub call)
+   * even when the caller handles it. The call has to be the stub, since the
+   * route under test is what makes it.
    */
   it.effect(
     "an orders/edited delivery resolves the order from order_edit.order_id and always fetches",

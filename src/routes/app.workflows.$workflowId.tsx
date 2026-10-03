@@ -197,9 +197,10 @@ function RouteComponent() {
 
   /**
    * The copy's tag mirrors its name until the merchant's first keystroke in
-   * the tag field, the same rule the create dialog follows: the fold is
-   * `trim().toLowerCase()`, what `Domain.WorkflowTag` applies at the schema
-   * boundary, so what they see is what will be stored.
+   * the tag field, the same suggestion the create dialog makes: trimmed and
+   * lowercased here, in the route. `Domain.WorkflowTag` only trims; a tag is
+   * compared exactly, so the fold is a default for a string the merchant will
+   * type onto products, not a rule.
    */
   const seedDuplicateForm = () => {
     setCopy(suggestedCopy(detail));
@@ -253,11 +254,11 @@ function RouteComponent() {
       </s-page>
     );
 
-  const { draft, tasks } = detail;
+  const { draftTasks, tasks } = detail;
   const workflow = detail.workflow;
 
   const fresh = neverApplied(detail);
-  const hasDraft = draft !== null;
+  const hasDraft = draftTasks !== null;
   const blocker = turnOnBlocker(tasks);
   const on = Domain.workflowIsOn(workflow);
   /** Flow's asymmetry: Turn off is always offered, Turn on only when what would go on is what the editor is holding. */

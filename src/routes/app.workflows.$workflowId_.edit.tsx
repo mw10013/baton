@@ -14,6 +14,7 @@ import { LocalDateTime } from "@/components/LocalDateTime";
 import { StepFlow, TeamFaultBanners } from "@/components/WorkflowSteps";
 import { WorkflowSwitch } from "@/components/WorkflowSwitch";
 import * as Domain from "@/lib/Domain";
+import { formatNumber } from "@/lib/format";
 import { hideModal } from "@/lib/polarisModal";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
@@ -90,6 +91,20 @@ const discardResultMessage = Match.typeTags<
 const instructionsOrNull = (value: string) =>
   value.trim().length === 0 ? null : value;
 
+/**
+ * The Instructions field's `help` slot (`CopySlot` in `Screen.ts`): what the
+ * text is for and its cap ({@link Domain.TaskInstructions}).
+ *
+ * The field sets `maxLength`, so typing stops at the cap and Polaris draws
+ * its own `n/500` counter in the field. That departs from the run note's
+ * field, which counts down only from `Domain.noteCountFrom` and lets the
+ * write refuse an over-long note: a task's instructions are edited in a
+ * panel whose Save has no field error to land a refusal in, and a field that
+ * cannot exceed its cap never needs one. The counter is Polaris's, so the
+ * help line carries no count of its own.
+ */
+const INSTRUCTIONS_HELP = `Members see this at this step on every item. Up to ${formatNumber(Domain.TASK_INSTRUCTIONS_MAX_LENGTH)} characters.`;
+
 const getLoaderData = createServerFn({ method: "GET" })
   .validator(Schema.toStandardSchemaV1(WorkflowParams))
   .middleware([shopifyServerFnMiddleware])
@@ -130,8 +145,8 @@ export const Route = createFileRoute("/app/workflows/$workflowId_/edit")({
  * Opening it writes nothing. The canvas shows the draft when one exists and
  * the workflow itself when one does not — the first change is what creates
  * the draft, and because a task keeps its id from the workflow into the draft
- * (`WorkflowRepository.ensureDraft`) the task being edited is the same task
- * either way.
+ * (`editDraft` in `WorkflowRepository`) the task being edited is the same
+ * task either way.
  *
  * The header is the state, in one primary button and one badge:
  *
@@ -382,7 +397,7 @@ function RouteComponent() {
    * that returns an equal task leaves typing alone; the id is in it so that
    * moving between two tasks that happen to match still re-seeds.
    */
-  const loadedTasks = detail?.draft?.tasks ?? detail?.tasks;
+  const loadedTasks = detail?.draftTasks ?? detail?.tasks;
   const loadedTask =
     loadedTasks?.find((task) => task.id === selectedTaskId) ?? null;
   const loadedTaskName = loadedTask?.name;
@@ -431,12 +446,12 @@ function RouteComponent() {
       </s-page>
     );
 
-  const { draft, teams } = detail;
+  const { draftTasks, teams } = detail;
   const workflow = detail.workflow;
 
   /** What the editor writes: the draft once one exists, the workflow itself until then. */
-  const tasks = draft?.tasks ?? detail.tasks;
-  const hasDraft = draft !== null;
+  const tasks = draftTasks ?? detail.tasks;
+  const hasDraft = draftTasks !== null;
   const fresh = neverApplied(detail);
   /**
    * Turn on rather than Apply. `hasDraft` is true here too — the first added
@@ -514,6 +529,8 @@ function RouteComponent() {
         <s-text-area
           label="Instructions"
           rows={2}
+          maxLength={Domain.TASK_INSTRUCTIONS_MAX_LENGTH}
+          details={INSTRUCTIONS_HELP}
           value={adding?.instructions ?? ""}
           disabled={busy}
           onInput={(event) => {
@@ -721,7 +738,8 @@ function RouteComponent() {
 
           {/* Every task control writes as it is used, so there is no Save for
               the canvas and nothing on screen would otherwise say the work is
-              safe. The date is the draft's while one exists: that is the edit
+              safe. The date is the workflow's one date, which every write
+              moves, draft edits included, so it is the edit
               this line is about. */}
           <s-text color="subdued">
             {busy ? (
@@ -729,9 +747,7 @@ function RouteComponent() {
             ) : (
               <>
                 {"\u2713 Saved \u00B7 Last changed on "}
-                <LocalDateTime
-                  value={draft?.draft.updatedAt ?? workflow.updatedAt}
-                />
+                <LocalDateTime value={workflow.updatedAt} />
               </>
             )}
           </s-text>
@@ -770,6 +786,8 @@ function RouteComponent() {
             <s-text-area
               label="Instructions"
               rows={3}
+              maxLength={Domain.TASK_INSTRUCTIONS_MAX_LENGTH}
+              details={INSTRUCTIONS_HELP}
               value={edit.instructions}
               disabled={busy}
               onInput={(event) => {

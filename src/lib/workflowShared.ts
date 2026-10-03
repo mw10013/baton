@@ -56,8 +56,9 @@ export const deleteWorkflowResultMessage = Match.typeTags<
 
 /**
  * A workflow that has never been applied has no tasks of its own: Apply is the
- * only writer of `WorkflowTask`, and a fresh workflow starts with none (the
- * JSDoc on `Domain.Workflow`). Zero tasks after the first Apply is impossible,
+ * only editor write that lands on `Workflow.tasks` (a team delete nulls a
+ * pointer in it and Duplicate copies it, neither adds a task), and a fresh
+ * workflow starts with none (the JSDoc on `Domain.Workflow`). Zero tasks after the first Apply is impossible,
  * since Apply refuses an empty draft (`NoTasksError`). So "no tasks" and
  * "never applied" are the same fact, and the editor can offer Turn on instead
  * of Apply on the strength of it.

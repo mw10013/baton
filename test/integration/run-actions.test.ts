@@ -245,7 +245,6 @@ const withTask = (workflow: Domain.Workflow): Domain.WorkflowDetail => ({
   tasks: [
     {
       id: Schema.decodeUnknownSync(Domain.WorkflowTaskId)(`${workflow.id}-t`),
-      workflowId: workflow.id,
       position: 1,
       step: 1,
       name: Schema.decodeUnknownSync(Domain.TaskName)("Task"),
@@ -259,7 +258,7 @@ const stateOf = (
   item: Domain.OrderLineItem,
   runs: readonly Domain.RunDetail[],
   offered: readonly Domain.Workflow[],
-) => Domain.lineItemState(item, runs, offered.map(withTask), TEAMS);
+) => Domain.lineItemState(item, runs, offered.map(withTask), [], TEAMS);
 
 const kindOf = (
   item: Domain.OrderLineItem,

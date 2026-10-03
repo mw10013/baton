@@ -148,6 +148,16 @@ describe("a retired word stays off every merchant and member screen", () => {
     expect(hits(source)).toEqual([1]);
   });
 
+  it("picker is retired in screen copy", () => {
+    const source = [
+      '<s-select label="Workflow picker" />',
+      'const a = "Choose a workflow from the picker";',
+      "// the Workflow select at rest",
+      'const b = "Workflow";',
+    ].join("\n");
+    expect(hits(source)).toEqual([1, 2]);
+  });
+
   it("please, successfully, oops, sorry, click here and are you sure are retired in every slot", () => {
     const source = [
       'const a = "Please choose a team.";',
@@ -200,6 +210,11 @@ describe("an exported identifier carries no reserved stem", () => {
       { name: "TeamRoster", line: 2, kind: "type" },
       { name: "RunTier", line: 3, kind: "const" },
     ]);
+  });
+  it("an export named workflowPicker is refused", () => {
+    expect(
+      RulesLint.reservedStemHits("export const workflowPicker = () => null;"),
+    ).toEqual([{ name: "workflowPicker", line: 1, kind: "const" }]);
   });
   it("an export named ProductionAgent is refused", () => {
     expect(
@@ -256,6 +271,27 @@ describe("an import follows the map's direction", () => {
       Billing: ["Orders", "Platform"],
       Platform: [],
     });
+  });
+
+  it("a context file importing a module under src/ outside lib/domain/ is refused", () => {
+    expect(
+      importHits(
+        "lib/domain/ShopWork.ts",
+        [
+          'import { Schema } from "effect";',
+          'import { layoutIsValid } from "../WorkflowLayout.ts";',
+          'import { Screen } from "@/lib/Screen";',
+          'import { OrderState } from "./Orders.ts";',
+        ].join("\n"),
+      ),
+    ).toEqual([
+      {
+        line: 2,
+        specifier: "../WorkflowLayout.ts",
+        allowed: ["Orders", "Platform"],
+      },
+      { line: 3, specifier: "@/lib/Screen", allowed: ["Orders", "Platform"] },
+    ]);
   });
 
   it("Orders importing ShopWork is refused", () => {

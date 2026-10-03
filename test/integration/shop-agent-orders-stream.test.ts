@@ -13,6 +13,8 @@ import { runShopAgentOrdersStream } from "@/lib/ShopAgentOrdersStream";
 import { runShopAgentMigrations } from "@/lib/ShopAgentSchema";
 import { WorkflowRepository } from "@/lib/WorkflowRepository";
 
+import { reconcileContext } from "./reconcile-context.ts";
+
 const BULK_URL = "https://storage.googleapis.test/bulk-orders.jsonl";
 
 const httpClientLayer = (body: string) =>
@@ -379,10 +381,7 @@ describe("runShopAgentOrdersStream with afterWrite", () => {
           on: true,
           teams: [team],
         });
-        const context = {
-          workflows: yield* workflows.listOnWorkflowDetails(),
-          teams: [team],
-        };
+        const context = yield* reconcileContext([team]);
         const afterWrite = (order: Domain.ShopOrder) =>
           runs.reconcileOrder({ ...context, orderId: order.id });
         yield* runShopAgentOrdersStream({ url: BULK_URL, afterWrite });

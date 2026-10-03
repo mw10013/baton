@@ -35,8 +35,10 @@
  * of its own: a page shape that reads two contexts is loader data, and loader
  * data lives in its route. Nothing outside
  * `src/lib/domain/` imports a context file directly, and a context file
- * imports only what its `may import` cell names. `scripts/rules-lint.ts`
- * reads the cell and refuses both. Every vocabulary table
+ * imports only what its `may import` cell names, plus packages: never a
+ * module under `src/` outside `src/lib/domain/`, so the model depends on
+ * nothing above it. `scripts/rules-lint.ts` reads the cell and refuses all
+ * three. Every vocabulary table
  * names its context, in its first line or in a `context` column:
  *
  * | context   | kind       | about                                                                                      | whose words                              | file          | may import       |
@@ -140,7 +142,7 @@
  * | merchant | `app.teams.index`                 | Teams                        | the teams index             |
  * | merchant | `app.teams.$teamId`               | the team's name              | the team page               |
  * | merchant | `app.members`                     | Members                      | the members page            |
- * | member   | `shop.index`                      | Your stores                  | the shop picker             |
+ * | member   | `shop.index`                      | Your stores                  | the shop list               |
  * | member   | `shop.$shop.workflows.index`      | Workflows                    | the workflows list          |
  * | member   | `shop.$shop.workflows.$runId`     | the item's title             | the workflow page           |
  * | member   | `shop.$shop_.lapsed`              | the shop's domain            | the lapsed page             |

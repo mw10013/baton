@@ -425,7 +425,7 @@ function RouteComponent() {
       {addButton(true)}
       {/* The drill-in that makes the orders filter discoverable from the
           suspicion that prompts it — "is this team backed up?" — rather than
-          from browsing a picker. `?team=` means waiting on: the orders whose
+          from browsing a select. `?team=` means waiting on: the orders whose
           current task is this team's right now (open orders only, see
           `Domain.ListOrdersInput.team`), not every order it ever touched. Order positions stay on Orders; this page is the team's members
           (`UsedByCard` below is configuration, not run state). */}
@@ -605,7 +605,7 @@ function RouteComponent() {
           table with a header row and a scrollbar for one row. A modal keeps
           the inset, drops the search field when there is nothing to search,
           shows where each candidate already works, and folds in the two
-          nobody-to-add cases the picker had to hand to a second dialog. It
+          nobody-to-add cases App Bridge's had to hand to a second dialog. It
           also matches the Members page, which edits the same membership from
           the other side with a checklist in a modal. */}
       <s-modal

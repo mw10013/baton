@@ -135,7 +135,8 @@ export class ShopAgentClient extends Context.Service<
     ) => Effect.Effect<Domain.ShopUsage, ShopAgentClientError>;
     readonly listWorkflows: (
       shop: string,
-    ) => Effect.Effect<readonly Domain.WorkflowSummary[], ShopAgentClientError>;
+      input: Domain.ListWorkflowsInput,
+    ) => Effect.Effect<Domain.WorkflowsIndexData, ShopAgentClientError>;
     readonly getWorkflowDetail: (
       shop: string,
       input: Domain.WorkflowIdInput,
@@ -237,7 +238,7 @@ export class ShopAgentClient extends Context.Service<
       const ordersIndexData = Schema.toType(Domain.OrdersIndexData);
       const orderDetail = Schema.toType(Schema.NullOr(Domain.OrderPageData));
       const usage = Schema.toType(Domain.ShopUsage);
-      const workflows = Schema.toType(Schema.Array(Domain.WorkflowSummary));
+      const workflows = Schema.toType(Domain.WorkflowsIndexData);
       const workflowDetail = Schema.toType(
         Schema.NullOr(Domain.WorkflowPageData),
       );
@@ -282,9 +283,9 @@ export class ShopAgentClient extends Context.Service<
           call("getUsage", usage, shop, (stub) => stub.getUsage()),
         ),
         listWorkflows: Effect.fn("ShopAgentClient.listWorkflows")(
-          (shop: string) =>
+          (shop: string, input: Domain.ListWorkflowsInput) =>
             call("listWorkflows", workflows, shop, (stub) =>
-              stub.listWorkflows(),
+              stub.listWorkflows(input),
             ),
         ),
         getWorkflowDetail: Effect.fn("ShopAgentClient.getWorkflowDetail")(

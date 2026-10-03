@@ -4,14 +4,17 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { useMutation } from "@tanstack/react-query";
 import {
   createFileRoute,
+  useLocation,
   useNavigate,
   useRouter,
 } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { Effect, Schema } from "effect";
 
+import { ListSearchField } from "@/components/ListSearchField";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import * as Domain from "@/lib/Domain";
+import { formatNumber } from "@/lib/format";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
@@ -20,6 +23,7 @@ import { useWorkflowEditorWindow } from "@/lib/workflowEditorWindow";
 import { workflowResultMessage } from "@/lib/workflowShared";
 
 const CREATE_MODAL = "create-workflow";
+const WORKFLOWS_PAGE_SIZE = 50;
 
 const decodeWorkflowResult = Schema.decodeUnknownPromise(
   Schema.toType(Domain.WorkflowResult),
@@ -52,36 +56,52 @@ export const stateBadges = (workflow: Domain.WorkflowSummary) => (
   </s-stack>
 );
 
-interface WorkflowsIndexLoaderData {
-  readonly workflows: readonly Domain.WorkflowSummary[];
-}
+type WorkflowsIndexLoaderData = Domain.WorkflowsIndexData;
+
+/** The page the URL names: the search, the state filter and the page ({@link Domain.ListWorkflowsInput}). */
+const WorkflowsLoaderInput = Schema.Struct({
+  q: Schema.NullOr(Domain.ListSearch),
+  state: Schema.NullOr(Domain.WorkflowsIndexState),
+  after: Schema.NullOr(Domain.WorkflowName),
+});
 
 /**
  * Workflow definitions are configuration one person edits, so the read is a
  * loader (the loader-versus-socket rule on `ShopAgentClient`): SSR paint, and
  * `router.invalidate()` after each write. Only the writes use the socket.
+ * One page in name order: the index pages and searches in the object rather
+ * than here, so its cost does not grow with the shop's workflows.
  */
 const getLoaderData = createServerFn({ method: "GET" })
+  .validator(Schema.toStandardSchemaV1(WorkflowsLoaderInput))
   .middleware([shopifyServerFnMiddleware])
-  .handler(({ context: { runEffect, session } }) =>
+  .handler(({ data: { q, state, after }, context: { runEffect, session } }) =>
     runEffect(
       Effect.gen(function* () {
-        const workflows = yield* (yield* ShopAgentClient).listWorkflows(
-          session.shop,
-        );
-        return { workflows } satisfies WorkflowsIndexLoaderData;
+        return (yield* (yield* ShopAgentClient).listWorkflows(session.shop, {
+          limit: WORKFLOWS_PAGE_SIZE,
+          cursor: after,
+          q,
+          state,
+        })) satisfies WorkflowsIndexLoaderData;
       }),
     ),
   );
 
 export const Route = createFileRoute("/app/workflows/")({
-  loader: () => getLoaderData(),
+  loaderDeps: ({ search }) => ({
+    q: search.q ?? null,
+    state: search.state ?? null,
+    after: search.after ?? null,
+  }),
+  loader: ({ deps }) => getLoaderData({ data: deps }),
   component: RouteComponent,
 });
 
 /**
- * The workflows page: every workflow as a filterable list. Delete lives on
- * the detail page; the index has no destructive control.
+ * The workflows page: the workflows in name order, one page at a time, with
+ * a search by name and a state filter. Delete lives on the detail page; the
+ * index has no destructive control.
  *
  * Creating asks for a name and a tag, the tag prefilled from the name — the
  * tag is what makes a workflow reachable at all, so it is asked for at the
@@ -93,13 +113,15 @@ export const Route = createFileRoute("/app/workflows/")({
  * says what they do, so the page carries no standing form.
  */
 function RouteComponent() {
-  const { workflows } = Route.useLoaderData();
-  const { state } = Route.useSearch();
+  const { workflows, nextCursor, matches } = Route.useLoaderData();
+  const { state, q, after } = Route.useSearch();
   const router = useRouter();
   const navigate = useNavigate({ from: Route.fullPath });
+  const nextPageEntry = useLocation({
+    select: (location) => location.state.workflowsNextPage === true,
+  });
   const shopify = useAppBridge();
   const { agent, identified } = useShopAgent();
-  const [query, setQuery] = React.useState("");
   const [name, setName] = React.useState("");
   const [tag, setTag] = React.useState("");
   const [tagDirty, setTagDirty] = React.useState(false);
@@ -171,9 +193,11 @@ function RouteComponent() {
   /**
    * The tag mirrors the name until the merchant's first keystroke in the tag
    * field, then stops for good (until the modal reopens). The mirror is
-   * `trim().toLowerCase()`, the same folding `Domain.WorkflowTag` applies at
-   * the schema boundary, so what the merchant sees is what will be stored —
-   * no slug logic, and spaces stay because Shopify tags allow them. Only the
+   * `trim().toLowerCase()`, a suggestion and not a rule: `Domain.WorkflowTag`
+   * stores the tag as the field shows it, trimmed, and matches it exactly, so
+   * what the merchant sees is what will be stored. A lowercase string is the
+   * easiest to type onto products the same way every time. No slug logic,
+   * and spaces stay because Shopify tags allow them. Only the
    * create dialog mirrors: a later rename never touches the tag, because
    * products already carry the old string.
    */
@@ -193,30 +217,52 @@ function RouteComponent() {
    * member's workflows list's reason (`selectState` in `shop.$shop.workflows.index.tsx`): the filters are a
    * screen's state, not a trail.
    */
-  const setFilters = (next: {
-    readonly state: Domain.WorkflowsIndexState | undefined;
+  const setFilters = (patch: {
+    readonly state?: Domain.WorkflowsIndexState | null;
+    readonly q?: Domain.ListSearch | null;
   }) => {
     void navigate({
-      search: (prev) => ({ ...prev, state: next.state }),
+      search: (prev) => ({
+        ...prev,
+        state:
+          patch.state === undefined ? prev.state : (patch.state ?? undefined),
+        q: patch.q === undefined ? prev.q : (patch.q ?? undefined),
+        after: undefined,
+      }),
       replace: true,
     });
   };
 
-  const trimmed = query.trim().toLowerCase();
-  const rows = workflows.filter((workflow) => {
-    if (state === "on" && !Domain.workflowIsOn(workflow)) return false;
-    if (state === "off" && Domain.workflowIsOn(workflow)) return false;
-    if (trimmed !== "" && !workflow.name.toLowerCase().includes(trimmed))
-      return false;
-    return true;
-  });
-  const filtered = state !== undefined || trimmed !== "";
+  /** Next and Previous, for the reason on `nextPage` in `app.orders.index.tsx`. */
+  const nextPage = (cursor: Domain.WorkflowName) => {
+    void navigate({
+      search: (prev) => ({ ...prev, after: cursor }),
+      state: { workflowsNextPage: true },
+    });
+  };
+  const previousPage = () => {
+    if (nextPageEntry) {
+      router.history.back();
+      return;
+    }
+    void navigate({
+      search: (prev) => ({ ...prev, after: undefined }),
+      replace: true,
+    });
+  };
+
+  const clearSearch = () => {
+    setFilters({ q: null });
+  };
+  /** No search, no filter and page one: an empty page here means the shop has no workflows. */
+  const unfiltered =
+    q === undefined && state === undefined && after === undefined;
 
   const stateButton = (label: string, value?: Domain.WorkflowsIndexState) => (
     <s-button
       variant={state === value ? "primary" : "tertiary"}
       onClick={() => {
-        setFilters({ state: value });
+        setFilters({ state: value ?? null });
       }}
     >
       {label}
@@ -235,7 +281,7 @@ function RouteComponent() {
   );
 
   const renderRows = () => {
-    if (workflows.length === 0)
+    if (unfiltered && workflows.length === 0)
       return (
         <s-box padding="base">
           <s-grid gap="base" justifyItems="center" paddingBlock="large-400">
@@ -246,7 +292,18 @@ function RouteComponent() {
           </s-grid>
         </s-box>
       );
-    if (rows.length === 0)
+    if (q !== undefined && workflows.length === 0)
+      return (
+        <s-box padding="base">
+          <s-stack gap="base" alignItems="start">
+            <s-paragraph color="subdued">{`No workflow matches ${q}`}</s-paragraph>
+            <s-button variant="secondary" onClick={clearSearch}>
+              Clear search
+            </s-button>
+          </s-stack>
+        </s-box>
+      );
+    if (workflows.length === 0)
       return (
         <s-box padding="base">
           <s-stack gap="base" alignItems="start">
@@ -254,8 +311,7 @@ function RouteComponent() {
             <s-button
               variant="secondary"
               onClick={() => {
-                setQuery("");
-                setFilters({ state: undefined });
+                setFilters({ state: null });
               }}
             >
               Clear filters
@@ -264,7 +320,15 @@ function RouteComponent() {
         </s-box>
       );
     return (
-      <s-table>
+      <s-table
+        paginate
+        hasPreviousPage={after !== undefined}
+        hasNextPage={nextCursor !== null}
+        onPreviousPage={previousPage}
+        onNextPage={() => {
+          if (nextCursor !== null) nextPage(nextCursor);
+        }}
+      >
         <s-table-header-row>
           <s-table-header listSlot="primary">Workflow</s-table-header>
           <s-table-header>Status</s-table-header>
@@ -273,7 +337,7 @@ function RouteComponent() {
           <s-table-header>Updated</s-table-header>
         </s-table-header-row>
         <s-table-body>
-          {rows.map((workflow) => (
+          {workflows.map((workflow) => (
             <s-table-row key={workflow.id} id={workflow.id}>
               <s-table-cell>
                 <s-link href={`/app/workflows/${workflow.id}`}>
@@ -315,35 +379,46 @@ function RouteComponent() {
           description: the badges and the Turn on / Turn off buttons already
           say what a workflow is and what its state means. */}
       <s-section padding="none" accessibilityLabel="Workflows">
-        {workflows.length > 0 && (
+        {!(unfiltered && workflows.length === 0) && (
           <s-box padding="base">
-            <s-stack gap="small-300">
-              <s-grid
-                gridTemplateColumns="auto 1fr"
-                gap="base"
-                alignItems="center"
-              >
+            <s-grid
+              gridTemplateColumns="auto 1fr"
+              gap="base"
+              alignItems="center"
+            >
+              {/* A search ignores the state filter, so the buttons give way
+                  to how many workflows match and Clear search (`Control` in
+                  `Screen.ts`, "a search is on"). */}
+              {q === undefined ? (
                 <s-stack direction="inline" gap="small-300">
                   {stateButton("All")}
                   {stateButton(Domain.WORKFLOW_STATE_LABEL.on, "on")}
                   {stateButton(Domain.WORKFLOW_STATE_LABEL.off, "off")}
                 </s-stack>
-                <s-search-field
-                  label="Search workflows by name"
-                  labelAccessibilityVisibility="exclusive"
-                  placeholder="Search by name"
-                  value={query}
-                  onInput={(event) => {
-                    setQuery(event.currentTarget.value);
-                  }}
-                />
-              </s-grid>
-              {filtered && (
-                <s-paragraph color="subdued">
-                  {`Showing ${String(rows.length)} of ${String(workflows.length)} workflows.`}
-                </s-paragraph>
+              ) : (
+                // A search that matched nothing says so in the list's place,
+                // with its own Clear search.
+                <s-stack direction="inline" gap="base" alignItems="center">
+                  {matches !== null && matches > 0 && (
+                    <>
+                      <s-text>
+                        {matches === 1
+                          ? `1 workflow matches ${q}`
+                          : `${formatNumber(matches)} workflows match ${q}`}
+                      </s-text>
+                      <s-button onClick={clearSearch}>Clear search</s-button>
+                    </>
+                  )}
+                </s-stack>
               )}
-            </s-stack>
+              <ListSearchField
+                value={q ?? null}
+                placeholder="Search by name"
+                onSubmit={(next) => {
+                  setFilters({ q: next });
+                }}
+              />
+            </s-grid>
           </s-box>
         )}
 

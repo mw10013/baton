@@ -709,8 +709,8 @@ export class ShopAgent extends Agent {
    * (`orderId: null`) is published to either way; a detail subscription only
    * for its own order. Workflow configuration is loader data and does not
    * publish, with one exception: Apply and the on/off switch change what
-   * creates runs, which the order page's `itemWorkflows` shows, so those two
-   * publish `"all"`.
+   * creates runs, which the order page's Workflow select shows
+   * (`matchedWorkflows`, `otherWorkflows`), so those two publish `"all"`.
    *
    * `teams` is the same idea for the other population. A member's subscription
    * is their workflows list, which is scoped by team rather than by order, so an order
@@ -1315,12 +1315,18 @@ export class ShopAgent extends Agent {
    * `ShopAgentClient` (the loader-versus-socket rule documented there). Only
    * the mutations stay on the socket.
    */
-  listWorkflows(): Promise<readonly Domain.WorkflowSummary[]> {
+  listWorkflows(
+    input: typeof Domain.ListWorkflowsInput.Encoded,
+  ): Promise<Domain.WorkflowsIndexData> {
     return this.runEffect(
-      ShopWorkAgent.pipe(
-        Effect.flatMap((shopWork) => shopWork.listWorkflows()),
-        Effect.withLogSpan("ShopAgent.listWorkflows"),
-      ),
+      callableEffect("ShopAgent.listWorkflows", Domain.ListWorkflowsInput, {
+        role: "rpc",
+        parse: { onExcessProperty: "error" },
+      })((decoded) =>
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.listWorkflows(decoded)),
+        ),
+      )(input),
     );
   }
 

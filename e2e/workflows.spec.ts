@@ -33,7 +33,8 @@ const clickMenuItem = (frame: FrameLocator, name: string) =>
  * applies and activates; from then on the first saved change starts a draft,
  * Apply promotes it, and Discard throws it away. It also covers the one thing
  * that makes the lazy draft possible — editing a task that only exists on the
- * workflow so far, whose id the draft then carries (`ensureDraft`).
+ * workflow so far, whose id the draft then carries (`editDraft` in
+ * `WorkflowRepository`).
  *
  * The draft state is asserted through the header's buttons rather than the
  * `Draft` accessory badge: App Bridge hoists accessory badges into admin
@@ -348,8 +349,8 @@ test("turning on a workflow creates runs on the open orders already stored", asy
 
   /* The order page shows the run that Turn on created: the item's
      section carries Manage, whose drawer names the workflow, and with a run on
-     it the card carries no workflow picker at rest. Scoped to the section
-     because another item's picker on the same page lists every workflow by
+     it the card carries no Workflow select at rest. Scoped to the section
+     because another item's Workflow select on the same page lists every workflow by
      name. */
   await clickHoisted(appNavLink(page, "Orders"));
   await frame.getByRole("link", { name: "#9101", exact: true }).click();
@@ -631,4 +632,101 @@ test("the workflows index and the workflow page show Needs a team and Team has n
   const noMembers = frame.locator('s-banner[heading="Team has no members"]');
   await expect(noMembers).toHaveAttribute("tone", "critical");
   await expect(noMembers).toContainText(`Nobody is on ${EMPTY}.`);
+});
+
+/**
+ * The workflows index searches in the object, a word prefix of the name
+ * (`Domain.ListWorkflowsInput`), keyed `?q=` as on the orders index. Enter
+ * submits; the state buttons give way to how many workflows match and Clear
+ * search, which puts the list back.
+ */
+test("the workflows index searches by name and clears back to the list", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+
+  const GLAZE = "E2E Mug glaze";
+  await seedMembers(
+    seedConfig(),
+    [MEMBER],
+    [{ name: TEAM, members: [MEMBER] }],
+    [
+      {
+        name: EXISTING,
+        tag: "e2e-ring",
+        tasks: [{ name: "Cut", team: TEAM }],
+      },
+      {
+        name: GLAZE,
+        tag: "e2e-mug",
+        tasks: [{ name: "Glaze", team: TEAM }],
+      },
+    ],
+  );
+
+  const frame = await gotoApp(page);
+  await clickHoisted(appNavLink(page, "Workflows"));
+  await expect(frame.getByRole("link", { name: EXISTING })).toBeVisible();
+  await awaitHydration(frame);
+
+  const search = frame.getByRole("searchbox", { name: "Search" });
+  await search.fill("glaz");
+  await search.press("Enter");
+  await expect(frame.getByRole("link", { name: GLAZE })).toBeVisible();
+  await expect(frame.getByRole("link", { name: EXISTING })).toHaveCount(0);
+  await expect(
+    frame.getByText("1 workflow matches glaz", { exact: true }),
+  ).toBeVisible();
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("q"))
+    .toBe("glaz");
+
+  await frame.getByRole("button", { name: "Clear search" }).click();
+  await expect(frame.getByRole("link", { name: EXISTING })).toBeVisible();
+  await expect(frame.getByRole("link", { name: GLAZE })).toBeVisible();
+});
+
+/**
+ * A task's instructions stop at `Domain.TASK_INSTRUCTIONS_MAX_LENGTH`: the
+ * field takes no more (`INSTRUCTIONS_HELP` in the editor says why there is
+ * no count-down of the editor's own), and its help line names the cap.
+ */
+test("the editor stops instructions at 500 characters", async ({ page }) => {
+  test.setTimeout(120_000);
+
+  await seedMembers(
+    seedConfig(),
+    [MEMBER],
+    [{ name: TEAM, members: [MEMBER] }],
+    [
+      {
+        name: EXISTING,
+        tag: "e2e-ring",
+        tasks: [{ name: "Cut", team: TEAM }],
+      },
+    ],
+  );
+
+  const frame = await gotoApp(page);
+  const editor = editorFrame(page);
+  await clickHoisted(appNavLink(page, "Workflows"));
+  await frame.getByRole("link", { name: EXISTING }).click();
+  await expect(frame.locator(`s-page[heading="${EXISTING}"]`)).toBeVisible();
+  await openEditor(page);
+  await editor.getByRole("button", { name: "Edit Cut" }).click();
+
+  const instructions = editor.getByRole("textbox", {
+    name: "Instructions",
+    exact: true,
+  });
+  await expect(
+    editor.getByText(
+      "Members see this at this step on every item. Up to 500 characters.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await instructions.fill("x".repeat(Domain.TASK_INSTRUCTIONS_MAX_LENGTH + 1));
+  await expect(instructions).toHaveValue(
+    "x".repeat(Domain.TASK_INSTRUCTIONS_MAX_LENGTH),
+  );
 });

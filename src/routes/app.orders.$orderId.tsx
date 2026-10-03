@@ -263,8 +263,8 @@ type ActionableTask = Domain.RunTaskRow & {
 
 /**
  * The `team` issue on a run: one row per open task whose team is gone, named
- * with an "Assign team" picker, the remedy that makes a team delete safe.
- * Follows {@link Domain.taskActions}' `assign`, because the picker is that
+ * with an Assign team select, the remedy that makes a team delete safe.
+ * Follows {@link Domain.taskActions}' `assign`, because the select is that
  * write.
  */
 const unassignedRows = (
@@ -353,7 +353,7 @@ function RouteComponent() {
   const [attachChoice, setAttachChoice] = React.useState<
     Record<string, string>
   >({});
-  /** The "Assign team" picker's choice per unassigned run task. */
+  /** The Assign team select's choice per unassigned run task. */
   const [assignChoice, setAssignChoice] = React.useState<
     Record<string, string>
   >({});
@@ -365,14 +365,14 @@ function RouteComponent() {
    * say which item it meant.
    *
    * The pick lives here and not in `attachChoice`: that map belongs to the
-   * at-rest Start picker, and a pick left behind in the modal would preselect
+   * at-rest Workflow select, and a choice left behind in the modal would preselect
    * it after a later Cancel workflow.
    */
   const [changing, setChanging] = React.useState<{
     readonly lineItemId: string;
     readonly from: Domain.WorkflowName;
     readonly run: Domain.Run;
-    readonly options: readonly Domain.Workflow[];
+    readonly options: readonly Domain.WorkflowNameRow[];
     readonly tasks: readonly Domain.RunTask[];
     readonly workflowId: string | null;
   } | null>(null);
@@ -553,7 +553,7 @@ function RouteComponent() {
       ),
     onSuccess: async (result, { runTaskId }) => {
       const message = assignResultMessage(result);
-      /* The unassigned row's picker has no modal to hold a message, so its
+      /* The unassigned row's select has no modal to hold a message, so its
          refusal goes to the page banner; the modal keeps its own. */
       if (assigning?.runTaskId === runTaskId) {
         if (message === null) {
@@ -612,7 +612,8 @@ function RouteComponent() {
       </s-page>
     );
 
-  const { order, lineItems, runs, itemWorkflows, teams } = detail;
+  const { order, lineItems, runs, matchedWorkflows, otherWorkflows, teams } =
+    detail;
   const orderOpen = Domain.orderIsOpen(order);
   /**
    * The same aggregate the index computes in SQL, rebuilt from the runs
@@ -665,13 +666,13 @@ function RouteComponent() {
     return changeWarning(changing.from, to, changing.run, changing.tasks);
   })();
   /**
-   * The team picker and Assign button beside an unassigned task in
+   * The Assign team select and Assign button beside an unassigned task in
    * `unassignedRows`, open at rest because a task with no team is a required
    * field left empty, the one thing on the card that must be acted on. A task
    * that has a team changes it through the Assign team modal instead: a filled
    * field is changed in a modal, an empty one is filled at rest.
    *
-   * The picker starts empty so Assign stays disabled until a team is chosen.
+   * The select starts empty so Assign stays disabled until a team is chosen.
    */
   const assignTeam = (runTaskId: string) => (
     <s-grid
@@ -945,17 +946,18 @@ function RouteComponent() {
     const actions = Domain.runActions(MERCHANT, order, run, tasks, item);
     const now = nowLine({ run, tasks });
     const teamIssues = teamIssueRows(tasks, teams, assignTeam);
-    const options = itemWorkflows
-      .map(({ workflow }) => workflow)
-      .filter(
-        (workflow) => !Domain.runIsOpen(run) || workflow.id !== run.workflowId,
-      );
+    const options = [
+      ...matchedWorkflows.map(({ workflow }) => workflow),
+      ...otherWorkflows,
+    ].filter(
+      (workflow) => !Domain.runIsOpen(run) || workflow.id !== run.workflowId,
+    );
     /**
      * `Change workflow`, handed to `manageRows`. Absent when the field is
      * false, when the shop's only workflow that is on is the one an open run
      * already has, and on a closed run, whose item takes a new workflow from
-     * the picker at rest under it ({@link workflowPicker}). A done run gets
-     * it here rather than the picker because replacing it loses a record, and
+     * the Workflow select at rest under it ({@link workflowSelect}). A done run gets
+     * it here rather than the select because replacing it loses a record, and
      * the modal is where the `confirm` slot names what ({@link changeWarning}).
      */
     const change =
@@ -1055,9 +1057,9 @@ function RouteComponent() {
    * label so the visible word stays "Workflow" while the accessible name
    * stays the verb.
    */
-  const workflowPicker = (
+  const workflowSelect = (
     item: Domain.OrderLineItem,
-    options: readonly Domain.Workflow[],
+    options: readonly Domain.WorkflowNameRow[],
     matched: readonly Domain.WorkflowId[],
   ) => {
     const chosen = attachChoice[item.id];
@@ -1122,11 +1124,17 @@ function RouteComponent() {
    */
   const renderLineItem = (item: Domain.OrderLineItem) => {
     const toMake = Domain.unitsToMake(item);
-    const itemState = Domain.lineItemState(item, runs, itemWorkflows, teams);
+    const itemState = Domain.lineItemState(
+      item,
+      runs,
+      matchedWorkflows,
+      otherWorkflows,
+      teams,
+    );
     /**
      * Quantity and SKU, as one subdued line under the title. No product tags:
      * they were "why a workflow matched", and on a multi-match item the
-     * picker's option list, matches first, is that answer now.
+     * select's option list, matches first, is that answer now.
      */
     const facts = [
       /* Ordered vs. to make differ after an edit or a refund; fulfilment does not move it ({@link Domain.unitsToMake}). */
@@ -1159,12 +1167,12 @@ function RouteComponent() {
               {itemState.multiMatch && (
                 <s-paragraph>{MULTI_MATCH_SENTENCE}</s-paragraph>
               )}
-              {workflowPicker(item, itemState.options, itemState.matched)}
+              {workflowSelect(item, itemState.options, itemState.matched)}
             </>
           ) : null;
         }
         /* The run as the record. Under a closed run, its reason line
-           first, then what the Cancel workflow modal promised: the picker,
+           first, then what the Cancel workflow modal promised: the Workflow select,
            for a fresh run. A done run's Change workflow is in Manage, behind
            the modal that names what it loses. */
         case "ended": {
@@ -1178,7 +1186,7 @@ function RouteComponent() {
                     <s-paragraph color="subdued">
                       Nothing starts on this item until you choose a workflow.
                     </s-paragraph>
-                    {workflowPicker(item, itemState.options, itemState.matched)}
+                    {workflowSelect(item, itemState.options, itemState.matched)}
                   </>
                 )}
             </>

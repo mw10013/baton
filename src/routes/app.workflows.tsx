@@ -6,7 +6,18 @@ import {
 import { Schema } from "effect";
 
 import * as Domain from "@/lib/Domain";
-import { lenientSearchKey } from "@/lib/searchParams";
+import { lenientSearchKey, ListSearchParam } from "@/lib/searchParams";
+
+declare module "@tanstack/react-router" {
+  interface HistoryState {
+    /**
+     * Set on the entry the workflows index's Next pushes, for the reason on
+     * `ordersNextPage` (`app.orders.tsx`): the entry before is the page
+     * before, so Previous can be the browser's Back.
+     */
+    readonly workflowsNextPage?: true;
+  }
+}
 
 /**
  * **The merchant's filter on the workflows index, and it travels.** The same
@@ -24,10 +35,15 @@ import { lenientSearchKey } from "@/lib/searchParams";
  * `?status=` from before the renames is an unknown key and reads as All.
  *
  * The filter buttons are in the URL, so a filtered list is a link someone can
- * send. The search text is not: it changes on every keystroke and is
- * nobody's destination. There is no tag filter: a workflow's tag is its
- * identity, not a grouping dimension, and one filter button per tag made it
- * look like one.
+ * send. `?q=` is the search, a word prefix of the name, keyed as on the
+ * orders index (`app.orders.tsx`): it is submitted on Enter or blur, not per
+ * keystroke, and a search ignores `state`, which stays in the URL so Clear
+ * search returns to it (`Domain.ListWorkflowsInput`). `?after=` is the page,
+ * as the name of the last workflow on the page before; an absent `after` is
+ * page one, and Previous is the browser's Back when the entry before is that
+ * page ({@link HistoryState}'s `workflowsNextPage`). There is no tag filter:
+ * a workflow's tag is its identity, not a grouping dimension, and one filter
+ * button per tag made it look like one.
  *
  * The layout is `/app/workflows` rather than `/app` because only the
  * workflows screens read `state`; retained on `/app` it would ride onto every
@@ -38,13 +54,15 @@ import { lenientSearchKey } from "@/lib/searchParams";
  */
 const WorkflowsSearch = Schema.Struct({
   state: lenientSearchKey(Domain.WorkflowsIndexState),
+  q: lenientSearchKey(ListSearchParam),
+  after: lenientSearchKey(Domain.WorkflowName),
 });
 
 /** Layout for the workflows pages: the search context ({@link WorkflowsSearch}) and nothing else. */
 export const Route = createFileRoute("/app/workflows")({
   validateSearch: Schema.toStandardSchemaV1(WorkflowsSearch),
   search: {
-    middlewares: [retainSearchParams(["state"])],
+    middlewares: [retainSearchParams(["state", "q", "after"])],
   },
   component: () => <Outlet />,
 });

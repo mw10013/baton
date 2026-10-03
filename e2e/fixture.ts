@@ -545,7 +545,7 @@ const floorOrders: readonly SeedOrder[] = [
   },
   {
     // two workflows claim the one item (its own tag plus `rush`), so nothing
-    // starts: a "Multiple workflows match" issue badge on the index, and the order page's picker
+    // starts: a "Multiple workflows match" issue badge on the index, and the order page's Workflow select
     // offers exactly those two
     n: 1011,
     lineItems: [
@@ -809,7 +809,7 @@ const floorOrders: readonly SeedOrder[] = [
     lineItems: [item("Wall clock", TAG.clock, 1, { Numerals: "Arabic" })],
   },
   {
-    // three workflows claim the item: the picker lists the three matches,
+    // three workflows claim the item: the Workflow select lists the three matches,
     // a rule, then every other workflow
     n: 1034,
     lineItems: [
@@ -818,7 +818,7 @@ const floorOrders: readonly SeedOrder[] = [
   },
   {
     // the merchant cancelled the run after a step was done: Closed, "Cancelled
-    // by you", the done step still on record, and the picker to start one
+    // by you", the done step still on record, and the Workflow select to start one
     // afresh; reconcile creates nothing on it
     n: 1035,
     lineItems: [

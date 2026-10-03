@@ -153,35 +153,34 @@ const RUN_FOR_ITEM = `select 1 from Run r
 /**
  * The SQL twin of `Domain.itemMatches`, counted: how many eligible workflows
  * carry a tag of the item `li`. On, with a task, every task's `teamId` set,
- * and a product tag, trimmed and lowercased, equal to the workflow's tag.
- * The item half's other clause, units to make above zero, is on the readers
+ * and a product tag equal to the workflow's tag, exactly. The item half's
+ * other clause, units to make above zero, is on the readers
  * ({@link MULTI_MATCH_ITEM}), where it is one comparison on the row. It
- * restates the rule and must move with it.
+ * restates the rule and must move with it. A `teamId` no D1 team carries is
+ * the window stated on `itemMatches`.
  *
- * Two stated gaps against the TypeScript side. A `teamId` no D1 team
- * carries is the window stated on `itemMatches`. And SQLite's `lower` and
- * `trim` fold ASCII and strip U+0020 only, where `toLowerCase` and `trim`
- * are Unicode-aware: a product tag with non-ASCII case ("GRAVÜR") or a
- * no-break space matches in TypeScript and not here. Workflow tags are
- * lowercased on input (`Domain.WorkflowTag`), so only the product tag's
- * spelling can differ.
+ * It starts from the item's tags and probes the unique `Workflow.tag`, the
+ * rule on `Domain.itemMatches`, so a workflow whose tag the item does not
+ * carry is never read. Counted per workflow (`distinct w.id`), as
+ * `Domain.matchedWorkflows` counts: a tag listed twice on an item is one
+ * match. Exported for the test that reads its query plan.
  *
  * `json_each` is SQLite's JSON1, compiled into Durable Object SQLite;
  * `order-repository.test.ts` is the proof.
  */
-const ITEM_MATCHES = `(select count(*) from Workflow w
+export const ITEM_MATCHES = `(select count(distinct w.id)
+  from json_each(li.productTags) tag
+  join Workflow w on w.tag = tag.value
   where w.state = 'on'
-    and exists (select 1 from WorkflowTask t where t.workflowId = w.id)
+    and json_array_length(w.tasks) > 0
     and not exists (
-      select 1 from WorkflowTask t where t.workflowId = w.id and t.teamId is null
-    )
-    and exists (
-      select 1 from json_each(li.productTags) tag
-      where lower(trim(tag.value)) = w.tag
-    ))`;
+      select 1 from json_each(w.tasks) t
+      where json_extract(t.value, '$.teamId') is null))`;
 /**
  * `Domain.multiMatchItems` in SQL: an item with units still to make, two or
- * more matches ({@link ITEM_MATCHES}), and no run in any state. Derived from
+ * more matches ({@link ITEM_MATCHES}), and no run in any state. It restates
+ * `Domain.itemMatches` from the item's side, which is the rule there: a
+ * workflow is found by its tag, never by scanning. Derived from
  * the workflows as they are now, so a Turn off, a tag edit or Change workflow
  * away and back reads correctly with no reconcile in between.
  */

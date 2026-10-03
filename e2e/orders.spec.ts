@@ -367,7 +367,7 @@ test("the merchant marks a task done, reopens it, and blocks the run", async ({
   await frame.getByRole("button", { name: "Manage" }).click();
 
   /* The drawer draws the member page's step cards (`RunSteps`). A task that
-     has a team shows it as a line, not an open picker: a filled field is
+     has a team shows it as a line, not an open select: a filled field is
      changed in the Assign team modal, which opens on the current team and
      offers to keep it. */
   await expect(frame.getByText("Step 1", { exact: true })).toBeVisible();
@@ -803,7 +803,7 @@ test("an item matching two workflows waits for the merchant to choose, then chan
   await frame.getByRole("link", { name: "#9401", exact: true }).click();
   await expect(frame.locator('s-page[heading="#9401"]')).toBeVisible();
 
-  /* An item with no run carries the picker at rest, and on a multi-match one it
+  /* An item with no run carries the Workflow select at rest, and on a multi-match one it
      offers every workflow that is on, with the two that matched first. The
      sentence says why it asks and names nothing, so it cannot drift from the
      list. The shop may carry other tests' workflows, so the count is not
@@ -817,12 +817,12 @@ test("an item matching two workflows waits for the merchant to choose, then chan
       { exact: true },
     ),
   ).toBeVisible();
-  const picker = item.getByRole("combobox", { name: "Workflow" });
-  const options = picker.getByRole("option");
+  const select = item.getByRole("combobox", { name: "Workflow" });
+  const options = select.getByRole("option");
   await expect(options.nth(0)).toHaveText(ENGRAVING);
   await expect(options.nth(1)).toHaveText(RUSH);
 
-  await picker.selectOption({ label: ENGRAVING });
+  await select.selectOption({ label: ENGRAVING });
   await item
     .getByRole("button", {
       name: Domain.VERB_LABEL.attachWorkflow.merchant,
@@ -830,7 +830,7 @@ test("an item matching two workflows waits for the merchant to choose, then chan
     })
     .click();
 
-  /* The run replaces the ask, and with it the picker: an item with a live run
+  /* The run replaces the ask, and with it the select: an item with a live run
      carries no workflow control at rest, only the header's Manage. The
      workflow's name is not on the card; it heads the Manage drawer. */
   const manage = item.getByRole("button", { name: "Manage" });
@@ -880,7 +880,7 @@ test("an item matching two workflows waits for the merchant to choose, then chan
 
   /* Cancel workflow asks first, because nothing brings the run back. After it
      the item's run is Closed, "Cancelled by you", and the item waits for the
-     merchant: the picker offers every workflow, the closed one included, as
+     merchant: the Workflow select offers every workflow, the closed one included, as
      a fresh run. */
   await item
     .getByRole("button", {
