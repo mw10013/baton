@@ -291,8 +291,7 @@ describe("OrderRepository.listOrders", () => {
           limit: 2,
           cursor: null,
           q: null,
-          position: null,
-          issues: false,
+          show: null,
           team: null,
           teams: [],
         });
@@ -302,8 +301,7 @@ describe("OrderRepository.listOrders", () => {
             limit: 2,
             cursor: first.nextCursor,
             q: null,
-            position: null,
-            issues: false,
+            show: null,
             team: null,
             teams: [],
           }),
@@ -422,8 +420,7 @@ const seedStates = Effect.gen(function* () {
  * its current task on a team with no members, which is no order issue.
  * Ready tasks on Cut hang off `#1013` and `#1014`, both choosing.
  */
-/** A position filter, or `"issues"` for the Issues filter alone. */
-type Filter = Domain.OrdersPositionFilter | "issues" | null;
+type Filter = Domain.OrdersShow | null;
 
 const seedIssues = Effect.gen(function* () {
   const repository = yield* seedStates;
@@ -466,19 +463,16 @@ const seedIssues = Effect.gen(function* () {
     { id: "team-cut", name: "Cut", memberCount: 1 },
     { id: "team-empty", name: "Polish", memberCount: 0 },
   ]);
-  /** `"issues"` is the Issues filter with no position; `issues` adds it to a position. */
   const list = (
     filter: Filter,
     team: Domain.TeamId | null = null,
     q: string | null = null,
-    issues = false,
   ) =>
     repository.listOrders({
       limit: 20,
       cursor: null,
       q: q === null ? null : Schema.decodeUnknownSync(Domain.ListSearch)(q),
-      position: filter === "issues" ? null : filter,
-      issues: issues || filter === "issues",
+      show: filter,
       team,
       teams,
     });
@@ -546,8 +540,7 @@ describe("OrderRepository.listOrders multi-match", () => {
           limit: 20,
           cursor: null,
           q: null,
-          position: null,
-          issues: false,
+          show: null,
           team: null,
           teams,
         });
@@ -567,13 +560,12 @@ describe("OrderRepository.listOrders filters", () => {
     const pages = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* seedStates;
-        const list = (position: Domain.OrdersPositionFilter | null) =>
+        const list = (show: Domain.OrdersShow | null) =>
           repository.listOrders({
             limit: 20,
             cursor: null,
             q: null,
-            position,
-            issues: false,
+            show,
             team: null,
             teams: [],
           });
@@ -650,8 +642,8 @@ describe("OrderRepository.listOrders filters", () => {
   /**
    * `Domain.OrderCounts`, checked as the rule itself: for every filter, team
    * and search, each count equals the length of the list its value would show
-   * under that team with no search, so a count never moves with the main
-   * filter, the issues filter or the search.
+   * under that team with no search, so a count never moves with the Show
+   * filter or the search.
    */
   it("a count ignores the search and the main filter and honours the team", async () => {
     const checks = await runInRepository(
@@ -664,6 +656,7 @@ describe("OrderRepository.listOrders filters", () => {
           "making",
           "made",
           "fulfilled",
+          "cancelled",
           "all",
         ] as const;
         const counted = {
@@ -680,16 +673,14 @@ describe("OrderRepository.listOrders filters", () => {
         }[] = [];
         const reads = filters.flatMap((filter) =>
           [null, aTeamId("team-cut")].flatMap((team) =>
-            [null, "1007", "1013", "item 1"].flatMap((q) =>
-              [false, true].map((issues) => ({ filter, team, q, issues })),
-            ),
+            [null, "1007", "1013", "item 1"].map((q) => ({ filter, team, q })),
           ),
         );
-        for (const { filter, team, q, issues } of reads) {
-          const { counts } = yield* list(filter, team, q, issues);
+        for (const { filter, team, q } of reads) {
+          const { counts } = yield* list(filter, team, q);
           for (const [key, shows] of Object.entries(counted))
             out.push({
-              label: `${String(filter)}/${String(team)}/${String(q)}/${String(issues)}: ${key}`,
+              label: `${String(filter)}/${String(team)}/${String(q)}: ${key}`,
               count: counts[key as keyof typeof counted],
               shown: (yield* list(shows, team)).orders.length,
             });
@@ -726,9 +717,9 @@ describe("OrderRepository.listOrders filters", () => {
         const { list } = yield* seedIssues;
         return {
           // Fulfilled, so under no Made filter, and waiting on nobody.
-          fulfilled: yield* list("made", aTeamId("team-nobody"), "1007", true),
+          fulfilled: yield* list("made", aTeamId("team-nobody"), "1007"),
           // Waiting on Cut, making, not made.
-          cut: yield* list("made", aTeamId("team-nobody"), "1013", true),
+          cut: yield* list("made", aTeamId("team-nobody"), "1013"),
         };
       }),
     );
@@ -740,7 +731,7 @@ describe("OrderRepository.listOrders filters", () => {
     const found = await runInRepository(
       Effect.gen(function* () {
         const { list } = yield* seedIssues;
-        return yield* list("made", aTeamId("team-nobody"), "item 7", true);
+        return yield* list("made", aTeamId("team-nobody"), "item 7");
       }),
     );
     deepStrictEqual(names(found), ["#1007"]);
@@ -757,22 +748,27 @@ describe("OrderRepository.listOrders filters", () => {
     deepStrictEqual(names(found), ["#1013"]);
   });
 
-  it("Making and Issues combine", async () => {
+  it("Issues holds every open order with an issue, whatever its position", async () => {
     const pages = await runInRepository(
       Effect.gen(function* () {
         const { list } = yield* seedIssues;
         return {
-          making: yield* list("making"),
+          open: yield* list(null),
           issues: yield* list("issues"),
-          both: yield* list("making", null, null, true),
         };
       }),
     );
+    // Making `#1014`, `#1013`, `#1004` and `#1003`, and not started `#1012`.
     deepStrictEqual(
-      names(pages.both),
-      names(pages.making).filter((name) => names(pages.issues).includes(name)),
+      names(pages.issues),
+      names(pages.open).filter((name) =>
+        ["#1014", "#1013", "#1012", "#1004", "#1003"].includes(name),
+      ),
     );
-    deepStrictEqual(names(pages.both), ["#1014", "#1013", "#1004", "#1003"]);
+    deepStrictEqual(
+      new Set(pages.issues.orders.map((row) => Domain.orderPosition(row))),
+      new Set(["making", "not_started"]),
+    );
   });
 
   it("a filter under a team narrows to the open orders waiting on it", async () => {
@@ -819,8 +815,7 @@ describe("OrderRepository.listOrders filters", () => {
             limit: 20,
             cursor: null,
             q: null,
-            position: null,
-            issues: false,
+            show: null,
             team: null,
             teams: [],
           }),
@@ -881,8 +876,7 @@ describe("OrderRepository.listOrders q", () => {
         limit: 20,
         cursor: null,
         q: Schema.decodeUnknownSync(Domain.ListSearch)(q),
-        position: null,
-        issues: false,
+        show: null,
         team: null,
         teams: [],
       });
@@ -968,8 +962,7 @@ describe("OrderRepository.listOrders team issues", () => {
             limit: 20,
             cursor: null,
             q: null,
-            position: null,
-            issues,
+            show: issues ? "issues" : null,
             team: null,
             teams,
           });
@@ -1068,8 +1061,7 @@ describe("OrderRepository.listOrders team", () => {
         limit: 20,
         cursor: null,
         q: null,
-        position: filter === "issues" ? null : filter,
-        issues: filter === "issues",
+        show: filter,
         team,
         teams,
       });

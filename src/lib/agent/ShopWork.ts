@@ -436,8 +436,7 @@ const make = Effect.gen(function* () {
     limit,
     cursor,
     q,
-    position,
-    issues,
+    show,
     team,
   }: Domain.ListOrdersInput) => {
     const readTeams = () => teams();
@@ -453,8 +452,7 @@ const make = Effect.gen(function* () {
           limit,
           cursor,
           q,
-          position,
-          issues,
+          show,
           team,
           teams,
         }),

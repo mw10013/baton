@@ -814,8 +814,8 @@ function RouteComponent() {
    * every state with its count, the chosen one filled.
    *
    * The strip is the state filter and the only one: every state is on it,
-   * so there is no State select and no chips, which on the orders index name
-   * filters its strip cannot show. The chosen cell is filled
+   * so there is no State select, which on the orders index holds the
+   * values its strip has no cell for. The chosen cell is filled
    * (`background="subdued"`). Not `aria-current`: `s-clickable` leaves it on
    * the host, and the native button in its shadow root, which is what a
    * screen reader reads, never gets it; the accessibility label says

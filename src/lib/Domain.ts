@@ -145,8 +145,8 @@
  * | member   | `shop.$shop.workflows.$runId`     | the item's title             | the workflow page           |
  * | member   | `shop.$shop_.lapsed`              | the shop's domain            | the lapsed page             |
  *
- * The orders index's strip and Status select speak the two order tables plus
- * Open, Issues and All (`ORDERS_FILTER_LABEL` in ShopWork); the member's
+ * The orders index's strip and Show select speak the two order tables plus
+ * Open, Issues and All (`ORDERS_SHOW_LABEL` in ShopWork); the member's
  * workflows list's strip reads its labels from `workflowsListStates.ts`.
  */
 export * from "./domain/Platform.ts";

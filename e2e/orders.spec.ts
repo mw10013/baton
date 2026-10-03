@@ -161,9 +161,9 @@ const stripCount = async (frame: FrameLocator, label: string) =>
     )?.groups?.n ?? Number.NaN,
   );
 
-/** The main filter, `Domain.OrdersPositionFilter`, labelled Status. */
-const statusSelect = (frame: FrameLocator) =>
-  frame.getByRole("combobox", { name: "Status" });
+/** The main filter, `Domain.OrdersShow`, labelled Show. */
+const showSelect = (frame: FrameLocator) =>
+  frame.getByRole("combobox", { name: "Show" });
 
 /** The search field both lists share (`ListSearchField`). */
 const searchField = (frame: FrameLocator) =>
@@ -241,13 +241,13 @@ test("the orders index searches by order number and clears back to the list", as
     frame.getByText("1 order matches #9301", { exact: true }),
   ).toBeVisible();
   await expect(stripCell(frame, "Made")).toHaveCount(0);
-  await expect(statusSelect(frame)).toBeDisabled();
+  await expect(showSelect(frame)).toBeDisabled();
 
   /* Clear search brings the strip back, with Made still chosen. */
   await frame.getByRole("button", { name: "Clear search" }).click();
   await expect(searchField(frame)).toHaveValue("");
   await expect(stripCell(frame, "Made")).toBeVisible();
-  await expect(statusSelect(frame)).toHaveValue("made");
+  await expect(showSelect(frame)).toHaveValue("made");
   await expect(
     frame.getByRole("link", { name: "#9302", exact: true }),
   ).toHaveCount(0);
@@ -794,8 +794,8 @@ test("an item matching two workflows waits for the merchant to choose, then chan
   ).toBeVisible();
   await stripCell(frame, "Issues").click();
   await expect
-    .poll(() => new URL(page.url()).searchParams.get("issues"))
-    .toBe("1");
+    .poll(() => new URL(page.url()).searchParams.get("show"))
+    .toBe("issues");
   await expect(
     frame.getByRole("link", { name: "#9401", exact: true }),
   ).toBeVisible();
@@ -1181,14 +1181,11 @@ test("each count is what choosing it shows, given the team", async ({
       frame.getByRole("button", { name: `${label}, ${String(n)}` }),
     ).toBeVisible();
 
-  /* Open first each time: it clears Issues, which a position keeps. */
   const rows = frame.locator("s-table-row");
   for (const [label, n] of counted) {
-    await stripCell(frame, "Open").click();
     await stripCell(frame, label).click();
     await expect(rows).toHaveCount(n);
   }
-  await stripCell(frame, "Open").click();
   await stripCell(frame, "Issues").click();
   await expect(
     frame.getByRole("link", { name: "#9501", exact: true }),
@@ -1209,15 +1206,13 @@ test("each count is what choosing it shows, given the team", async ({
 });
 
 /**
- * The main filter and the Issues filter combine (`Domain.ListOrdersInput`):
- * Making then Issues is the making orders with an issue, each chosen value
- * has a chip, and removing a chip clears that filter alone. `#9701` is making
- * with a Multiple workflows match; `#9702` is making with none. The team
- * keeps the test to its own orders.
+ * `Domain.OrdersShow` takes one value, and the strip and the Show select
+ * both set it: Making then Issues is Issues alone, every open order with an
+ * issue, with only the Issues cell chosen. A value with no cell, Fulfilled,
+ * leaves no cell chosen. `#9701` is making with a Multiple workflows match;
+ * `#9702` is making with none. The team keeps the test to its own orders.
  */
-test("Making and Issues combine, and a chip removes its filter", async ({
-  page,
-}) => {
+test("the strip and the Show select hold one value", async ({ page }) => {
   test.setTimeout(120_000);
 
   const MEMBER = "e2e.combine@example.com";
@@ -1267,28 +1262,25 @@ test("Making and Issues combine, and a chip removes its filter", async ({
   await expect(rows).toHaveCount(2);
 
   await stripCell(frame, "Making").click();
+  await expect(stripChosen(frame, "Making")).toBeVisible();
   await stripCell(frame, "Issues").click();
   await expect
-    .poll(() => {
-      const url = new URL(page.url());
-      return [url.searchParams.get("position"), url.searchParams.get("issues")];
-    })
-    .toEqual(["making", "1"]);
+    .poll(() => new URL(page.url()).searchParams.get("show"))
+    .toBe("issues");
   await expect(rows).toHaveCount(1);
   await expect(
     frame.getByRole("link", { name: "#9701", exact: true }),
   ).toBeVisible();
+  await expect(showSelect(frame)).toHaveValue("issues");
+  await expect(stripChosen(frame, "Issues")).toBeVisible();
+  await expect(stripChosen(frame, "Making")).toHaveCount(0);
 
-  /* Three chips: Making, Issues and the team. Removing Issues keeps Making. */
-  const chips = frame.locator("s-clickable-chip");
-  await expect(chips).toHaveCount(3);
-  await chips
-    .filter({ hasText: "Issues" })
-    .getByRole("button", { name: /remove/iu })
-    .click();
-  await expect(rows).toHaveCount(2);
-  await expect(statusSelect(frame)).toHaveValue("making");
-  await expect(chips).toHaveCount(2);
+  await showSelect(frame).selectOption({ label: "Fulfilled" });
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("show"))
+    .toBe("fulfilled");
+  for (const label of ["Open", "Not started", "Making", "Made", "Issues"])
+    await expect(stripChosen(frame, label)).toHaveCount(0);
 });
 
 /**
@@ -1323,7 +1315,7 @@ const seedTwoPages = async (team: string) => {
 const listContext = (page: Page) => {
   const url = new URL(page.url());
   return {
-    position: url.searchParams.get("position"),
+    show: url.searchParams.get("show"),
     team: url.searchParams.get("team"),
     after: url.searchParams.get("after"),
   };
@@ -1355,7 +1347,7 @@ test("the orders index keeps its filters and page across the order page", async 
   await expect(rows).toHaveCount(5);
   await expect.poll(() => listContext(page).after).not.toBeNull();
   const expected = listContext(page);
-  expect(expected.position).toBe("making");
+  expect(expected.show).toBe("making");
   expect(expected.team).not.toBeNull();
 
   /* The row's real href carries them, so open-in-new-tab does too. */
@@ -1363,7 +1355,7 @@ test("the orders index keeps its filters and page across the order page", async 
   const href = await link.evaluate((el) => el.getAttribute("href") ?? "");
   const hrefSearch = new URL(href, "http://localhost").searchParams;
   expect({
-    position: hrefSearch.get("position"),
+    show: hrefSearch.get("show"),
     team: hrefSearch.get("team"),
     after: hrefSearch.get("after"),
   }).toEqual(expected);
@@ -1435,27 +1427,27 @@ test("a filter change resets the page and replaces history", async ({
 
   await frame.getByRole("button", { name: "Go to next page" }).click();
   await expect(rows).toHaveCount(5);
-  await statusSelect(frame).selectOption({ label: "All" });
+  await showSelect(frame).selectOption({ label: "All" });
   await expect
     .poll(() => {
-      const { position, after } = listContext(page);
-      return { position, after };
+      const { show, after } = listContext(page);
+      return { show, after };
     })
-    .toEqual({ position: "all", after: null });
+    .toEqual({ show: "all", after: null });
   await expect(rows).toHaveCount(25);
 });
 
-/** `lenientSearchKey`: an unreadable filter reads as that key being off, never as an error; an old `?view=` is not a key at all. */
+/** `lenientSearchKey`: an unreadable filter reads as that key being off, never as an error; an old `?view=`, `?position=` or `?issues=` is not a key at all. */
 test("a bad filter value reads as no filter", async ({ page }) => {
   test.setTimeout(120_000);
 
   const frame = await gotoApp(
     page,
-    "app/orders?position=nonsense&issues=nonsense&view=issues&after=nonsense",
+    "app/orders?show=nonsense&position=made&issues=1&view=issues&after=nonsense",
   );
   await expect(frame.locator('s-page[heading="Orders"]')).toBeVisible();
-  await expect(statusSelect(frame)).toHaveValue("open");
-  await expect(frame.locator("s-clickable-chip")).toHaveCount(0);
+  await expect(showSelect(frame)).toHaveValue("open");
+  await expect(stripChosen(frame, "Open")).toBeVisible();
   /* `after=nonsense` is not shaped like a cursor (`Domain.OrdersCursor`), so
      it is dropped too: this is page one and there is no previous page. */
   await expect(
@@ -1571,8 +1563,8 @@ test("every issue kind counts in the Issues filter and its badge is critical", a
   await expect(frame.locator('s-page[heading="Orders"]')).toBeVisible();
   await stripCell(frame, "Issues").click();
   await expect
-    .poll(() => new URL(page.url()).searchParams.get("issues"))
-    .toBe("1");
+    .poll(() => new URL(page.url()).searchParams.get("show"))
+    .toBe("issues");
 
   const team = frame.getByRole("combobox", { name: "Team" });
   const cases = [

@@ -53,8 +53,7 @@ const listOrdersInput = {
   limit: 1,
   cursor: null,
   q: null,
-  position: null,
-  issues: false,
+  show: null,
   team: null,
 } as const;
 

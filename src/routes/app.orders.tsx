@@ -30,14 +30,14 @@ declare module "@tanstack/react-router" {
  * and the browser's Back all land on the filters and the page the merchant
  * left.
  *
- * `?position=` is the main filter (`Domain.OrdersPositionFilter`; `made` is
- * the packer's queue, `all` the whole history), and an absent `position` is
- * Open. `?issues=1` keeps the orders with an issue, and combines with the
- * position. `?q=` is the search (`Domain.searchTerm`): it searches every
+ * `?show=` is the main filter (`Domain.OrdersShow`; `made` is the packer's
+ * queue, `issues` the merchant's, `all` the whole history), and an absent
+ * `show` is Open. `?q=` is the search (`Domain.searchTerm`): it searches every
  * stored order and the filters are then ignored (`Domain.ListOrdersInput.q`),
  * though they stay in the URL so Clear search returns to them. `?team=` keeps
  * only orders waiting on that team, which is the link the team page drills in
- * with. An old `?view=` is not a key and is dropped by the first navigation.
+ * with. An old `?view=`, `?position=` or `?issues=` is not a key and is
+ * dropped by the first navigation.
  * `?after=` is the page, as the keyset cursor it starts after; an absent
  * `after` is page one.
  *
@@ -64,9 +64,7 @@ declare module "@tanstack/react-router" {
  */
 const OrdersSearch = Schema.Struct({
   q: lenientSearchKey(ListSearchParam),
-  position: lenientSearchKey(Domain.OrdersPositionFilter),
-  /** `1` is on; anything else reads as off. A number rather than `true` so the URL reads `?issues=1`. */
-  issues: lenientSearchKey(Schema.Literal(1)),
+  show: lenientSearchKey(Domain.OrdersShow),
   team: lenientSearchKey(Domain.TeamId),
   after: lenientSearchKey(Domain.OrdersCursor),
 });
@@ -80,9 +78,7 @@ const OrdersSearch = Schema.Struct({
 export const Route = createFileRoute("/app/orders")({
   validateSearch: Schema.toStandardSchemaV1(OrdersSearch),
   search: {
-    middlewares: [
-      retainSearchParams(["q", "position", "issues", "team", "after"]),
-    ],
+    middlewares: [retainSearchParams(["q", "show", "team", "after"])],
   },
   component: () => <Outlet />,
 });

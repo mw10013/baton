@@ -197,7 +197,7 @@ const MULTI_MATCH = `exists (${MULTI_MATCH_ITEM})`;
 
 /**
  * Each counted filter value's predicate over the `facts` rows of the count
- * statement in `listOrders`: `positionFilter` and `issuesFilter` restated over per-order facts
+ * statement in `listOrders`: `showFilter` restated over per-order facts
  * instead of correlated subqueries, and moving with it. `OPEN` is the
  * statement's own `where`, so `open` is every row. `issues` is the three
  * `Domain.orderIssues` elements or'd.
@@ -334,15 +334,15 @@ export class OrderRepository extends Context.Service<
       orderId: string,
     ) => Effect.Effect<Option.Option<number>, SqlError.SqlError>;
     /**
-     * `position` filters by `Domain.OrdersPositionFilter`, each SQL fragment
-     * restating a branch of `orderPosition`, and `issues` by the union of
-     * `orderIssues`' elements; each must move with the function it restates.
+     * `show` filters by `Domain.OrdersShow`, each SQL fragment restating a
+     * branch of `orderPosition` or, for Issues, the union of `orderIssues`'
+     * elements; each must move with the function it restates.
      * Open, the open positions, Issues and the `counts` aggregate spell out
      * `fulfillmentStatus <> 'FULFILLED' and cancelledAt is null` verbatim so
      * SQLite can prove they are served by the partial `ShopOrder_open_idx`,
      * which is what keeps a count from reading the shop's whole history.
      *
-     * `q` set means `position`, `issues` and `team` are not applied: search
+     * `q` set means `show` and `team` are not applied: search
      * ignores the filters (`Domain.ListOrdersInput.q`).
      *
      * `counts` follows `Domain.OrderCounts`: a count is what choosing that
@@ -354,10 +354,8 @@ export class OrderRepository extends Context.Service<
       readonly cursor: string | null;
       /** `null` is no search; otherwise `Domain.searchTerm`'s reading (`Domain.ListOrdersInput.q`). */
       readonly q: Domain.ListSearch | null;
-      /** `null` is Open (`Domain.ListOrdersInput.position`). */
-      readonly position: Domain.OrdersPositionFilter | null;
-      /** `true` keeps orders with an issue (`Domain.ListOrdersInput.issues`). */
-      readonly issues: boolean;
+      /** `null` is Open (`Domain.ListOrdersInput.show`). */
+      readonly show: Domain.OrdersShow | null;
       /** `null` is any team; an id is `Domain.ListOrdersInput.team` — waiting on that team. */
       readonly team: Domain.TeamId | null;
       /** The shop's teams, read live from D1: what `unassigned` is derived against (`Domain.OrderRow`). */
@@ -957,16 +955,14 @@ export class OrderRepository extends Context.Service<
           limit,
           cursor,
           q,
-          position,
-          issues,
+          show,
           team,
           teams,
         }: {
           readonly limit: number;
           readonly cursor: string | null;
           readonly q: Domain.ListSearch | null;
-          readonly position: Domain.OrdersPositionFilter | null;
-          readonly issues: boolean;
+          readonly show: Domain.OrdersShow | null;
           readonly team: Domain.TeamId | null;
           readonly teams: Domain.EligibleContext["teams"];
         }) {
@@ -1010,9 +1006,10 @@ export class OrderRepository extends Context.Service<
            * The open positions partition the open orders by run state alone:
            * no open and no done run is `not_started`, any open run is
            * `making`, only done runs is `made`, as `Domain.orderPosition`
-           * says.
+           * says. Issues is `OPEN` and the three `Domain.orderIssues`
+           * elements or'd, each the fragment above that restates it.
            */
-          const positionFilter = Match.value(position).pipe(
+          const showFilter = Match.value(show).pipe(
             Match.when("not_started", () =>
               sql.and([
                 OPEN,
@@ -1037,32 +1034,27 @@ export class OrderRepository extends Context.Service<
             Match.when("cancelled", () =>
               sql.literal("cancelledAt is not null"),
             ),
-            /**
-             * `null` is Open, the default, and it is open work, not
-             * everything: the negation of the `fulfilled` and `cancelled`
-             * branches above, spelled as `OPEN` so the partial index serves
-             * it. `"all"`, `"fulfilled"` and `"cancelled"` are the only values
-             * that read a shop's history ({@link Domain.OrdersPositionFilter}).
-             */
-            Match.when(null, () => sql.literal(OPEN)),
-            Match.when("all", () => sql.literal("1 = 1")),
-            Match.exhaustive,
-          );
-          /**
-           * `OPEN` and the three `Domain.orderIssues` elements or'd, each the
-           * fragment above that restates it. Combines with `positionFilter`:
-           * Making and Issues is the making orders with an issue.
-           */
-          const issuesFilter = issues
-            ? sql.and([
+            Match.when("issues", () =>
+              sql.and([
                 OPEN,
                 sql.or([
                   `(${MULTI_MATCH})`,
                   unassignedRun,
                   `exists (${BLOCKED_RUN})`,
                 ]),
-              ])
-            : sql.literal("1 = 1");
+              ]),
+            ),
+            /**
+             * `null` is Open, the default, and it is open work, not
+             * everything: the negation of the `fulfilled` and `cancelled`
+             * branches above, spelled as `OPEN` so the partial index serves
+             * it. `"all"`, `"fulfilled"` and `"cancelled"` are the only values
+             * that read a shop's history ({@link Domain.OrdersShow}).
+             */
+            Match.when(null, () => sql.literal(OPEN)),
+            Match.when("all", () => sql.literal("1 = 1")),
+            Match.exhaustive,
+          );
           /**
            * `Domain.searchTerm`'s reading. An order number matches the name
            * whole: `#10` listing `#1001` … `#1099` read as a guess, and the
@@ -1105,13 +1097,11 @@ export class OrderRepository extends Context.Service<
               ]),
           });
           /**
-           * A search reads every stored order: `position`, `issues` and
-           * `team` apply only when `q` is null (`Domain.ListOrdersInput.q`).
+           * A search reads every stored order: `show` and `team` apply only
+           * when `q` is null (`Domain.ListOrdersInput.q`).
            */
           const narrowing =
-            q === null
-              ? [positionFilter, issuesFilter, teamFilter]
-              : [searchFilter];
+            q === null ? [showFilter, teamFilter] : [searchFilter];
           const page = yield* decodeOrders(
             yield* sql`
               select ${orderColumns} from ShopOrder
@@ -1195,14 +1185,14 @@ export class OrderRepository extends Context.Service<
           );
           /**
            * `Domain.OrderCounts` in one statement over the open orders the
-           * team leaves: one count per filter value, never the main filter
-           * or the issues filter, and never the search, which ignores the filters. `run_summary` is the per-page
+           * team leaves: one count per Show value, never the Show filter
+           * itself, and never the search, which ignores the filters. `run_summary` is the per-page
            * `runRows` aggregate hoisted over every open order, one grouped
            * read of `Run` in place of a correlated `exists` per fragment;
            * `MULTI_MATCH` and `unassignedRun` stay correlated, walking items and
            * tasks. `facts` is materialised so each correlated term runs once
            * per order however many sums read it. The sums restate
-           * `positionFilter` and `issuesFilter` over those facts ({@link COUNT_FACT}) and must move
+           * `showFilter` over those facts ({@link COUNT_FACT}) and must move
            * with it.
            *
            * `run_summary` is a `cross join`, which SQLite reads as "keep this

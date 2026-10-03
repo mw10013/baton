@@ -1534,8 +1534,7 @@ const ordersPage = async (
     limit: 50,
     cursor: null,
     q: null,
-    position: null,
-    issues: false,
+    show: null,
     team: null,
   });
   return data.page.orders;

@@ -26,12 +26,6 @@ import { useSubscribedQuery } from "@/lib/useSubscribedQuery";
 
 const ORDERS_PAGE_SIZE = 25;
 
-/** The `?issues=` value a patch writes: `1` on, `undefined` off, the old value when the patch leaves it out. */
-const issuesKeyOf = (next: boolean | undefined, prev: 1 | undefined) => {
-  if (next === undefined) return prev;
-  return next ? (1 as const) : undefined;
-};
-
 /**
  * Keyed by every filter, the search and the page as well as the shop: each
  * combination is a different read, and the order page's invalidation of
@@ -40,19 +34,18 @@ const issuesKeyOf = (next: boolean | undefined, prev: 1 | undefined) => {
 const ordersQueryKey = (
   shop: string,
   q: Domain.ListSearch | null,
-  position: Domain.OrdersPositionFilter | null,
-  issues: boolean,
+  show: Domain.OrdersShow | null,
   team: Domain.TeamId | null,
   after: string | null,
-) => ["orders", shop, q, position, issues, team, after] as const;
+) => ["orders", shop, q, show, team, after] as const;
 
 /**
- * The strip, left to right: Open (the default, `?position=` left out), the
- * three open positions in the order an order moves, then Issues, which cuts
- * across them. These are the five values `Domain.OrderCounts` counts; each
- * cell is the value's name over its count and is a one-click filter. Fulfilled,
- * Cancelled and All carry no count and live only in the Status select.
- * Labels are `Domain.ORDERS_FILTER_LABEL`.
+ * The strip, left to right: Open (the default, `?show=` left out), the
+ * three open positions in the order an order moves, then Issues. These are
+ * the five Show values `Domain.OrderCounts` counts; each cell is the value's
+ * name over its count, and choosing it sets the Show filter. Fulfilled,
+ * Cancelled and All carry no count and live only in the Show select.
+ * Labels are `Domain.ORDERS_SHOW_LABEL`.
  */
 const STRIP: readonly (keyof Domain.OrderCounts)[] = [
   "open",
@@ -63,15 +56,16 @@ const STRIP: readonly (keyof Domain.OrderCounts)[] = [
 ];
 
 /**
- * The Status select's values, in its order: Open, the positions, All. Open's
- * option value is `"open"`, not `""`: an `s-option` with an empty value takes
- * its label as the value.
+ * The Show select's values, in its order: the strip's five, then the closed
+ * positions and All. Open's option value is `"open"`, not `""`: an
+ * `s-option` with an empty value takes its label as the value.
  */
-const POSITIONS: readonly (Domain.OrdersPositionFilter | null)[] = [
+const SHOW: readonly (Domain.OrdersShow | null)[] = [
   null,
   "not_started",
   "making",
   "made",
+  "issues",
   "fulfilled",
   "cancelled",
   "all",
@@ -163,44 +157,30 @@ const syncStatusText = (
 
 /**
  * What an empty list says, one line each (the `empty` slot, `CopySlot`).
- * With a team selected the list is narrowed by more than one filter, so the
- * text says that rather than claiming one value is empty. A search has its
- * own heading (see `renderOrders`).
+ * With a team selected the list is narrowed by two filters, so the text says
+ * that rather than claiming one value is empty. A search has its own heading
+ * (see `renderOrders`).
  */
 const emptyText = (
-  position: Domain.OrdersPositionFilter | null,
-  issues: boolean,
+  show: Domain.OrdersShow | null,
   team: Domain.TeamId | null,
-) => {
-  if (team !== null) return "No orders match these filters.";
-  if (!issues) return positionEmptyText(position);
-  return Match.value(position).pipe(
-    Match.when(
-      (value) => value === null || value === "all",
-      () => "No open orders have issues.",
-    ),
-    Match.when(
-      (value) => value === "fulfilled" || value === "cancelled",
-      () => "A fulfilled or cancelled order has no issues.",
-    ),
-    Match.orElse(
-      (value) =>
-        `No ${Domain.ORDERS_FILTER_LABEL[value ?? "open"].toLowerCase()} orders have issues.`,
-    ),
-  );
-};
-
-const positionEmptyText = (position: Domain.OrdersPositionFilter | null) =>
-  Match.value(position).pipe(
-    Match.when(null, () => "No open orders."),
-    Match.when("not_started", () => "No open orders are waiting to start."),
-    Match.when("making", () => "Nothing is being made."),
-    Match.when("made", () => "No orders are made and waiting to be fulfilled."),
-    Match.when("fulfilled", () => "No orders have been fulfilled yet."),
-    Match.when("cancelled", () => "No cancelled orders."),
-    Match.when("all", () => "No orders yet."),
-    Match.exhaustive,
-  );
+) =>
+  team === null
+    ? Match.value(show).pipe(
+        Match.when(null, () => "No open orders."),
+        Match.when("not_started", () => "No open orders are waiting to start."),
+        Match.when("making", () => "Nothing is being made."),
+        Match.when(
+          "made",
+          () => "No orders are made and waiting to be fulfilled.",
+        ),
+        Match.when("issues", () => "No orders have issues."),
+        Match.when("fulfilled", () => "No orders have been fulfilled yet."),
+        Match.when("cancelled", () => "No cancelled orders."),
+        Match.when("all", () => "No orders yet."),
+        Match.exhaustive,
+      )
+    : "No orders match these filters.";
 
 /**
  * The loader half of the subscribed page: the current filters, search and page, read
@@ -210,8 +190,7 @@ const positionEmptyText = (position: Domain.OrdersPositionFilter | null) =>
  */
 const OrdersLoaderInput = Schema.Struct({
   q: Schema.NullOr(Domain.ListSearch),
-  position: Schema.NullOr(Domain.OrdersPositionFilter),
-  issues: Schema.Boolean,
+  show: Schema.NullOr(Domain.OrdersShow),
   team: Schema.NullOr(Domain.TeamId),
   after: Schema.NullOr(Domain.OrdersCursor),
 });
@@ -234,10 +213,7 @@ const getLoaderData = createServerFn({ method: "GET" })
   .validator(Schema.toStandardSchemaV1(OrdersLoaderInput))
   .middleware([shopifyServerFnMiddleware])
   .handler(
-    ({
-      data: { q, position, issues, team, after },
-      context: { runEffect, session },
-    }) =>
+    ({ data: { q, show, team, after }, context: { runEffect, session } }) =>
       runEffect(
         Effect.gen(function* () {
           const client = yield* ShopAgentClient;
@@ -246,8 +222,7 @@ const getLoaderData = createServerFn({ method: "GET" })
               limit: ORDERS_PAGE_SIZE,
               cursor: after,
               q,
-              position,
-              issues,
+              show,
               team,
             }),
             usage: yield* client.getUsage(session.shop),
@@ -259,8 +234,7 @@ const getLoaderData = createServerFn({ method: "GET" })
 export const Route = createFileRoute("/app/orders/")({
   loaderDeps: ({ search }) => ({
     q: search.q ?? null,
-    position: search.position ?? null,
-    issues: search.issues === 1,
+    show: search.show ?? null,
     team: search.team ?? null,
     after: search.after ?? null,
   }),
@@ -284,12 +258,10 @@ function RouteComponent() {
   const { shop } = Route.useRouteContext();
   const {
     q = null,
-    position = null,
-    issues: issuesKey,
+    show = null,
     team = null,
     after = null,
   } = Route.useSearch();
-  const issues = issuesKey === 1;
   const navigate = useNavigate({ from: Route.fullPath });
   const router = useRouter();
   const nextPageEntry = useLocation({
@@ -314,19 +286,14 @@ function RouteComponent() {
    */
   const setFilters = (patch: {
     readonly q?: Domain.ListSearch | null;
-    readonly position?: Domain.OrdersPositionFilter | null;
-    readonly issues?: boolean;
+    readonly show?: Domain.OrdersShow | null;
     readonly team?: Domain.TeamId | null;
   }) => {
     void navigate({
       search: (prev) => ({
         ...prev,
         q: patch.q === undefined ? prev.q : (patch.q ?? undefined),
-        position:
-          patch.position === undefined
-            ? prev.position
-            : (patch.position ?? undefined),
-        issues: issuesKeyOf(patch.issues, prev.issues),
+        show: patch.show === undefined ? prev.show : (patch.show ?? undefined),
         team: patch.team === undefined ? prev.team : (patch.team ?? undefined),
         after: undefined,
       }),
@@ -368,15 +335,14 @@ function RouteComponent() {
     agent,
     identified,
   } = useSubscribedQuery({
-    queryKey: ordersQueryKey(shop, q, position, issues, team, after),
+    queryKey: ordersQueryKey(shop, q, show, team, after),
     subscribe: (stub, subscriberId) =>
       stub
         .subscribeOrders({
           limit: ORDERS_PAGE_SIZE,
           cursor: after,
           q,
-          position,
-          issues,
+          show,
           team,
           subscriberId,
         })
@@ -409,7 +375,7 @@ function RouteComponent() {
 
   const syncInFlight = data?.syncState.inFlight ?? false;
   const orders = data?.page.orders ?? [];
-  const filtered = q !== null || position !== null || issues || team !== null;
+  const filtered = q !== null || show !== null || team !== null;
   /**
    * Nothing stored and nothing filtered: the shop has never had orders here,
    * so the card is the empty state alone. Declared beside `orders` rather than
@@ -417,7 +383,7 @@ function RouteComponent() {
    * `renderOrders` all branch on it.
    */
   const neverStored = orders.length === 0 && !filtered;
-  /** The team filter's select and chip name the team its id points at. */
+  /** The team filter's select names the team its id points at. */
   const teamName = new Map(
     (data?.teams ?? []).map(({ id, name }) => [id, name]),
   );
@@ -480,19 +446,17 @@ function RouteComponent() {
   };
 
   /**
-   * The filter slot: the search, then Status and Team, then a chip per chosen
-   * value. Rendered in the table's `filters` slot when there are rows, and
-   * above the empty sentence when there are none, so the controls that
-   * emptied the list stay in reach.
+   * The filter slot: the search, then Show and Team. Rendered in the table's
+   * `filters` slot when there are rows, and above the empty sentence when
+   * there are none, so the controls that emptied the list stay in reach.
    *
    * The selects are disabled under a search, because the read ignores them
    * (`Domain.ListOrdersInput.q`) and a filter that looks set but does
    * nothing is the controls table's "never" (`Control` in `Screen.ts`). They
    * keep their values, so Clear search restores the list they describe.
    *
-   * Status is the main filter ({@link Domain.OrdersPositionFilter}), labelled
-   * because it is one axis now; Issues is not one of its values, it is the
-   * strip's last cell and a chip. Team is a select rather than buttons: the
+   * Show is the main filter ({@link Domain.OrdersShow}), and the strip sets
+   * the same value. Team is a select rather than buttons: the
    * team list is unbounded. The primary way in is the drill-in from the team
    * page, which sets `?team=`. It keeps the orders waiting on the team
    * ({@link Domain.ListOrdersInput} `team`). Under Fulfilled it can only match nothing, because a closed
@@ -502,104 +466,67 @@ function RouteComponent() {
    * aggregate on every refresh of a subscribed page, which is the cost
    * `Domain.OrderCounts` is bounded to avoid.
    *
-   * The chips name what is chosen, so a filter the strip does not show
-   * (Fulfilled, a team) is still visible, and removing one clears that
-   * filter. None under a search, for the selects' reason.
+   * No chips: both filters are selects that always show their value, so a
+   * chip per chosen value would repeat it, and the select already clears it.
    */
   const filters = (slotted: boolean) => (
-    <s-stack {...(slotted ? { slot: "filters" } : {})} gap="small-300">
-      <s-query-container>
-        <s-grid
-          gridTemplateColumns="@container (inline-size > 560px) 1fr 12rem 12rem, 1fr"
-          gap="small-300"
-          alignItems="end"
+    <s-query-container {...(slotted ? { slot: "filters" } : {})}>
+      <s-grid
+        gridTemplateColumns="@container (inline-size > 560px) 1fr 12rem 12rem, 1fr"
+        gap="small-300"
+        alignItems="end"
+      >
+        <ListSearchField
+          value={q}
+          onSubmit={(next) => {
+            setFilters({ q: next });
+          }}
+        />
+        <s-select
+          label="Show"
+          value={show ?? "open"}
+          disabled={q !== null}
+          onChange={(event) => {
+            const value = event.currentTarget.value;
+            setFilters({
+              show: SHOW.find((each) => each === value) ?? null,
+            });
+          }}
         >
-          <ListSearchField
-            value={q}
-            onSubmit={(next) => {
-              setFilters({ q: next });
-            }}
-          />
-          <s-select
-            label="Status"
-            value={position ?? "open"}
-            disabled={q !== null}
-            onChange={(event) => {
-              const value = event.currentTarget.value;
-              setFilters({
-                position: POSITIONS.find((each) => each === value) ?? null,
-              });
-            }}
-          >
-            {POSITIONS.map((each) => (
-              <s-option key={each ?? "open"} value={each ?? "open"}>
-                {Domain.ORDERS_FILTER_LABEL[each ?? "open"]}
-              </s-option>
-            ))}
-          </s-select>
-          <s-select
-            label="Team"
-            value={team ?? ANY_OPTION_VALUE}
-            disabled={q !== null}
-            onChange={(event) => {
-              const value = event.currentTarget.value;
-              setFilters({
-                team: data?.teams.find(({ id }) => id === value)?.id ?? null,
-              });
-            }}
-          >
-            <s-option value={ANY_OPTION_VALUE}>Any team</s-option>
-            {data?.teams.map(({ id, name }) => (
-              <s-option key={id} value={id}>
-                {name}
-              </s-option>
-            ))}
-            {/* A link that set `?team=` outlives the team it named. Without
+          {SHOW.map((each) => (
+            <s-option key={each ?? "open"} value={each ?? "open"}>
+              {Domain.ORDERS_SHOW_LABEL[each ?? "open"]}
+            </s-option>
+          ))}
+        </s-select>
+        <s-select
+          label="Team"
+          value={team ?? ANY_OPTION_VALUE}
+          disabled={q !== null}
+          onChange={(event) => {
+            const value = event.currentTarget.value;
+            setFilters({
+              team: data?.teams.find(({ id }) => id === value)?.id ?? null,
+            });
+          }}
+        >
+          <s-option value={ANY_OPTION_VALUE}>Any team</s-option>
+          {data?.teams.map(({ id, name }) => (
+            <s-option key={id} value={id}>
+              {name}
+            </s-option>
+          ))}
+          {/* A link that set `?team=` outlives the team it named. Without
               this the control would read "Any team" while the list stayed
               filtered to nothing. */}
-            {team !== null && !teamName.has(team) && (
-              <s-option disabled value={team}>
-                Deleted team
-              </s-option>
-            )}
-          </s-select>
-        </s-grid>
-      </s-query-container>
-      {q === null && (position !== null || issues || team !== null) && (
-        <s-stack direction="inline" gap="small-300">
-          {position !== null && (
-            <s-clickable-chip
-              removable
-              onRemove={() => {
-                setFilters({ position: null });
-              }}
-            >
-              {Domain.ORDERS_FILTER_LABEL[position]}
-            </s-clickable-chip>
+          {team !== null && !teamName.has(team) && (
+            <s-option disabled value={team}>
+              Deleted team
+            </s-option>
           )}
-          {issues && (
-            <s-clickable-chip
-              removable
-              onRemove={() => {
-                setFilters({ issues: false });
-              }}
-            >
-              {Domain.ORDERS_FILTER_LABEL.issues}
-            </s-clickable-chip>
-          )}
-          {team !== null && (
-            <s-clickable-chip
-              removable
-              onRemove={() => {
-                setFilters({ team: null });
-              }}
-            >
-              {teamName.get(team) ?? "Deleted team"}
-            </s-clickable-chip>
-          )}
-        </s-stack>
-      )}
-    </s-stack>
+        </s-select>
+      </s-grid>
+    </s-query-container>
   );
 
   const renderOrders = () => {
@@ -639,7 +566,7 @@ function RouteComponent() {
               <s-grid justifyItems="center" maxInlineSize="450px" gap="base">
                 {term === null ? (
                   <s-paragraph color="subdued">
-                    {emptyText(position, issues, team)}
+                    {emptyText(show, team)}
                   </s-paragraph>
                 ) : (
                   <>
@@ -666,10 +593,10 @@ function RouteComponent() {
         }}
       >
         {filters(true)}
-        {/* Status and Issues are two columns because each has its own
-            filter, and a column is headed by its filter's word. "Status" is
-            right for a column, which holds exactly one value per row, and
-            for the select, which picks one position. */}
+        {/* Status and Issues are two columns because they are two facts:
+            an order has one position and any number of issues. "Status" is
+            right for a column, which holds exactly one value per row; the
+            select is Show because its values are lists, not one fact. */}
         <s-table-header-row>
           <s-table-header listSlot="primary">Order</s-table-header>
           <s-table-header listSlot="secondary">Placed</s-table-header>
@@ -733,28 +660,25 @@ function RouteComponent() {
   /**
    * One cell of the strip, the metrics-card composition
    * (`refs/shopify-docs/docs/api/app-home/latest/patterns/compositions/metrics-card.md`):
-   * the value's name over its count, the whole cell a one-click filter. Open
-   * clears the position and Issues; a position sets the position and keeps
-   * Issues; Issues sets Issues and keeps the position, so Making then Issues
-   * is the making orders with an issue.
+   * the value's name over its count, the whole cell a radio button over the
+   * Show filter. Choosing a cell sets Show to its value, so at most one cell
+   * is chosen, and none under Fulfilled, Cancelled or All, which have no
+   * cell; the Show select names those. Each count is the list its cell
+   * opens ({@link Domain.OrderCounts}).
    *
-   * The chosen cells are filled (`background="subdued"`), and a chip under
-   * the filters names each one. Not `aria-current`: `s-clickable` leaves it on
-   * the host, and the native button in its shadow root, which is what a
-   * screen reader reads, never gets it; the accessibility label says
-   * "selected" instead, since that label does reach the button. A count
-   * always renders, at zero if need be,
+   * The chosen cell is filled (`background="subdued"`). Not `aria-current`:
+   * `s-clickable` leaves it on the host, and the native button in its shadow
+   * root, which is what a screen reader reads, never gets it; the
+   * accessibility label says "selected" instead, since that label does
+   * reach the button. A count always renders, at zero if need be,
    * so nothing on the strip appears or disappears with the data. No cell is
    * red: the alarm colour belongs with the remedy, on the Issues badges.
    */
   const stripCell = (key: (typeof STRIP)[number]) => {
-    const label = Domain.ORDERS_FILTER_LABEL[key];
+    const label = Domain.ORDERS_SHOW_LABEL[key];
     const n = data?.page.counts[key] ?? 0;
-    const chosen = Match.value(key).pipe(
-      Match.when("open", () => position === null && !issues),
-      Match.when("issues", () => issues),
-      Match.orElse((value) => position === value),
-    );
+    const value = key === "open" ? null : key;
+    const chosen = show === value;
     return (
       <s-clickable
         key={key}
@@ -764,13 +688,7 @@ function RouteComponent() {
         background={chosen ? "subdued" : "transparent"}
         accessibilityLabel={`${label}, ${formatNumber(n)}${chosen ? ", selected" : ""}`}
         onClick={() => {
-          setFilters(
-            Match.value(key).pipe(
-              Match.when("open", () => ({ position: null, issues: false })),
-              Match.when("issues", () => ({ issues: true })),
-              Match.orElse((value) => ({ position: value })),
-            ),
-          );
+          setFilters({ show: value });
         }}
       >
         <s-grid gap="small-300">

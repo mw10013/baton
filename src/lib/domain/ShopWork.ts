@@ -24,10 +24,10 @@
  * | block         | a person's hold on a run                                                                                   | `runIsBlocked`                                                                                     | Blocked                                                     |
  * | note          | free text on a run                                                                                         | `RunNote`                                                                                          | Note                                                        |
  * | draft         | the workflow's edited copy of its tasks, from Edit until Apply or Discard; one or none                     | `WorkflowDraft`                                                                                    | Draft                                                       |
- * | filter        | one axis of a list with a fixed set of values; the list shows the rows matching every chosen filter        | `OrdersPositionFilter`, `WorkflowsListState`, `WorkflowsIndexState`, `ListOrdersInput`, `RunQuery` | the axis name (Status, Team) or the value (Making, Ready)   |
+ * | filter        | one axis of a list with a fixed set of values; the list shows the rows matching every chosen filter        | `OrdersShow`, `WorkflowsListState`, `WorkflowsIndexState`, `ListOrdersInput`, `RunQuery`           | the axis name (Show, Team) or the value (Making, Ready)     |
  * | count         | how many rows a filter value would show, given the other filters and never the search                      | `OrderCounts`, `RunListCounts`                                                                     | the number beside the value                                 |
  * | search        | free text matched against a row's order number, item title, variant title and SKU; finds, does not narrow  | `ListSearch`, `searchTerm`                                                                         | Search by order number or item                              |
- * | default       | what a list shows with no filter and no search                                                             | `null` position (Open); `DEFAULT_WORKFLOWS_LIST_STATE`                                             | Open; Started by you                                        |
+ * | default       | what a list shows with no filter and no search                                                             | `null` show (Open); `DEFAULT_WORKFLOWS_LIST_STATE`                                                 | Open; Started by you                                        |
  * | reconcile     | make an order's runs agree with the order and the eligible workflows; idempotent                           | `reconcileItem`, `RunRepository.reconcileOrder`                                                    | (none)                                                      |
  * | reconcile all | reconcile every stored open, paid order once, after anything that changes which workflows are eligible     | `ShopWorkAgent.reconcileAllNow`, `RunRepository.reconcileAll`                                      | (none)                                                      |
  * | eligible      | a workflow that is on, has a task, and has every task on a team; only an eligible workflow creates runs    | `workflowIsEligible`, `EligibleContext`                                                            | (none): Needs a team names the fault                        |
@@ -36,12 +36,12 @@
  * | units to make | what is left to make on an item: Shopify's current quantity                                                | `unitsToMake`                                                                                      | the quantity on the card                                    |
  *
  * Each list's main filter is keyed in the URL by its axis's word:
- * `?position=` on the orders index (`OrdersPositionFilter`), `?state=` on the
+ * `?show=` on the orders index (`OrdersShow`), `?state=` on the
  * workflows index (`WorkflowsIndexState`) and on the member's workflows list
  * (`WorkflowsListState`). The literal is the label's words (`started_by_you`
  * reads Started by you), so a URL a person reads names what the screen shows.
- * The orders index's Issues and Team are filters of their own (`?issues=`,
- * `?team=`), and a search (`?q=`) ignores every filter.
+ * The orders index's Team is a filter of its own (`?team=`), and a search
+ * (`?q=`) ignores every filter.
  *
  * "run" is an implementation noun a merchant or member would have to learn;
  * the merchant already has the item and its workflow (Change workflow replaces
@@ -258,15 +258,15 @@ export const WORKFLOW_STATE_LABEL = { on: "On", off: "Off" } as const;
  * two workflow states ({@link workflowIsOn}, labelled by
  * {@link WORKFLOW_STATE_LABEL}). Keyed `?state=` because each value is a
  * workflow state. All is the default and is not a value: it is the key left
- * out, as Open is `?position=` left out on the orders index
- * ({@link OrdersPositionFilter}).
+ * out, as Open is `?show=` left out on the orders index
+ * ({@link OrdersShow}).
  */
 export const WorkflowsIndexState = Schema.Literals(["on", "off"]);
 export type WorkflowsIndexState = typeof WorkflowsIndexState.Type;
 
 /**
  * The vocabulary's order-positions screen column: the orders index's Status
- * badge and its position filter values. "Not started" is also
+ * badge and the position values of its Show filter ({@link OrdersShow}). "Not started" is also
  * {@link RUN_UNSTARTED_LABEL}, the merchant's word for an open run nobody has
  * touched: it is the same fact one level down, and the two never render on
  * one row (the orders index shows positions, the order page shows runs).
@@ -291,7 +291,7 @@ export const WORKFLOW_FAULT_LABEL = {
 /**
  * The vocabulary's order-issues screen column: the badges in the orders index's
  * Issues column. A row of filter buttons used to carry these words too; now
- * only the badges do, and the Issues filter holds all of them. `unassigned`
+ * only the badges do, and the Show filter's Issues value holds all of them. `unassigned`
  * reads {@link WORKFLOW_FAULT_LABEL}, so the fault has one label on every
  * screen.
  */
@@ -302,23 +302,22 @@ export const ORDER_ISSUE_LABEL = {
 } as const satisfies Record<OrderIssue, string>;
 
 /**
- * The orders index's filter labels: Open, the positions of
- * {@link ORDER_POSITION_LABEL} and All, in the Status select's order
- * ({@link OrdersPositionFilter}), and Issues, the filter of its own
- * ({@link ListOrdersInput} `issues`). Not a vocabulary table: Open and All
- * carry no rule of their own, and the two vocabulary tables cover the words.
- * `open` keys the default, which is `?position=` left out.
+ * The labels of the orders index's Show filter ({@link OrdersShow}), in the
+ * select's order: Open, the open positions of {@link ORDER_POSITION_LABEL},
+ * Issues, the closed positions, All. Not a vocabulary table: Open, Issues and
+ * All carry no rule of their own, and the two vocabulary tables cover the
+ * words. `open` keys the default, which is `?show=` left out.
  */
-export const ORDERS_FILTER_LABEL = {
+export const ORDERS_SHOW_LABEL = {
   open: "Open",
   not_started: ORDER_POSITION_LABEL.not_started,
   making: ORDER_POSITION_LABEL.making,
   made: ORDER_POSITION_LABEL.made,
+  issues: "Issues",
   fulfilled: ORDER_POSITION_LABEL.fulfilled,
   cancelled: ORDER_POSITION_LABEL.cancelled,
   all: "All",
-  issues: "Issues",
-} as const satisfies Record<OrdersPositionFilter | "open" | "issues", string>;
+} as const satisfies Record<OrdersShow | "open", string>;
 
 /**
  * The vocabulary's verbs, as the action structs name them ({@link RunActions},
@@ -1355,33 +1354,37 @@ export const OrderPosition = Schema.Literals([
 export type OrderPosition = typeof OrderPosition.Type;
 
 /**
- * The orders index's main filter, on the order's position ({@link orderPosition}):
- * `null` is Open, the default, {@link orderIsOpen}; a position is itself; `"all"` is
- * every stored order, cancelled included, and the only value that reads both open
- * and closed orders. Keyed `?position=` in the URL (`OrdersSearch` in `app.orders.tsx`)
- * because that is the axis's word; the column the merchant reads is headed Status,
- * which is the screen's word for one value per row and not a Baton key
- * (the vocabulary's entry test on `status`).
+ * The orders index's main filter, labelled Show: which orders the list holds.
+ * `null` is Open, the default, {@link orderIsOpen}; a position
+ * ({@link orderPosition}) is itself; `"issues"` is every open order with at
+ * least one {@link orderIssues} element; `"all"` is every stored order,
+ * cancelled included, and the only value that reads both open and closed
+ * orders. Keyed `?show=` in the URL (`OrdersSearch` in `app.orders.tsx`).
+ *
+ * **One value at a time; the values do not combine.** The axis is not one
+ * fact about an order but the list the merchant wants, so its word is the
+ * act, Show, not a fact word like Status, which would not cover Issues, Open
+ * or All. Issues is a value rather than a filter of its own because the
+ * merchant fixing issues wants every order that has one, whatever its
+ * position, and each row's Status badge already says the position; Made and
+ * Issues as two filters could only add empty lists. Team does combine
+ * ({@link ListOrdersInput} `team`); a search ignores both.
  *
  * Open is the default because retention keeps a year of orders
  * (`ShopLimits.orderRetentionDays` in Platform) and a merchant opening Orders
- * is looking at the bench, not at the year. `"all"` is not an
- * `OrderPosition`: nothing derives it from an order.
- *
- * Issues is not a value here: an issue crosses the three open positions, so it is its
- * own filter, {@link ListOrdersInput} `issues`. The two combine (Making and Issues is a
- * legal, often empty, list), and so does Team; a search ignores all three.
- * The labels are {@link ORDERS_FILTER_LABEL}.
+ * is looking at the bench, not at the year. `"issues"` and `"all"` are not
+ * an `OrderPosition`: nothing derives them from an order's runs alone.
+ * The labels are {@link ORDERS_SHOW_LABEL}.
  */
-export const OrdersPositionFilter = Schema.Union([
+export const OrdersShow = Schema.Union([
   OrderPosition,
-  Schema.Literal("all"),
+  Schema.Literals(["issues", "all"]),
 ]);
-export type OrdersPositionFilter = typeof OrdersPositionFilter.Type;
+export type OrdersShow = typeof OrdersShow.Type;
 
 /**
  * **An issue is an open order that will not move until the merchant acts**:
- * the orders index's Issues filter and Issues column. The one definition is
+ * the orders index's Issues value of its Show filter and its Issues column. The one definition is
  * {@link orderIssues}; the SQL predicates in `OrderRepository.listOrders`
  * restate each element and must move with it.
  *
@@ -1577,7 +1580,7 @@ export const ListOrdersInput = Schema.Struct({
    * The search, read by {@link searchTerm}: `null` is no search.
    *
    * **Search ignores the filters.** When `q` is not null the read is over
-   * every stored order and `position`, `issues` and `team` are not applied:
+   * every stored order and `show` and `team` are not applied:
    * what the merchant typed is the whole question, and a search crossed with
    * a filter meant "no match under Made" sent them to All to type it again.
    * The counts ignore `q` in turn ({@link OrderCounts}).
@@ -1586,18 +1589,12 @@ export const ListOrdersInput = Schema.Struct({
    */
   q: Schema.NullOr(ListSearch),
   /**
-   * {@link OrdersPositionFilter}: `null` is Open, `"all"` is every order, and
-   * a position has a SQL form in `OrderRepository.listOrders` that restates
-   * `orderPosition`. Always send the key, for the same reason as `team`.
+   * {@link OrdersShow}: `null` is Open, `"all"` is every order. A position
+   * and `"issues"` each have a SQL form in `OrderRepository.listOrders` that
+   * restates `orderPosition` or `orderIssues`. Always send the key, for the
+   * same reason as `team`.
    */
-  position: Schema.NullOr(OrdersPositionFilter),
-  /**
-   * `true` keeps only orders with at least one {@link orderIssues} element,
-   * restated in SQL in `OrderRepository.listOrders`. Combines with
-   * `position` and `team`: Making and Issues is the making orders that have
-   * an issue.
-   */
-  issues: Schema.Boolean,
+  show: Schema.NullOr(OrdersShow),
   /**
    * `null` is any team; an id keeps only orders waiting on that team: an
    * open order with an open, unblocked run whose current task is on the
@@ -1718,7 +1715,7 @@ export const orderPosition = ({
  * Shop work's reading of an order, from {@link orderIsOpen} in Orders: its
  * {@link OrderIssue}s, in
  * `OrderIssue` order; `[]` for a closed order. The one definition: the orders index's
- * Issues column renders this result, and its Issues filter is this result's
+ * Issues column renders this result, and Show: Issues is this result's
  * non-emptiness, restated in SQL in `OrderRepository.listOrders`.
  */
 export const orderIssues = ({
@@ -1783,21 +1780,20 @@ export const runCounts = (runs: readonly Run[]): RunCounts =>
   );
 
 /**
- * The counts on the orders index's strip ({@link OrdersPositionFilter} and the
- * Issues filter): `open` is Open, `issues` is Issues, and the three positions
- * are theirs.
+ * The counts on the orders index's strip, one per {@link OrdersShow} value
+ * that reads open orders only: `open` is Open, `issues` is Issues, and the
+ * three open positions are theirs.
  *
  * **A count is what choosing that value would show, given the team.** Counts
  * honour the team select and nothing else: not the search, because the
- * search ignores the filters ({@link ListOrdersInput} `q`); and a count
- * ignores the main filter and the issues filter, because it describes the
- * list the merchant can switch to; it honours the team and nothing else. So
+ * search ignores the filters ({@link ListOrdersInput} `q`); and not the Show
+ * filter, because a count describes the list the merchant can switch to. So
  * the numbers move only when the team changes, which is what a merchant
  * expects a team select to do. `open` is the sum of the three positions.
  *
  * All are computed over open orders only. They are read through the partial
  * index over unfulfilled, uncancelled orders, so a count costs one row per
- * open order, not one per order ever stored. So Fulfilled and All carry no
+ * open order, not one per order ever stored. So Fulfilled, Cancelled and All carry no
  * count: on a shop with years of history that would be a full-table read on
  * every refresh of a subscribed page.
  *
@@ -1852,7 +1848,7 @@ export type SubscribeOrderInput = typeof SubscribeOrderInput.Type;
  * {@link WorkflowPageData}, {@link WorkflowsListData}, {@link RunPageData}):
  * `Data` is TanStack's own word for what a screen reads (`loaderData`,
  * `useLoaderData`), and a `View` suffix would read as the retired word for a
- * filter ({@link OrdersPositionFilter}, {@link WorkflowsListState}). The structs carry no
+ * filter ({@link OrdersShow}, {@link WorkflowsListState}). The structs carry no
  * rule of their own, so a generic suffix is right and the screen name carries
  * the meaning.
  */

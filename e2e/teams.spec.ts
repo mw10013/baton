@@ -194,7 +194,7 @@ test("the team page drills in to the orders waiting on that team", async ({
   await expect(frame.locator('s-page[heading="Orders"]')).toBeVisible();
 
   /* The select's value is the id the link carried — which is what makes the
-     control read as the active chip rather than as "Any team" over a
+     control read as the chosen team rather than as "Any team" over a
      filtered list. `toHaveValue` cannot answer this: `s-select` is a custom
      element, not an `<select>`, so its value is read off the element. */
   const team = new URL(page.url()).searchParams.get("team");
