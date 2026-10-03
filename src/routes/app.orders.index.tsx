@@ -446,7 +446,9 @@ function RouteComponent() {
   };
 
   /**
-   * The filter slot: the search, then Show and Team. Rendered in the table's
+   * The filter slot: Show, the search, then Team, labels hidden on screen
+   * (the controls table's row for a filter beside a search, `Control` in
+   * `Screen.ts`). Rendered in the table's
    * `filters` slot when there are rows, and above the empty sentence when
    * there are none, so the controls that emptied the list stay in reach.
    *
@@ -466,67 +468,85 @@ function RouteComponent() {
    * aggregate on every refresh of a subscribed page, which is the cost
    * `Domain.OrderCounts` is bounded to avoid.
    *
+   * In the table's slot the box adds `small-200` above and at the sides:
+   * `s-table` pads its filters slot by half the card's `base`, so without it
+   * the row sat 8px under the strip and 8px left of it, and the gap read as
+   * tight beside a filled cell. With it both states measure the same, 16px
+   * under the strip and flush with its cells.
+   *
    * No chips: both filters are selects that always show their value, so a
    * chip per chosen value would repeat it, and the select already clears it.
    */
   const filters = (slotted: boolean) => (
-    <s-query-container {...(slotted ? { slot: "filters" } : {})}>
-      <s-grid
-        gridTemplateColumns="@container (inline-size > 560px) 1fr 12rem 12rem, 1fr"
-        gap="small-300"
-        alignItems="end"
-      >
-        <ListSearchField
-          value={q}
-          onSubmit={(next) => {
-            setFilters({ q: next });
-          }}
-        />
-        <s-select
-          label="Show"
-          value={show ?? "open"}
-          disabled={q !== null}
-          onChange={(event) => {
-            const value = event.currentTarget.value;
-            setFilters({
-              show: SHOW.find((each) => each === value) ?? null,
-            });
-          }}
+    <s-box
+      {...(slotted
+        ? {
+            slot: "filters",
+            paddingBlockStart: "small-200",
+            paddingInline: "small-200",
+          }
+        : {})}
+    >
+      <s-query-container>
+        <s-grid
+          gridTemplateColumns="@container (inline-size > 560px) 10rem 1fr 12rem, 1fr"
+          gap="small-300"
+          alignItems="end"
         >
-          {SHOW.map((each) => (
-            <s-option key={each ?? "open"} value={each ?? "open"}>
-              {Domain.ORDERS_SHOW_LABEL[each ?? "open"]}
-            </s-option>
-          ))}
-        </s-select>
-        <s-select
-          label="Team"
-          value={team ?? ANY_OPTION_VALUE}
-          disabled={q !== null}
-          onChange={(event) => {
-            const value = event.currentTarget.value;
-            setFilters({
-              team: data?.teams.find(({ id }) => id === value)?.id ?? null,
-            });
-          }}
-        >
-          <s-option value={ANY_OPTION_VALUE}>Any team</s-option>
-          {data?.teams.map(({ id, name }) => (
-            <s-option key={id} value={id}>
-              {name}
-            </s-option>
-          ))}
-          {/* A link that set `?team=` outlives the team it named. Without
+          <s-select
+            label="Show"
+            labelAccessibilityVisibility="exclusive"
+            value={show ?? "open"}
+            disabled={q !== null}
+            onChange={(event) => {
+              const value = event.currentTarget.value;
+              setFilters({
+                show: SHOW.find((each) => each === value) ?? null,
+              });
+            }}
+          >
+            {SHOW.map((each) => (
+              <s-option key={each ?? "open"} value={each ?? "open"}>
+                {Domain.ORDERS_SHOW_LABEL[each ?? "open"]}
+              </s-option>
+            ))}
+          </s-select>
+          <ListSearchField
+            value={q}
+            onSubmit={(next) => {
+              setFilters({ q: next });
+            }}
+          />
+          <s-select
+            label="Team"
+            labelAccessibilityVisibility="exclusive"
+            value={team ?? ANY_OPTION_VALUE}
+            disabled={q !== null}
+            onChange={(event) => {
+              const value = event.currentTarget.value;
+              setFilters({
+                team: data?.teams.find(({ id }) => id === value)?.id ?? null,
+              });
+            }}
+          >
+            <s-option value={ANY_OPTION_VALUE}>Any team</s-option>
+            {data?.teams.map(({ id, name }) => (
+              <s-option key={id} value={id}>
+                {name}
+              </s-option>
+            ))}
+            {/* A link that set `?team=` outlives the team it named. Without
               this the control would read "Any team" while the list stayed
               filtered to nothing. */}
-          {team !== null && !teamName.has(team) && (
-            <s-option disabled value={team}>
-              Deleted team
-            </s-option>
-          )}
-        </s-select>
-      </s-grid>
-    </s-query-container>
+            {team !== null && !teamName.has(team) && (
+              <s-option disabled value={team}>
+                Deleted team
+              </s-option>
+            )}
+          </s-select>
+        </s-grid>
+      </s-query-container>
+    </s-box>
   );
 
   const renderOrders = () => {

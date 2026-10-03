@@ -110,6 +110,7 @@ export type CopySlot = typeof CopySlot.Type;
  * | leaving for another screen from body copy                                         | a link whose text is the screen's heading, only when the act is not on this screen                                | "here"; a link inside an empty sentence for an on-screen act |
  * | a verb that replaces a run with a record on it (started, done, blocked, or a note) | the verb's modal carries the consequence as its `confirm` slot: what is lost; nothing when the run is untouched   | a second modal; a warning on an untouched run                |
  * | a filter that can be off                                                          | a select whose first option is "Any <noun>" with {@link ANY_OPTION_VALUE} as its value                            | an option with an empty value                                |
+ * | a filter beside a search                                                          | a select with its label hidden on screen and kept for screen readers; the main filter left of the search          | a visible label over the row                                 |
  */
 export const Control = Schema.Literals([
   "button",

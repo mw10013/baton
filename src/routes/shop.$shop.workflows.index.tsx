@@ -779,6 +779,9 @@ function RouteComponent() {
    * read as Any team (`team` above), so unlike the orders index there is no
    * Deleted team option: the list under Any team really is every team.
    *
+   * Its label is hidden on screen and kept for screen readers (the controls
+   * table's row for a filter beside a search).
+   *
    * Rendered only for a member on more than one team: with one team there is
    * no choice to make, whereas a merchant on the orders index always has one.
    * Disabled under a search, which ignores the team (`Domain.RunQuery`): a
@@ -790,6 +793,7 @@ function RouteComponent() {
     teams.length > 1 ? (
       <s-select
         label="Team"
+        labelAccessibilityVisibility="exclusive"
         value={team ?? ANY_OPTION_VALUE}
         disabled={q !== null}
         onChange={(event) => {
