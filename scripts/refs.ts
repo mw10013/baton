@@ -143,6 +143,12 @@ const REFS: readonly Ref[] = [
     version: { from: ".", dep: "wrangler" },
   },
   {
+    name: "cf",
+    repo: "cloudflare/cf",
+    tag: "cf@{v}",
+    version: { from: ".", dep: "cf" },
+  },
+  {
     name: "agents",
     repo: "cloudflare/agents",
     tag: "agents@{v}",
@@ -193,7 +199,7 @@ const REFS: readonly Ref[] = [
     name: "shopify-cli",
     repo: "Shopify/cli",
     tag: "{v}",
-    pin: "4.7.1",
+    pin: "4.8.4",
   },
   {
     name: "shopify-app-template",

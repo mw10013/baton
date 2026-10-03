@@ -596,12 +596,24 @@ const buildWebhookTasks = (section: DocSection, source: SectionSource) =>
       );
     }
     const dataUrl = `${canonicalPrefix}.data`;
-    const raw = yield* requestText(dataUrl);
+    const versioned = yield* requestText(dataUrl);
+    // A versioned webhooks page that Shopify has not published yet answers its
+    // `.data` URL with a React Router SingleFetchRedirect to `latest` instead of
+    // the topic payload (seen with 2026-10, whose page 301s to latest while
+    // latest itself already serves apiVersion 2026-10). Follow it so the fetch
+    // tracks the pinned version's content rather than failing to decode.
+    const redirected = versioned.includes("SingleFetchRedirect");
+    const effectiveDataUrl = redirected
+      ? `${ORIGIN}/docs/api/webhooks/latest.data`
+      : dataUrl;
+    if (redirected)
+      yield* Console.log(`  ${dataUrl} redirects; using ${effectiveDataUrl}`);
+    const raw = redirected ? yield* requestText(effectiveDataUrl) : versioned;
     const topics = yield* Effect.try({
       try: () => readWebhookTopics(decodeReactRouterData(JSON.parse(raw))),
       catch: (cause) =>
         new ShopifyDocsError({
-          message: `Failed to decode webhooks data ${dataUrl}`,
+          message: `Failed to decode webhooks data ${effectiveDataUrl}`,
           cause,
         }),
     });
@@ -613,13 +625,21 @@ const buildWebhookTasks = (section: DocSection, source: SectionSource) =>
         kind: "Webhook",
         section,
         docUrl: canonicalPrefix,
-        content: renderWebhookTopicsMarkdown(canonicalPrefix, dataUrl, topics),
+        content: renderWebhookTopicsMarkdown(
+          canonicalPrefix,
+          effectiveDataUrl,
+          topics,
+        ),
       },
       ...topics.map((topic): DocTask => ({
         kind: "Webhook",
         section,
         docUrl: toWebhookTopicDocUrl(canonicalPrefix, topic.name),
-        content: renderWebhookTopicMarkdown(canonicalPrefix, dataUrl, topic),
+        content: renderWebhookTopicMarkdown(
+          canonicalPrefix,
+          effectiveDataUrl,
+          topic,
+        ),
       })),
     ] satisfies readonly DocTask[];
   });
