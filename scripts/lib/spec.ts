@@ -235,17 +235,37 @@ export const expand = <TeamId>(
   );
 };
 
-/** Where the JSDoc before `export const <name> =` starts and ends, or a message saying why there is none. */
+/**
+ * Where the JSDoc before `export const <name> =` or `export class <name>`
+ * starts and ends, or a message saying why there is none. A table on a
+ * declaration of neither form (a class method, such as `private publish(`
+ * on `ShopAgent`) passes `anchor`, the declaration's text from its line
+ * start, which must occur exactly once in `source`: two matches fail rather
+ * than take the first.
+ */
 const jsdocBefore = (
   source: string,
   name: string,
+  anchor?: string,
 ): Result.Result<
   { readonly start: number; readonly end: number },
   ParseError
 > => {
-  const at = [`\nexport const ${name} =`, `\nexport class ${name} `]
-    .map((declaration) => source.indexOf(declaration))
-    .find((index) => index !== -1);
+  if (anchor !== undefined) {
+    const first = source.indexOf(anchor);
+    if (first === -1 || source.includes(anchor, first + 1))
+      return Result.fail(
+        new ParseError({
+          message: `${name}: \`${anchor.trim()}\` occurs ${first === -1 ? "nowhere" : "more than once"}; expected exactly once`,
+        }),
+      );
+  }
+  const at =
+    anchor === undefined
+      ? [`\nexport const ${name} =`, `\nexport class ${name} `]
+          .map((declaration) => source.indexOf(declaration))
+          .find((index) => index !== -1)
+      : source.indexOf(anchor);
   if (at === undefined)
     return Result.fail(
       new ParseError({
@@ -317,9 +337,9 @@ interface TableLines {
 
 /**
  * Find the JSDoc immediately preceding `export const <name> =` in `source`
- * and take its markdown table number `nth` (0 is the first). The header must
- * equal `expected`, and the line after it must be the separator. Shared by
- * the action matrices, the data-model tables and the reconcile tables, so all
+ * (or `anchor`, {@link jsdocBefore}) and take its markdown table number
+ * `nth` (0 is the first). The header must equal `expected`, and the line
+ * after it must be the separator. Shared by every parsed table, so all
  * locate and frame their table the same way.
  */
 const nthTable = (
@@ -327,8 +347,9 @@ const nthTable = (
   name: string,
   expected: readonly string[],
   nth: number,
+  anchor?: string,
 ): Result.Result<TableLines, ParseError> =>
-  Result.flatMap(jsdocBefore(source, name), ({ start, end }) => {
+  Result.flatMap(jsdocBefore(source, name, anchor), ({ start, end }) => {
     const firstLine = source.slice(0, start).split("\n").length;
     const lines = source
       .slice(start, end)
@@ -2487,3 +2508,195 @@ export const parseControls = (
         }),
       ),
   );
+
+/** One parsed row of a {@link parsePinnedTable} table, per title of its `pinned by`. */
+export interface PinnedTableRow {
+  readonly line: number;
+  /** Every cell but `pinned by`, by column. */
+  readonly cells: Readonly<Record<string, string>>;
+  readonly pinnedBy: string;
+}
+
+/** Where a {@link parsePinnedTable} table is and what its cells may hold. */
+interface PinnedTable {
+  /** The symbol whose JSDoc holds the table, and the messages' prefix. */
+  readonly name: string;
+  /** The table in the messages, after `name`. */
+  readonly label: string;
+  /** The header, `pinned by` excluded; it is always the last column. */
+  readonly columns: readonly string[];
+  /** The columns held to a closed list, and the list. */
+  readonly words: Readonly<Record<string, readonly string[]>>;
+  readonly nth: number;
+  readonly anchor?: string;
+}
+
+/**
+ * The shape the publish and subscribe tables share: free-text columns that
+ * must be non-empty, some columns held to a closed word list, and a last
+ * `pinned by` column of one or more titles separated by `; `
+ * ({@link pinnedTitles}), with a row yielded per title. Fails with a message
+ * naming the line and the offending cell.
+ */
+const parsePinnedTable =
+  ({ name, label, columns, words, nth, anchor }: PinnedTable) =>
+  (source: string): Result.Result<readonly PinnedTableRow[], ParseError> =>
+    Result.flatMap(
+      nthTable(source, name, [...columns, "pinned by"], nth, anchor),
+      ({ body }) =>
+        Result.map(
+          Result.all(
+            body.map(
+              ({
+                line,
+                text,
+              }): Result.Result<readonly PinnedTableRow[], ParseError> => {
+                const fail = (message: string) =>
+                  Result.fail(
+                    new ParseError({
+                      message: `${name} ${label}, line ${String(line)}: ${message}`,
+                    }),
+                  );
+                const values = cellsOf(text);
+                if (values.length !== columns.length + 1)
+                  return fail(
+                    `${String(values.length)} cells, expected ${String(columns.length + 1)}: ${text}`,
+                  );
+                const cells = Object.fromEntries(
+                  columns.map((column, index) => [column, values[index] ?? ""]),
+                );
+                const empty = columns.find((column) => cells[column] === "");
+                if (empty !== undefined) return fail(`empty ${empty}`);
+                const unknown = Object.entries(words).find(
+                  ([column, list]) => !list.includes(cells[column] ?? ""),
+                );
+                if (unknown !== undefined)
+                  return fail(
+                    `unknown ${unknown[0]} "${cells[unknown[0]] ?? ""}"; expected one of: ${unknown[1].join(", ")}`,
+                  );
+                const pinnedBy = values[columns.length] ?? "";
+                if (pinnedBy === "") return fail("empty pinned by");
+                return Result.succeed(
+                  pinnedTitles(pinnedBy).map((title) => ({
+                    line,
+                    cells,
+                    pinnedBy: title,
+                  })),
+                );
+              },
+            ),
+          ),
+          (rows) => rows.flat(),
+        ),
+    );
+
+/** The `side` cells of the cycle table on `Subscription` in Platform: where a step runs. */
+export const CYCLE_SIDE_WORDS = ["object", "tab", "both", "Worker"] as const;
+
+/**
+ * Read the cycle table, the first table in the JSDoc on `Subscription` in
+ * `source` (`src/lib/domain/Platform.ts`). The header is `step | side |
+ * symbol | rule | pinned by`; `side` is one of {@link CYCLE_SIDE_WORDS}.
+ */
+export const parseSubscriptionCycle = parsePinnedTable({
+  name: "Subscription",
+  label: "cycle",
+  columns: ["step", "side", "symbol", "rule"],
+  words: { side: CYCLE_SIDE_WORDS },
+  nth: 0,
+});
+
+/** The `role` cells of the delivery table on `Subscription`. */
+export const DELIVERY_ROLE_WORDS = ["either", "merchant", "member"] as const;
+
+/** The `receives` cells of the delivery table on `Subscription`. */
+export const RECEIVES_WORDS = ["yes", "no"] as const;
+
+/**
+ * Read the delivery table, the second table in the JSDoc on `Subscription`
+ * in `source`. The header is `role | subscription | scope | receives |
+ * pinned by`; `role` is one of {@link DELIVERY_ROLE_WORDS} and `receives`
+ * one of {@link RECEIVES_WORDS}.
+ */
+export const parseSubscriptionDelivery = parsePinnedTable({
+  name: "Subscription",
+  label: "delivery",
+  columns: ["role", "subscription", "scope", "receives"],
+  words: { role: DELIVERY_ROLE_WORDS, receives: RECEIVES_WORDS },
+  nth: 1,
+});
+
+/** The `orders` cells of the sites table on `ShopAgent.publish`: the orders half of the scope. */
+export const SITE_ORDERS_WORDS = ["all", "the order"] as const;
+
+/** The `teams` cells of the sites table on `ShopAgent.publish`: the teams half of the scope. */
+export const SITE_TEAMS_WORDS = [
+  "all",
+  "the order's teams",
+  "before ∪ after",
+  "the order's teams, read before the write",
+  "(none)",
+] as const;
+
+/** The `when` cells of the sites table on `ShopAgent.publish`. */
+export const SITE_WHEN_WORDS = [
+  "changed",
+  "written",
+  "always",
+  "swept",
+] as const;
+
+/**
+ * Read the sites table out of the JSDoc on `ShopAgent.publish` in `source`
+ * (`src/lib/ShopAgent.ts`), a private method, so the JSDoc is found by its
+ * declaration (`private publish(`, {@link jsdocBefore}). The header is
+ * `trigger | orders | teams | when | pinned by`; `orders`, `teams` and
+ * `when` are held to {@link SITE_ORDERS_WORDS}, {@link SITE_TEAMS_WORDS}
+ * and {@link SITE_WHEN_WORDS}.
+ */
+export const parsePublishSites = parsePinnedTable({
+  name: "publish",
+  label: "sites",
+  columns: ["trigger", "orders", "teams", "when"],
+  words: {
+    orders: SITE_ORDERS_WORDS,
+    teams: SITE_TEAMS_WORDS,
+    when: SITE_WHEN_WORDS,
+  },
+  nth: 0,
+  anchor: "\n  private publish(",
+});
+
+/** The `visible` cells of the events table on `useSubscribedQuery`: the tab's visibility when the event arrives. */
+export const VISIBLE_WORDS = ["yes", "no", "either"] as const;
+
+/**
+ * Read the events table out of the JSDoc on `useSubscribedQuery` in `source`
+ * (`src/lib/useSubscribedQuery.ts`). The header is `event | visible | the
+ * hook | pinned by`; `visible` is one of {@link VISIBLE_WORDS}. Its titles
+ * are the browser project's, which is why the test sources include
+ * `test/browser/`.
+ */
+export const parseClientEvents = parsePinnedTable({
+  name: "useSubscribedQuery",
+  label: "events",
+  columns: ["event", "visible", "the hook"],
+  words: { visible: VISIBLE_WORDS },
+  nth: 0,
+});
+
+/** The `side` cells of the connection table on `ConnectionRole` in Platform. */
+export const CONNECTION_SIDE_WORDS = ["Worker", "object", "tab"] as const;
+
+/**
+ * Read the connection table out of the JSDoc on `ConnectionRole` in
+ * `source` (`src/lib/domain/Platform.ts`). The header is `event | side |
+ * answer | pinned by`; `side` is one of {@link CONNECTION_SIDE_WORDS}.
+ */
+export const parseConnectionEvents = parsePinnedTable({
+  name: "ConnectionRole",
+  label: "connection",
+  columns: ["event", "side", "answer"],
+  words: { side: CONNECTION_SIDE_WORDS },
+  nth: 0,
+});

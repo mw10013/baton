@@ -9,17 +9,21 @@
 // what each action does beyond the run, and the rules of a pass), the
 // four sync tables on `syncOrder` in src/lib/domain/Orders.ts (what one sync
 // does to one order, its sources, the open-orders sync's endings, and its
-// rules), the sync pipeline table on `ShopAgentHost` in src/lib/agent/Host.ts, and the data-model
+// rules), the sync pipeline table on `ShopAgentHost` in src/lib/agent/Host.ts, the data-model
 // tables on `initializeSchema` in src/lib/ShopAgentSchema.ts (the object) and
-// on `D1_TABLES` in src/lib/D1Schema.ts (D1).
+// on `D1_TABLES` in src/lib/D1Schema.ts (D1), and the publish and subscribe
+// tables: the cycle, delivery and connection tables on `Subscription` and
+// `ConnectionRole` in src/lib/domain/Platform.ts, the sites table on
+// `ShopAgent.publish` in src/lib/ShopAgent.ts, and the events table on
+// `useSubscribedQuery` in src/lib/useSubscribedQuery.ts.
 //
-//   node scripts/spec.ts check   parse both action tables, refuse overlapping rows, check the vocabulary, its contexts, its screen columns, its stored cells against the DDL and its Screens table, parse the triggers table, the four reconcile tables, the four sync tables on syncOrder (refusing overlapping actions rows), the sync pipeline table and both data-model tables and refuse a pinned title no test carries and a data-model row pinned by (none yet), parse the copy and controls tables in src/lib/Screen.ts and refuse an example no screen shows (exit 1 on any failure)
-//   node scripts/spec.ts print   render the parsed rows and how many fixtures each expands to, then the triggers rows, then the reconcile rows and how many are pinned by (none yet), then the four sync tables, the actions' fixture counts and the count of rows pinned by (none yet), then the sync pipeline rows, then the data-model rows and how many are pinned by (none yet)
+//   node scripts/spec.ts check   parse both action tables, refuse overlapping rows, check the vocabulary, its contexts, its screen columns, its stored cells against the DDL and its Screens table, parse the triggers table, the four reconcile tables, the four sync tables on syncOrder (refusing overlapping actions rows), the sync pipeline table, both data-model tables and the five publish and subscribe tables and refuse a pinned title no test carries (in either test project) and a data-model row pinned by (none yet), parse the copy and controls tables in src/lib/Screen.ts and refuse an example no screen shows (exit 1 on any failure)
+//   node scripts/spec.ts print   render the parsed rows and how many fixtures each expands to, then the triggers rows, then the reconcile rows and how many are pinned by (none yet), then the four sync tables, the actions' fixture counts and the count of rows pinned by (none yet), then the sync pipeline rows, then the publish and subscribe rows, then the data-model rows and how many are pinned by (none yet)
 
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
 import { Console, Effect, Result } from "effect";
 import { CliError, Command } from "effect/unstable/cli";
-import { globSync, readdirSync, readFileSync } from "node:fs";
+import { globSync, readdirSync, readFileSync, statSync } from "node:fs";
 
 import * as Domain from "../src/lib/Domain.ts";
 import * as Screen from "../src/lib/Screen.ts";
@@ -84,12 +88,56 @@ const readDataModels = Effect.sync(() => {
   ] as const;
 });
 
+const AGENT_CLASS = new URL("../src/lib/ShopAgent.ts", import.meta.url)
+  .pathname;
+const HOOK = new URL("../src/lib/useSubscribedQuery.ts", import.meta.url)
+  .pathname;
+
+/**
+ * The publish and subscribe tables, parsed: the cycle and delivery tables on
+ * `Subscription` in Platform, the sites table on `ShopAgent.publish`, the
+ * events table on `useSubscribedQuery` and the connection table on
+ * `ConnectionRole` in Platform. Each is pinned, and `check` and `print`
+ * treat them alike.
+ */
+const readPinnedTables = Effect.sync(() => {
+  const platform = readFileSync(contextPath("Platform"), "utf8");
+  const agentClass = readFileSync(AGENT_CLASS, "utf8");
+  const hook = readFileSync(HOOK, "utf8");
+  return [
+    {
+      title: "Subscription cycle",
+      parsed: ActionTable.parseSubscriptionCycle(platform),
+    },
+    {
+      title: "Subscription delivery",
+      parsed: ActionTable.parseSubscriptionDelivery(platform),
+    },
+    {
+      title: "publish sites",
+      parsed: ActionTable.parsePublishSites(agentClass),
+    },
+    {
+      title: "useSubscribedQuery events",
+      parsed: ActionTable.parseClientEvents(hook),
+    },
+    {
+      title: "ConnectionRole connection",
+      parsed: ActionTable.parseConnectionEvents(platform),
+    },
+  ] as const;
+});
+
+/**
+ * Both projects' test files: the integration project's `.test.ts` and the
+ * browser project's `.test.tsx`. Files only: the browser project writes a
+ * failed test's screenshots under a directory named for its file.
+ */
 const readTestSources = Effect.sync(() =>
   Object.fromEntries(
-    globSync("test/**/*.test.ts", { cwd: ROOT }).map((file) => [
-      file,
-      readFileSync(`${ROOT}${file}`, "utf8"),
-    ]),
+    globSync("test/**/*.test.{ts,tsx}", { cwd: ROOT })
+      .filter((file) => statSync(`${ROOT}${file}`).isFile())
+      .map((file) => [file, readFileSync(`${ROOT}${file}`, "utf8")]),
   ),
 );
 
@@ -239,6 +287,13 @@ const checkCommand = Command.make(
         onFailure: (error) => [error.message],
         onSuccess: () => [],
       }),
+      ...(yield* readPinnedTables).flatMap(({ title, parsed }) =>
+        Result.match(parsed, {
+          onFailure: (error) => [error.message],
+          onSuccess: (rows) =>
+            ActionTable.checkPinned(rows, testSources, title),
+        }),
+      ),
       ...dataModels.flatMap(({ source, options }) =>
         Result.match(ActionTable.parseDataModel(source, options), {
           onFailure: (error) => [error.message],
@@ -270,7 +325,7 @@ const checkCommand = Command.make(
   }),
 ).pipe(
   Command.withDescription(
-    "Parse the action tables and the four reconcile tables (triggers, actions, effects, pass rules) in domain/ShopWork.ts, the four sync tables on syncOrder in domain/Orders.ts and the sync pipeline table in agent/Host.ts, check the vocabulary in Domain.ts and domain/ and its stored cells against the DDL in ShopAgentSchema.ts, check the triggers table on ShopUsage in domain/Billing.ts and the data-model tables in ShopAgentSchema.ts and D1Schema.ts (none pinned by (none yet)), and check the copy and controls tables in Screen.ts; exit 1 on any failure",
+    "Parse the action tables and the four reconcile tables (triggers, actions, effects, pass rules) in domain/ShopWork.ts, the four sync tables on syncOrder in domain/Orders.ts, the sync pipeline table in agent/Host.ts and the five publish and subscribe tables (Subscription and ConnectionRole in domain/Platform.ts, publish in ShopAgent.ts, useSubscribedQuery), check the vocabulary in Domain.ts and domain/ and its stored cells against the DDL in ShopAgentSchema.ts, check the triggers table on ShopUsage in domain/Billing.ts and the data-model tables in ShopAgentSchema.ts and D1Schema.ts (none pinned by (none yet)), and check the copy and controls tables in Screen.ts; exit 1 on any failure",
   ),
 );
 
@@ -462,6 +517,18 @@ const printCommand = Command.make(
       },
     );
     for (const line of pipeline) yield* Console.log(`  ${line}`);
+    for (const { title, parsed } of yield* readPinnedTables) {
+      yield* Console.log(title);
+      const lines = Result.match(parsed, {
+        onFailure: (error) => [error.message],
+        onSuccess: (rows) =>
+          rows.map(
+            (row) =>
+              `${Object.values(row.cells).join(" | ")} — ${row.pinnedBy}`,
+          ),
+      });
+      for (const line of lines) yield* Console.log(`  ${line}`);
+    }
     for (const { source: dataModel, options } of yield* readDataModels) {
       yield* Console.log(options.symbol);
       const rows = Result.match(
@@ -493,13 +560,13 @@ const printCommand = Command.make(
   }),
 ).pipe(
   Command.withDescription(
-    "Render the parsed action tables and their fixture counts, then the triggers rows, then the reconcile rows, the actions' fixture counts and the count of rows pinned by (none yet), then the four sync tables, the actions' fixture counts and the count of rows pinned by (none yet), then the sync pipeline rows, then the data-model rows and how many are pinned by (none yet)",
+    "Render the parsed action tables and their fixture counts, then the triggers rows, then the reconcile rows, the actions' fixture counts and the count of rows pinned by (none yet), then the four sync tables, the actions' fixture counts and the count of rows pinned by (none yet), then the sync pipeline rows, then the publish and subscribe rows, then the data-model rows and how many are pinned by (none yet)",
   ),
 );
 
 const specCommand = Command.make("spec").pipe(
   Command.withDescription(
-    "The action matrices in src/lib/domain/ShopWork.ts, the vocabulary in src/lib/Domain.ts and src/lib/domain/, the triggers table in src/lib/domain/Billing.ts, and the data-model tables in src/lib/ShopAgentSchema.ts and src/lib/D1Schema.ts",
+    "The action matrices in src/lib/domain/ShopWork.ts, the vocabulary in src/lib/Domain.ts and src/lib/domain/, the triggers table in src/lib/domain/Billing.ts, the data-model tables in src/lib/ShopAgentSchema.ts and src/lib/D1Schema.ts, and the publish and subscribe tables",
   ),
   Command.withSubcommands([checkCommand, printCommand]),
 );

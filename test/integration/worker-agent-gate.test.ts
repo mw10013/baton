@@ -233,7 +233,7 @@ describe("ShopAgent connect gate", () => {
    * contract", so `requireMember` redirects and the gate answers `402` — the
    * same status the merchant gate gives a lapsed shop.
    */
-  it.effect("402s a member of a shop whose subscription lapsed", () =>
+  it.effect("402s a member of a shop whose app subscription lapsed", () =>
     run(
       Effect.gen(function* () {
         const shop = shopOf("gate-lapsed.myshopify.com");

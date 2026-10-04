@@ -222,7 +222,7 @@ function AppProvider({ children }: { readonly children: React.ReactNode }) {
  * Renders the `/app` shell (nav + `Outlet`) inside the shared
  * `ShopAgentSocketProvider`, which owns the per-shop socket and the context
  * consumers read it through (`src/lib/ShopAgentSocketHost.tsx` carries the
- * quarantine, `identified`, and lifecycle rationale).
+ * Suspense boundary, `identified`, and lifecycle rationale).
  *
  * What is specific to `/app` and stays here is the credential: `query` mints a
  * fresh App Bridge ID token per connect, because a browser cannot set a header

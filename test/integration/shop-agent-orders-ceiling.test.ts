@@ -9,6 +9,11 @@ import { describe, it } from "vitest";
 
 import * as Domain from "@/lib/Domain";
 
+import {
+  openTwoScreens,
+  receivedInvalidations,
+  receivesNoMore,
+} from "./agent-socket.ts";
 import { withMaxOrdersPerCycle } from "./order-ceiling.ts";
 
 /**
@@ -57,6 +62,31 @@ const webhook = (orderId: string) => ({
 });
 
 describe("ShopAgent order ceiling", () => {
+  /**
+   * The refused order is on no team, so the publish names it and no team:
+   * the orders index refetches for the banner's flag and no member list
+   * moves.
+   */
+  it("a new order refused at the ceiling publishes to the merchant and no member", async () => {
+    const shop = "ceiling-publishes.myshopify.com";
+    await withMaxOrdersPerCycle(2, async () => {
+      const agent = await agentFor(shop);
+      await agent.setBillingCycle({
+        shopGid,
+        cycleStartAt: 0,
+        cycleEndAt: CYCLE_END,
+        memberCount: 0,
+      });
+      await setCount(shop, 2);
+      const screens = await openTwoScreens(shop);
+      await agent.syncOrderWebhook(webhook("gid://shopify/Order/1"));
+      strictEqual(await orderCount(shop), 0);
+      await receivedInvalidations(screens.merchant, 1);
+      await receivesNoMore(screens.member);
+      screens.close();
+    });
+  });
+
   it("refuses a new order at the ceiling and flags the refusal", async () => {
     const shop = "ceiling.myshopify.com";
     await withMaxOrdersPerCycle(2, async () => {

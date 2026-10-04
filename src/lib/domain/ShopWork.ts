@@ -1623,7 +1623,8 @@ export const prefixPatterns = (text: string): readonly [string, string] => {
 /**
  * `subscriberId` is what subscribes the calling connection to invalidations —
  * the `subscribe<Feature>` convention documented on `ShopAgent.subscribeOrders`.
- * A page that only reads is a page that never hears about a write: the Durable
+ * A page that only reads is a page that never receives a write's
+ * invalidation: the Durable
  * Object publishes to subscribed connections only, and the `/app` socket is
  * shared, so a route that read without subscribing would go silent the moment
  * another route's unmount unsubscribed the connection.
@@ -1893,7 +1894,7 @@ export type GetOrderDetailInput = typeof GetOrderDetailInput.Type;
 
 export const SubscribeOrderInput = Schema.Struct({
   ...GetOrderDetailInput.fields,
-  /** Subscribes the connection to pushes; see `SubscribeOrdersInput`. */
+  /** Subscribes the connection to this order's invalidations; see `SubscribeOrdersInput`. */
   subscriberId: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
 });
 export type SubscribeOrderInput = typeof SubscribeOrderInput.Type;
@@ -3767,7 +3768,7 @@ export const OrderPageData = Schema.Struct({
    * page decides anything about them until one is chosen, and Attach reads
    * the chosen workflow again. Both lists ride in the page's data rather
    * than a second socket query so the page has exactly one read, one key,
-   * and one push.
+   * and one invalidation.
    */
   otherWorkflows: Schema.Array(WorkflowNameRow),
   /** The shop's live teams: the Assign team select's choices, and what decides which open tasks are unassigned. */

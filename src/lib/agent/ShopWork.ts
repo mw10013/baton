@@ -304,6 +304,19 @@ const runResult = <R>(
   );
 
 /**
+ * A verb publishes only after a write that succeeded (`when` is `written`
+ * in the sites table on `ShopAgent.publish`): a refused call wrote nothing
+ * a screen shows, so an invalidation would cost every subscribed screen a
+ * refetch for no change. The refused tab is not left stale by this: it
+ * refetches itself on every result (`useMemberRunActions`'s `settle`, the
+ * order page's `invalidate`).
+ */
+const publishIfOk =
+  <R>(publish: () => Effect.Effect<void, never, R>) =>
+  (result: { readonly _tag: string }) =>
+    result._tag === "Ok" ? publish() : Effect.void;
+
+/**
  * The teams whose workflows lists a write to this order could have changed, as a value
  * a caller can read on both sides of the write. A failed read answers `"all"`,
  * never `[]`: an over-broad publish costs each member one refetch, while an
@@ -517,7 +530,7 @@ const make = Effect.gen(function* () {
     ({ teamIds }: RunsMemoKey) => runRepository.runListItems(teamIds),
     { capacity: MEMO_CAPACITY, timeToLive: keepSuccesses },
   );
-  /** Empties both memos; the class's `publish` runs it before any frame goes out. */
+  /** Empties both memos; the class's `publish` runs it before any invalidation goes out. */
   const clearListMemo = Effect.all([
     Cache.invalidateAll(ordersMemo),
     Cache.invalidateAll(runsMemo),
@@ -592,7 +605,7 @@ const make = Effect.gen(function* () {
    * The orders index's `subscribe<Feature>` method — reads the page and
    * subscribes the calling connection in one round trip. Combining the read and
    * subscription prevents a write between separate calls from being missed.
-   * `orderId: null` subscribes to every order-state push.
+   * `orderId: null` subscribes to every order-state publish.
    */
   const subscribeOrders = ({
     subscriberId,
@@ -733,7 +746,7 @@ const make = Effect.gen(function* () {
         yield* reconcileAll(workflow);
         return workflow;
       }),
-    ).pipe(Effect.tap(publish));
+    ).pipe(Effect.tap(publishIfOk(publish)));
   };
 
   /** Edit: creates the draft (or returns the existing one). */
@@ -778,7 +791,7 @@ const make = Effect.gen(function* () {
         yield* reconcileAll(workflow);
         return workflow;
       }),
-    ).pipe(Effect.tap(publish));
+    ).pipe(Effect.tap(publishIfOk(publish)));
   };
 
   const discardDraft = ({
@@ -827,7 +840,7 @@ const make = Effect.gen(function* () {
         yield* reconcileAll(workflow);
         return workflow;
       }),
-    ).pipe(Effect.tap(publish));
+    ).pipe(Effect.tap(publishIfOk(publish)));
   };
 
   /**
@@ -856,7 +869,7 @@ const make = Effect.gen(function* () {
         yield* reconcileAll(workflow);
         return workflow;
       }),
-    ).pipe(Effect.tap(publish));
+    ).pipe(Effect.tap(publishIfOk(publish)));
   };
 
   /**
@@ -1022,10 +1035,11 @@ const make = Effect.gen(function* () {
 
   /**
    * The detail page's `subscribe<Feature>` read: the order, its items, and
-   * every run on them, and the calling connection subscribed to pushes in the
-   * same round trip (the convention documented on `subscribeOrders`). Without
-   * the attach, a webhook landing on the open order would update SQLite and
-   * push to nobody. Addressed by `legacyId` because that is what the route
+   * every run on them, and the calling connection subscribed to its
+   * invalidations in the same round trip (the convention documented on
+   * `subscribeOrders`). Without the subscription, a webhook landing on the
+   * open order would update SQLite and publish to nobody. Addressed by
+   * `legacyId` because that is what the route
    * carries (see `Domain.SubscribeOrderInput`). `null` when the order is not
    * stored, which the page renders as not-found rather than as a failure.
    */
@@ -1158,9 +1172,12 @@ const make = Effect.gen(function* () {
    */
   const merchantCancelRun = ({ runId }: typeof Domain.RunIdInput.Type) => {
     const shop = host.shop();
-    const publish = (teams: PublishTeams) => host.publish("all", teams);
+    const publish = (touched: PublishScope, teams: PublishTeams) =>
+      host.publish(touched, teams);
     return Effect.gen(function* () {
-      const teams = yield* orderTeamIds({ runId });
+      // Read before the write: the cancel takes every team's tasks off the
+      // run, so the read after would name nobody.
+      const { touched, teamIds } = yield* orderAndTeamIds({ runId });
       const result = yield* runResult(
         Effect.gen(function* () {
           yield* requireRunAction(runId, MERCHANT, "cancel");
@@ -1170,7 +1187,7 @@ const make = Effect.gen(function* () {
           ).pipe(Effect.annotateLogs({ shop, runId }));
         }),
       );
-      if (result._tag === "Ok") yield* publish(teams);
+      if (result._tag === "Ok") yield* publish(touched, teamIds);
       return result;
     });
   };
@@ -1214,7 +1231,7 @@ const make = Effect.gen(function* () {
           `ShopAgent.merchantMarkTaskDone: shop=${shop} task=${runTaskId}`,
         ).pipe(Effect.annotateLogs({ shop, task: runTaskId }));
       }),
-    ).pipe(Effect.tap(() => publish(runTaskId)));
+    ).pipe(Effect.tap(publishIfOk(() => publish(runTaskId))));
   };
 
   const merchantReopenTask = ({
@@ -1233,7 +1250,7 @@ const make = Effect.gen(function* () {
           `ShopAgent.merchantReopenTask: shop=${shop} task=${runTaskId}`,
         ).pipe(Effect.annotateLogs({ shop, task: runTaskId }));
       }),
-    ).pipe(Effect.tap(() => publish(runTaskId)));
+    ).pipe(Effect.tap(publishIfOk(() => publish(runTaskId))));
   };
 
   /** Put back from the order page; the rule is on `RunRepository.putBackTask`. */
@@ -1253,7 +1270,7 @@ const make = Effect.gen(function* () {
           `ShopAgent.merchantPutBackTask: shop=${shop} task=${runTaskId}`,
         ).pipe(Effect.annotateLogs({ shop, task: runTaskId }));
       }),
-    ).pipe(Effect.tap(() => publish(runTaskId)));
+    ).pipe(Effect.tap(publishIfOk(() => publish(runTaskId))));
   };
 
   /** The note itself never reaches the log line, as on the member's {@link memberSetRunNote}. */
@@ -1274,7 +1291,7 @@ const make = Effect.gen(function* () {
           `ShopAgent.merchantSetRunNote: shop=${shop} runId=${runId}`,
         ).pipe(Effect.annotateLogs({ shop, runId }));
       }),
-    ).pipe(Effect.tap(() => publish(runId)));
+    ).pipe(Effect.tap(publishIfOk(() => publish(runId))));
   };
 
   const merchantBlockRun = ({
@@ -1295,7 +1312,7 @@ const make = Effect.gen(function* () {
           `ShopAgent.merchantBlockRun: shop=${shop} runId=${runId}`,
         ).pipe(Effect.annotateLogs({ shop, runId }));
       }),
-    ).pipe(Effect.tap(() => publish(runId)));
+    ).pipe(Effect.tap(publishIfOk(() => publish(runId))));
   };
 
   const merchantUnblockRun = ({ runId }: typeof Domain.RunIdInput.Type) => {
@@ -1311,7 +1328,7 @@ const make = Effect.gen(function* () {
           `ShopAgent.merchantUnblockRun: shop=${shop} runId=${runId}`,
         ).pipe(Effect.annotateLogs({ shop, runId }));
       }),
-    ).pipe(Effect.tap(() => publish(runId)));
+    ).pipe(Effect.tap(publishIfOk(() => publish(runId))));
   };
 
   /**
@@ -1498,7 +1515,7 @@ const make = Effect.gen(function* () {
           `ShopAgent.memberStartTask: shop=${shop} task=${runTaskId} memberId=${memberId}`,
         ).pipe(Effect.annotateLogs({ shop, task: runTaskId, memberId }));
       }),
-    ).pipe(Effect.tap(() => publish(runTaskId)));
+    ).pipe(Effect.tap(publishIfOk(() => publish(runTaskId))));
   };
 
   /** Put back; the rule is on `RunRepository.putBackTask`. */
@@ -1521,7 +1538,7 @@ const make = Effect.gen(function* () {
           `ShopAgent.memberPutBackTask: shop=${shop} task=${runTaskId} memberId=${memberId}`,
         ).pipe(Effect.annotateLogs({ shop, task: runTaskId, memberId }));
       }),
-    ).pipe(Effect.tap(() => publish(runTaskId)));
+    ).pipe(Effect.tap(publishIfOk(() => publish(runTaskId))));
   };
 
   /** The note itself never reaches the log line: worker text is unbounded and not ours to index. */
@@ -1544,7 +1561,7 @@ const make = Effect.gen(function* () {
           `ShopAgent.memberSetRunNote: shop=${shop} runId=${runId} memberId=${memberId}`,
         ).pipe(Effect.annotateLogs({ shop, runId, memberId }));
       }),
-    ).pipe(Effect.tap(() => publish(runId)));
+    ).pipe(Effect.tap(publishIfOk(() => publish(runId))));
   };
 
   const memberBlockRun = (
@@ -1567,7 +1584,7 @@ const make = Effect.gen(function* () {
           `ShopAgent.memberBlockRun: shop=${shop} runId=${runId} memberId=${memberId}`,
         ).pipe(Effect.annotateLogs({ shop, runId, memberId }));
       }),
-    ).pipe(Effect.tap(() => publish(runId)));
+    ).pipe(Effect.tap(publishIfOk(() => publish(runId))));
   };
 
   const memberMarkTaskDone = (
@@ -1589,7 +1606,7 @@ const make = Effect.gen(function* () {
           `ShopAgent.memberMarkTaskDone: shop=${shop} task=${runTaskId} memberId=${memberId}`,
         ).pipe(Effect.annotateLogs({ shop, task: runTaskId, memberId }));
       }),
-    ).pipe(Effect.tap(() => publish(runTaskId)));
+    ).pipe(Effect.tap(publishIfOk(() => publish(runTaskId))));
   };
 
   /**
@@ -1615,7 +1632,7 @@ const make = Effect.gen(function* () {
           `ShopAgent.memberReopenTask: shop=${shop} task=${runTaskId} memberId=${memberId}`,
         ).pipe(Effect.annotateLogs({ shop, task: runTaskId, memberId }));
       }),
-    ).pipe(Effect.tap(() => publish(runTaskId)));
+    ).pipe(Effect.tap(publishIfOk(() => publish(runTaskId))));
   };
 
   /** The workflow page's loader read; plain RPC for the same reason as {@link listRuns}. */
@@ -1626,7 +1643,7 @@ const make = Effect.gen(function* () {
   /**
    * The socket twin of {@link memberGetRun}, as `subscribeRuns` is of
    * `listRuns`. The subscription is the same team-scoped one the workflows list
-   * registers (`orderId: null`): a member's pushes are decided by team, so
+   * registers (`orderId: null`): who receives a member's invalidation is decided by team, so
    * any write touching one of their teams' orders refetches this run too.
    * Over-broad by an order or two; the read is one run.
    */
@@ -1654,7 +1671,7 @@ const make = Effect.gen(function* () {
           teamIds,
         } satisfies Domain.UnblockRunCommand);
       }),
-    ).pipe(Effect.tap(() => publish(runId)));
+    ).pipe(Effect.tap(publishIfOk(() => publish(runId))));
   };
 
   /**
@@ -1816,7 +1833,8 @@ const make = Effect.gen(function* () {
    * failing after the D1 row is gone; every read already treats an id no
    * team carries as unassigned, so that state is self-healing, and a retry
    * of this call (which reports `NotFound` for the row but still runs the
-   * nulling) repairs it. So does the next delete of any team in the shop:
+   * nulling, and publishes, since the nulling is a write the lists show)
+   * repairs it. So does the next delete of any team in the shop:
    * it also nulls every pointer to a team gone from D1. The object's ids in
    * use are read before the shop's teams, so a team created between the
    * two reads, and a task pointed at it, is not among the candidates and

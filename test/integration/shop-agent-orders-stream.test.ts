@@ -13,6 +13,7 @@ import { runShopAgentOrdersStream } from "@/lib/ShopAgentOrdersStream";
 import { runShopAgentMigrations } from "@/lib/ShopAgentSchema";
 import { WorkflowRepository } from "@/lib/WorkflowRepository";
 
+import { openTwoScreens, receivedInvalidations } from "./agent-socket.ts";
 import { reconcileContext } from "./reconcile-context.ts";
 
 const BULK_URL = "https://storage.googleapis.test/bulk-orders.jsonl";
@@ -101,6 +102,19 @@ const fixture = ndjson(
   orderLine(2, "2026-08-02T10:00:00Z"),
   lineItemLine(3, 2),
 );
+
+/**
+ * The bulk file as the object fetches it in `ShopAgent.onOrdersStream`. The
+ * object shares this isolate, and its HTTP client reads `globalThis.fetch`,
+ * so the stand-in answers this one URL with {@link fixture} and passes every
+ * other request through.
+ */
+const OBJECT_BULK_URL = "https://storage.googleapis.test/object-stream.jsonl";
+const realFetch = globalThis.fetch;
+globalThis.fetch = (input, init) =>
+  new Request(input, init).url === OBJECT_BULK_URL
+    ? Promise.resolve(new Response(fixture, { status: 200 }))
+    : realFetch(input, init);
 
 describe("runShopAgentOrdersStream", () => {
   it("folds the flattened NDJSON into orders with their line items", async () => {
@@ -398,5 +412,19 @@ describe("runShopAgentOrdersStream with afterWrite", () => {
     strictEqual(second.length, 1);
     strictEqual(second[0]?.tasks[0]?.teamName, "Engravers");
     strictEqual(secondPass.length, 1);
+  });
+});
+
+describe("ShopAgent.onOrdersStream", () => {
+  it("the open-orders stream publishes to every screen when it finishes", async () => {
+    const shop = "stream-publishes.myshopify.com";
+    const screens = await openTwoScreens(shop);
+    const counts = await env.SHOP_AGENT.getByName(shop).onOrdersStream({
+      url: OBJECT_BULK_URL,
+    });
+    strictEqual(counts.ordersSeen, 2);
+    await receivedInvalidations(screens.merchant, 1);
+    await receivedInvalidations(screens.member, 1);
+    screens.close();
   });
 });

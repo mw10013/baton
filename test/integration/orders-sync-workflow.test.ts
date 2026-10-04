@@ -14,6 +14,7 @@ import {
   ORDERS_SYNC_WORKFLOW_NAME,
 } from "@/lib/orderSyncConstants";
 
+import { openTwoScreens, receivedInvalidations } from "./agent-socket.ts";
 import { withMaxOrdersPerCycle } from "./order-ceiling.ts";
 
 const sessionProps = (shop: string) =>
@@ -523,5 +524,118 @@ describe("bulkOrdersQueryText", () => {
     );
     expect(text).toContain("status:open -fulfillment_status:fulfilled");
     expect(text).not.toContain("updated_at");
+  });
+});
+
+/**
+ * The open-orders sync's rows of the sites table on `ShopAgent.publish`:
+ * every one publishes to all orders and all teams, with no changed-or-nothing
+ * gate, because the sync's state (the button, the banner) is on the orders
+ * index whatever the stream did. Counted, because each case publishes more
+ * than once on the same sockets.
+ */
+describe("OrdersSyncWorkflow publishes", () => {
+  it("Sync open orders publishes to every screen when it starts or is refused", async () => {
+    const started = "orders-publish-started.myshopify.com";
+    await using introspector = await introspectWorkflow(
+      env.ORDERS_SYNC_WORKFLOW,
+    );
+    // Sleeps stay on, so the instance is still waiting on its first poll
+    // when the start's invalidation is counted.
+    await introspector.modifyAll(async (m) => {
+      await m.mockStepResult({ name: "ensure-session" }, sessionProps(started));
+      await m.mockStepResult(
+        { name: "run-bulk-orders-query" },
+        runningOperation,
+      );
+    });
+    const startedScreens = await openTwoScreens(started);
+    const startedAgent = await getAgentByName(env.SHOP_AGENT, started);
+    const start = await startedAgent.syncOpenOrders();
+    expect(start._tag).toBe("Started");
+    await receivedInvalidations(startedScreens.merchant, 1);
+    await receivedInvalidations(startedScreens.member, 1);
+    startedScreens.close();
+
+    const refused = "orders-publish-refused.myshopify.com";
+    await withMaxOrdersPerCycle(2, async () => {
+      const agent = await getAgentByName(env.SHOP_AGENT, refused);
+      await agent.setBillingCycle({
+        shopGid: Schema.decodeUnknownSync(Domain.ShopGid)(
+          "gid://shopify/Shop/1",
+        ),
+        cycleStartAt: 0,
+        cycleEndAt: Date.now() + 86_400_000,
+        memberCount: 0,
+      });
+      await runInDurableObject(env.SHOP_AGENT.getByName(refused), (object) => {
+        sqlOf(object).exec(
+          "update ShopUsage set ordersThisCycle = 2 where id = 1",
+        );
+      });
+      const refusedScreens = await openTwoScreens(refused);
+      const refusal = await agent.syncOpenOrders();
+      expect(refusal._tag).toBe("Refused");
+      await receivedInvalidations(refusedScreens.merchant, 1);
+      await receivedInvalidations(refusedScreens.member, 1);
+      refusedScreens.close();
+    });
+  });
+
+  it("the open-orders sync publishes to every screen when its workflow completes", async () => {
+    const completes = "orders-publish-complete.myshopify.com";
+    await using introspector = await introspectWorkflow(
+      env.ORDERS_SYNC_WORKFLOW,
+    );
+    await introspector.modifyAll(async (m) => {
+      await m.disableSleeps();
+      await m.disableRetryDelays();
+      await m.mockStepResult(
+        { name: "ensure-session" },
+        sessionProps(completes),
+      );
+      await m.mockStepResult(
+        { name: "run-bulk-orders-query" },
+        completedOperation,
+      );
+      await m.mockStepResult({ name: "on-orders-stream" }, { ok: true });
+    });
+    const completeScreens = await openTwoScreens(completes);
+    await startSync(completes);
+    const [completed] = await introspector.get();
+    if (!completed) throw new Error("no workflow instance captured");
+    await expect(completed.waitForStatus("complete")).resolves.not.toThrow();
+    // The start, then the completion; the stream step is mocked, so it
+    // publishes nothing of its own.
+    await receivedInvalidations(completeScreens.merchant, 2);
+    await receivedInvalidations(completeScreens.member, 2);
+    completeScreens.close();
+  });
+
+  /**
+   * Prints the same two uncaught-exception lines as the error-sink test
+   * above, for the same reason.
+   */
+  it("the open-orders sync publishes to every screen when its workflow fails", async () => {
+    const fails = "orders-publish-error.myshopify.com";
+    await using failing = await introspectWorkflow(env.ORDERS_SYNC_WORKFLOW);
+    await failing.modifyAll(async (m) => {
+      await m.disableSleeps();
+      await m.disableRetryDelays();
+      await m.mockStepResult({ name: "ensure-session" }, sessionProps(fails));
+      await m.mockStepError(
+        { name: "run-bulk-orders-query" },
+        new Error("bulk submit failed"),
+      );
+    });
+    const failScreens = await openTwoScreens(fails);
+    await startSync(fails);
+    const [errored] = await failing.get();
+    if (!errored) throw new Error("no workflow instance captured");
+    await expect(errored.waitForStatus("errored")).resolves.not.toThrow();
+    // The start, the error sink, then `onWorkflowError`.
+    await receivedInvalidations(failScreens.merchant, 3);
+    await receivedInvalidations(failScreens.member, 3);
+    failScreens.close();
   });
 });

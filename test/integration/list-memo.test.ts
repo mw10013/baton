@@ -274,7 +274,7 @@ describe("the list memo", () => {
     strictEqual(runs, 1);
   });
 
-  it("the class's publish clears the memo before its frames", async () => {
+  it("the class's publish clears the memo before its invalidations", async () => {
     const shop = `memo-publish-${crypto.randomUUID()}.myshopify.com`;
     const agent = await getAgentByName(env.SHOP_AGENT, shop);
     const stub = env.SHOP_AGENT.get(env.SHOP_AGENT.idFromName(shop));

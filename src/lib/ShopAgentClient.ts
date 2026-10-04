@@ -73,7 +73,8 @@ export class ShopAgentClientError extends Schema.TaggedError<ShopAgentClientErro
  *
  * The orders index and the workflows list reads are memoized in the object
  * per key and cleared on every publish (the rule on `ShopAgent.publish`), so
- * the loader paint and the socket refetches after a push read one answer.
+ * the loader paint and the socket refetches after an invalidation read one
+ * answer.
  *
  * **Loader data.** `<RoutePrefix>LoaderData` names the data contract for a
  * route's loader, owned by that route. The prefix derives mechanically from
@@ -132,7 +133,7 @@ export class ShopAgentClient extends Context.Service<
     /**
      * The quota surfaces' loader read. `@callable()` on the object as well, for
      * the socket; both are the same method, since usage is read by a page that
-     * paints server-side and by one that refreshes on order pushes.
+     * paints server-side and by one that refreshes on order invalidations.
      */
     readonly getUsage: (
       shop: string,

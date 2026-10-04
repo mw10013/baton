@@ -14,7 +14,14 @@ import * as Domain from "@/lib/Domain";
 import { makeEnvLayer } from "@/lib/LayerEx";
 import { Repository } from "@/lib/Repository";
 
-import { isInvalidated, openMerchantSocket } from "./agent-socket.ts";
+import {
+  isInvalidated,
+  openMemberSocket,
+  openMerchantSocket,
+  openTwoScreens,
+  receivedInvalidations,
+  receivesNoMore,
+} from "./agent-socket.ts";
 import { withMaxOrdersPerCycle } from "./order-ceiling.ts";
 
 /**
@@ -36,6 +43,8 @@ let shopifyHasOrder = true;
 let productTags = ["engraved"];
 /** The order's `updatedAt` Shopify answers; null is the time of the request. */
 let orderUpdatedAt: string | null = null;
+/** The order's `cancelledAt` Shopify answers. */
+let orderCancelledAt: string | null = null;
 const realFetch = globalThis.fetch;
 setAbstractFetchFunc(async (input, init) => {
   const request = new Request(input, init);
@@ -53,7 +62,7 @@ setAbstractFetchFunc(async (input, init) => {
         name: "#1001",
         processedAt: now,
         updatedAt,
-        cancelledAt: null,
+        cancelledAt: orderCancelledAt,
         displayFulfillmentStatus: "UNFULFILLED",
         fullyPaid: true,
         note: null,
@@ -119,6 +128,7 @@ afterEach(async () => {
   shopifyHasOrder = true;
   productTags = ["engraved"];
   orderUpdatedAt = null;
+  orderCancelledAt = null;
   await env.D1.exec("delete from Team");
   await env.D1.exec("delete from ShopSession");
 });
@@ -422,13 +432,67 @@ describe("ShopAgent one-order sync", () => {
       return page.orders.map(({ order }) => order.id).toSorted();
     };
     deepStrictEqual(await list(), [ORDER_ID, "gid://shopify/Order/9"]);
-    const merchant = await subscribeOrdersIndex(shop);
+    const screens = await openTwoScreens(shop);
     // The same version: the webhook's own order does not change, and the
-    // sweep deletes the expired one.
+    // sweep deletes the expired one. A deleted run may have been on any
+    // team's list, so every member receives it too.
     await deliver();
-    await merchant.socket.waitForMessage(isInvalidated);
-    merchant.close();
+    await receivedInvalidations(screens.merchant, 1);
+    await receivedInvalidations(screens.member, 1);
+    screens.close();
     deepStrictEqual(await list(), [ORDER_ID]);
+  });
+
+  it("a webhook publishes to the teams on the order before and after, and to no other team", async () => {
+    const shop = "sync-order-teams.myshopify.com";
+    const team = await seedShop(shop);
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    await turnOnEngraving(agent, team.id);
+    const deliver = () =>
+      agent.syncOrderWebhook({
+        orderId: ORDER_ID,
+        topic: "orders/edited",
+        updatedAt: null,
+      });
+    orderUpdatedAt = "2026-09-02T12:00:00.000Z";
+    await deliver();
+    strictEqual(await runCount(agent), 1);
+    const screens = await openTwoScreens(shop);
+    const onTeam = await openMemberSocket(shop, {
+      memberId: "member-on-team",
+      memberEmail: "on-team@example.com",
+      teamIds: [team.id],
+    });
+    await onTeam.socket.call("subscribeRuns", {
+      subscriberId: "sub-on-team",
+      query: { team: null, state: "ready", limit: Domain.RUN_PAGE, q: null },
+    });
+    // The cancel closes the run, so the team has no task on the order after
+    // the write: only the read before it names the team.
+    orderUpdatedAt = "2026-09-02T12:05:00.000Z";
+    orderCancelledAt = "2026-09-02T12:05:00.000Z";
+    await deliver();
+    await receivedInvalidations(onTeam.socket, 1);
+    await receivedInvalidations(screens.merchant, 1);
+    await receivesNoMore(screens.member);
+    onTeam.close();
+    screens.close();
+  });
+
+  it("Sync this order publishes the order to every team when it changed something, and nothing when it did not", async () => {
+    const shop = "sync-order-button-publishes.myshopify.com";
+    await seedShop(shop);
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    orderUpdatedAt = "2026-09-02T12:00:00.000Z";
+    const screens = await openTwoScreens(shop);
+    await agent.syncOrder({ orderId: ORDER_ID });
+    await receivedInvalidations(screens.merchant, 1);
+    await receivedInvalidations(screens.member, 1);
+    // The same version again: no row moves and no run, so no publish.
+    await agent.syncOrder({ orderId: ORDER_ID });
+    await receivesNoMore(screens.merchant, 1);
+    await receivesNoMore(screens.member, 1);
+    screens.close();
   });
 
   it("the order ceiling is read at the cycle the sync lands in: a sync after the cycle end is not refused at the old count", async () => {

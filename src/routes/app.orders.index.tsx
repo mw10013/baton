@@ -199,10 +199,10 @@ const OrdersLoaderInput = Schema.Struct({
  * The first page, plus the usage the
  * page's limit banners need.
  *
- * `orders` is what the socket replaces on every order push; `usage` is
+ * `orders` is what the socket replaces on every order invalidation; `usage` is
  * loader-only and deliberately does not move under the socket. It is a
  * billing-cycle fact, and refreshing it on every webhook would be a read per
- * push for a number that changes on a scale of days.
+ * invalidation for a number that changes on a scale of days.
  */
 interface OrdersIndexLoaderData {
   readonly orders: Domain.OrdersIndexData;
@@ -250,7 +250,7 @@ export const Route = createFileRoute("/app/orders/")({
  *
  * A subscribed page (the socket half of the loader-versus-socket rule on
  * `ShopAgentClient`): the loader paints the first page, then `useSubscribedQuery`
- * reads through `subscribeOrders` and refetches on every order-state push,
+ * reads through `subscribeOrders` and refetches on every order-state invalidation,
  * so the table stays current while a bulk stream and webhooks write
  * underneath it.
  */

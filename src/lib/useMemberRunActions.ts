@@ -44,7 +44,7 @@ export const runResultMessage = (
  * cannot drift on how a click reaches the object or how its answer reads.
  *
  * Every action is a `@callable()` on the member socket, reached through
- * `withSocketRecovery` so a zombie connection is healed rather than waited
+ * `withSocketRecovery` so a stale socket is healed rather than waited
  * out (`ShopAgentContext.tsx` describes both recovery layers). `identified`
  * gates them: the socket is the only path these mutations have, so a click
  * before the handshake has nothing to send on and says so rather than
@@ -58,8 +58,8 @@ export const runResultMessage = (
  * `onSuccess` is the page's own refetch. The write's publish would refetch
  * eventually, but the throttle in `useSubscribedQuery` means "eventually" is
  * up to two seconds — too long for the person who just pressed the button.
- * Invalidating here paints their own action immediately; the push still
- * covers everyone else.
+ * Invalidating here paints their own action immediately; the publish still
+ * reaches everyone else.
  */
 export const useMemberRunActions = ({
   agent,

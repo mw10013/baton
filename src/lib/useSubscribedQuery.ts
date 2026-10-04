@@ -26,10 +26,12 @@ import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
  * `cancelRefetch: false`: an invalidation landing mid-fetch under `staleTime: Infinity`
  * would otherwise mark the query invalid with no trigger left to refetch it.
  *
- * The leading edge is also what makes one push one computation: every tab's
+ * The leading edge is also what makes one publish one computation: every tab's
  * first refetch arrives a round trip after the publish that cleared the
  * object's list memo, so the tabs on one key join a single lookup instead of
- * each reading the rows (the rule on `ShopAgent.publish`).
+ * each reading the rows (the rule on `ShopAgent.publish`). What the hook does
+ * inside and at the end of the window is the events table on
+ * {@link useSubscribedQuery}.
  */
 export const INVALIDATION_THROTTLE_MS = 2000;
 
@@ -38,58 +40,76 @@ const decodeAgentMessage = Schema.decodeUnknownOption(
 );
 
 /**
- * Whether the page is hidden, for the deferral on {@link useSubscribedQuery}.
- * `false` without a document (SSR), where no frame arrives anyway.
+ * Whether the tab is hidden, for the deferral on {@link useSubscribedQuery}:
+ * the Page Visibility API's `document.visibilityState`, which names the
+ * browser tab. `false` without a document (SSR), where no invalidation
+ * arrives anyway.
  */
-export const pageIsHidden = () =>
+export const tabIsHidden = () =>
   typeof document !== "undefined" && document.visibilityState === "hidden";
 
 const connecting = () =>
   Promise.reject(new Error("Still connecting. Try again in a moment."));
 
 /**
- * The client half of the subscribe pattern (`Domain.Subscription` describes
- * the whole cycle): one query on the publish → invalidate → refetch model, for
- * a page whose data other actors change underneath it. Every subscribed page
- * goes through this hook so the three pieces that make a socket query
- * subscribed cannot drift apart:
+ * The tab's half of the cycle on `Domain.Subscription`: one query on the
+ * publish, invalidate, refetch model, for a screen whose data other actors
+ * change underneath it. Every subscribed screen goes through this hook so the
+ * read that subscribes, the refetch on an invalidation and the unsubscribe
+ * cannot drift apart. `subscribe` is a `subscribe<Feature>` RPC that reads
+ * and registers the subscription on this connection in one round trip, keyed
+ * by a per-mount `subscriberId`: the subtree's one socket outlives the
+ * route, so a stale `unsubscribe` from a replaced mount must not clear the
+ * newer mount's subscription.
  *
- * - **The read subscribes.** `subscribe` is a `subscribe<Feature>` RPC that
- *   reads and registers a `Domain.Subscription` on this connection in one
- *   round trip, keyed by a per-mount `subscriberId` (the subtree's one
- *   socket outlives the route, so a stale `unsubscribe` from a replaced mount
- *   must not clear the newer mount's subscription). `staleTime: Infinity` makes
- *   the invalidations below the only refetch triggers; `gcTime` matches
- *   Router's 30-minute route cache so a retained loader match never outlives
- *   its Query data.
- * - **Identify re-subscribes.** A reconnect is a fresh server connection with
- *   no subscription, so invalidations stop until `subscribe` runs again. Every
- *   identify (first connect and each reconnect) invalidates with
- *   `cancelRefetch: false`, joining the subscribe a mount or re-enable
- *   already started instead of running a second unabortable RPC.
- * - **Published invalidations refetch, throttled.** See
- *   `INVALIDATION_THROTTLE_MS`. A trailing invalidate pending at cleanup is
- *   dropped: cleanup is unmount or an `agent` replacement, and the reconnect's
- *   identify flip re-invalidates.
- * - **A hidden page defers.** A frame arriving while
- *   `document.visibilityState` is `"hidden"` marks the query stale without a
- *   fetch (`refetchType: "none"`) and sets a flag; the first
- *   `visibilitychange` to visible refetches once, through the throttle, and
- *   clears it; a throttled frame whose window elapses while hidden defers
- *   the same way. A merchant's background orders index would otherwise run
- *   the counts statement on every webhook the shop receives, for a screen
- *   nobody is looking at. The identify refetch is not deferred: a fresh
- *   subscription must read once, and a reconnect is rare. {@link pageIsHidden}
- *   is the one definition of hidden. The hook is the only refetcher:
- *   `refetchOnWindowFocus` and `refetchOnReconnect` are off, because a
- *   deferred frame leaves the query invalidated, which TanStack Query's focus
- *   manager counts as stale and would refetch on the same `visibilitychange`,
- *   outside the throttle.
+ * The events the hook handles. `visible` is the tab's visibility when the
+ * event arrives (`either` when it does not matter); the window is
+ * `INVALIDATION_THROTTLE_MS`, opened by a refetch.
+ *
+ * | event                              | visible | the hook                                               | pinned by                                                         |
+ * | ---------------------------------- | ------- | ------------------------------------------------------ | ----------------------------------------------------------------- |
+ * | identify                           | either  | invalidates, joining a fetch in flight; never deferred | identify invalidates once and joins a fetch in flight             |
+ * | invalidation, no window open       | yes     | refetches now and opens the window                     | a visible tab refetches on an invalidation                        |
+ * | invalidation, window open          | yes     | marks pending; the window's end refetches once         | a burst inside the window costs two refetches                     |
+ * | invalidation                       | no      | marks the query stale and defers                       | a hidden tab defers its refetch to the next visibilitychange      |
+ * | window ends with a refetch pending | no      | defers                                                 | a throttled invalidation whose window elapses while hidden defers |
+ * | tab becomes visible, deferred      | yes     | refetches through the throttle                         | a hidden tab defers its refetch to the next visibilitychange      |
+ * | unmount                            | either  | unsubscribes one task later, if still identified       | unmount unsubscribes with the mount's subscriber id               |
+ * | setup again before that task       | either  | cancels the unsubscribe                                | a setup before the unsubscribe task cancels it                    |
+ *
+ * Identify is every connect, first and each reconnect: a reconnect is a
+ * fresh connection with no subscription, so invalidations stop until
+ * `subscribe` runs again. It invalidates with `cancelRefetch: false`,
+ * joining the subscribe a mount or re-enable already started instead of
+ * running a second RPC that cannot be aborted. It is never deferred: a fresh
+ * subscription must read once, and a reconnect is rare.
+ *
+ * Deferral marks the query stale without a fetch (`refetchType: "none"`)
+ * and sets a flag the next `visibilitychange` to visible clears. A
+ * merchant's orders index in a background tab would otherwise run the
+ * counts statement on every webhook the shop receives, for a screen nobody
+ * is looking at. {@link tabIsHidden} is the one definition of hidden. The
+ * hook is the only refetcher: `staleTime: Infinity` leaves invalidations as
+ * the only trigger, and `refetchOnWindowFocus` and `refetchOnReconnect` are
+ * off, because a deferred invalidation leaves the query invalidated, which
+ * TanStack Query's focus manager counts as stale and would refetch on the
+ * same `visibilitychange`, outside the throttle. A trailing refetch pending
+ * at cleanup is dropped: cleanup is unmount or an `agent` replacement, and
+ * the reconnect's identify invalidates again. `gcTime` matches Router's
+ * 30-minute route cache so a retained loader match never outlives its Query
+ * data.
+ *
+ * The unsubscribe waits one task so React Strict Mode's setup, cleanup,
+ * setup probe cannot drop the subscription the first read just created. It
+ * is best-effort and outside `withSocketRecovery`: the subscription is
+ * connection-scoped, so any failure means the connection is already gone,
+ * and reconnecting the shared socket from a route the user just left would
+ * be pure churn.
  *
  * `initialData` is the loader's SSR read of the same contract (through
- * `ShopAgentClient`), so the page paints before the socket identifies; the
+ * `ShopAgentClient`), so the screen paints before the socket identifies; the
  * identify invalidation then performs the first subscribing read. Without it
- * the page shows its own connecting state until `identified`.
+ * the screen shows its own connecting state until `identified`.
  *
  * It may be `undefined`, because a key can outrun the loader: the member's workflows list
  * puts its `Domain.RunQuery` in the key, and a chip press or a Show more
@@ -101,14 +121,7 @@ const connecting = () =>
  * not gets `A | undefined` and has to say what it renders meanwhile.
  * `placeholderData: keepPreviousData` keeps the previous key's rows on screen
  * until the new key's read returns, so a chip press re-renders the list
- * rather than the page's connecting state.
- *
- * `unsubscribe` is deferred by one task and cancelled if the effect sets up
- * again, so React Strict Mode's setup → cleanup → setup probe cannot drop
- * the subscription the first read just created. Best-effort and outside
- * `withSocketRecovery`: the subscription is connection-scoped, so any failure
- * means the connection is already gone, and reconnecting the shared socket
- * from a route the user just left would be pure churn.
+ * rather than the screen's connecting state.
  *
  * `agent` is `null` until the socket host first commits (see
  * `ShopAgentContext.tsx`); `identified` is `false` whenever it is, so the
@@ -183,7 +196,7 @@ export const useSubscribedQuery = <A, Initial extends A | undefined>({
       timer = null;
       if (!pending) return;
       pending = false;
-      if (pageIsHidden()) {
+      if (tabIsHidden()) {
         defer();
         return;
       }
@@ -201,14 +214,14 @@ export const useSubscribedQuery = <A, Initial extends A | undefined>({
     const onMessage = (event: MessageEvent) => {
       if (typeof event.data !== "string") return;
       if (Option.isNone(decodeAgentMessage(event.data))) return;
-      if (pageIsHidden()) {
+      if (tabIsHidden()) {
         defer();
         return;
       }
       refetch();
     };
     const onVisibilityChange = () => {
-      if (pageIsHidden() || !deferred) return;
+      if (tabIsHidden() || !deferred) return;
       deferred = false;
       refetch();
     };

@@ -15,7 +15,7 @@ import { seedConfig, seedMembers } from "./seed";
  * socket → `@callable()`. The integration suite already proves the object's
  * side; what only a browser can prove is that a member holding nothing but a
  * better-auth cookie reaches the Durable Object at all, that the page's
- * buttons drive the socket rather than a form post, and that a push or a
+ * buttons drive the socket rather than a form post, and that an invalidation or a
  * revocation changes the page with no navigation.
  *
  * This file signs in exactly twice — once per member, in `beforeAll` — and
@@ -574,7 +574,7 @@ test("a run's row opens the workflow page and its menu does not", async ({
  * it shows arrived as a `publish` over its own socket.
  *
  * The observer's page is opened first: its `subscribeRuns` has to be
- * registered before the write it is meant to hear about, and the maker's own
+ * registered before the write whose invalidation it is meant to receive, and the maker's own
  * page load and socket handshake are the margin.
  *
  * The cross-team half rides along: the box order is routed to a team the maker
@@ -600,7 +600,7 @@ test("a task one member marks done lands on another member's workflows list with
   await expect(maker.getByText("Pack")).toBeHidden();
 
   await rowAction(maker, RING_ORDER, "Start");
-  /* The push reaches the mate whatever state they are on: the strip renumbers
+  /* The invalidation reaches the mate whatever state they are on: the strip renumbers
      under them while they are still reading Ready. */
   await expect(stateCount(mate, STARTED_BY_OTHERS, 1)).toBeVisible();
   await expect(stateCount(mate, READY, 1)).toBeVisible();
@@ -656,7 +656,7 @@ test("removing a member from a team empties their open workflows list", async ({
  * The strip, driven by the two real actors rather than the seed: untouched
  * work is counted under "Ready"; the maker's own Start moves the card to
  * "Started by you" on their page and to "Started by others" — naming them — on the mate's,
- * which arrives by push. The counts on the strip are the shape of the day,
+ * which arrives by invalidation. The counts on the strip are the shape of the day,
  * and every state stays on it whatever its count, so nothing reflows when a
  * number crosses zero.
  */

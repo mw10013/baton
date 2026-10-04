@@ -11,8 +11,10 @@ import platformSource from "@/lib/domain/Platform.ts?raw";
 import shopWorkSource from "@/lib/domain/ShopWork.ts?raw";
 import * as Screen from "@/lib/Screen";
 import screenSource from "@/lib/Screen.ts?raw";
+import agentClassSource from "@/lib/ShopAgent.ts?raw";
 import clientSource from "@/lib/ShopAgentClient.ts?raw";
 import schemaSource from "@/lib/ShopAgentSchema.ts?raw";
+import hookSource from "@/lib/useSubscribedQuery.ts?raw";
 
 import * as ActionTable from "../../scripts/lib/spec.ts";
 
@@ -891,12 +893,12 @@ describe("reconcile actions table parser", () => {
 const shopWorkWith = (pattern: RegExp, edit: (line: string) => string) =>
   shopWorkSource.replace(pattern, edit);
 
+/** Every test source `checkPinned` reads: both projects, as `scripts/spec.ts` globs them. */
 const pinnedTestSources = () =>
-  import.meta.glob<string>("/test/integration/*.test.ts", {
-    query: "?raw",
-    import: "default",
-    eager: true,
-  });
+  import.meta.glob<string>(
+    ["/test/integration/*.test.ts", "/test/browser/*.test.{ts,tsx}"],
+    { query: "?raw", import: "default", eager: true },
+  );
 
 const syncActionsOf = (...rows: readonly string[]) =>
   [
@@ -1202,6 +1204,147 @@ describe("reconcile pass rules table parser", () => {
         ),
       ),
     ).toMatch(/header is rule, who, pinned by/u);
+  });
+});
+
+describe("subscription tables parser", () => {
+  it("the real tables parse and every pinned title is carried by a test", () => {
+    const cycle = Result.getOrThrow(
+      ActionTable.parseSubscriptionCycle(platformSource),
+    );
+    const delivery = Result.getOrThrow(
+      ActionTable.parseSubscriptionDelivery(platformSource),
+    );
+    expect(cycle.map((row) => row.cells.step)).toContain("reconnect");
+    expect(delivery.map((row) => row.cells.receives)).toContain("no");
+    expect([
+      ...ActionTable.checkPinned(cycle, pinnedTestSources(), "Subscription"),
+      ...ActionTable.checkPinned(delivery, pinnedTestSources(), "Subscription"),
+    ]).toEqual([]);
+  });
+
+  it("a side outside the list is refused", () => {
+    expect(
+      reconcileError(
+        ActionTable.parseSubscriptionCycle,
+        platformSource.replace(/^ \* \| identify +\| object .*$/mu, (line) =>
+          line.replace("| object |", "| server |"),
+        ),
+      ),
+    ).toMatch(/unknown side "server"/u);
+  });
+
+  it("a receives outside the list is refused", () => {
+    expect(
+      reconcileError(
+        ActionTable.parseSubscriptionDelivery,
+        platformSource.replace(/^ \* \| either +\| none .*$/mu, (line) =>
+          line.replace("| no       |", "| never    |"),
+        ),
+      ),
+    ).toMatch(/unknown receives "never"/u);
+  });
+
+  it("a table without its separator row is refused", () => {
+    expect(
+      reconcileError(
+        ActionTable.parseSubscriptionCycle,
+        platformSource.replace(/^ \* \| -+ \| -+ \| -+ \| -+ \| -+ \|\n/mu, ""),
+      ),
+    ).toMatch(/expected the separator row after the header/u);
+  });
+});
+
+describe("publish sites table parser", () => {
+  it("the real table parses and every pinned title is carried by a test", () => {
+    const rows = Result.getOrThrow(
+      ActionTable.parsePublishSites(agentClassSource),
+    );
+    expect(rows.map((row) => row.cells.trigger)).toContain("Cancel workflow");
+    expect(
+      ActionTable.checkPinned(rows, pinnedTestSources(), "publish"),
+    ).toEqual([]);
+  });
+
+  it("an orders cell outside the list is refused", () => {
+    expect(
+      reconcileError(
+        ActionTable.parsePublishSites,
+        agentClassSource.replace(/^ +\* \| Attach workflow .*$/mu, (line) =>
+          line.replace("| the order |", "| one order |"),
+        ),
+      ),
+    ).toMatch(/unknown orders "one order"/u);
+  });
+
+  it("a when outside the list is refused", () => {
+    expect(
+      reconcileError(
+        ActionTable.parsePublishSites,
+        agentClassSource.replace(/^ +\* \| Attach workflow .*$/mu, (line) =>
+          line.replace("| written |", "| often   |"),
+        ),
+      ),
+    ).toMatch(/unknown when "often"/u);
+  });
+
+  it("a source with no publish method names the declaration it looked for", () => {
+    expect(
+      reconcileError(
+        ActionTable.parsePublishSites,
+        agentClassSource.replace("\n  private publish(", "\n  private send("),
+      ),
+    ).toMatch(/`private publish\(` occurs nowhere/u);
+  });
+});
+
+describe("connection table parser", () => {
+  it("the real table parses and every pinned title is carried by a test", () => {
+    const rows = Result.getOrThrow(
+      ActionTable.parseConnectionEvents(platformSource),
+    );
+    expect(rows.map((row) => row.cells.side)).toEqual(
+      expect.arrayContaining(["Worker", "object", "tab"]),
+    );
+    expect(
+      ActionTable.checkPinned(rows, pinnedTestSources(), "ConnectionRole"),
+    ).toEqual([]);
+  });
+
+  it("a side outside the list is refused", () => {
+    expect(
+      reconcileError(
+        ActionTable.parseConnectionEvents,
+        platformSource.replace(/^ \* \| close 4401 +\| tab .*$/mu, (line) =>
+          line.replace("| tab    |", "| client |"),
+        ),
+      ),
+    ).toMatch(/unknown side "client"/u);
+  });
+});
+
+describe("client events table parser", () => {
+  it("the real table parses and every title is carried by a browser test", () => {
+    const rows = Result.getOrThrow(ActionTable.parseClientEvents(hookSource));
+    expect(rows.map((row) => row.cells.event)).toContain("unmount");
+    const browserSources = import.meta.glob<string>(
+      "/test/browser/*.test.tsx",
+      { query: "?raw", import: "default", eager: true },
+    );
+    expect(
+      ActionTable.checkPinned(rows, browserSources, "useSubscribedQuery"),
+    ).toEqual([]);
+  });
+
+  it("a visible outside the list is refused", () => {
+    expect(
+      reconcileError(
+        ActionTable.parseClientEvents,
+        hookSource.replace(/^ \* \| unmount +\| either .*$/mu, (line) =>
+          line.replace("| either  |", "| always  |"),
+        ),
+      ),
+    ).toMatch(/unknown visible "always"/u);
   });
 });
 

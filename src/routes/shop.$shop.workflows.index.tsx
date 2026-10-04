@@ -126,7 +126,7 @@ export const Route = createFileRoute("/shop/$shop/workflows/")({
   /**
    * A query is a different loader key, so its first visit runs the loader once
    * and that read is the socket query's `initialData` for the new key; after
-   * that the socket owns the data and pushes keep it current. Without this the
+   * that the socket owns the data and invalidations keep it current. Without this the
    * default `staleTime: 0` would re-run the loader on every return to a state,
    * team, depth or search whose data the socket already holds — which, now that all
    * four are in the URL, is every way back to this screen.
@@ -277,7 +277,7 @@ function RouteComponent() {
   /**
    * The subscribe pattern (`Domain.Subscription`): the loader's rows paint
    * first, then `subscribeRuns` re-reads them over the socket and registers
-   * this connection for pushes, so another member's Done lands here
+   * this connection's subscription, so another member's Done lands here
    * without a reload. The subscription's scope is the teams on the connection,
    * so nothing about it is named by the browser — `query` only chooses among
    * them, and the object bounds what it can ask for.

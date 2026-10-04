@@ -330,7 +330,7 @@ export const Route = createFileRoute("/app/orders/$orderId")({
  * One order: its note, every item with its properties and workflow
  * runs, and the order's facts. Subscribed like the index: the loader paints,
  * `useSubscribedQuery` reads through `ShopAgent.subscribeOrder` — which subscribes the
- * shared `/app` connection to this order's pushes — so a webhook, sync, or
+ * shared `/app` connection to this order's invalidations — so a webhook, sync, or
  * member task action on this order repaints the page. Every write returns a
  * tagged result that is copy-mapped into the banner rather than thrown.
  *

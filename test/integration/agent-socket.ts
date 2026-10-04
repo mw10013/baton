@@ -256,5 +256,96 @@ export const openMemberSocket = async (
   return { ...memberActions(socket), socket, close: socket.close };
 };
 
-/** The one server push: `Domain.InvalidatedMessage` on the wire. */
+/** The invalidation: `Domain.InvalidatedMessage` on the wire. */
 export const isInvalidated = (data: string) => data.includes(`"invalidated"`);
+
+/** The workflows list's first page of Ready, every team: what a member's subscription reads. */
+const READY_QUERY = {
+  team: null,
+  state: "ready",
+  limit: Domain.RUN_PAGE,
+  q: null,
+} satisfies Domain.RunQuery;
+
+/**
+ * Two subscribed screens, for a test of what a publish names: a merchant on
+ * the orders index, which receives any publish (the delivery table on
+ * `Domain.Subscription`), and a member on the workflows list, whose
+ * connection is on `teamIds` only. With the default, a team no order has, the
+ * member receives only a publish to all teams.
+ */
+export const openTwoScreens = async (
+  shop: string,
+  teamIds: readonly string[] = ["team-with-no-work"],
+) => {
+  const merchant = await openMerchantSocket(shop);
+  await merchant.socket.call("subscribeOrders", {
+    subscriberId: "sub-orders-index",
+    limit: 50,
+    cursor: null,
+    q: null,
+    show: null,
+    team: null,
+  });
+  const member = await openMemberSocket(shop, {
+    memberId: "member-watching",
+    memberEmail: "watching@example.com",
+    teamIds,
+  });
+  await member.socket.call("subscribeRuns", {
+    subscriberId: "sub-workflows-list",
+    query: READY_QUERY,
+  });
+  return {
+    merchant: merchant.socket,
+    member: member.socket,
+    close: () => {
+      merchant.close();
+      member.close();
+    },
+  };
+};
+
+/** How many invalidations `socket` has received so far. */
+export const invalidations = (socket: AgentSocket) =>
+  socket.received.filter(isInvalidated).length;
+
+/**
+ * Resolves once `socket` has received `count` invalidations in all; rejects
+ * after `timeoutMs`. For a publish that follows another on the same socket.
+ */
+export const receivedInvalidations = (
+  socket: AgentSocket,
+  count: number,
+  timeoutMs = RPC_TIMEOUT_MS,
+) =>
+  new Promise<void>((resolve, reject) => {
+    const started = Date.now();
+    const poll = () => {
+      if (invalidations(socket) >= count) resolve();
+      else if (Date.now() - started > timeoutMs)
+        reject(
+          new Error(
+            `received ${String(invalidations(socket))} invalidations, expected ${String(count)}`,
+          ),
+        );
+      else setTimeout(poll, 20);
+    };
+    poll();
+  });
+
+/**
+ * Resolves when 200 ms pass and `socket` has still received exactly `count`
+ * invalidations; rejects when it has more. The negative half of a delivery
+ * assertion, always after a positive one, so a publish that never ran cannot
+ * pass for a scope that left this socket out.
+ */
+export const receivesNoMore = async (socket: AgentSocket, count = 0) => {
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, 200);
+  });
+  if (invalidations(socket) !== count)
+    throw new Error(
+      `received ${String(invalidations(socket))} invalidations, expected ${String(count)}`,
+    );
+};

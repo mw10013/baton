@@ -21,7 +21,7 @@ const GRACE_MS = 4000;
  * Renders nothing while the socket is healthy, because connected is the
  * expected state and a permanent green badge trains people to ignore the one
  * moment it matters. When the socket stays down past `GRACE_MS` the page's
- * writes are disabled and pushes have stopped, so the banner says what that
+ * writes are disabled and invalidations have stopped, so the banner says what that
  * costs rather than just naming the state.
  *
  * Hardcodes `slot="supplemental-start"`, the slot `s-page` renders above its

@@ -18,7 +18,7 @@ import { seedConfig, seedMembers } from "./seed";
  * This is the one test that exercises the whole chain nothing else can —
  * `@callable() syncOpenOrders` over the authenticated socket, `runWorkflow`, a real
  * Shopify bulk operation, the poll loop, the NDJSON stream inside the Durable
- * Object, and the broadcast that makes the table refresh without a reload. Every
+ * Object, and the publish that makes the table refresh without a reload. Every
  * piece of that has an integration test with its neighbours stubbed; only this
  * one proves they are wired to each other.
  *

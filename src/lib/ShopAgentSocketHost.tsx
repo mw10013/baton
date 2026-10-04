@@ -28,9 +28,20 @@ export type SocketQuery =
   | undefined;
 
 /**
+ * Whether {@link ShopAgentSocketHost} re-arms the socket after a close with
+ * `code`: on `Domain.CONNECTION_CLOSE_REVOKED` only, since a revocation is
+ * answered by asking the gate again, and on
+ * `Domain.CONNECTION_CLOSE_FORBIDDEN` a reconnect would forward the same
+ * malformed request. The host's JSDoc says why it has to do this by hand;
+ * the table on `Domain.ConnectionRole` is the rule.
+ */
+export const reconnectAfterClose = (code: number) =>
+  code === Domain.CONNECTION_CLOSE_REVOKED;
+
+/**
  * Shares the per-shop `ShopAgent` socket with a subtree via
- * `ShopAgentProvider`, with the socket itself quarantined in
- * {@link ShopAgentSocketHost} behind a dedicated Suspense boundary.
+ * `ShopAgentProvider`, with the socket itself in {@link ShopAgentSocketHost}
+ * behind its own Suspense boundary.
  *
  * Both populations mount this: `/app` for merchants, passing the App Bridge
  * `idToken` query the Worker's gate verifies, and `/shop/$shop` for members,
@@ -38,7 +49,7 @@ export type SocketQuery =
  * browser sends on a same-origin upgrade, which the same gate reads. Nothing
  * else differs, which is why the two share one host rather than two that drift.
  *
- * Quarantine rationale: `useAgent` suspends whenever its token `query`
+ * Why its own Suspense boundary: `useAgent` suspends whenever its token `query`
  * re-runs — on the hydration flip and, critically, on every socket drop
  * (its `onClose` deletes the query cache with a sync, non-transition
  * setState, so the next render hits `use(pendingPromise)`). A suspending
@@ -122,7 +133,7 @@ export function ShopAgentSocketProvider({
  * Render-nothing host for the `useAgent` socket. Exists so the hook's
  * suspending renders are absorbed by the `fallback={null}` boundary in
  * {@link ShopAgentSocketProvider} instead of blanking the page — see the
- * quarantine rationale there.
+ * reason for its own Suspense boundary there.
  *
  * Publishes the socket by writing `agentRef` during render (not an effect):
  * later siblings (`Outlet` consumers) read it via the context getter in this
@@ -139,8 +150,8 @@ export function ShopAgentSocketProvider({
  * option it exposes can only veto a reconnect, never restore one), so
  * partysocket's usual auto-reconnect does not run for
  * `Domain.CONNECTION_CLOSE_REVOKED` — the socket would stay closed for the
- * life of the document, the page's writes would stay disabled, and the pushes
- * its lists depend on would never resume. `reconnect()` sets the flag back and
+ * life of the document, the page's writes would stay disabled, and the
+ * invalidations its lists depend on would never resume. `reconnect()` sets the flag back and
  * opens a new connection, which is the entire point of that close code: the
  * gate re-runs and answers with the current membership, or refuses (`404` /
  * `402`) and partysocket backs off. Deferred a task so the SDK's own close
@@ -148,7 +159,7 @@ export function ShopAgentSocketProvider({
  * before a new socket exists. `4403` is deliberately excluded: it means the
  * forwarded request was malformed, which a reconnect cannot fix.
  *
- * `identified` is pushed up, not read down: the parent can't observe the
+ * `identified` is lifted up, not read down: the parent can't observe the
  * hook's internal identity state, and reading `agent.identified` off the ref
  * wouldn't re-render consumers (it mutates in place; see
  * `ShopAgentContext.tsx`). `onClose` flips it false immediately — it fires
@@ -186,8 +197,8 @@ export function ShopAgentSocketProvider({
  * `cacheTtl`.
  *
  * `defaultCallTimeout` lowers the SDK's 30s RPC timeout to 20s — the
- * *backstop* zombie detector behind the watchdog and pre-flight (see
- * `withSocketRecovery`, `ShopAgentContext.tsx`); it only fires on a zombie
+ * *backstop* stale-socket detector behind the watchdog and pre-flight (see
+ * `withSocketRecovery`, `ShopAgentContext.tsx`); it only fires on a stale socket
  * younger than the edge deadline or a genuinely slow RPC. Not lower:
  * keep it above the slowest `@callable()` an RPC can reach. Any method that
  * awaits `ensureShopSession` plus a Shopify Admin GraphQL round trip must clear
@@ -196,25 +207,25 @@ export function ShopAgentSocketProvider({
  *
  * The three socket-lifecycle effects below are this host's side of the
  * evidence/watchdog/keepalive design in `ShopAgentContext.tsx`, placed here
- * so every `/app` route heals, not just the ones that push:
+ * so every `/app` route heals, not just the subscribed ones:
  *
  * - Frame evidence: `open`/`message` listeners call `markSocketFrame` —
  *   received frames only (see `reconnectIfSocketStale` for why sends don't
  *   count).
  * - Watchdog: 30s interval + `visibilitychange`→visible run
- *   `reconnectIfSocketStale`, making zombie recovery passive. Nothing else
- *   heals a zombie: a page that renders live pushes has no reason to refetch
+ *   `reconnectIfSocketStale`, making stale-socket recovery passive. Nothing else
+ *   heals a stale socket: a subscribed screen has no reason to refetch
  *   on tab return, and browser dead-TCP detection is unspecified,
  *   platform-variant behavior. Suspended timers resume within seconds of machine wake, so the
- *   first tick heals a wake-after-sleep zombie even when the tab was visible
+ *   first tick heals a stale socket after a wake from sleep even when the tab was visible
  *   throughout (no `visibilitychange`). A heal runs the ordinary reconnect
  *   machinery — synthetic close → `identified` false → "Connecting" badge →
  *   fresh token → open → re-identify — and the close's query invalidation
- *   refetches the state whose pushes the zombie swallowed.
+ *   refetches the state whose invalidations the stale socket swallowed.
  * - Keepalive: sends the edge-answered ping (see `SOCKET_KEEPALIVE_MS` for
  *   cadence and trade-offs). Independent churn reduction, shares no state
  *   with the watchdog: pings send blind, never touch `lastFrameAt`, and a
- *   zombie yields no pong — the watchdog reconnects as if the keepalive did
+ *   stale socket yields no pong — the watchdog reconnects as if the keepalive did
  *   not exist.
  *
  * Standing constraint across all three: no periodic traffic that wakes the
@@ -249,7 +260,7 @@ function ShopAgentSocketHost({
     onClose: (event: CloseEvent) => {
       onIdentifiedChange(false);
       onSocketClose?.(event);
-      if (event.code === Domain.CONNECTION_CLOSE_REVOKED)
+      if (reconnectAfterClose(event.code))
         setTimeout(() => agentRef.current?.reconnect(), 0);
     },
   });

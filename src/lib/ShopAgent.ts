@@ -51,8 +51,14 @@ import { Shopify } from "@/lib/Shopify";
 import { ShopifyAppEvents } from "@/lib/ShopifyAppEvents";
 import { WorkflowRepository } from "@/lib/WorkflowRepository";
 
-class ShopAgentNotifyError extends Schema.TaggedError<ShopAgentNotifyError>()(
-  "ShopAgentNotifyError",
+/**
+ * A failure on the publish and revoke paths: reading the connections, sending
+ * an invalidation, or closing a revoked connection. Never surfaced: each site
+ * logs it and carries on, for the reasons on `publish` and
+ * `closeMemberConnections`.
+ */
+class ShopAgentPublishError extends Schema.TaggedError<ShopAgentPublishError>()(
+  "ShopAgentPublishError",
   {
     message: Schema.String,
     cause: Schema.Defect(),
@@ -515,7 +521,8 @@ export class ShopAgent extends Agent {
 
   /**
    * Tags are persisted with the hibernatable socket and are what
-   * `getConnections(tag)` filters on, so they carry only what a *fan-out* has
+   * `getConnections(tag)` filters on, so they carry only what a fan-out (the
+   * set of connections one publish or revoke reaches) has
    * to select by: the role, and for a member the id a membership change has
    * to revoke (`revokeMemberConnections`). Everything else stays in
    * `connection.state`.
@@ -551,13 +558,14 @@ export class ShopAgent extends Agent {
     return Effect.try({
       try: () => [...this.getConnections()],
       catch: (cause) =>
-        new ShopAgentNotifyError({ message: "getConnections failed", cause }),
+        new ShopAgentPublishError({ message: "getConnections failed", cause }),
     });
   }
 
   /**
-   * Sends one connection the frame when its subscription is in scope, and
-   * answers whether it did; a send that throws answers `false`.
+   * Sends one connection the invalidation when its subscription is in scope
+   * (the delivery table on `Domain.Subscription`), and answers the role it
+   * sent to, or `null`; a send that throws answers `null`.
    */
   private publishTo(
     connection: Connection,
@@ -586,7 +594,10 @@ export class ShopAgent extends Agent {
         return state.role;
       },
       catch: (cause) =>
-        new ShopAgentNotifyError({ message: "invalidated send failed", cause }),
+        new ShopAgentPublishError({
+          message: "invalidated send failed",
+          cause,
+        }),
     }).pipe(
       Effect.catch((error) =>
         Effect.logDebug(`ShopAgent.publishTo: shop=${shop}`).pipe(
@@ -629,7 +640,7 @@ export class ShopAgent extends Agent {
               );
           },
           catch: (cause) =>
-            new ShopAgentNotifyError({
+            new ShopAgentPublishError({
               message: "revoke close failed",
               cause,
             }),
@@ -666,7 +677,7 @@ export class ShopAgent extends Agent {
    * Closes every connection on this object — merchant and member alike — with
    * `Domain.CONNECTION_CLOSE_REVOKED`. Plain RPC, not `@callable()`: the
    * caller is `SubscriptionPlan`, at the moment a revalidation learns the
-   * shop's subscription lapsed.
+   * shop's app subscription lapsed.
    *
    * The keepalive means a healthy socket never reconnects on its own, so the
    * connect-time plan check would otherwise hold for as long as the tab
@@ -686,11 +697,11 @@ export class ShopAgent extends Agent {
             for (const connection of connections())
               connection.close(
                 Domain.CONNECTION_CLOSE_REVOKED,
-                "subscription lapsed",
+                "app subscription lapsed",
               );
           },
           catch: (cause) =>
-            new ShopAgentNotifyError({
+            new ShopAgentPublishError({
               message: "revoke close failed",
               cause,
             }),
@@ -713,57 +724,78 @@ export class ShopAgent extends Agent {
    * closed a run. A redelivery, or an edit that fetched the version already
    * stored, writes the same row and reconciles to the same runs, and no
    * subscribed screen would read anything new. The sites that publish
-   * without that signal say so on themselves.
+   * without that signal are the rows below whose `when` is not `changed`.
    *
-   * Invalidations are best-effort hints, never the new value: SQLite stays
-   * authoritative and a subscribing tab refetches, so a dropped push costs a
-   * stale render until the next subscribe rather than a lost write. That is
-   * why a send failure is swallowed here instead of failing the mutation that
-   * triggered it.
+   * **A publish clears the list memo before the first invalidation goes
+   * out.** The memo holds each list read's last answer per key, in the
+   * object's memory: the orders index page (`ShopWorkAgent`'s `readOrders`)
+   * and the rows a team set owns on the workflows list (`readRuns`). Every
+   * tab refetches after an invalidation, so the tabs that share a key share
+   * one computation instead of one each; and because the clear happens before
+   * any invalidation is sent, a refetch after one always computes fresh. It
+   * runs with no connections too: a loader read is memoized the same way. A
+   * write that publishes nothing leaves the memo as it is, which is the same
+   * write leaving every open tab as it is; so every write a list shows must
+   * publish, the retention sweep included. A lookup in flight when the clear
+   * runs is dropped from the memo, never stored: its caller still gets the
+   * value, correct for the moment it asked, and is about to be told to
+   * refetch (Effect's `Cache.invalidateAll`). The memo is not state: it
+   * starts empty on every activation, so after a wake each key costs one
+   * computation at the unmemoized price. Keeping it across hibernation would
+   * need a table and a read on every hit, which is the cost it exists to
+   * avoid.
    *
-   * `touched` scopes the push (see `Domain.Subscription`): the order GIDs a
-   * write changed, or `"all"` when the writer cannot name them — the bulk
-   * sync, which touches a window of orders, and the configuration writes.
-   * The run mutations name their order through `publishToTeams`. An index
-   * subscription (`orderId: null`) is published to either way; a detail
-   * subscription only for its own order. Workflow configuration is loader
-   * data and does not publish, with one exception: Apply and the on/off
-   * switch change what creates runs, which the order page's Workflow select
-   * shows (`matchedWorkflows`, `otherWorkflows`), so those two publish `"all"`.
+   * The sites: every write that publishes, and what it names. `orders` is the
+   * orders half of the scope (`touched`, the parameter): `all` or `the
+   * order`. `teams` is the teams half: `all`, `the order's teams` (every
+   * team with a task on any run of the order, `RunRepository.listOrderTeamIds`,
+   * read after the write), `before ∪ after` (that read on both sides of the
+   * write, because a write can take a team's last task away as readily as
+   * give one), `the order's teams, read before the write`, or `(none)`. Who
+   * receives each scope is the delivery table on `Domain.Subscription`.
+   * `when` is `changed` (the first rule above), `written` (after a write
+   * that succeeded, changed or not; a refused call publishes nothing, since
+   * it wrote nothing a screen shows and the refused tab refetches itself on
+   * every result, `publishIfOk` in `ShopWorkAgent`), `always` (every call of
+   * the trigger, refused or not, because the refusal is itself what the
+   * screen shows, or because a refused Delete team still nulls dangling
+   * team pointers and reconciles), or `swept` (the retention sweep deleted
+   * a row).
    *
-   * `teams` is the same idea for the other population. A member's subscription
-   * is their workflows list, which is scoped by team rather than by order, so an order
-   * GID says nothing about whether their list changed. The five member
-   * mutations name the teams their write could have affected — every team
-   * owning a task on any run of that order, because which tasks are current depends on every run of the order
-   * (`RunRepository.listOrderTeamIds`) — and everything else publishes
-   * `"all"`, which reaches every member. Over-broad costs a refetch;
-   * under-broad costs a list that silently stops updating, so `"all"` is the
-   * right default for a writer that cannot name them.
+   * | trigger                                                                     | orders    | teams                                    | when    | pinned by                                                                                                                                                                                                                                   |
+   * | --------------------------------------------------------------------------- | --------- | ---------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+   * | order webhook (create, paid, cancelled, fulfilled, edited)                  | the order | before ∪ after                           | changed | a webhook on the same version whose reconcile creates a run publishes; a webhook that moves the order's updatedAt publishes even when no run moved; a webhook publishes to the teams on the order before and after, and to no other team |
+   * | order webhook, the retention sweep deleted something                        | all       | all                                      | swept   | a webhook whose sweep deletes an order publishes and the orders index stops showing it                                                                                                                                                      |
+   * | order webhook, new order at the cycle ceiling                               | the order | (none)                                   | always  | a new order refused at the ceiling publishes to the merchant and no member                                                                                                                                                                  |
+   * | Sync open orders pressed, started or refused (in flight publishes nothing) | all       | all                                      | always  | Sync open orders publishes to every screen when it starts or is refused                                                                                                                                                                     |
+   * | the open-orders stream finishes                                             | all       | all                                      | always  | the open-orders stream publishes to every screen when it finishes                                                                                                                                                                           |
+   * | the sync workflow completes, or fails (its error sink, then its callback)  | all       | all                                      | always  | the open-orders sync publishes to every screen when its workflow completes; the open-orders sync publishes to every screen when its workflow fails                                                                                          |
+   * | Sync this order pressed                                                     | the order | all                                      | changed | Sync this order publishes the order to every team when it changed something, and nothing when it did not                                                                                                                                   |
+   * | Edit tag, Apply                                                             | all       | all                                      | written | Edit tag and Apply publish to every screen whether or not a run moved; a refused call publishes nothing                                                                                                                                      |
+   * | the on/off switch, the editor's Turn on, Delete workflow                    | all       | all                                      | written | turning a workflow on or off, deleting it, or deleting a team publishes to every screen; a refused call publishes nothing                                                                                                                    |
+   * | Delete team                                                                 | all       | all                                      | always  | turning a workflow on or off, deleting it, or deleting a team publishes to every screen                                                                                                                                                     |
+   * | Assign a task's team                                                        | all       | before ∪ after                           | written | assigning a task's team publishes to the teams before and after                                                                                                                                                                             |
+   * | Attach workflow                                                             | the order | all                                      | written | Attach workflow publishes the order to every team                                                                                                                                                                                           |
+   * | Cancel workflow                                                             | the order | the order's teams, read before the write | written | Cancel workflow publishes the order to the teams it had                                                                                                                                                                                     |
+   * | a merchant run or task verb, through `publishToTeams`                       | the order | the order's teams                        | written | completes a member's task over a merchant socket and publishes it to the team; a refused call publishes nothing                                                                                                                              |
+   * | a member run or task verb, through `publishToTeams`                         | the order | the order's teams                        | written | a task verb reaches the orders index and the order's page, and not another order's page; publishes a completed task to the team, and not to a team with no work on that order; a refused call publishes nothing                              |
+   * | seed (dev)                                                                  | all       | all                                      | written | the seed publishes once to every screen                                                                                                                                                                                                     |
+   *
+   * `"all"` is the honest default for a writer that cannot name a half:
+   * over-broad costs a refetch, under-broad a list that silently stops
+   * updating. Workflow configuration is loader data and does not publish,
+   * except Edit tag, Apply and the switch, which change what the order page's
+   * Workflow select shows (`matchedWorkflows`, `otherWorkflows`).
+   *
+   * An invalidation is best-effort and never the new value: SQLite stays
+   * authoritative and a subscribing tab refetches, so a dropped invalidation
+   * costs a stale render until the next subscribe rather than a lost write.
+   * That is why a send failure is swallowed here instead of failing the
+   * mutation that triggered it.
    *
    * Logs one line per publish with how many merchant and member connections
-   * received the frame, under `instrumentationIsOn`. The counts, with
+   * received the invalidation, under `instrumentationIsOn`. The counts, with
    * `readOrders`'s and `readRuns`'s `ms=`, are how the fan-out is measured.
-   *
-   * **A publish clears the list memo before the first frame goes out.** The
-   * memo holds each list read's last answer per key, in the object's memory:
-   * the orders index page (`ShopWorkAgent`'s `readOrders`) and the rows a
-   * team set owns on the workflows list (`readRuns`). Every tab refetches
-   * after a push, so the tabs that share a key share one computation instead
-   * of one each; and because the clear happens before any frame is sent, a
-   * refetch after a push always computes fresh. It runs with no connections
-   * too: a loader read is memoized the same way. A write that publishes
-   * nothing leaves the memo as it is, which is the same write leaving every
-   * open tab as it is; so every write a list shows must publish, the
-   * retention sweep included (`syncOrderWebhook` publishes when its sweep
-   * deleted anything, pinned by "a webhook whose sweep deletes an order
-   * publishes and the orders index stops showing it"). A lookup in flight when the clear runs is dropped
-   * from the memo, never stored: its caller still gets the value, correct
-   * for the moment it asked, and is about to be told to refetch (Effect's
-   * `Cache.invalidateAll`). The memo is not state: it starts empty on every
-   * activation, so after a wake each key costs one computation at the
-   * unmemoized price. Keeping it across hibernation would need a table and
-   * a read on every hit, which is the cost it exists to avoid.
    */
   private publish(touched: PublishScope, teams: PublishTeams = "all") {
     const shop = this.name;
@@ -1178,8 +1210,8 @@ export class ShopAgent extends Agent {
            * 2xx: a retry cannot change the answer, and making Shopify replay
            * a delivery for four hours to reach the same refusal helps nobody.
            *
-           * The publish is a nudge, not the banner: the merchant's open
-           * orders page refetches its list, and the critical banner itself
+           * The publish is not the banner: the merchant's open orders
+           * index refetches its list, and the critical banner itself
            * arrives with that page's next loader read, since usage is
            * deliberately loader-only (the orders index's loader data).
            */
@@ -2237,8 +2269,8 @@ export class ShopAgent extends Agent {
    * reads this through its loader via `ShopAgentClient`, so nothing
    * browser-side calls it. Task ownership is configuration that only changes
    * on the workflow pages, and a loader read refreshes with
-   * `router.invalidate` and paints during SSR, which a socket query without a
-   * push listener cannot do.
+   * `router.invalidate` and paints during SSR, which a socket query outside
+   * the subscription cycle cannot do.
    */
   listTeamWorkflows(
     input: typeof Domain.TeamIdInput.Encoded,

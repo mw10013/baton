@@ -46,7 +46,8 @@ export const unionTeams = (a: PublishTeams, b: PublishTeams): PublishTeams =>
  * the sync tables on `Domain.syncOrder`; `reconcile` is
  * the shape from the triggers table on `Domain.reconcileItem`, `reconcile` or
  * `reconcile all`; `flush` is when the usage queue is sent; `publish` is
- * who is told. No `pinned by`: the rows are wiring, covered by the webhook,
+ * who is told, and the sites table on `ShopAgent.publish` is the full list
+ * of writes that publish. No `pinned by`: the rows are wiring, covered by the webhook,
  * stream and ceiling suites by scenario.
  *
  * | source                        | store                                             | reconcile                          | flush                 | publish                                                                    |
@@ -66,7 +67,7 @@ export class ShopAgentHost extends Context.Service<
      * the runtime is first built inside the constructor.
      */
     readonly shop: () => string;
-    /** The object's invalidation push; the scopes are the class's `publish`. */
+    /** The object's publish; the scopes are the class's `publish`. */
     readonly publish: (
       touched: PublishScope,
       teams?: PublishTeams,

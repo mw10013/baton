@@ -346,7 +346,7 @@ const rebuildRequest = (
  * by invariant never a member, so it gets no connection role at all); not a
  * member of this shop → `404`, the same "no such shop" the page returns, so a
  * stranger cannot distinguish a shop they lack access to from one that does
- * not exist; a member of a shop whose subscription lapsed → `402`, the same
+ * not exist; a member of a shop whose app subscription lapsed → `402`, the same
  * answer the merchant gate gives.
  *
  * A failure that is not an authorization answer — D1 unreachable — is `503`

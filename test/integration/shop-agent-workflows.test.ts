@@ -23,7 +23,13 @@ import { runShopAgentMigrations } from "@/lib/ShopAgentSchema";
 import { ShopifyAppEvents } from "@/lib/ShopifyAppEvents";
 import { WorkflowRepository } from "@/lib/WorkflowRepository";
 
-import { openMemberSocket, openMerchantSocket } from "./agent-socket";
+import {
+  openMemberSocket,
+  openMerchantSocket,
+  openTwoScreens,
+  receivedInvalidations,
+  receivesNoMore,
+} from "./agent-socket";
 
 const layer = Repository.layerNoDeps.pipe(
   Layer.provide(
@@ -1557,6 +1563,34 @@ const twoTask = (name: string, tag: string, teamId: string) => ({
 });
 
 describe("ShopAgent seed callables", () => {
+  /**
+   * `seedWorkflows` publishes nothing of its own: `seedOrders` always
+   * follows it, and its one publish to all orders and all teams covers both.
+   */
+  it("the seed publishes once to every screen", async () => {
+    const shop = "seed-publishes.myshopify.com";
+    const team = await seedTeam(shop, "Bench");
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    const screens = await openTwoScreens(shop);
+    await agent.seedWorkflows({
+      workflows: [twoTask("Board", "board", team.id)],
+    });
+    await agent.seedOrders({
+      ...seedMember,
+      orders: [
+        {
+          n: 1,
+          lineItems: [{ title: "Board", quantity: 1, tags: ["board"] }],
+        },
+      ],
+    });
+    await receivedInvalidations(screens.merchant, 1);
+    await receivedInvalidations(screens.member, 1);
+    await receivesNoMore(screens.merchant, 1);
+    await receivesNoMore(screens.member, 1);
+    screens.close();
+  });
+
   it("seedOrders runs each item on its own progress and leaves its siblings alone", async () => {
     const shop = "seed-per-item.myshopify.com";
     const team = await seedTeam(shop, "Bench");

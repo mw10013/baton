@@ -74,8 +74,8 @@ export const useShopAgent = () => {
 let lastFrameAt = Date.now();
 
 /**
- * Called by the socket host's `open`/`message` listeners. Incoming server
- * pushes must count — they reset the edge's idle timer too. Outgoing sends
+ * Called by the socket host's `open`/`message` listeners. Incoming
+ * invalidations must count — they reset the edge's idle timer too. Outgoing sends
  * deliberately do not (see `reconnectIfSocketStale`).
  */
 export const markSocketFrame = () => {
@@ -105,7 +105,7 @@ export const STALE_SOCKET_MS = 310_000;
  * ~60s headroom for hidden-tab timer throttling; a late tick just lets the
  * edge close fire and the normal ~1s reconnect run, so every failure mode
  * degrades to the pre-keepalive behavior, never below it. The ping never
- * touches `lastFrameAt` (received frames only) — a zombie yields no pong, so
+ * touches `lastFrameAt` (received frames only) — a stale socket yields no pong, so
  * evidence goes stale and the watchdog fires unmasked. Accepted trade-off:
  * tokens are checked only at connect, so a kept-alive socket holds its
  * connect-time auth for hours (the old 5-min cycle incidentally re-authed).
@@ -117,19 +117,21 @@ export const SOCKET_KEEPALIVE_MS = 240_000;
  * wake. Granularity is noise against the 310s threshold (worst-case awake
  * detection = threshold + one tick); browsers suspend timers through machine
  * sleep and resume within seconds of wake, so the first resumed tick heals a
- * wake-after-sleep zombie almost immediately regardless of this value.
+ * stale socket after a wake from sleep almost immediately regardless of this value.
  */
 export const SOCKET_WATCHDOG_MS = 30_000;
 
 /**
- * The one definition of "stale": `readyState` claims OPEN but no received
- * frame for >310s → `reconnect()`. A dead-man's switch, not a heartbeat: the
+ * The one definition of a stale socket: `readyState` claims OPEN but no
+ * received frame for >310s → `reconnect()`. "Stale" here is the socket's; a
+ * stale query is TanStack Query's, and each travels with its noun. The
+ * watchdog, not a heartbeat: the
  * edge's idle-close guarantees a healthy socket — even fully idle — receives
- * a frame at least every ~300s (keepalive pong, server push, or the edge
+ * a frame at least every ~300s (keepalive pong, an invalidation, or the edge
  * close's fresh `open`), so this audits that inbound cadence and sends
  * nothing. Only received frames count as evidence — a locally successful
  * `send()` cannot prove the edge got the bytes, and counting sends would mask
- * a young zombie. Cost of that strictness: a slow in-flight RPC in an
+ * a young stale socket. Cost of that strictness: a slow in-flight RPC in an
  * otherwise idle window can trip a reconnect of a healthy socket (in-flight
  * call rejects "Connection closed") — rare, tolerated by every call site
  * (at-least-once mutations, idempotent save, read query). `Date.now()` advances
@@ -158,10 +160,10 @@ export const reconnectIfSocketStale = (agent: ShopAgentSocket) => {
  * open — the click that would have burned the full RPC timeout on a dead pipe
  * delivers ~1–3s later instead, no error surfaced, never transmitted twice.
  *
- * Backstop: an RPC timeout on a socket claiming OPEN is the zombie signature
- * (`send()` succeeds locally on a dead path), and `useAgent`'s timeout only
+ * Backstop: an RPC timeout on a socket claiming OPEN is the stale socket's
+ * signature (`send()` succeeds locally on a dead path), and `useAgent`'s timeout only
  * rejects the promise — without `reconnect()` here every later call would
- * burn its own timeout on the same pipe. Catches zombies younger than the
+ * burn its own timeout on the same pipe. Catches stale sockets younger than the
  * edge deadline. A false positive (a slow RPC that actually landed) costs one
  * churn and a possible duplicate delivery; every call site tolerates that.
  * The regex matches the message `useAgent` manufactures for call timeouts;

@@ -38,6 +38,26 @@ const connectionsOf = (shop: string) =>
     })),
   );
 
+/** Headers no `Domain.ConnectionState` decodes from, each a gate that forwarded something malformed. */
+const UNDECODABLE = [
+  ["no role header at all", {}],
+  ["an unknown role", { [Domain.CONNECTION_ROLE_HEADER]: "operator" }],
+  [
+    "a member role with no member id",
+    {
+      [Domain.CONNECTION_ROLE_HEADER]: "member",
+      [Domain.CONNECTION_MEMBER_EMAIL_HEADER]: "maker@example.com",
+    },
+  ],
+  [
+    "a member role with no email",
+    {
+      [Domain.CONNECTION_ROLE_HEADER]: "member",
+      [Domain.CONNECTION_MEMBER_ID_HEADER]: "member-3",
+    },
+  ],
+] as const;
+
 describe("ShopAgent connection identity", () => {
   it("stores a merchant identity and tags the connection", async () => {
     const shop = "conn-merchant.myshopify.com";
@@ -99,31 +119,15 @@ describe("ShopAgent connection identity", () => {
     socket.close();
   });
 
-  for (const [label, headers] of [
-    ["no role header at all", {}],
-    ["an unknown role", { [Domain.CONNECTION_ROLE_HEADER]: "operator" }],
-    [
-      "a member role with no member id",
-      {
-        [Domain.CONNECTION_ROLE_HEADER]: "member",
-        [Domain.CONNECTION_MEMBER_EMAIL_HEADER]: "maker@example.com",
-      },
-    ],
-    [
-      "a member role with no email",
-      {
-        [Domain.CONNECTION_ROLE_HEADER]: "member",
-        [Domain.CONNECTION_MEMBER_ID_HEADER]: "member-3",
-      },
-    ],
-  ] as const) {
-    it(`closes ${label} with ${String(Domain.CONNECTION_CLOSE_FORBIDDEN)}`, async () => {
+  it("closes a connection with undecodable headers with 4403", async () => {
+    expect(Domain.CONNECTION_CLOSE_FORBIDDEN).toBe(4403);
+    for (const [label, headers] of UNDECODABLE) {
       const shop = `conn-bad-${label.replaceAll(/\W+/gu, "-")}.myshopify.com`;
       const socket = await openAgentSocket(shop, { ...headers });
       const { code } = await socket.waitForClose();
-      expect(code).toBe(Domain.CONNECTION_CLOSE_FORBIDDEN);
-    });
-  }
+      expect(code, label).toBe(Domain.CONNECTION_CLOSE_FORBIDDEN);
+    }
+  });
 
   /**
    * Revocation, the object's half. A membership change cannot reach into a
@@ -164,7 +168,7 @@ describe("ShopAgent connection identity", () => {
   });
 
   /**
-   * The subscription half: a lapse invalidates every connection on the shop,
+   * The app subscription half: a lapse revokes every connection on the shop,
    * merchant and member, since the gate refuses both once the plan is gone.
    */
   it("revokes every connection on the shop for a lapse", async () => {

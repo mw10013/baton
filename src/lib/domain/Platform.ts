@@ -10,6 +10,15 @@
  * | shop    | one Shopify store, the tenant                                                                          | `ShopSession`, `Shop` | store (Shopify's merchant word); its domain as the name |
  * | ceiling | a per-shop limit the object enforces: `maxOrdersPerCycle`, `maxMembers` on `ShopLimits` | `ShopLimits`          | the banner that names what stopped                      |
  * | memo    | a list read's last answer, kept in the object's memory until the next publish | the Cache values in ShopWorkAgent | (none)                                                  |
+ * | socket       | a tab's one WebSocket to its shop's object, for the life of the tab; a series of connections                                                | `ShopAgentSocket`, `ShopAgentSocketProvider`       | (none): Connecting |
+ * | connection   | the object's end of one socket, from identify to close; carries who is on it and its subscription                                           | `ConnectionState` in ShopWork, `ConnectionRole`    | (none)             |
+ * | identify     | the object learns who is on a connection from the gate's headers, once, at connect; the tab learns the handshake landed                     | `ShopAgent.onConnect`, `identified`                | (none): Connecting |
+ * | subscription | a connection's registered interest in one screen's data: the orders index, one order, or the member's teams; one or none per connection     | `Subscription`, `subscribe<Feature>`               | (none)             |
+ * | subscriber   | one mounted subscribed screen, by the id that guards its unsubscribe                                                                        | `SubscriberIdInput`, `useSubscribedQuery`          | (none)             |
+ * | publish      | a write telling every connection whose subscription it touched to refetch; follows a write that changed something                           | `ShopAgent.publish`, `ShopAgentHost.publish`       | (none)             |
+ * | scope        | what a publish names: the orders it changed or all, and the teams it could have changed or all                                              | `PublishScope`, `PublishTeams` in ShopAgentHost    | (none)             |
+ * | invalidation | the one message the object sends: this screen's data is stale; never the data                                                               | `InvalidatedMessage`, `INVALIDATION_THROTTLE_MS`   | (none)             |
+ * | revoke       | the object closing a connection whose identity no longer holds (membership, team, app subscription), so the tab reconnects through the gate | `CONNECTION_CLOSE_REVOKED`, `revokeAllConnections` | (none): Connecting |
  */
 import { Schema, SchemaGetter, Struct } from "effect";
 
@@ -301,40 +310,61 @@ export const EpochMillis = Schema.DateFromString.pipe(
 );
 
 /**
- * The subscribe pattern — the socket half of the loader-versus-socket rule on
- * `ShopAgentClient`, for a page whose data other actors change underneath it.
- * One cycle, named the same on both sides:
+ * A subscription is a connection's registered interest in one screen's data:
+ * the orders index, one order, or the member's teams. A connection holds one
+ * or none. It is stored on the connection beside the identity
+ * (`ConnectionState` in ShopWork) rather than as the whole connection state,
+ * so a subscribe cannot erase the identity that authorizes it: the subscribe
+ * sites write the state with the subscription replaced and the rest kept.
+ * This is the socket half of the loader-versus-socket rule on
+ * `ShopAgentClient`: each `subscribe<Feature>` has a plain twin without the
+ * subscription (`listOrders`, `getOrderDetail`) that the route loader reads
+ * for SSR paint, and a socket `useQuery` outside this cycle is a mistake,
+ * because it never refetches; it belongs on a loader instead.
  *
- * 1. **Subscribe.** The page's read is a `subscribe<Feature>` RPC on
- *    `ShopAgent` (`subscribeOrders`, `subscribeOrder`) that returns the page's data
- *    *and* stores this `Subscription` as the connection's state, in one round
- *    trip so a write between two calls cannot be missed. Each has a plain
- *    twin without the subscription (`listOrders`, `getOrderDetail`) that the
- *    route loader reads through `ShopAgentClient` for SSR paint. The page
- *    calls the RPC through `useSubscribedQuery`, which owns the client half.
- * 2. **Publish.** A write on the object ends with `ShopAgent.publish`, which
- *    sends `InvalidatedMessage` to every connection whose subscription the
- *    write touched — a hint that the data is stale, never the new value.
- * 3. **Invalidate.** The hook decodes the message and invalidates its query
- *    (throttled), which re-runs the `subscribe<Feature>` read and so also
- *    renews the subscription.
- * 4. **Unsubscribe.** On unmount the hook calls `unsubscribe` with its
- *    `subscriberId`; the object clears the state only if the id still
- *    matches, so a stale unsubscribe from a previous mount on the same shared
- *    socket cannot clear a newer mount's subscription. A reconnect is a fresh
- *    connection with no subscription, which is why the hook re-subscribes on
- *    every identify.
+ * The cycle, both sides. `side` is where the step runs: the object, the tab,
+ * both, or the Worker.
  *
- * A connection with no subscription receives nothing. A socket `useQuery`
- * outside this cycle is a mistake — it never refetches — and belongs on a
- * loader instead.
+ * | step         | side   | symbol                                      | rule                                                                                                                             | pinned by                                                             |
+ * | ------------ | ------ | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+ * | identify     | object | `ShopAgent.onConnect`                       | a fresh connection carries the gate's identity and no subscription                                                               | stores a merchant identity and tags the connection                    |
+ * | subscribe    | both   | `subscribe<Feature>`                        | one RPC reads the screen's data and stores the subscription, so a write between two calls cannot be missed                       | reads the workflows list for the connection's teams and subscribes    |
+ * | re-subscribe | both   | `subscribe<Feature>`                        | a second subscribe on the connection replaces the first                                                                          | re-subscribing with a different query changes what the read returns   |
+ * | publish      | object | `ShopAgent.publish`                         | a write that changed something sends the invalidation to every connection whose subscription is in scope; see the delivery table | a webhook on the same version whose reconcile creates a run publishes |
+ * | invalidate   | tab    | `useSubscribedQuery`                        | the invalidation re-runs the subscribing read, throttled; the client table is on the hook                                        | a visible tab refetches on an invalidation                            |
+ * | unsubscribe  | both   | `ShopAgent.unsubscribe`                     | clears the connection's subscription only when the subscriber id matches; a stale unsubscribe cannot clear a newer mount's       | a stale unsubscribe cannot clear a newer mount's subscription         |
+ * | reconnect    | both   | `ShopAgentSocketHost`, `useSubscribedQuery` | a reconnect is a fresh connection with no subscription; the tab's `identified` flip subscribes again                             | a reconnect is a fresh connection with no subscription                |
  *
- * `orderId` is the subscription's scope: `null` is the orders index, which
- * wants every order-state change; a GID is one detail page, which wants only
- * its own order. `publish` takes the set of orders a write touched (or `"all"`
- * for the bulk sync and the configuration writes) and skips a detail
- * subscription whose order is not in it. Only order state is ever published —
- * workflow configuration is loader data and changes on navigation.
+ * Delivery: who receives one publish. `role` is the connection's
+ * (`either` for both), `subscription` is the screen it subscribed for, and
+ * `scope` is what the publish names, in its orders half for a merchant and
+ * its teams half for a member. `receives` is `yes` or `no`.
+ *
+ * | role     | subscription               | scope                             | receives | pinned by                                                                                |
+ * | -------- | -------------------------- | --------------------------------- | -------- | ---------------------------------------------------------------------------------------- |
+ * | either   | none                       | any                               | no       | a connection with no subscription receives nothing                                       |
+ * | merchant | the orders index           | any                               | yes      | a task verb reaches the orders index and the order's page, and not another order's page |
+ * | merchant | the order page             | all, or names its order           | yes      | a task verb reaches the orders index and the order's page, and not another order's page |
+ * | merchant | the order page             | names other orders                | no       | a task verb reaches the orders index and the order's page, and not another order's page |
+ * | member   | the workflows list         | all teams, or names one of theirs | yes      | publishes a completed task to the team, and not to a team with no work on that order     |
+ * | member   | the workflows list         | names only other teams            | no       | publishes a completed task to the team, and not to a team with no work on that order     |
+ * | member   | the member's workflow page | as the workflows list             | yes      | the member's workflow page receives what the list receives                               |
+ *
+ * The scope has two halves (`PublishScope`, `PublishTeams` in
+ * ShopAgentHost). The orders half is the order GIDs a write changed, and
+ * `orderId` here is what a merchant's subscription matches it against: `null`
+ * is the orders index, which wants every order-state change, and a GID is
+ * one order page, which wants only its own. The teams half is every team a
+ * member's workflows list could have changed for. A writer that cannot name
+ * a half passes `"all"`, the honest default: over-broad costs a refetch,
+ * under-broad a list that silently stops updating. A member's subscription
+ * has `orderId: null` on both of the member's screens, because their scope is
+ * the teams on the connection.
+ *
+ * Only order and run state is published. Workflow configuration is loader
+ * data and changes on navigation, except where an order page shows it; the
+ * sites table on `ShopAgent.publish` names every write that publishes and
+ * what it names.
  */
 export const Subscription = Schema.Struct({
   subscriberId: Schema.String,
@@ -346,7 +376,8 @@ export const SubscriptionState = Schema.NullOr(Subscription);
 
 /**
  * Who is on a `ShopAgent` WebSocket connection. Two populations reach the
- * object over the same socket and must not reach the same methods:
+ * object over the same socket (`ShopAgentSocket`, mounted by
+ * `ShopAgentSocketProvider` on both sides) and must not reach the same methods:
  * **merchants** (Shopify staff inside the embedded admin, proved by an App
  * Bridge session token) and **members** (a Baton login with no Shopify
  * account, proved by a better-auth cookie). Only the Worker can tell them
@@ -360,16 +391,35 @@ export const SubscriptionState = Schema.NullOr(Subscription);
  * inputs a member must not be able to name for themselves. Every `@callable()`
  * checks the role here first (see `callableEffect` on `ShopAgent`).
  *
+ * From connect to close. `side` is where the answer is given: the Worker's
+ * gate (`authorizeShopAgentRequest`), the object, or the tab.
+ *
+ * | event                                          | side   | answer                                                                           | pinned by                                                                                                |
+ * | ---------------------------------------------- | ------ | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+ * | upgrade with a valid App Bridge token          | Worker | forwards `merchant`                                                              | forwards a merchant role for a valid session token                                                       |
+ * | upgrade with a member cookie for this shop     | Worker | forwards `member`, the id, the email, the team ids                               | forwards the member identity resolved from the cookie                                                    |
+ * | a member past the plan's included seats        | Worker | forwards `member`; a seat over the plan is billed, never refused                 | forwards a member past the plan's included seats                                                         |
+ * | upgrade carrying a forged `x-baton-*` header   | Worker | the header is dropped; the gate's own answer is forwarded                        | strips a forged role header from a member upgrade                                                        |
+ * | cookie of a signed-in non-member of the shop   | Worker | 404                                                                              | 404s a signed-in non-member of that shop                                                                 |
+ * | cookie of an operator                          | Worker | 403                                                                              | 403s an operator cookie                                                                                  |
+ * | member of a shop whose app subscription lapsed | Worker | 402                                                                              | 402s a member of a shop whose app subscription lapsed                                                    |
+ * | neither token nor cookie                       | Worker | 401                                                                              | 401s an upgrade with neither a token nor a session                                                       |
+ * | connect with decodable headers                 | object | identity stored on the connection, tagged by role and member id; no subscription | stores a merchant identity and tags the connection; stores a member identity, its teams, and the revocation tag |
+ * | connect with undecodable headers               | object | closed 4403                                                                      | closes a connection with undecodable headers with 4403                                                   |
+ * | a member's teams or membership change          | object | that member's connections closed 4401                                            | revokes only the named member's connections                                                              |
+ * | a team is deleted                              | object | its members' connections closed 4401                                             | closes the sockets of everyone who was on the deleted team                                               |
+ * | the shop's app subscription lapses             | object | every connection closed 4401                                                     | revokes every connection on the shop for a lapse                                                         |
+ * | close 4401                                     | tab    | reconnects through the gate one task later                                       | the tab reconnects on 4401 and not on 4403                                                               |
+ * | close 4403                                     | tab    | stays closed: a reconnect cannot fix a malformed forward                         | the tab reconnects on 4401 and not on 4403                                                               |
+ *
  * Identity is a connect-time snapshot, persisted with the hibernatable socket
  * (`serializeAttachment`), so it survives the object hibernating but does not
- * follow later team edits. Those edits close the affected member connections
- * (`ShopAgent.revokeMemberConnections`) and the reconnect re-runs the gate;
- * Cloudflare's ~300s idle close is the backstop, as it already is for the
- * merchant subscription check.
- *
- * {@link Subscription} moves inside this value rather than being the whole
- * connection state: a subscribe must not be able to erase the identity that
- * authorizes it, so the subscribe sites write `{ ...state, subscription }`.
+ * follow later team edits; the three 4401 rows are why, and the reconnect
+ * re-runs the gate, which gives the current answer (a new identity, `404`,
+ * or `402`). Cloudflare's ~300s idle close is the backstop. On a 4401 the
+ * merchant's and the member's shells also invalidate the router, so the
+ * loaders re-run against what the gate now says. {@link Subscription} says
+ * why the subscription sits inside the connection's state beside this value.
  */
 export const ConnectionRole = Schema.Literals(["merchant", "member"]);
 export type ConnectionRole = typeof ConnectionRole.Type;
@@ -389,15 +439,12 @@ export const CONNECTION_TEAM_IDS_HEADER = "x-baton-team-ids";
 
 /**
  * Close codes the object sends on a connection it will not serve. Both are in
- * the 4000-4999 application range, so the browser sees them verbatim.
- *
- * `4403` is a gate failure: the forwarded request carried no decodable
- * identity, which can only mean the Worker forwarded something malformed (a
- * browser cannot set these headers on an upgrade). `4401` is revocation: what
- * the gate answered at connect no longer holds — the member's teams or
- * membership changed, or the shop's subscription lapsed — so the snapshot on
- * the connection is stale and the client must reconnect through the gate,
- * which now gives the current answer (a new identity, `404`, or `402`).
+ * the 4000-4999 application range, so the browser sees them verbatim. `4403`
+ * is a gate failure: the forwarded request carried no decodable identity,
+ * which can only mean the Worker forwarded something malformed (a browser
+ * cannot set these headers on an upgrade). `4401` is revocation, sent by
+ * `closeMemberConnections` and `revokeAllConnections`. When each is sent and
+ * what the tab does with it is the table on {@link ConnectionRole}.
  */
 export const CONNECTION_CLOSE_FORBIDDEN = 4403;
 export const CONNECTION_CLOSE_REVOKED = 4401;
@@ -419,9 +466,11 @@ export const SubscriberIdInput = Schema.Struct({
 export type SubscriberIdInput = typeof SubscriberIdInput.Type;
 
 /**
- * The one server push: "your loader data is stale, refetch". Deliberately not
- * the new value — the Durable Object never learns what any tab is rendering,
- * and a refetch re-runs the same authenticated loader the tab already trusts.
+ * The invalidation, the one message the object sends: "your loader data is
+ * stale, refetch". Deliberately not the new value — the Durable Object never
+ * learns what any tab is rendering, and a refetch re-runs the same
+ * authenticated loader the tab already trusts. The tab throttles them
+ * (`INVALIDATION_THROTTLE_MS`).
  */
 export const InvalidatedMessage = Schema.Struct({
   type: Schema.Literal("invalidated"),

@@ -252,7 +252,7 @@ describe("member workflows list", () => {
   );
 
   /**
-   * A member of a shop whose subscription lapsed is sent to the lapsed page,
+   * A member of a shop whose app subscription lapsed is sent to the lapsed page,
    * and only a member: the stranger still gets `404`, because `requireMember`
    * checks membership before the plan so a lapse is never disclosed to someone
    * who does not belong to the shop. The lapsed page itself renders without
