@@ -41,8 +41,10 @@
  * Install: after a wipe, the dev shop has no `ShopSession` row until the
  * embedded app loads in a logged-in admin and its token exchange writes one.
  * The command waits for the tunnel to answer, opens the app's admin URL in
- * the default browser, exactly what the CLI's `p` key does, and waits for the
- * row in local D1, opening the app again if one load does not write it.
+ * the default browser, as the CLI's `p` key does but with `open -g` so the
+ * browser stays behind the app in front, and waits for the row in local D1,
+ * opening the app again if one load does not write it. The browser still
+ * shows the new tab when it is brought forward, and the tab stays open.
  *
  * `start`, `stop` and `reset` hold `logs/dev.lock` so parallel agents in one
  * checkout cannot start two servers.
@@ -599,9 +601,9 @@ const finishStart = (config: Config, options: { readonly seed: boolean }) =>
         ),
       );
       yield* step(
-        "install: opened the app in your default browser",
+        "install: opened the app in your default browser, in the background",
         waitUntil(
-          runCommand("open", [config.appUrl]).pipe(
+          runCommand("open", ["-g", config.appUrl]).pipe(
             Effect.andThen(
               waitUntil(hasShopSession(config), INSTALL_REOPEN_MS, 3000),
             ),
