@@ -22,6 +22,8 @@ refs
 playwright/
 .playwright-cli/
 logs/
+# Disposable local experiment files.
+/tmp/
 todo.md
 .vitest-attachments/
 test/browser/__screenshots__/
