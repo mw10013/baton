@@ -297,35 +297,44 @@ export class RunRepository extends Context.Service<
       | RunOrderClosedError
     >;
     /**
-     * The member's workflows list, sorted by state and cut here rather than on the page: every run
-     * with at least one current task owned by `teamIds`, grouped by
-     * {@link Domain.listStateOf} against `memberEmail`. **Every** state is counted;
-     * **one** is returned — the one `query.state` names — sorted oldest first
-     * and cut to `query.limit`. `state: "done"` returns no items at all and the
-     * caller reads `listRecent` for that state's rows. Under a search
-     * (`query.q`) the items are every open match on `teamIds` whatever its
-     * state or team ({@link Domain.RunQuery}), `matches` is how many there
-     * were before the cut (`null` without a search), and the counts ignore it. Only open runs have
-     * current tasks, so a closed or done run is never listed
-     * ({@link Domain.RunState}).
+     * Every workflows list row the teams own, unsorted and uncapped: one
+     * {@link Domain.RunListItem} per run with at least one current task of
+     * `teamIds`, carrying that run's last step. Actor emails are on the row
+     * already, so no team join and no D1 read.
      *
-     * The four state counts are after `query.team` narrows, because they
-     * describe the lists the member can switch to.
+     * The first statement starts from the member's teams: each team's
+     * open tasks through `RunTask_teamId_idx (teamId, doneAt)`, kept when
+     * the task is current and its run is open, which names the qualifying
+     * runs. Only then does it read those runs' current tasks, by `runId`.
+     * Starting from every open task instead, and asking of each whether
+     * its run has a current task on the teams, read every open run's tasks
+     * twice per task. The `cross join`s are the planner pin, as on
+     * `OrderRepository.listOrders`: SQLite keeps a `cross join`'s table
+     * order (https://www.sqlite.org/optoverview.html#crossjoin), so the
+     * read cannot turn around and drive from `Run`.
      *
-     * Both statements still read every row of `teamIds`: the rows are not the
-     * cost, the bytes leaving the Durable Object are, so the bound is on what
-     * is returned rather than on what is read.
+     * It still reads *every* current task of a qualifying run, including
+     * tasks owned by other teams: the row's step and its other teams are
+     * the run's, and it is why the row's own tasks are filtered in
+     * TypeScript after the read rather than in SQL. Nothing about the other teams'
+     * tasks is shipped.
+     *
+     * It reads at most 12 rows per open run for a member on a third of the
+     * teams. It is linear because each of the teams' open tasks is read once
+     * from the team index and every other row is a probe by `runId` or `id`.
+     * Pinned by "the workflows list read reads at most 12 rows per open run".
+     *
+     * It ignores the member and the query: grouping, narrowing to a team,
+     * search, sorting and the cut are {@link Domain.workflowsListFrom}'s, over
+     * this result. So the result depends on `teamIds` alone, which is what
+     * lets the object memoize it per team set and share it between members
+     * on the same teams (`ShopAgent.publish`). `json_each` keeps the team list
+     * a single bound parameter.
      */
-    readonly listRuns: (input: {
-      readonly teamIds: readonly Domain.TeamId[];
-      readonly memberEmail: Domain.Email;
-      readonly query: Domain.RunQuery;
-    }) => Effect.Effect<
-      {
-        readonly counts: Omit<Domain.RunListCounts, "done">;
-        readonly items: readonly Domain.RunListItem[];
-        readonly matches: number | null;
-      },
+    readonly runListItems: (
+      teamIds: readonly Domain.TeamId[],
+    ) => Effect.Effect<
+      readonly Domain.RunListItem[],
       SqlError.SqlError | RunRepositoryError
     >;
     /**
@@ -783,22 +792,6 @@ export class RunRepository extends Context.Service<
               ),
             );
 
-      /**
-       * Every workflows list row the teams own, unsorted and uncapped: one
-       * {@link Domain.RunListItem} per run with at least one current task of
-       * `teamIds`, carrying that run's last step. Actor emails are on the row
-       * already, so no team join and no D1 read.
-       *
-       * The first statement still reads *every* current task of a qualifying
-       * run, including tasks owned by other teams: that is how it decides the
-       * run qualifies at all, and it is why the row's own tasks are filtered
-       * in TypeScript below rather than in SQL. Nothing about the other
-       * teams' tasks is shipped.
-       *
-       * Separate from `listRuns` because sorting by state, narrowing, and capping are
-       * decisions about the rows rather than about the query: keeping them
-       * apart means the two statements below are read once, in one place.
-       */
       const runListItems = Effect.fn("RunRepository.runListItems")(function* (
         teamIds: readonly Domain.TeamId[],
       ) {
@@ -806,15 +799,12 @@ export class RunRepository extends Context.Service<
         const current = yield* decodeTasks(
           yield* sql`
               select s.* from RunTask s
-              join Run r on r.id = s.runId
-              where r.state = 'open'
-                and ${currentWhere("s")}
-                and exists (
-                  select 1 from RunTask m
-                  where m.runId = s.runId
-                    and m.teamId in (select value from json_each(${json(teamIds)}))
-                    and ${currentWhere("m")}
-                )
+              where s.runId in (
+                select m.runId from json_each(${json(teamIds)}) tt
+                cross join RunTask m on m.teamId = tt.value and m.doneAt is null
+                cross join Run r on r.id = m.runId and r.state = 'open'
+                where ${currentWhere("m")}
+              ) and ${currentWhere("s")}
               order by s.runId, s.position
             `,
         );
@@ -1267,92 +1257,7 @@ export class RunRepository extends Context.Service<
           );
         }),
 
-        /**
-         * Two statements, then the grouping in TypeScript: every current task of
-         * every run that has at least one current task for the caller's teams
-         * (the other teams' tasks are what decide the run qualifies; they are
-         * not shipped), then those runs with their last step. `json_each`
-         * keeps the team list a single bound parameter.
-         *
-         * The statements ignore `query.team` and read all of `teamIds`: the
-         * counts the team select shows are over every team, and narrowing the
-         * SQL would make each selection a different read whose totals
-         * disagreed with the one beside it.
-         */
-        listRuns: Effect.fn("RunRepository.listRuns")(function* ({
-          teamIds,
-          memberEmail,
-          query,
-        }: {
-          readonly teamIds: readonly Domain.TeamId[];
-          readonly memberEmail: Domain.Email;
-          readonly query: Domain.RunQuery;
-        }) {
-          const items = yield* runListItems(teamIds);
-          // A team the member is not on narrows to nothing rather than
-          // failing: `items` only ever holds their own teams' tasks, so the
-          // filter empties itself and every state counts zero.
-          const narrowed =
-            query.team === null
-              ? items
-              : items.flatMap((item): Domain.RunListItem[] => {
-                  const [first, ...rest] = item.tasks.filter(
-                    (task) => task.teamId === query.team,
-                  );
-                  return first === undefined
-                    ? []
-                    : [{ ...item, tasks: [first, ...rest] }];
-                });
-          // `Map.groupBy` would say this in one line, but the repo's `lib` is
-          // below es2024; a reduce into a record is the same pass.
-          const byState = narrowed.reduce<
-            Record<Domain.RunListState, Domain.RunListItem[]>
-          >(
-            (grouped, item) => {
-              grouped[Domain.listStateOf(item, memberEmail)].push(item);
-              return grouped;
-            },
-            {
-              blocked: [],
-              started_by_you: [],
-              started_by_others: [],
-              ready: [],
-            },
-          );
-          const inState = (wanted: Domain.RunListState) => byState[wanted];
-          // A search ignores the state and the team: every open match on the
-          // member's teams. Without one, "done" (Done or closed) is not a
-          // RunListState: its rows come from `listRecent`, which reads done
-          // tasks and closed runs rather than the current ones grouped here.
-          const chosen = (): readonly Domain.RunListItem[] => {
-            if (query.q !== null) {
-              const term = Domain.searchTerm(query.q);
-              return items.filter(({ run }) =>
-                Domain.searchMatches(term, {
-                  orderName: run.orderName,
-                  title: run.lineItemTitle,
-                  variantTitle: run.variantTitle,
-                  sku: run.sku,
-                }),
-              );
-            }
-            return Domain.workflowsListStateIsDone(query.state)
-              ? []
-              : inState(query.state);
-          };
-          const wanted = chosen();
-          const selected = wanted.toSorted(Domain.byAge).slice(0, query.limit);
-          return {
-            counts: {
-              started_by_you: inState("started_by_you").length,
-              started_by_others: inState("started_by_others").length,
-              ready: inState("ready").length,
-              blocked: inState("blocked").length,
-            },
-            items: selected,
-            matches: query.q === null ? null : wanted.length,
-          };
-        }),
+        runListItems,
 
         listRecent: Effect.fn("RunRepository.listRecent")(function* ({
           teamIds,
@@ -1394,7 +1299,8 @@ export class RunRepository extends Context.Service<
            * Two windows, each bounded by `since` and served by its own index:
            * done tasks by `RunTask_teamId_idx (teamId,
            * doneAt)`, closed runs by `Run_closed_idx (closedAt)`,
-           * partial over `closed`. So each counts a day, not the table.
+           * partial over `closed`. So each counts a day, not the table:
+           * pinned by "the Done count reads a day, not the table".
            */
           const closedWhere = sql`
             r.state = 'closed' and r.closedAt >= ${since}

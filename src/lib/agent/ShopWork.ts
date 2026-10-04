@@ -1,6 +1,17 @@
 import type { SqlError } from "effect/unstable/sql";
 
-import { Clock, Context, Effect, Layer, Option, Schema } from "effect";
+import {
+  Cache,
+  Clock,
+  Context,
+  Data,
+  Duration,
+  Effect,
+  Exit,
+  Layer,
+  Option,
+  Schema,
+} from "effect";
 
 import { CloudflareEnv, instrumentationIsOn } from "@/lib/CloudflareEnv";
 import * as Domain from "@/lib/Domain";
@@ -452,12 +463,74 @@ const listAllTeamWorkflows = () =>
     Effect.flatMap((repository) => repository.listAllTeamWorkflows()),
   );
 
+/**
+ * An orders index read's memo key: the input, and the D1 teams the read
+ * derives `unassigned` against. Effect compares arrays and plain objects
+ * structurally, so a team added, renamed or deleted is a different key and
+ * the old entry is never asked for again.
+ */
+class OrdersMemoKey extends Data.Class<{
+  readonly limit: number;
+  readonly cursor: string | null;
+  readonly q: Domain.ListSearch | null;
+  readonly show: Domain.OrdersShow | null;
+  readonly team: Domain.TeamId | null;
+  readonly teams: Domain.EligibleContext["teams"];
+}> {}
+
+/** A workflows list read's memo key: the member's teams, sorted, so two members on the same teams share one entry. */
+class RunsMemoKey extends Data.Class<{
+  readonly teamIds: readonly Domain.TeamId[];
+}> {}
+
+/**
+ * A failed lookup expires at once, so the next read retries; a success is
+ * kept until the next publish clears it. `Cache` otherwise stores the
+ * failure's `Exit` and replays it to every later `get`.
+ */
+const keepSuccesses = (exit: Exit.Exit<unknown, unknown>) =>
+  Exit.isFailure(exit) ? Duration.zero : Duration.infinity;
+
+/**
+ * The bound on keys per memo. The keys in use are the filter combinations
+ * merchants have open and the team sets members have open, both far fewer;
+ * the bound caps memory if a client walks many cursors.
+ */
+const MEMO_CAPACITY = 32;
+
 const make = Effect.gen(function* () {
   const host = yield* ShopAgentHost;
   const env = yield* CloudflareEnv;
   /** The one crossing into billing; the rule is on {@link BillingAgent}'s `flushUsageEvents`. */
   const { flushUsageEvents } = yield* BillingAgent;
+  const orderRepository = yield* OrderRepository;
+  const runRepository = yield* RunRepository;
 
+  /** The orders index's memo; the rule is on the class's `publish`. */
+  const ordersMemo = yield* Cache.makeWith(
+    ({ limit, cursor, q, show, team, teams }: OrdersMemoKey) =>
+      orderRepository.listOrders({ limit, cursor, q, show, team, teams }),
+    { capacity: MEMO_CAPACITY, timeToLive: keepSuccesses },
+  );
+  /** The workflows list's memo; the rule is on the class's `publish`. */
+  const runsMemo = yield* Cache.makeWith(
+    ({ teamIds }: RunsMemoKey) => runRepository.runListItems(teamIds),
+    { capacity: MEMO_CAPACITY, timeToLive: keepSuccesses },
+  );
+  /** Empties both memos; the class's `publish` runs it before any frame goes out. */
+  const clearListMemo = Effect.all([
+    Cache.invalidateAll(ordersMemo),
+    Cache.invalidateAll(runsMemo),
+  ]).pipe(Effect.asVoid);
+
+  /**
+   * The orders index read. The page is memoized ({@link ShopWorkAgent}'s
+   * `clearListMemo`, the rule on the class's `publish`), keyed by the input
+   * and the D1 teams, which are read live on every call as before: they are
+   * the one input outside the object, so a team change is a new key rather
+   * than a stale entry. `syncState` is read live, outside the memo: the
+   * in-flight half is the SDK's workflow row, which no publish tracks.
+   */
   const readOrders = ({
     limit,
     cursor,
@@ -475,14 +548,10 @@ const make = Effect.gen(function* () {
          back. */
       const teams = yield* readTeams();
       const started = yield* Clock.currentTimeMillis;
-      const page = yield* repository.listOrders({
-        limit,
-        cursor,
-        q,
-        show,
-        team,
-        teams,
-      });
+      const page = yield* Cache.get(
+        ordersMemo,
+        new OrdersMemoKey({ limit, cursor, q, show, team, teams }),
+      );
       if (instrumentationIsOn(env.ENVIRONMENT)) {
         const ms = (yield* Clock.currentTimeMillis) - started;
         const rows = page.orders.length;
@@ -1280,10 +1349,19 @@ const make = Effect.gen(function* () {
    * closed matches, each cut to `query.limit` ({@link Domain.WorkflowsListData}).
    *
    * `query.team` narrows Done or closed the same way it narrows the other states, and a team
-   * the member is not on narrows it to nothing — the same answer the
-   * repository gives for the other states, reached here because `listRecent` takes
+   * the member is not on narrows it to nothing — the same answer
+   * {@link Domain.workflowsListFrom} gives for the other states, reached here because `listRecent` takes
    * the team list already narrowed. A search ignores the team, so its rows
    * are read over every team on the connection while the count stays narrowed.
+   *
+   * The current half is memoized ({@link ShopWorkAgent}'s `clearListMemo`,
+   * the rule on the class's `publish`): the rows the member's teams own
+   * (`RunRepository.runListItems`), keyed by the team ids sorted, so members
+   * on the same teams share one computation, and each member's grouping
+   * ({@link Domain.workflowsListFrom}) runs on every read because it is per
+   * member and reads no rows. `listRecent` is outside the memo: its window
+   * slides with the clock, so the same key would not mean the same answer a
+   * minute later.
    */
   const readRuns = (
     teamIds: readonly Domain.TeamId[],
@@ -1294,15 +1372,15 @@ const make = Effect.gen(function* () {
     return Effect.gen(function* () {
       const repository = yield* RunRepository;
       const started = yield* Clock.currentTimeMillis;
+      const teamRows = yield* Cache.get(
+        runsMemo,
+        new RunsMemoKey({ teamIds: teamIds.toSorted() }),
+      );
       const {
         counts,
         items,
         matches: openMatches,
-      } = yield* repository.listRuns({
-        teamIds,
-        memberEmail,
-        query,
-      });
+      } = Domain.workflowsListFrom(teamRows, memberEmail, query);
       const recentTeamIds =
         query.team === null
           ? teamIds
@@ -2246,6 +2324,7 @@ const make = Effect.gen(function* () {
     reconciler,
     /** The teams with an open task on the target, for the class's webhook publish. */
     orderTeamIds,
+    clearListMemo,
   };
 });
 

@@ -744,11 +744,41 @@ export class ShopAgent extends Agent {
    * Logs one line per publish with how many merchant and member connections
    * received the frame, under `instrumentationIsOn`. The counts, with
    * `readOrders`'s and `readRuns`'s `ms=`, are how the fan-out is measured.
+   *
+   * **A publish clears the list memo before the first frame goes out.** The
+   * memo holds each list read's last answer per key, in the object's memory:
+   * the orders index page (`ShopWorkAgent`'s `readOrders`) and the rows a
+   * team set owns on the workflows list (`readRuns`). Every tab refetches
+   * after a push, so the tabs that share a key share one computation instead
+   * of one each; and because the clear happens before any frame is sent, a
+   * refetch after a push always computes fresh. It runs with no connections
+   * too: a loader read is memoized the same way. A write that publishes
+   * nothing leaves the memo as it is, which is the same write leaving every
+   * open tab as it is; so every write a list shows must publish, the
+   * retention sweep included (`syncOrderWebhook` publishes when its sweep
+   * deleted anything, pinned by "a webhook whose sweep deletes an order
+   * publishes and the orders index stops showing it"). A lookup in flight when the clear runs is dropped
+   * from the memo, never stored: its caller still gets the value, correct
+   * for the moment it asked, and is about to be told to refetch (Effect's
+   * `Cache.invalidateAll`). The memo is not state: it starts empty on every
+   * activation, so after a wake each key costs one computation at the
+   * unmemoized price. Keeping it across hibernation would need a table and
+   * a read on every hit, which is the cost it exists to avoid.
    */
   private publish(touched: PublishScope, teams: PublishTeams = "all") {
     const shop = this.name;
     const instrumented = instrumentationIsOn(this.env.ENVIRONMENT);
-    return this.connections().pipe(
+    /* Through the runtime, as a nested run: the memo is shop work's, and the
+       host this method is published through carries no services. */
+    const clearListMemo = Effect.promise(() =>
+      this.runEffect(
+        ShopWorkAgent.pipe(
+          Effect.flatMap((shopWork) => shopWork.clearListMemo),
+        ),
+      ),
+    );
+    return clearListMemo.pipe(
+      Effect.andThen(this.connections()),
       Effect.flatMap((connections) =>
         Effect.all(
           connections.map((connection) =>
@@ -1120,6 +1150,7 @@ export class ShopAgent extends Agent {
      */
     const publish = (orderId: string, teams: PublishTeams) =>
       this.publish([orderId], teams);
+    const publishAll = () => this.publish("all");
     return this.runEffect(
       callableEffect("ShopAgent.syncOrderWebhook", OrderWebhookInput, {
         role: "rpc",
@@ -1200,37 +1231,47 @@ export class ShopAgent extends Agent {
            * ({@link Domain.ShopLimits.orderRetentionDays}).
            */
           const now = yield* Clock.currentTimeMillis;
-          if (
+          const swept =
             usage.lastSweepAt === null ||
             now - usage.lastSweepAt >= Domain.ShopLimits.sweepIntervalMs
-          ) {
-            const swept = yield* repository.sweepExpiredOrders({ now });
-            if (swept.orders > 0 || swept.runs > 0)
-              yield* Effect.logInfo(
-                `ShopAgent.syncOrderWebhook: shop=${shop} sweptOrders=${String(swept.orders)} sweptRuns=${String(swept.runs)}`,
-              ).pipe(
-                Effect.annotateLogs({
-                  shop,
-                  sweptOrders: swept.orders,
-                  sweptRuns: swept.runs,
-                }),
-              );
-          }
-          yield* changed
-            ? publish(
+              ? yield* repository.sweepExpiredOrders({ now })
+              : { orders: 0, runs: 0 };
+          const sweptAny = swept.orders > 0 || swept.runs > 0;
+          if (sweptAny)
+            yield* Effect.logInfo(
+              `ShopAgent.syncOrderWebhook: shop=${shop} sweptOrders=${String(swept.orders)} sweptRuns=${String(swept.runs)}`,
+            ).pipe(
+              Effect.annotateLogs({
+                shop,
+                sweptOrders: swept.orders,
+                sweptRuns: swept.runs,
+              }),
+            );
+          /**
+           * A sweep that deleted rows is a write the screens show (a Done
+           * order gone, a run gone with it), so it publishes even when the
+           * webhook's own order did not change; without it the list memo
+           * ({@link ShopAgent.publish}) would answer the swept rows until the
+           * next publish. Scope "all": the deleted orders are not this one,
+           * and a deleted run may have been on any team's list.
+           */
+          if (changed)
+            yield* publish(
+              orderId,
+              unionTeams(before, yield* shopWork.orderTeamIds({ orderId })),
+            );
+          else if (sweptAny) yield* publishAll();
+          else
+            yield* Effect.logInfo(
+              `ShopAgent.syncOrderWebhook: shop=${shop} topic=${topic} orderId=${orderId} status=unchanged`,
+            ).pipe(
+              Effect.annotateLogs({
+                shop,
+                topic,
                 orderId,
-                unionTeams(before, yield* shopWork.orderTeamIds({ orderId })),
-              )
-            : Effect.logInfo(
-                `ShopAgent.syncOrderWebhook: shop=${shop} topic=${topic} orderId=${orderId} status=unchanged`,
-              ).pipe(
-                Effect.annotateLogs({
-                  shop,
-                  topic,
-                  orderId,
-                  status: "unchanged",
-                }),
-              );
+                status: "unchanged",
+              }),
+            );
           // Outside the upsert's transaction, because it does network I/O
           // and Durable Object SQLite transactions must not await anything
           // but storage. The webhook path is the outbox's ordinary carrier:

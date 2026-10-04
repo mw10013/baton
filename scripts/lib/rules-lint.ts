@@ -498,3 +498,44 @@ export const modelShapeReferenceHits = (
     );
   });
 };
+
+/** One call that would keep the object awake: its line and the call. */
+export interface HibernationBlockerHit {
+  readonly line: number;
+  readonly call: string;
+}
+
+const HIBERNATION_BLOCKER =
+  /\b(?<call>setTimeout|setInterval)\s*\(|\bnew\s+(?<socket>WebSocket)\s*\(/gu;
+
+/**
+ * **The object holds nothing that keeps it from hibernating.** In
+ * `lib/ShopAgent.ts` and every file under `lib/agent/` (`file` is the path
+ * under `src/`), no `setTimeout`, no `setInterval` and no `new WebSocket(`.
+ * Cloudflare hibernates an idle object only when it has no pending timer and
+ * no standard-API WebSocket (the hibernation conditions in
+ * `refs/cloudflare-docs/src/content/docs/durable-objects/concepts/durable-object-lifecycle.mdx`);
+ * either one keeps it in memory between pushes, charging duration for the
+ * whole idle time. Sockets come through the Agents SDK, which accepts them
+ * with the hibernation API, and delayed work goes through the SDK's
+ * schedule, which is an alarm. A comment is not read: comments are blanked
+ * before the scan.
+ */
+export const hibernationBlockerHits = (
+  file: string,
+  source: string,
+): readonly HibernationBlockerHit[] => {
+  if (file !== "lib/ShopAgent.ts" && !file.startsWith("lib/agent/")) return [];
+  const blanked = source.replaceAll(COMMENT, (text) =>
+    text.replaceAll(/[^\n]/gu, " "),
+  );
+  return [...blanked.matchAll(HIBERNATION_BLOCKER)].map(
+    ({ index, groups }) => ({
+      line: blanked.slice(0, index).split("\n").length,
+      call:
+        groups?.call === undefined
+          ? `new ${groups?.socket ?? "WebSocket"}(`
+          : `${groups.call}(`,
+    }),
+  );
+};

@@ -434,7 +434,7 @@ function RouteComponent() {
      * team, so a row a teammate started offers it too.
      *
      * The list sets `current: true` on every task of a row because the query
-     * returns current tasks only (`RunRepository.listRuns`), and
+     * returns current tasks only (`RunRepository.runListItems`), and
      * `laterStepStarted: false` because the row holds no done task; a list that
      * one day carried a waiting task would need `RunListTask` to carry
      * `current`.
@@ -467,7 +467,7 @@ function RouteComponent() {
       };
       return tasks.flatMap((each) => {
         /* Every task on a row is current: that is what put it on the
-           list (`RunRepository.listRuns`). */
+           list (`RunRepository.runListItems`). */
         const can = Domain.taskActions(actor, item.order, run, {
           ...each,
           current: true,

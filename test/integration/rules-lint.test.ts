@@ -492,3 +492,28 @@ describe("a model symbol never references a shape", () => {
     ).toEqual([]);
   });
 });
+
+describe("the object holds nothing that keeps it from hibernating", () => {
+  it("setTimeout, setInterval and new WebSocket are refused in the object and its modules", () => {
+    const source = [
+      "const a = setTimeout(() => {}, 10);",
+      "const b = setInterval(() => {}, 10);",
+      'const c = new WebSocket("wss://example.com");',
+      "// setTimeout(() => {}) in a comment is not read",
+      "const d = new WebSocketRequestResponsePair(ping, pong);",
+    ].join("\n");
+    expect(
+      RulesLint.hibernationBlockerHits("lib/ShopAgent.ts", source),
+    ).toStrictEqual([
+      { line: 1, call: "setTimeout(" },
+      { line: 2, call: "setInterval(" },
+      { line: 3, call: "new WebSocket(" },
+    ]);
+    expect(
+      RulesLint.hibernationBlockerHits("lib/agent/ShopWork.ts", source),
+    ).toHaveLength(3);
+    expect(
+      RulesLint.hibernationBlockerHits("lib/useSubscribedQuery.ts", source),
+    ).toHaveLength(0);
+  });
+});

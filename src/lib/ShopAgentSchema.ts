@@ -95,6 +95,14 @@ import { causeToErrorMessage } from "@/lib/LayerEx";
  *
  * The other half of each cross-store row is on {@link D1_TABLES}.
  *
+ * The object never runs `analyze`, so the planner works without
+ * `sqlite_stat1`, and the query plans the tests pin are the no-statistics
+ * plans. Statistics would change them: with `analyze` run, `ITEM_MATCHES` on
+ * `OrderRepository` reverses its join and scans every workflow per item
+ * instead of probing `Workflow.tag` with the item's tags. A plan test that
+ * fails after a schema change says the planner chose differently, not that
+ * statistics are needed.
+ *
  * Versioned through `SqliteMigrator` rather than a bare `create table if not
  * exists` block, so the next migration has somewhere to go.
  */
@@ -240,8 +248,13 @@ export const initializeSchema = Effect.gen(function* () {
       check (blockedAt is null or state = 'open'),
       check ((blockedAt is null) = (blockedBy is null))
     );
-    create index if not exists Run_orderId_idx on Run (orderId);
-    create index if not exists Run_state_idx on Run (state);
+    -- Every per-order run predicate on the orders index (open run, done run,
+    -- blocked run, unassigned run, the team filter) has two equality terms,
+    -- orderId and state. With no sqlite_stat1 a single-column index on each
+    -- looks equally good, and the planner took the one on state: every open
+    -- run read per open order, quadratic in open orders. The composite serves
+    -- both terms and every orderId-only probe as its prefix.
+    create index if not exists Run_orderId_state_idx on Run (orderId, state);
     create index if not exists Run_open_age_idx
       on Run (orderProcessedAt, lineItemId, id) where state = 'open';
     create index if not exists Run_closed_idx

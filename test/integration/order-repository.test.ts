@@ -15,6 +15,7 @@ import {
 } from "@/lib/ShopifyAppEvents";
 
 import { withMaxOrdersPerCycle } from "./order-ceiling.ts";
+import { planOf, runInRepositoryCountingRows } from "./rows-read.ts";
 
 const runInRepository = <A, E>(
   program: Effect.Effect<A, E, OrderRepository | SqlClient.SqlClient>,
@@ -617,6 +618,8 @@ describe("OrderRepository.listOrders by tag", () => {
           team: null,
           teams: [],
         });
+        // No `analyze`: with statistics the planner reverses this join and
+        // scans every workflow per item (the rule on `initializeSchema`).
         const rows = yield* sql.unsafe<{ readonly detail: string }>(
           `explain query plan select ${ITEM_MATCHES} from OrderLineItem li`,
         );
@@ -636,6 +639,89 @@ describe("OrderRepository.listOrders by tag", () => {
     );
     strictEqual(
       plan.some((detail) => /^SCAN w\b/u.test(detail)),
+      false,
+      plan.join("\n"),
+    );
+  });
+});
+
+/** The plan lines that read `alias`, by search or by scan. */
+const reads = (plan: readonly string[], alias: string) =>
+  plan.filter((detail) =>
+    new RegExp(`^(?:SEARCH|SCAN) ${alias}\\b`, "u").test(detail),
+  );
+
+/**
+ * The plans of the statements `listOrders` runs, read from the statement
+ * text it executed. Every plan here is the no-statistics plan: nothing runs
+ * `analyze`, and neither does the object (the rule above the table on
+ * `initializeSchema`).
+ */
+describe("OrderRepository.listOrders query plans", () => {
+  const countsPlan = (team: Domain.TeamId | null) =>
+    runInRepositoryCountingRows((captured) =>
+      Effect.gen(function* () {
+        const { list } = yield* seedIssues;
+        const from = captured.length;
+        yield* list(null, team);
+        const counts = captured
+          .slice(from)
+          .find(({ query }) => query.includes("run_summary"));
+        if (counts === undefined)
+          return yield* Effect.die("no counts statement");
+        return yield* planOf(counts);
+      }),
+    );
+
+  // No `analyze`: the plan is the one the object runs.
+  it("the counts statement probes Run by order and state and Workflow by tag", async () => {
+    const plan = await countsPlan(null);
+    const runs = reads(plan, "r").filter(
+      (detail) => !detail.includes("(lineItemId=?)"),
+    );
+    strictEqual(runs.length > 0, true, plan.join("\n"));
+    strictEqual(
+      runs.every((detail) =>
+        detail.startsWith("SEARCH r USING INDEX Run_orderId_state_idx"),
+      ),
+      true,
+      plan.join("\n"),
+    );
+    const workflows = reads(plan, "w");
+    strictEqual(workflows.length > 0, true, plan.join("\n"));
+    strictEqual(
+      workflows.every(
+        (detail) => detail.startsWith("SEARCH w") && detail.includes("(tag=?)"),
+      ),
+      true,
+      plan.join("\n"),
+    );
+  });
+
+  // No `analyze`: the plan is the one the object runs.
+  it("the team filter reads a run's tasks by run, never the team's tasks by team", async () => {
+    const plan = await countsPlan(aTeamId("team-cut"));
+    const wr = reads(plan, "wr");
+    strictEqual(wr.length > 0, true, plan.join("\n"));
+    strictEqual(
+      wr.every((detail) =>
+        detail.startsWith("SEARCH wr USING INDEX Run_orderId_state_idx"),
+      ),
+      true,
+      plan.join("\n"),
+    );
+    const s = reads(plan, "s");
+    strictEqual(
+      s.some((detail) =>
+        detail.startsWith(
+          "SEARCH s USING INDEX sqlite_autoindex_RunTask_2 (runId=?)",
+        ),
+      ),
+      true,
+      plan.join("\n"),
+    );
+    strictEqual(
+      plan.some((detail) => detail.includes("RunTask_teamId_idx")),
       false,
       plan.join("\n"),
     );

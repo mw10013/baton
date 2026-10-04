@@ -40,8 +40,9 @@
  *
  * Install: after a wipe, the dev shop has no `ShopSession` row until the
  * embedded app loads in a logged-in admin and its token exchange writes one.
- * The command opens the app's admin URL in the default browser, exactly what
- * the CLI's `p` key does, and waits for the row in local D1.
+ * The command waits for the tunnel to answer, opens the app's admin URL in
+ * the default browser, exactly what the CLI's `p` key does, and waits for the
+ * row in local D1, opening the app again if one load does not write it.
  *
  * `start`, `stop` and `reset` hold `logs/dev.lock` so parallel agents in one
  * checkout cannot start two servers.
@@ -67,6 +68,9 @@ const SERVER_TAB = "server";
 const CLI_PROCESS = "shopify app dev";
 const START_TIMEOUT_MS = 180_000;
 const INSTALL_TIMEOUT_MS = 180_000;
+/** How long one opened app gets to write the ShopSession before the install opens it again. */
+const INSTALL_REOPEN_MS = 30_000;
+const TUNNEL_TIMEOUT_MS = 120_000;
 const STOP_TIMEOUT_MS = 20_000;
 
 class ConfigError extends Data.TaggedError("ConfigError")<{
@@ -82,6 +86,9 @@ class StartTimedOut extends Data.TaggedError("StartTimedOut")<{
   readonly message: string;
 }> {}
 class InstallTimedOut extends Data.TaggedError("InstallTimedOut")<{
+  readonly message: string;
+}> {}
+class TunnelTimedOut extends Data.TaggedError("TunnelTimedOut")<{
   readonly message: string;
 }> {}
 
@@ -218,6 +225,54 @@ const hasShopSession = (config: Config) =>
     // Before migrations have run there is no table, which means no session.
     Effect.orElseSucceed(() => false),
   );
+
+/**
+ * The tunnel the CLI started, read from the environment it gave the server
+ * process: `shopify app dev` passes the tunnel URL to `pnpm dev` as `APP_URL`
+ * (seen 2026-09-27). Its own output is no source: in a terminal the status
+ * panel redraws over the line that printed it. `ps -E` shows another
+ * process's environment on macOS, for processes of the same user.
+ */
+const findTunnelUrl = (config: Config) =>
+  Effect.gen(function* () {
+    for (const pid of yield* portListeners(config.port)) {
+      const command = yield* runCommand("ps", [
+        "-wwwE",
+        "-p",
+        String(pid),
+        "-o",
+        "command=",
+      ]).pipe(Effect.orElseSucceed(() => ""));
+      const url = /\bAPP_URL=(?<url>https:\/\/\S+)/u.exec(command)?.groups?.url;
+      if (url !== undefined) return Option.some(url);
+    }
+    return Option.none<string>();
+  });
+
+/**
+ * Only an answer from Cloudflare proves anything about a quick tunnel: 530
+ * means its `cloudflared` is gone, any other status means it serves. A
+ * request that gets no answer is `unknown`, not `dead`: for about a minute
+ * after a start the macOS resolver can hold a cached "not found" for the new
+ * hostname while public DNS already resolves it (seen 2026-09-27).
+ */
+type TunnelState = "reachable" | "dead" | "unknown";
+
+/** The tunnel's state, or `null` when no tunnel URL is found on the server process. */
+const tunnelState = (config: Config) =>
+  Effect.gen(function* () {
+    const tunnelUrl = yield* findTunnelUrl(config);
+    if (Option.isNone(tunnelUrl)) return null;
+    return yield* answering(tunnelUrl.value, 10_000).pipe(
+      Effect.map(
+        Option.match({
+          onNone: (): TunnelState => "unknown",
+          onSome: (response): TunnelState =>
+            response.status === 530 ? "dead" : "reachable",
+        }),
+      ),
+    );
+  });
 
 /** The Herdr pane whose foreground process is this checkout's `shopify app dev`. */
 const findServerPane = Effect.gen(function* () {
@@ -516,13 +571,44 @@ const finishStart = (config: Config, options: { readonly seed: boolean }) =>
       ),
     );
     const installed = !(yield* hasShopSession(config));
-    if (installed)
+    /*
+     * The admin loads the app through the tunnel, not through the port: a
+     * browser opened while the new quick tunnel does not resolve yet, or
+     * before the CLI points the app at it, gets a frame that never loads, and
+     * nothing loads it again. So the install waits for the tunnel to answer,
+     * then opens the app again every INSTALL_REOPEN_MS until the ShopSession
+     * row appears.
+     */
+    if (installed) {
+      yield* step(
+        "tunnel answering",
+        waitUntil(
+          tunnelState(config).pipe(
+            Effect.map((state) => state === "reachable"),
+          ),
+          TUNNEL_TIMEOUT_MS,
+          2000,
+        ).pipe(
+          Effect.filterOrFail(
+            (reachable) => reachable,
+            () =>
+              new TunnelTimedOut({
+                message: `the tunnel did not answer after ${String(TUNNEL_TIMEOUT_MS / 1000)}s; see pnpm dev:status and pnpm dev:logs`,
+              }),
+          ),
+        ),
+      );
       yield* step(
         "install: opened the app in your default browser",
-        runCommand("open", [config.appUrl]).pipe(
-          Effect.andThen(
-            waitUntil(hasShopSession(config), INSTALL_TIMEOUT_MS, 3000),
+        waitUntil(
+          runCommand("open", [config.appUrl]).pipe(
+            Effect.andThen(
+              waitUntil(hasShopSession(config), INSTALL_REOPEN_MS, 3000),
+            ),
           ),
+          INSTALL_TIMEOUT_MS,
+          0,
+        ).pipe(
           Effect.filterOrFail(
             (installed) => installed,
             () =>
@@ -532,6 +618,7 @@ const finishStart = (config: Config, options: { readonly seed: boolean }) =>
           ),
         ),
       );
+    }
     const seeded = options.seed
       ? yield* step(
           "seed",
@@ -672,38 +759,6 @@ const resetCommand = Command.make(
   ),
 );
 
-/**
- * The tunnel the CLI started, read from the environment it gave the server
- * process: `shopify app dev` passes the tunnel URL to `pnpm dev` as `APP_URL`
- * (seen 2026-09-27). Its own output is no source: in a terminal the status
- * panel redraws over the line that printed it. `ps -E` shows another
- * process's environment on macOS, for processes of the same user.
- */
-const findTunnelUrl = (config: Config) =>
-  Effect.gen(function* () {
-    for (const pid of yield* portListeners(config.port)) {
-      const command = yield* runCommand("ps", [
-        "-wwwE",
-        "-p",
-        String(pid),
-        "-o",
-        "command=",
-      ]).pipe(Effect.orElseSucceed(() => ""));
-      const url = /\bAPP_URL=(?<url>https:\/\/\S+)/u.exec(command)?.groups?.url;
-      if (url !== undefined) return Option.some(url);
-    }
-    return Option.none<string>();
-  });
-
-/**
- * Only an answer from Cloudflare proves anything about a quick tunnel: 530
- * means its `cloudflared` is gone, any other status means it serves. A
- * request that gets no answer is `unknown`, not `dead`: for about a minute
- * after a start the macOS resolver can hold a cached "not found" for the new
- * hostname while public DNS already resolves it (seen 2026-09-27).
- */
-type TunnelState = "reachable" | "dead" | "unknown";
-
 const tunnelNote: Record<TunnelState, string> = {
   reachable: " (reachable)",
   dead: " (dead: pnpm dev:stop, then pnpm dev:start)",
@@ -725,17 +780,7 @@ const statusCommand = Command.make(
     const serving = listening && (yield* serverAnswering(config));
     const shopSession = yield* hasShopSession(config);
     const tunnelUrl = yield* findTunnelUrl(config);
-    const tunnel = Option.isSome(tunnelUrl)
-      ? yield* answering(tunnelUrl.value, 10_000).pipe(
-          Effect.map(
-            Option.match({
-              onNone: (): TunnelState => "unknown",
-              onSome: (response): TunnelState =>
-                response.status === 530 ? "dead" : "reachable",
-            }),
-          ),
-        )
-      : null;
+    const tunnel = yield* tunnelState(config);
     const healthy =
       server.pids.length > 0 && serving && shopSession && tunnel !== "dead";
     const report = {

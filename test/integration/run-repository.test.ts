@@ -17,6 +17,7 @@ import { runShopAgentMigrations } from "@/lib/ShopAgentSchema";
 import { WorkflowRepository } from "@/lib/WorkflowRepository";
 
 import { reconcileContext } from "./reconcile-context.ts";
+import { planOf, runInRepositoryCountingRows } from "./rows-read.ts";
 
 type Services =
   | OrderRepository
@@ -75,6 +76,26 @@ const reason = Schema.decodeUnknownSync(Domain.BlockReason);
 /** Nobody's list in particular: a reader who has started nothing, so `listStateOf` never answers "started_by_you". */
 const VIEWER = emailOf("viewer@example.com");
 
+/**
+ * The workflows list as the object composes it: the rows the teams own
+ * (`runListItems`), then the member's grouping, narrowing and cut
+ * (`Domain.workflowsListFrom`). A test about which runs qualify is about the
+ * first; a test about the states is about the second.
+ */
+const listRuns = ({
+  teamIds,
+  memberEmail,
+  query,
+}: {
+  readonly teamIds: readonly Domain.TeamId[];
+  readonly memberEmail: Domain.Email;
+  readonly query: Domain.RunQuery;
+}) =>
+  RunRepository.pipe(
+    Effect.flatMap((repository) => repository.runListItems(teamIds)),
+    Effect.map((items) => Domain.workflowsListFrom(items, memberEmail, query)),
+  );
+
 /** The four states whose rows `listRuns` returns; "done" is `listRecent`'s. */
 const RUN_STATES = [
   "started_by_you",
@@ -103,9 +124,8 @@ const runListRows = Effect.fn("runListRows")(function* ({
   readonly team?: Domain.TeamId | null;
   readonly limit?: number;
 }) {
-  const repository = yield* RunRepository;
   const read = (wanted: Domain.WorkflowsListState) =>
-    repository.listRuns({
+    listRuns({
       teamIds,
       memberEmail,
       query: { team, state: wanted, limit, q: null },
@@ -1405,6 +1425,41 @@ describe("RunRepository.reconcileOrder", () => {
     ));
 });
 
+describe("RunRepository workflows list query plan", () => {
+  // No `analyze`: the plan is the one the object runs (the rule above the
+  // table on `initializeSchema`).
+  it("the workflows list read starts from the member's teams through the team index", async () => {
+    const plan = await runInRepositoryCountingRows((captured) =>
+      Effect.gen(function* () {
+        yield* seed;
+        yield* upsertAndReconcile(order(), [
+          lineItem(1, ["a"]),
+          lineItem(2, ["b"]),
+        ]);
+        const from = captured.length;
+        yield* runListRows({ teamIds: [TEAM_A.id], state: "ready" });
+        const first = captured
+          .slice(from)
+          .find(({ query }) => query.includes("json_each"));
+        if (first === undefined) return yield* Effect.die("no first statement");
+        return yield* planOf(first);
+      }),
+    );
+    strictEqual(
+      plan.some((detail) =>
+        detail.startsWith("SEARCH m USING INDEX RunTask_teamId_idx"),
+      ),
+      true,
+      plan.join("\n"),
+    );
+    strictEqual(
+      plan.some((detail) => /^SCAN (?:s|m|r|p)\b/u.test(detail)),
+      false,
+      plan.join("\n"),
+    );
+  });
+});
+
 describe("RunRepository tasks, workflows list, blocks, delete", () => {
   it("markTaskDone enforces team, order, and terminal state and records who did it", () =>
     runInRepository(
@@ -1518,7 +1573,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
       }),
     ));
 
-  it("listRuns shows only current tasks for the given teams, and a blocked run in the Blocked state", () =>
+  it("the workflows list shows only current tasks for the given teams, and a blocked run in the Blocked state", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
@@ -1593,7 +1648,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
       }),
     ));
 
-  it("listRuns never lists a closed run", () =>
+  it("the workflows list never lists a closed run", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
@@ -1626,7 +1681,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
           (yield* runListRows({ teamIds: teams })).map((item) => item.run.id),
           [kept.run.id],
         );
-        const { counts } = yield* runs.listRuns({
+        const { counts } = yield* listRuns({
           teamIds: teams,
           memberEmail: VIEWER,
           query: {
@@ -1705,7 +1760,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
       }),
     ));
 
-  it("listRuns sorts by the reader: my started task is Started by you, a teammate's is Started by others, a block is Blocked for both", () =>
+  it("the workflows list sorts by the reader: my started task is Started by you, a teammate's is Started by others, a block is Blocked for both", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
@@ -1735,28 +1790,26 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         // The counts come back whatever state is asked for, so one read per
         // reader says where every row landed for them.
         const countsFor = (memberEmail: Domain.Email) =>
-          runs
-            .listRuns({
-              teamIds: [TEAM_A.id],
-              memberEmail,
-              query: {
-                team: null,
-                state: "started_by_you",
-                limit: Domain.RUN_PAGE,
-                q: null,
-              },
-            })
-            .pipe(
-              Effect.map(({ counts, items }) => ({
-                counts: [
-                  counts.started_by_you,
-                  counts.ready,
-                  counts.started_by_others,
-                  counts.blocked,
-                ],
-                mine: items.map((item) => item.run.id),
-              })),
-            );
+          listRuns({
+            teamIds: [TEAM_A.id],
+            memberEmail,
+            query: {
+              team: null,
+              state: "started_by_you",
+              limit: Domain.RUN_PAGE,
+              q: null,
+            },
+          }).pipe(
+            Effect.map(({ counts, items }) => ({
+              counts: [
+                counts.started_by_you,
+                counts.ready,
+                counts.started_by_others,
+                counts.blocked,
+              ],
+              mine: items.map((item) => item.run.id),
+            })),
+          );
 
         deepStrictEqual(yield* countsFor(maker.email), {
           counts: [1, 0, 0, 1],
@@ -1787,11 +1840,10 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
       }),
     ));
 
-  it("listRuns counts the whole state and returns only the limit", () =>
+  it("the workflows list counts the whole state and returns only the limit", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
-        const runs = yield* RunRepository;
         yield* upsertAndReconcile(
           order(),
           Array.from({ length: 12 }, (_, index) => lineItem(index + 1, ["a"])),
@@ -1799,7 +1851,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         // An explicit limit rather than `RUN_PAGE`: what is on trial is that
         // the cut happens at the number asked for, not what that number is.
         const read = (limit: number) =>
-          runs.listRuns({
+          listRuns({
             teamIds: [TEAM_A.id, TEAM_B.id],
             memberEmail: VIEWER,
             query: { team: null, state: "ready", limit, q: null },
@@ -1815,14 +1867,13 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
       }),
     ));
 
-  it("listRuns on Done or closed returns no items and counts the other states all the same", () =>
+  it("the workflows list on Done or closed returns no items and counts the other states all the same", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seed;
-        const runs = yield* RunRepository;
         yield* upsertAndReconcile(order(), [lineItem(1, ["a"])]);
 
-        const done = yield* runs.listRuns({
+        const done = yield* listRuns({
           teamIds: [TEAM_A.id],
           memberEmail: VIEWER,
           query: { team: null, state: "done", limit: Domain.RUN_PAGE, q: null },
@@ -1860,7 +1911,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
             const teamIds = [TEAM_A.id, TEAM_B.id];
             return {
               // Blocked and Team C would show nothing: the search ignores both.
-              open: yield* runs.listRuns({
+              open: yield* listRuns({
                 teamIds,
                 memberEmail: VIEWER,
                 query: { team: TEAM_C.id, state: "blocked", limit: 25, q },
@@ -1914,7 +1965,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         yield* complete(first, 1, [TEAM_A.id]);
         const teamIds = [TEAM_A.id, TEAM_B.id];
         const q = Schema.decodeUnknownSync(Domain.ListSearch)("ring");
-        const open = yield* runs.listRuns({
+        const open = yield* listRuns({
           teamIds,
           memberEmail: VIEWER,
           query: { team: null, state: "ready", limit: 1, q },
@@ -1937,7 +1988,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
           })).total,
           0,
         );
-        const unsearched = yield* runs.listRuns({
+        const unsearched = yield* listRuns({
           teamIds,
           memberEmail: VIEWER,
           query: { team: null, state: "ready", limit: 25, q: null },
@@ -1961,7 +2012,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         yield* complete(first, 1, [TEAM_A.id]);
         const read = (q: Domain.ListSearch | null) =>
           Effect.gen(function* () {
-            const { counts } = yield* runs.listRuns({
+            const { counts } = yield* listRuns({
               teamIds: [TEAM_A.id, TEAM_B.id],
               memberEmail: VIEWER,
               query: { team: null, state: "ready", limit: 25, q },
@@ -1984,16 +2035,15 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
       }),
     ));
 
-  it("listRuns narrows rows and their tasks to one team, and a team the member is not on reads empty", () =>
+  it("the workflows list narrows rows and their tasks to one team, and a team the member is not on reads empty", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seedStepped;
-        const runs = yield* RunRepository;
         yield* steppedRun();
         const teamIds = [TEAM_A.id, TEAM_B.id];
 
         const read = (team: Domain.TeamId | null) =>
-          runs.listRuns({
+          listRuns({
             teamIds,
             memberEmail: VIEWER,
             query: { team, state: "ready", limit: Domain.RUN_PAGE, q: null },
@@ -2020,7 +2070,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
       }),
     ));
 
-  it("listRuns returns every current task per run that the reader's teams own, with stepCount", () =>
+  it("the workflows list returns every current task per run that the reader's teams own, with stepCount", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seedStepped;
@@ -3181,7 +3231,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
       }),
     ));
 
-  it("start, complete, and block snapshot the actor's email onto the row; listRuns reads it back with no team read", () =>
+  it("start, complete, and block snapshot the actor's email onto the row; the workflows list reads it back with no team read", () =>
     runInRepository(
       Effect.gen(function* () {
         yield* seedStepped;

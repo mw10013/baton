@@ -25,6 +25,11 @@ import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
  * state is fetched — which is why this is a throttle rather than
  * `cancelRefetch: false`: an invalidation landing mid-fetch under `staleTime: Infinity`
  * would otherwise mark the query invalid with no trigger left to refetch it.
+ *
+ * The leading edge is also what makes one push one computation: every tab's
+ * first refetch arrives a round trip after the publish that cleared the
+ * object's list memo, so the tabs on one key join a single lookup instead of
+ * each reading the rows (the rule on `ShopAgent.publish`).
  */
 export const INVALIDATION_THROTTLE_MS = 2000;
 

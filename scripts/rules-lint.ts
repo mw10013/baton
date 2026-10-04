@@ -14,7 +14,8 @@
  * ({@link objectImportHits}), and the loader-data rule
  * ({@link loaderDataExportHits}) on every file under `src/`; and, in the
  * context files, the shapes' one-way dependency
- * ({@link modelShapeReferenceHits}).
+ * ({@link modelShapeReferenceHits}); and, in the object, nothing that keeps
+ * it from hibernating ({@link hibernationBlockerHits}).
  *
  * A grep, not an oxlint rule: the pattern is three tokens and has stayed
  * quiet. Union narrowing on `actor.role` and the connection state's `role`
@@ -28,6 +29,7 @@ import {
   bareStatePredicateHits,
   contextImportHits,
   contextImports,
+  hibernationBlockerHits,
   INLINE_COMPARISONS,
   loaderDataExportHits,
   modelShapeReferenceHits,
@@ -171,7 +173,18 @@ const shapeHits = walk(join(ROOT, "lib", "domain")).flatMap((path) => {
 
 for (const hit of shapeHits) console.error(hit);
 
+const hibernationHits = walk(ROOT).flatMap((path) => {
+  const file = relative(ROOT, path);
+  return hibernationBlockerHits(file, readFileSync(path, "utf8")).map(
+    ({ line, call }) =>
+      `rules-lint: src/${file}:${String(line)} calls ${call}; a pending timer or a standard-API socket keeps the object from hibernating, which charges duration and costs the list memo its one computation per push (the rule on hibernationBlockerHits)`,
+  );
+});
+
+for (const hit of hibernationHits) console.error(hit);
+
 if (
+  hibernationHits.length > 0 ||
   importHits.length > 0 ||
   objectHits.length > 0 ||
   loaderDataHits.length > 0 ||

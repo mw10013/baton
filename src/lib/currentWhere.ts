@@ -10,7 +10,7 @@
  * on a run that is not open ({@link Domain.runIsOpen}); this predicate reads
  * the task's own run's tasks and nothing else, so on a closed run it still
  * matches the open tasks the run keeps as its record. Every caller supplies
- * the run test: `RunRepository.listRuns` and `OrderRepository`'s team filter
+ * the run test: `RunRepository.runListItems` and `OrderRepository`'s team filter
  * joins `Run` with `state = 'open'`, the task guards
  * check {@link Domain.runIsOpen} in `requireActionable` before they ask, and
  * `getRunPage` reads it only for an open run. Block's team gate
@@ -21,7 +21,7 @@
  * hottest query.
  *
  * A module of its own rather than a closure in one repository because three
- * readers depend on agreeing exactly: the member's workflows list (`listRuns`), every
+ * readers depend on agreeing exactly: the member's workflows list (`runListItems`), every
  * task action's guard, and the orders index's team filter, which runs
  * inside `OrderRepository`. A second copy would drift, and a
  * merchant filter that disagrees with a worker's workflows list is worse than no filter.

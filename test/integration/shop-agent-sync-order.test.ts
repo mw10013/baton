@@ -385,6 +385,52 @@ describe("ShopAgent one-order sync", () => {
     merchant.close();
   });
 
+  it("a webhook whose sweep deletes an order publishes and the orders index stops showing it", async () => {
+    const shop = "sync-order-sweep-publishes.myshopify.com";
+    await seedShop(shop);
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    const deliver = () =>
+      agent.syncOrderWebhook({
+        orderId: ORDER_ID,
+        topic: "orders/edited",
+        updatedAt: null,
+      });
+    orderUpdatedAt = "2026-09-02T12:00:00.000Z";
+    // Stores the order and marks the first sweep, which found nothing.
+    await deliver();
+    // An order past retention, stored behind the sweep's back, and the sweep
+    // mark cleared so the next delivery sweeps again.
+    await runInDurableObject(env.SHOP_AGENT.getByName(shop), (instance) => {
+      const { sql } = (instance as unknown as { ctx: DurableObjectState }).ctx
+        .storage;
+      sql.exec(
+        `insert into ShopOrder (id, legacyId, name, processedAt, updatedAt,
+          cancelledAt, fulfillmentStatus, fullyPaid, note, syncedAt)
+         values ('gid://shopify/Order/9', '9', '#9', 1000, 1000, null,
+          'UNFULFILLED', 1, null, 1000)`,
+      );
+      sql.exec("update ShopUsage set lastSweepAt = null where id = 1");
+    });
+    const list = async () => {
+      const { page } = await agent.listOrders({
+        limit: 25,
+        cursor: null,
+        q: null,
+        show: null,
+        team: null,
+      });
+      return page.orders.map(({ order }) => order.id).toSorted();
+    };
+    deepStrictEqual(await list(), [ORDER_ID, "gid://shopify/Order/9"]);
+    const merchant = await subscribeOrdersIndex(shop);
+    // The same version: the webhook's own order does not change, and the
+    // sweep deletes the expired one.
+    await deliver();
+    await merchant.socket.waitForMessage(isInvalidated);
+    merchant.close();
+    deepStrictEqual(await list(), [ORDER_ID]);
+  });
+
   it("the order ceiling is read at the cycle the sync lands in: a sync after the cycle end is not refused at the old count", async () => {
     /** A shop whose stored cycle ended at 10s past the epoch, counted at the ceiling. */
     const atOldCeiling = async (shop: string) => {

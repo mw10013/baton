@@ -2999,6 +2999,91 @@ export const byAge = (a: RunListItem, b: RunListItem) =>
   a.run.id.localeCompare(b.run.id);
 
 /**
+ * The member's workflows list from the rows their teams own
+ * (`RunRepository.runListItems`), grouped by {@link listStateOf} against
+ * `memberEmail`, sorted by state and cut here rather than on the page.
+ * **Every** state is counted; **one** is returned — the one `query.state`
+ * names — sorted oldest first ({@link byAge}) and cut to `query.limit`.
+ * `state: "done"` returns no items at all and the caller reads
+ * `RunRepository.listRecent` for that state's rows. Under a search
+ * (`query.q`) the items are every open match on the member's teams whatever
+ * its state or team ({@link RunQuery}), `matches` is how many there were
+ * before the cut (`null` without a search), and the counts ignore it. Only
+ * open runs have current tasks, so a closed or done run is never listed
+ * ({@link RunState}).
+ *
+ * The four state counts are after `query.team` narrows, because they
+ * describe the lists the member can switch to. A team the member is not on
+ * narrows to nothing rather than failing: `items` only ever holds their own
+ * teams' tasks, so the filter empties itself and every state counts zero.
+ * The read under it ignores `query.team` and reads every team of the
+ * member's: narrowing the SQL would make each selection a different read
+ * whose totals disagreed with the one beside it.
+ *
+ * Pure, and per member: the rows are the same for every member on the same
+ * teams, and only this grouping reads `memberEmail`.
+ */
+export const workflowsListFrom = (
+  items: readonly RunListItem[],
+  memberEmail: Email,
+  query: RunQuery,
+): {
+  readonly counts: Omit<RunListCounts, "done">;
+  readonly items: readonly RunListItem[];
+  readonly matches: number | null;
+} => {
+  const narrowed =
+    query.team === null
+      ? items
+      : items.flatMap((item): RunListItem[] => {
+          const [first, ...rest] = item.tasks.filter(
+            (task) => task.teamId === query.team,
+          );
+          return first === undefined
+            ? []
+            : [{ ...item, tasks: [first, ...rest] }];
+        });
+  // `Map.groupBy` would say this in one line, but the repo's `lib` is
+  // below es2024; a reduce into a record is the same pass.
+  const byState = narrowed.reduce<Record<RunListState, RunListItem[]>>(
+    (grouped, item) => {
+      grouped[listStateOf(item, memberEmail)].push(item);
+      return grouped;
+    },
+    { blocked: [], started_by_you: [], started_by_others: [], ready: [] },
+  );
+  // A search ignores the state and the team: every open match on the
+  // member's teams. Without one, "done" (Done or closed) is not a
+  // RunListState: its rows come from `listRecent`, which reads done tasks and
+  // closed runs rather than the current ones grouped here.
+  const chosen = (): readonly RunListItem[] => {
+    if (query.q !== null) {
+      const term = searchTerm(query.q);
+      return items.filter(({ run }) =>
+        searchMatches(term, {
+          orderName: run.orderName,
+          title: run.lineItemTitle,
+          variantTitle: run.variantTitle,
+          sku: run.sku,
+        }),
+      );
+    }
+    return workflowsListStateIsDone(query.state) ? [] : byState[query.state];
+  };
+  const wanted = chosen();
+  return {
+    counts: {
+      started_by_you: byState.started_by_you.length,
+      started_by_others: byState.started_by_others.length,
+      ready: byState.ready.length,
+      blocked: byState.blocked.length,
+    },
+    items: wanted.toSorted(byAge).slice(0, query.limit),
+    matches: query.q === null ? null : wanted.length,
+  };
+};
+
+/**
  * The lowest step with an open task — where the run is — or `null` once
  * every task is done.
  */

@@ -126,7 +126,7 @@ const json = (value: unknown) => JSON.stringify(value);
  * partial index when the query's `where` provably implies the index's, and it
  * proves that by matching terms, not by reasoning about them. The run
  * fragments are correlated to the outer `ShopOrder` row and served by
- * `Run_orderId_idx`. A closed run still holds its item
+ * `Run_orderId_state_idx (orderId, state)`, both terms. A closed run still holds its item
  * (`Domain.RunState`): it is in `RUN_FOR_ITEM`, so an item whose run closed
  * is not "Multiple workflows match" (a closed run is a decided item), and it is in
  * no position fragment
@@ -355,6 +355,14 @@ export class OrderRepository extends Context.Service<
      * `counts` follows `Domain.OrderCounts`: a count is what choosing that
      * value would show, given the team. One count per filter value, narrowed
      * by `team` and by nothing else.
+     *
+     * The default read (Open, no team, no search) reads at most 60 rows per
+     * open order. It is linear because every per-order fact is a probe by the
+     * order's id: `Run` through `(orderId, state)`, the item's matches
+     * through `Workflow.tag`, the tasks through `runId`. A plan that drives
+     * from a table instead of probing it turns the read quadratic in open
+     * orders. Pinned by "the orders index default read reads at most 60 rows
+     * per open order".
      */
     readonly listOrders: (input: {
       readonly limit: number;
@@ -1002,6 +1010,16 @@ export class OrderRepository extends Context.Service<
            * a `where`. The outer run is aliased `wr` because `currentWhere`
            * binds `r` for the task's own run inside its subqueries (see its
            * JSDoc).
+           *
+           * `+s.teamId` is SQLite's unary plus, which keeps that term from
+           * choosing an index (https://www.sqlite.org/optoverview.html,
+           * "Disabling index use"). Without it `RunTask_teamId_idx (teamId,
+           * doneAt)` matches two of the subquery's terms (`currentWhere`
+           * starts with `doneAt is null`) against the unique `(runId,
+           * position)`'s one, and the planner drives from the team's open
+           * tasks once per open order: open orders × the team's open tasks.
+           * With it `runId` is the only indexable term on `RunTask`, so the
+           * plan is `Run` by `(orderId, state)`, then `RunTask` by `runId`.
            */
           const teamFilter =
             team === null
@@ -1012,7 +1030,7 @@ export class OrderRepository extends Context.Service<
                   where wr.orderId = ShopOrder.id
                     and wr.state = 'open'
                     and wr.blockedAt is null
-                    and s.teamId = ${team}
+                    and +s.teamId = ${team}
                     and ${sql.literal(CurrentWhere.currentWhere("s"))}
                 )`;
           /**
@@ -1210,11 +1228,12 @@ export class OrderRepository extends Context.Service<
            *
            * `run_summary` is a `cross join`, which SQLite reads as "keep this
            * table order" (https://www.sqlite.org/optoverview.html#crossjoin):
-           * with no `sqlite_stat1` the planner otherwise drives from
-           * `Run_state_idx` and reads every run the retention window
-           * keeps, closed orders included. Driven from `ShopOrder_open_idx`
-           * through `Run_orderId_idx`, the read is the open orders'
-           * runs only. The `ShopOrder` columns are qualified for the reason
+           * with no `sqlite_stat1` the planner may otherwise drive from `Run`
+           * and read every run the retention window keeps, closed orders
+           * included. Driven from `ShopOrder_open_idx` through the prefix of
+           * `Run_orderId_state_idx`, the read is the open orders' runs only.
+           * The correlated fragments in `facts` probe the same index with
+           * both terms. The `ShopOrder` columns are qualified for the reason
            * on {@link openAs}.
            */
           const [countRow] = yield* sql`

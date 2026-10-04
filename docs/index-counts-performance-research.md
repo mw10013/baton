@@ -1,5 +1,8 @@
 # Index counts: where the reads go and what to do about them
 
+Implemented 2026-10-04 by `docs/index-counts-performance-plan.md`; that plan's "Deviations and issues"
+records what differed from this research.
+
 Research, 2026-10-03. The question: the orders index (merchant) and the workflows list (member) each
 show counts per filter value, every push from the object makes every subscribed tab refetch them, and
 the refetch runs the count queries. With the workflow definitions now stored as JSON, are those

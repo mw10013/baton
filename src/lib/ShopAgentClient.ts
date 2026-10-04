@@ -71,6 +71,10 @@ export class ShopAgentClientError extends Schema.TaggedError<ShopAgentClientErro
  *   which is the bug that moved `listTeamWorkflows` from the socket to this
  *   service.
  *
+ * The orders index and the workflows list reads are memoized in the object
+ * per key and cleared on every publish (the rule on `ShopAgent.publish`), so
+ * the loader paint and the socket refetches after a push read one answer.
+ *
  * **Loader data.** `<RoutePrefix>LoaderData` names the data contract for a
  * route's loader, owned by that route. The prefix derives mechanically from
  * the route id — tail segment (`admin.shop.$shop` → `AdminShop`), parent +
