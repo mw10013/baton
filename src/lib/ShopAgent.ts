@@ -29,6 +29,7 @@ import {
 } from "@/lib/agent/Host";
 import { OrdersAgent } from "@/lib/agent/Orders";
 import { ShopWorkAgent } from "@/lib/agent/ShopWork";
+import { instrumentationIsOn } from "@/lib/CloudflareEnv";
 import { D1Primary } from "@/lib/D1Primary";
 import { D1Session } from "@/lib/D1Session";
 import * as Domain from "@/lib/Domain";
@@ -341,11 +342,11 @@ const reconciler = ShopWorkAgent.pipe(
 /** Stores one order ({@link OrdersAgent}) and reconciles it ({@link reconciler}). */
 const fetchAndUpsertOrder = (orderId: string) =>
   Effect.gen(function* () {
-    const { gone } = yield* (yield* OrdersAgent).fetchAndUpsertOrder(
+    const { gone, changed } = yield* (yield* OrdersAgent).fetchAndUpsertOrder(
       { orderId },
       reconciler,
     );
-    return { gone };
+    return { gone, changed };
   });
 
 const SHOP_AGENT_BINDING = "SHOP_AGENT";
@@ -554,16 +555,21 @@ export class ShopAgent extends Agent {
     });
   }
 
+  /**
+   * Sends one connection the frame when its subscription is in scope, and
+   * answers whether it did; a send that throws answers `false`.
+   */
   private publishTo(
     connection: Connection,
     touched: PublishScope,
     teams: PublishTeams,
   ) {
+    const shop = this.name;
     return Effect.try({
       try: () => {
         const state = Option.getOrNull(connectionState(connection));
         const subscription = state?.subscription;
-        if (!state || !subscription) return;
+        if (!state || !subscription) return null;
         const inScope =
           state.role === "member"
             ? teams === "all" ||
@@ -571,20 +577,23 @@ export class ShopAgent extends Agent {
             : touched === "all" ||
               subscription.orderId === null ||
               touched.includes(subscription.orderId);
-        if (inScope)
-          connection.send(
-            JSON.stringify({
-              type: "invalidated",
-            } satisfies Domain.InvalidatedMessage),
-          );
+        if (!inScope) return null;
+        connection.send(
+          JSON.stringify({
+            type: "invalidated",
+          } satisfies Domain.InvalidatedMessage),
+        );
+        return state.role;
       },
       catch: (cause) =>
         new ShopAgentNotifyError({ message: "invalidated send failed", cause }),
     }).pipe(
-      Effect.ignore({
-        log: "Debug",
-        message: `ShopAgent.publishTo: shop=${this.name}`,
-      }),
+      Effect.catch((error) =>
+        Effect.logDebug(`ShopAgent.publishTo: shop=${shop}`).pipe(
+          Effect.annotateLogs({ shop, error: error.message }),
+          Effect.as(null),
+        ),
+      ),
     );
   }
 
@@ -696,6 +705,16 @@ export class ShopAgent extends Agent {
   }
 
   /**
+   * **A publish follows a write that changed a stored row or a run; a call
+   * that changed nothing publishes nothing.** The webhook path and the
+   * one-order sync hold it through `OrdersAgent`'s `fetchAndUpsertOrder`
+   * `changed`: the order row moved (`fresh`, or a newer `updatedAt`; never
+   * `syncedAt`, which no screen shows) or the reconcile created, resized or
+   * closed a run. A redelivery, or an edit that fetched the version already
+   * stored, writes the same row and reconciles to the same runs, and no
+   * subscribed screen would read anything new. The sites that publish
+   * without that signal say so on themselves.
+   *
    * Invalidations are best-effort hints, never the new value: SQLite stays
    * authoritative and a subscribing tab refetches, so a dropped push costs a
    * stale render until the next subscribe rather than a lost write. That is
@@ -704,13 +723,13 @@ export class ShopAgent extends Agent {
    *
    * `touched` scopes the push (see `Domain.Subscription`): the order GIDs a
    * write changed, or `"all"` when the writer cannot name them — the bulk
-   * sync, which touches a window of orders, and the run mutations, whose
-   * repository reports a `RunResult` without the order. An index subscription
-   * (`orderId: null`) is published to either way; a detail subscription only
-   * for its own order. Workflow configuration is loader data and does not
-   * publish, with one exception: Apply and the on/off switch change what
-   * creates runs, which the order page's Workflow select shows
-   * (`matchedWorkflows`, `otherWorkflows`), so those two publish `"all"`.
+   * sync, which touches a window of orders, and the configuration writes.
+   * The run mutations name their order through `publishToTeams`. An index
+   * subscription (`orderId: null`) is published to either way; a detail
+   * subscription only for its own order. Workflow configuration is loader
+   * data and does not publish, with one exception: Apply and the on/off
+   * switch change what creates runs, which the order page's Workflow select
+   * shows (`matchedWorkflows`, `otherWorkflows`), so those two publish `"all"`.
    *
    * `teams` is the same idea for the other population. A member's subscription
    * is their workflows list, which is scoped by team rather than by order, so an order
@@ -721,16 +740,40 @@ export class ShopAgent extends Agent {
    * `"all"`, which reaches every member. Over-broad costs a refetch;
    * under-broad costs a list that silently stops updating, so `"all"` is the
    * right default for a writer that cannot name them.
+   *
+   * Logs one line per publish with how many merchant and member connections
+   * received the frame, under `instrumentationIsOn`. The counts, with
+   * `readOrders`'s and `readRuns`'s `ms=`, are how the fan-out is measured.
    */
   private publish(touched: PublishScope, teams: PublishTeams = "all") {
+    const shop = this.name;
+    const instrumented = instrumentationIsOn(this.env.ENVIRONMENT);
     return this.connections().pipe(
       Effect.flatMap((connections) =>
-        Effect.forEach(
-          connections,
-          (connection) => this.publishTo(connection, touched, teams),
-          { discard: true },
+        Effect.all(
+          connections.map((connection) =>
+            this.publishTo(connection, touched, teams),
+          ),
         ),
       ),
+      Effect.flatMap((sent) => {
+        if (!instrumented) return Effect.void;
+        const merchants = sent.filter((role) => role === "merchant").length;
+        const members = sent.filter((role) => role === "member").length;
+        const touchedLog = touched === "all" ? "all" : touched.length;
+        const teamsLog = teams === "all" ? "all" : teams.length;
+        return Effect.logInfo(
+          `ShopAgent.publish: shop=${shop} merchants=${String(merchants)} members=${String(members)} touched=${String(touchedLog)} teams=${String(teamsLog)}`,
+        ).pipe(
+          Effect.annotateLogs({
+            shop,
+            merchants,
+            members,
+            touched: touchedLog,
+            teams: teamsLog,
+          }),
+        );
+      }),
       Effect.ignore({
         log: "Debug",
         message: `ShopAgent.publish: shop=${this.name}`,
@@ -1055,8 +1098,9 @@ export class ShopAgent extends Agent {
    * retention pass rides it, rate-limited; the usage queue is sent after the
    * write. A redelivery is not deduplicated: it is skipped by the version
    * check, or, for an edit, fetches and rewrites the same version, which
-   * changes nothing (rule 16). The upsert's own version check is what
-   * survives two paths writing at once.
+   * changes nothing and publishes nothing (rule 16; the rule on `publish`).
+   * The upsert's own version check is what survives two paths writing at
+   * once.
    *
    * Each order goes through four steps, each owned by one module: store
    * ({@link OrdersAgent}), reconcile (shop work's reconciler, passed to the
@@ -1140,7 +1184,7 @@ export class ShopAgent extends Agent {
           ).pipe(
             Effect.annotateLogs({ shop, topic, orderId, status: "fetch" }),
           );
-          yield* fetchAndUpsertOrder(orderId);
+          const { changed } = yield* fetchAndUpsertOrder(orderId);
           /**
            * The second retention carrier, rate-limited by `lastSweepAt`
            * rather than run on every delivery: a busy shop must not pay for
@@ -1172,10 +1216,21 @@ export class ShopAgent extends Agent {
                 }),
               );
           }
-          yield* publish(
-            orderId,
-            unionTeams(before, yield* shopWork.orderTeamIds({ orderId })),
-          );
+          yield* changed
+            ? publish(
+                orderId,
+                unionTeams(before, yield* shopWork.orderTeamIds({ orderId })),
+              )
+            : Effect.logInfo(
+                `ShopAgent.syncOrderWebhook: shop=${shop} topic=${topic} orderId=${orderId} status=unchanged`,
+              ).pipe(
+                Effect.annotateLogs({
+                  shop,
+                  topic,
+                  orderId,
+                  status: "unchanged",
+                }),
+              );
           // Outside the upsert's transaction, because it does network I/O
           // and Durable Object SQLite transactions must not await anything
           // but storage. The webhook path is the outbox's ordinary carrier:
@@ -1252,7 +1307,8 @@ export class ShopAgent extends Agent {
    * Sends the usage queue afterwards ({@link flushUsageEvents}), whether or
    * not the fetch succeeded (rule 12): the reconcile may have started the
    * order's first run, which counts it. Answers `Domain.SyncOrderResult`, so
-   * the order page can say when Shopify no longer has the order.
+   * the order page can say when Shopify no longer has the order. Publishes
+   * only when the write changed something (the rule on `publish`).
    */
   @callable()
   syncOrder(input: Domain.SyncOrderInput): Promise<Domain.SyncOrderResult> {
@@ -1263,8 +1319,8 @@ export class ShopAgent extends Agent {
         parse: { onExcessProperty: "error" },
       })(({ orderId }) =>
         Effect.gen(function* () {
-          const { gone } = yield* fetchAndUpsertOrder(orderId);
-          yield* publish([orderId]);
+          const { gone, changed } = yield* fetchAndUpsertOrder(orderId);
+          if (changed) yield* publish([orderId]);
           return (
             gone ? { _tag: "Gone" } : { _tag: "Stored" }
           ) satisfies Domain.SyncOrderResult;

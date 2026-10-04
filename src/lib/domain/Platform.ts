@@ -331,10 +331,9 @@ export const EpochMillis = Schema.DateFromString.pipe(
  * `orderId` is the subscription's scope: `null` is the orders index, which
  * wants every order-state change; a GID is one detail page, which wants only
  * its own order. `publish` takes the set of orders a write touched (or `"all"`
- * for the bulk sync and for the run mutations, whose repository does not
- * report the order yet) and skips a detail subscription whose order is not in
- * it. Only order state is ever published — workflow configuration is loader
- * data and changes on navigation.
+ * for the bulk sync and the configuration writes) and skips a detail
+ * subscription whose order is not in it. Only order state is ever published —
+ * workflow configuration is loader data and changes on navigation.
  */
 export const Subscription = Schema.Struct({
   subscriberId: Schema.String,

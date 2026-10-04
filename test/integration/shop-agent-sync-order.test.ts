@@ -14,6 +14,7 @@ import * as Domain from "@/lib/Domain";
 import { makeEnvLayer } from "@/lib/LayerEx";
 import { Repository } from "@/lib/Repository";
 
+import { isInvalidated, openMerchantSocket } from "./agent-socket.ts";
 import { withMaxOrdersPerCycle } from "./order-ceiling.ts";
 
 /**
@@ -156,6 +157,30 @@ const storedOrder = (shop: string) =>
 const runsAsShown = (runs: readonly Domain.RunDetail[]) =>
   runs.map(({ run, tasks }) => [run.id, run.state, run.quantity, tasks.length]);
 
+/** A merchant socket subscribed to the orders index, which every order publish reaches. */
+const subscribeOrdersIndex = async (shop: string) => {
+  const merchant = await openMerchantSocket(shop);
+  await merchant.socket.call("subscribeOrders", {
+    subscriberId: "orders-index",
+    limit: 50,
+    cursor: null,
+    q: null,
+    show: null,
+    team: null,
+  });
+  return merchant;
+};
+
+/** How many `invalidated` frames the socket has received after waiting out a quiet window. */
+const invalidatedCount = async (
+  socket: Awaited<ReturnType<typeof openMerchantSocket>>["socket"],
+) => {
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, 200);
+  });
+  return socket.received.filter(isInvalidated).length;
+};
+
 const runCount = async (
   agent: Awaited<ReturnType<typeof getAgentByName<Cloudflare.Env, ShopAgent>>>,
 ) => {
@@ -289,13 +314,19 @@ describe("ShopAgent one-order sync", () => {
         topic: "orders/edited",
         updatedAt: null,
       });
+    const merchant = await subscribeOrdersIndex(shop);
     await deliver();
     const firstRuns = await agent.merchantListRunsForOrder({
       orderId: ORDER_ID,
     });
     const [first] = await storedOrder(shop);
+    await merchant.socket.waitForMessage(isInvalidated);
     await deliver();
     strictEqual(adminRequests.length, 2);
+    // The first delivery stored the order and created its run; the second
+    // moved neither, so it published nothing.
+    strictEqual(await invalidatedCount(merchant.socket), 1);
+    merchant.close();
     const [second] = await storedOrder(shop);
     strictEqual(second?.updatedAt, first?.updatedAt);
     strictEqual(second?.cancelledAt, first?.cancelledAt);
@@ -304,6 +335,54 @@ describe("ShopAgent one-order sync", () => {
     });
     deepStrictEqual(runsAsShown(secondRuns), runsAsShown(firstRuns));
     strictEqual(firstRuns.length, 1);
+  });
+
+  it("a webhook that moves the order's updatedAt publishes even when no run moved", async () => {
+    const shop = "sync-order-newer.myshopify.com";
+    await seedShop(shop);
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    const deliver = () =>
+      agent.syncOrderWebhook({
+        orderId: ORDER_ID,
+        topic: "orders/edited",
+        updatedAt: null,
+      });
+    orderUpdatedAt = "2026-09-02T12:00:00.000Z";
+    await deliver();
+    const merchant = await subscribeOrdersIndex(shop);
+    // A note edit: a newer version, and no workflow, so no run moves.
+    orderUpdatedAt = "2026-09-02T12:05:00.000Z";
+    await deliver();
+    await merchant.socket.waitForMessage(isInvalidated);
+    strictEqual(await runCount(agent), 0);
+    merchant.close();
+  });
+
+  it("a webhook on the same version whose reconcile creates a run publishes", async () => {
+    const shop = "sync-order-same-version-run.myshopify.com";
+    const team = await seedShop(shop);
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    await turnOnEngraving(agent, team.id);
+    const deliver = () =>
+      agent.syncOrderWebhook({
+        orderId: ORDER_ID,
+        topic: "orders/edited",
+        updatedAt: null,
+      });
+    orderUpdatedAt = "2026-09-02T12:00:00.000Z";
+    productTags = ["plain"];
+    await deliver();
+    strictEqual(await runCount(agent), 0);
+    const merchant = await subscribeOrdersIndex(shop);
+    // The same version, but the item now carries the workflow's tag: the
+    // row does not move and the reconcile creates the run. Gating on
+    // `written` alone would publish here too; gating on the row alone
+    // would not.
+    productTags = ["engraved"];
+    await deliver();
+    strictEqual(await runCount(agent), 1);
+    await merchant.socket.waitForMessage(isInvalidated);
+    merchant.close();
   });
 
   it("the order ceiling is read at the cycle the sync lands in: a sync after the cycle end is not refused at the old count", async () => {

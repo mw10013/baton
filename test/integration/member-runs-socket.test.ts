@@ -43,7 +43,8 @@ import {
 const ORDER_ID = "gid://shopify/Order/1";
 const LINE_ITEM_ID = "gid://shopify/LineItem/1";
 
-const seedOrder = (shop: string) =>
+/** Stores order `n` (`#100n`, legacy id `n`) with one item; order 1 is {@link ORDER_ID}. */
+const seedOrder = (shop: string, n = 1) =>
   runInDurableObject(
     env.SHOP_AGENT.get(env.SHOP_AGENT.idFromName(shop)),
     (_instance, state) =>
@@ -53,9 +54,9 @@ const seedOrder = (shop: string) =>
           const processedAt = Date.now() - 60_000;
           yield* (yield* OrderRepository).upsertOrder({
             order: {
-              id: ORDER_ID,
-              legacyId: "1",
-              name: "#1001",
+              id: `gid://shopify/Order/${String(n)}`,
+              legacyId: String(n),
+              name: `#100${String(n)}`,
               processedAt,
               updatedAt: processedAt,
               cancelledAt: null,
@@ -66,8 +67,8 @@ const seedOrder = (shop: string) =>
             },
             lineItems: [
               {
-                id: LINE_ITEM_ID,
-                orderId: ORDER_ID,
+                id: `gid://shopify/LineItem/${String(n)}`,
+                orderId: `gid://shopify/Order/${String(n)}`,
                 title: "Necklace",
                 variantTitle: null,
                 sku: null,
@@ -314,6 +315,49 @@ describe("member workflows list socket", () => {
     await worker.socket.waitForMessage(isInvalidated);
     expect(await subscribe(worker.socket, "sub-alice")).toHaveLength(0);
     merchant.close();
+    worker.close();
+  });
+
+  it("a task verb reaches the orders index and the order's page, and not another order's page", async () => {
+    const { shop, working, runTaskId, alice } = await seedShopWithWork(
+      "runs-order-scope.myshopify.com",
+    );
+    await seedOrder(shop, 2);
+    const index = await openMerchantSocket(shop);
+    await index.socket.call("subscribeOrders", {
+      subscriberId: "sub-index",
+      limit: 50,
+      cursor: null,
+      q: null,
+      show: null,
+      team: null,
+    });
+    const thisOrder = await openMerchantSocket(shop);
+    await thisOrder.socket.call("subscribeOrder", {
+      subscriberId: "sub-order-1",
+      legacyId: "1",
+    });
+    const otherOrder = await openMerchantSocket(shop);
+    await otherOrder.socket.call("subscribeOrder", {
+      subscriberId: "sub-order-2",
+      legacyId: "2",
+    });
+    const worker = await openMemberSocket(shop, {
+      memberId: alice,
+      memberEmail: "alice@example.com",
+      teamIds: [working.id],
+    });
+
+    expect(await worker.markTaskDone({ runTaskId })).toEqual({ _tag: "Ok" });
+
+    await thisOrder.socket.waitForMessage(isInvalidated);
+    await index.socket.waitForMessage(isInvalidated);
+    await expect(
+      otherOrder.socket.waitForMessage(isInvalidated, 200),
+    ).rejects.toThrow("no matching frame");
+    index.close();
+    thisOrder.close();
+    otherOrder.close();
     worker.close();
   });
 

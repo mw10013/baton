@@ -30,6 +30,7 @@ export default defineConfig({
     },
   },
   test: {
+    name: "browser",
     browser: {
       enabled: true,
       headless,

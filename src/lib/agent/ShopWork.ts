@@ -2,7 +2,7 @@ import type { SqlError } from "effect/unstable/sql";
 
 import { Clock, Context, Effect, Layer, Option, Schema } from "effect";
 
-import { CloudflareEnv } from "@/lib/CloudflareEnv";
+import { CloudflareEnv, instrumentationIsOn } from "@/lib/CloudflareEnv";
 import * as Domain from "@/lib/Domain";
 import { OrderRepository } from "@/lib/OrderRepository";
 import { Repository, type RepositoryError } from "@/lib/Repository";
@@ -305,13 +305,38 @@ const orderTeamIds = (
     | { readonly runTaskId: string }
     | { readonly runId: string }
     | { readonly orderId: string },
+) => orderAndTeamIds(target).pipe(Effect.map(({ teamIds }) => teamIds));
+
+/**
+ * The order a target belongs to, with {@link orderTeamIds}'s teams, from one
+ * read. A failed read answers `"all"` on both halves, for the reason on
+ * {@link orderTeamIds}.
+ */
+const orderAndTeamIds = (
+  target:
+    | { readonly runTaskId: string }
+    | { readonly runId: string }
+    | { readonly orderId: string },
 ) =>
   RunRepository.pipe(
     Effect.flatMap(
-      (repository): Effect.Effect<PublishTeams, SqlError.SqlError> =>
-        repository.listOrderTeamIds(target),
+      (
+        repository,
+      ): Effect.Effect<
+        { readonly touched: PublishScope; readonly teamIds: PublishTeams },
+        SqlError.SqlError
+      > =>
+        repository.listOrderTeamIds(target).pipe(
+          Effect.map(({ orderId, teamIds }) => ({
+            touched: orderId === null ? "all" : [orderId],
+            teamIds,
+          })),
+        ),
     ),
-    Effect.orElseSucceed((): PublishTeams => "all"),
+    Effect.orElseSucceed(() => ({
+      touched: "all" as const,
+      teamIds: "all" as const,
+    })),
   );
 
 /** The merchant as a gating actor: no team ids, because the merchant has none and every "M" cell is theirs. */
@@ -440,6 +465,7 @@ const make = Effect.gen(function* () {
     show,
     team,
   }: Domain.ListOrdersInput) => {
+    const shop = host.shop();
     const readTeams = () => teams();
     return Effect.gen(function* () {
       const repository = yield* OrderRepository;
@@ -448,15 +474,38 @@ const make = Effect.gen(function* () {
          `OrdersIndexData` carries it so the route can name the ids it gets
          back. */
       const teams = yield* readTeams();
+      const started = yield* Clock.currentTimeMillis;
+      const page = yield* repository.listOrders({
+        limit,
+        cursor,
+        q,
+        show,
+        team,
+        teams,
+      });
+      if (instrumentationIsOn(env.ENVIRONMENT)) {
+        const ms = (yield* Clock.currentTimeMillis) - started;
+        const rows = page.orders.length;
+        const showLog = show ?? "null";
+        const teamLog = team === null ? "null" : "set";
+        const qLog = q === null ? "null" : "set";
+        const cursorLog = cursor === null ? "null" : "set";
+        yield* Effect.logInfo(
+          `ShopAgent.readOrders: shop=${shop} show=${showLog} team=${teamLog} q=${qLog} cursor=${cursorLog} rows=${String(rows)} ms=${String(ms)}`,
+        ).pipe(
+          Effect.annotateLogs({
+            shop,
+            show: showLog,
+            team: teamLog,
+            q: qLog,
+            cursor: cursorLog,
+            rows,
+            ms,
+          }),
+        );
+      }
       return {
-        page: yield* repository.listOrders({
-          limit,
-          cursor,
-          q,
-          show,
-          team,
-          teams,
-        }),
+        page,
         syncState: {
           inFlight: yield* host.syncInFlight(yield* Clock.currentTimeMillis),
           ...(yield* repository.getSyncState()),
@@ -590,7 +639,10 @@ const make = Effect.gen(function* () {
    * not on Shopify's next edit. Runs in flight are untouched: a run snapshots
    * its workflow (the data model on `initializeSchema`,
    * `ShopAgentSchema.ts`). Publishes because the order pages read the
-   * reconcile.
+   * reconcile, and publishes whether or not the pass ran or moved a run
+   * (the rule on `publish`): Edit tag changes which orders match, which the
+   * order page's Workflow select shows as matched; that is not a run write,
+   * so there is no count to gate on.
    */
   const updateWorkflowTag = ({
     workflowId,
@@ -635,7 +687,10 @@ const make = Effect.gen(function* () {
    * afterwards: new tasks can make a workflow eligible for an item it was not, and those
    * orders should start now rather than at whatever moment Shopify next edits
    * them. Publishes because the next order starts against the new tasks,
-   * which the order page's Workflow selects reflect.
+   * which the order page's Workflow selects reflect, and publishes whether
+   * or not the pass ran or moved a run (the rule on `publish`): Apply changes
+   * what the Workflow select lists, which is not a run write, so there is no
+   * count to gate on.
    */
   const applyDraft = ({ workflowId }: typeof Domain.ApplyDraftInput.Type) => {
     const shop = host.shop();
@@ -1195,16 +1250,20 @@ const make = Effect.gen(function* () {
    * workflows list of — see `publish`. The read is one indexed query against the
    * object's own SQLite, and it runs after the write so a task that just
    * became current for another team is included.
+   *
+   * Publishes to the teams on the target's order and names the order as
+   * `touched`, so the orders index and that order's page refetch and every
+   * other order page is left alone. The one read resolves both: the order id
+   * is the join key the team list needs.
    */
   const publishToTeams = (
     target:
       | { readonly runTaskId: string }
       | { readonly runId: string }
       | { readonly orderId: string },
-    touched: PublishScope = "all",
   ) => {
-    return orderTeamIds(target).pipe(
-      Effect.flatMap((teams) => host.publish(touched, teams)),
+    return orderAndTeamIds(target).pipe(
+      Effect.flatMap(({ touched, teamIds }) => host.publish(touched, teamIds)),
     );
   };
 
@@ -1288,19 +1347,20 @@ const make = Effect.gen(function* () {
       const team = query.team ?? "all";
       const q = query.q === null ? "null" : "set";
       const ms = (yield* Clock.currentTimeMillis) - started;
-      yield* Effect.logInfo(
-        `ShopAgent.readRuns: shop=${shop} teams=${String(teamIds.length)} team=${team} state=${query.state} q=${q} rows=${String(rows)} ms=${String(ms)}`,
-      ).pipe(
-        Effect.annotateLogs({
-          shop,
-          teams: teamIds.length,
-          team,
-          state: query.state,
-          q,
-          rows,
-          ms,
-        }),
-      );
+      if (instrumentationIsOn(env.ENVIRONMENT))
+        yield* Effect.logInfo(
+          `ShopAgent.readRuns: shop=${shop} teams=${String(teamIds.length)} team=${team} state=${query.state} q=${q} rows=${String(rows)} ms=${String(ms)}`,
+        ).pipe(
+          Effect.annotateLogs({
+            shop,
+            teams: teamIds.length,
+            team,
+            state: query.state,
+            q,
+            rows,
+            ms,
+          }),
+        );
       return {
         counts: { ...counts, done: recent.total },
         items,

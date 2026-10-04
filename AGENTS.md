@@ -83,7 +83,8 @@ pnpm spec print         # Render the parsed action tables, their fixture counts,
 pnpm vocab:audit        # List words in exported identifiers under src/lib/ that the vocabulary does not have (an audit, not a check)
 node scripts/copy-audit.ts > docs/<name>.md   # Inventory every screen string by slot, as a markdown table to annotate (an audit, not a check)
 pnpm fmt                # Format the repo with oxfmt (excludes refs/ and dist/)
-pnpm test               # Run tests with Vitest.
+pnpm test               # Run tests with Vitest: the integration project (workerd) and the browser project (headless Chromium, test/browser/)
+pnpm test:browser       # The browser project alone (test:browser:headed for a visible browser)
 npm run test:e2e --     # Full local E2E suite, headless; pass Playwright args after --
 npm run test:e2e:headed -- # Same suite with visible browsers for debugging
 pnpm graphql-codegen    # Validate #graphql template literal strings against the Shopify Admin schema

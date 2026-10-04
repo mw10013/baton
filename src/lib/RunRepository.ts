@@ -113,6 +113,17 @@ export interface ReconcileCounts {
   readonly multiMatch: number;
 }
 
+/**
+ * Whether the pass wrote a run: created, resized or closed one. `multiMatch`
+ * is a state the pass left, not a write, and is left out. The run half of the
+ * signal `ShopAgent`'s `publish` gates on.
+ */
+export const reconcileCountsChanged = ({
+  created,
+  resized,
+  closed,
+}: ReconcileCounts) => created > 0 || resized > 0 || closed > 0;
+
 /** What `reconcileAll` hands back: the pass's counts, added over its orders, for the caller's one log line. No count reaches a screen: pass rule 6 on {@link Domain.reconcileItem}. */
 export interface ReconcileAllCounts {
   readonly orders: number;
@@ -492,13 +503,20 @@ export class RunRepository extends Context.Service<
      * Used only to scope a `ShopAgent.publish` fan-out, so an over-broad
      * answer costs a redundant refetch and an under-broad one costs a stale
      * list; the order boundary is the smallest scope where neither happens.
+     *
+     * Answers the order with its teams, so the publish can name the order as
+     * `touched` from the same read. `orderId` is `null` when a run-shaped
+     * target resolves to no order: the run is gone.
      */
     readonly listOrderTeamIds: (
       input:
         | { readonly runTaskId: string }
         | { readonly runId: string }
         | { readonly orderId: string },
-    ) => Effect.Effect<readonly string[], SqlError.SqlError>;
+    ) => Effect.Effect<
+      { readonly orderId: string | null; readonly teamIds: readonly string[] },
+      SqlError.SqlError
+    >;
     /**
      * Lifts the block: nulls `blockedAt`, `blockReason` and `blockedBy`.
      * Allowed when any current task of the run belongs to one of
@@ -1699,16 +1717,25 @@ export class RunRepository extends Context.Service<
                 `;
               return sql`select r0.orderId from Run r0 where r0.id = ${input.runId}`;
             };
-            const order = orderOf();
-            const rows = yield* sql`
-              select distinct rs.teamId as teamId
-              from RunTask rs
-              join Run r on r.id = rs.runId
-              where rs.teamId is not null and r.orderId in (${order})
+            // One statement answers both: the order is the join key the
+            // team list needs, so it comes back on every row, and an order
+            // with no assigned task still answers one row with a null team.
+            const rows = yield* sql<{
+              readonly orderId: string | null;
+              readonly teamId: string | null;
+            }>`
+              with o(orderId) as (${orderOf()})
+              select distinct o.orderId as orderId, rs.teamId as teamId
+              from o
+              left join Run r on r.orderId = o.orderId
+              left join RunTask rs on rs.runId = r.id and rs.teamId is not null
             `;
-            return rows.flatMap((row) =>
-              typeof row.teamId === "string" ? [row.teamId] : [],
-            );
+            return {
+              orderId: rows[0]?.orderId ?? null,
+              teamIds: rows.flatMap((row) =>
+                typeof row.teamId === "string" ? [row.teamId] : [],
+              ),
+            };
           },
         ),
 

@@ -26,11 +26,18 @@ import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
  * `cancelRefetch: false`: an invalidation landing mid-fetch under `staleTime: Infinity`
  * would otherwise mark the query invalid with no trigger left to refetch it.
  */
-const INVALIDATION_THROTTLE_MS = 2000;
+export const INVALIDATION_THROTTLE_MS = 2000;
 
 const decodeAgentMessage = Schema.decodeUnknownOption(
   Schema.fromJsonString(Domain.AgentMessage),
 );
+
+/**
+ * Whether the page is hidden, for the deferral on {@link useSubscribedQuery}.
+ * `false` without a document (SSR), where no frame arrives anyway.
+ */
+export const pageIsHidden = () =>
+  typeof document !== "undefined" && document.visibilityState === "hidden";
 
 const connecting = () =>
   Promise.reject(new Error("Still connecting. Try again in a moment."));
@@ -59,6 +66,20 @@ const connecting = () =>
  *   `INVALIDATION_THROTTLE_MS`. A trailing invalidate pending at cleanup is
  *   dropped: cleanup is unmount or an `agent` replacement, and the reconnect's
  *   identify flip re-invalidates.
+ * - **A hidden page defers.** A frame arriving while
+ *   `document.visibilityState` is `"hidden"` marks the query stale without a
+ *   fetch (`refetchType: "none"`) and sets a flag; the first
+ *   `visibilitychange` to visible refetches once, through the throttle, and
+ *   clears it; a throttled frame whose window elapses while hidden defers
+ *   the same way. A merchant's background orders index would otherwise run
+ *   the counts statement on every webhook the shop receives, for a screen
+ *   nobody is looking at. The identify refetch is not deferred: a fresh
+ *   subscription must read once, and a reconnect is rare. {@link pageIsHidden}
+ *   is the one definition of hidden. The hook is the only refetcher:
+ *   `refetchOnWindowFocus` and `refetchOnReconnect` are off, because a
+ *   deferred frame leaves the query invalidated, which TanStack Query's focus
+ *   manager counts as stale and would refetch on the same `visibilitychange`,
+ *   outside the throttle.
  *
  * `initialData` is the loader's SSR read of the same contract (through
  * `ShopAgentClient`), so the page paints before the socket identifies; the
@@ -117,6 +138,8 @@ export const useSubscribedQuery = <A, Initial extends A | undefined>({
     queryKey,
     staleTime: Infinity,
     gcTime: 30 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
     queryFn: () =>
       agent
         ? withSocketRecovery(agent)(() => subscribe(agent.stub, subscriberId))
@@ -133,6 +156,12 @@ export const useSubscribedQuery = <A, Initial extends A | undefined>({
     [queryClient, hashKey(queryKey)],
   );
 
+  const markStale = React.useCallback(
+    () => queryClient.invalidateQueries({ queryKey, refetchType: "none" }),
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- queryKey is an array literal per render; its hashed identity is what matters
+    [queryClient, hashKey(queryKey)],
+  );
+
   React.useEffect(() => {
     if (identified) void invalidate({ cancelRefetch: false });
   }, [identified, invalidate]);
@@ -140,17 +169,23 @@ export const useSubscribedQuery = <A, Initial extends A | undefined>({
   React.useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
     let pending = false;
+    let deferred = false;
+    const defer = () => {
+      deferred = true;
+      void markStale();
+    };
     const onWindowElapsed = () => {
       timer = null;
-      if (pending) {
-        pending = false;
-        void invalidate();
-        timer = setTimeout(onWindowElapsed, INVALIDATION_THROTTLE_MS);
+      if (!pending) return;
+      pending = false;
+      if (pageIsHidden()) {
+        defer();
+        return;
       }
+      void invalidate();
+      timer = setTimeout(onWindowElapsed, INVALIDATION_THROTTLE_MS);
     };
-    const onMessage = (event: MessageEvent) => {
-      if (typeof event.data !== "string") return;
-      if (Option.isNone(decodeAgentMessage(event.data))) return;
+    const refetch = () => {
       if (timer) {
         pending = true;
         return;
@@ -158,12 +193,28 @@ export const useSubscribedQuery = <A, Initial extends A | undefined>({
       void invalidate();
       timer = setTimeout(onWindowElapsed, INVALIDATION_THROTTLE_MS);
     };
+    const onMessage = (event: MessageEvent) => {
+      if (typeof event.data !== "string") return;
+      if (Option.isNone(decodeAgentMessage(event.data))) return;
+      if (pageIsHidden()) {
+        defer();
+        return;
+      }
+      refetch();
+    };
+    const onVisibilityChange = () => {
+      if (pageIsHidden() || !deferred) return;
+      deferred = false;
+      refetch();
+    };
     agent?.addEventListener("message", onMessage);
+    document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       agent?.removeEventListener("message", onMessage);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       if (timer) clearTimeout(timer);
     };
-  }, [agent, invalidate]);
+  }, [agent, invalidate, markStale]);
 
   React.useEffect(() => {
     if (unsubscribeTimerRef.current) {

@@ -227,6 +227,35 @@ describe("OrderRepository.upsertOrder", () => {
     strictEqual(lineItems.length, 1);
     strictEqual(lineItems[0]?.id, lineItemId(2));
   });
+
+  it("upsertOrder reports changed for a fresh row and a newer updatedAt, and not for the same version", async () => {
+    const changed = await runInRepository(
+      Effect.gen(function* () {
+        const repository = yield* OrderRepository;
+        const fresh = yield* upsert(repository, anOrder({ updatedAt: 2000 }), [
+          aLineItem(1),
+        ]);
+        const same = yield* upsert(
+          repository,
+          anOrder({ updatedAt: 2000, syncedAt: 9000 }),
+          [aLineItem(1)],
+        );
+        const newer = yield* upsert(repository, anOrder({ updatedAt: 3000 }), [
+          aLineItem(1),
+        ]);
+        const stale = yield* upsert(repository, anOrder({ updatedAt: 1000 }), [
+          aLineItem(1),
+        ]);
+        return [fresh, same, newer, stale].map((r) => [r.written, r.changed]);
+      }),
+    );
+    deepStrictEqual(changed, [
+      [true, true],
+      [true, false],
+      [true, true],
+      [false, false],
+    ]);
+  });
 });
 
 describe("OrderRepository.upsertOrder columns", () => {
@@ -1442,24 +1471,28 @@ describe("OrderRepository usage", () => {
       deepStrictEqual(first, {
         written: true,
         fresh: true,
+        changed: true,
         refused: false,
         afterWrite: none,
       });
       deepStrictEqual(uncounted, {
         written: true,
         fresh: true,
+        changed: true,
         refused: false,
         afterWrite: none,
       });
       deepStrictEqual(second, {
         written: false,
         fresh: false,
+        changed: false,
         refused: true,
         afterWrite: none,
       });
       deepStrictEqual(third, {
         written: true,
         fresh: false,
+        changed: true,
         refused: false,
         afterWrite: none,
       });
@@ -1865,6 +1898,7 @@ describe("OrderRepository retention", () => {
     deepStrictEqual(expired, {
       written: false,
       fresh: false,
+      changed: false,
       refused: false,
       afterWrite: Option.none(),
     });

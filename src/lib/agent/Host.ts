@@ -49,13 +49,13 @@ export const unionTeams = (a: PublishTeams, b: PublishTeams): PublishTeams =>
  * who is told. No `pinned by`: the rows are wiring, covered by the webhook,
  * stream and ceiling suites by scenario.
  *
- * | source                        | store                                             | reconcile                          | flush                 | publish                                  |
- * | ----------------------------- | ------------------------------------------------- | ---------------------------------- | --------------------- | ---------------------------------------- |
- * | order webhook                 | `Domain.syncOrder`: fetch one; version skip first | reconcile, inside the upsert       | after the order       | the order, to the teams before and after |
- * | open-orders sync (the stream) | `Domain.syncOrder`: each streamed order           | reconcile each, inside its upsert  | once after the stream | all                                      |
- * | one-order sync (the button)   | `Domain.syncOrder`: fetch one; no skip            | reconcile, inside the upsert       | after the order       | the order                                |
- * | workflow and team verbs       | —                                                 | reconcile all                      | after the pass        | all                                      |
- * | seed (dev)                    | upsert each                                       | reconcile each, then reconcile all | after                 | all                                      |
+ * | source                        | store                                             | reconcile                          | flush                 | publish                                                                    |
+ * | ----------------------------- | ------------------------------------------------- | ---------------------------------- | --------------------- | -------------------------------------------------------------------------- |
+ * | order webhook                 | `Domain.syncOrder`: fetch one; version skip first | reconcile, inside the upsert       | after the order       | the order, to the teams before and after, when the write changed something |
+ * | open-orders sync (the stream) | `Domain.syncOrder`: each streamed order           | reconcile each, inside its upsert  | once after the stream | all                                                                        |
+ * | one-order sync (the button)   | `Domain.syncOrder`: fetch one; no skip            | reconcile, inside the upsert       | after the order       | the order, when the write changed something                                |
+ * | workflow and team verbs       | —                                                 | reconcile all                      | after the pass        | all                                                                        |
+ * | seed (dev)                    | upsert each                                       | reconcile each, then reconcile all | after                 | all                                                                        |
  */
 export class ShopAgentHost extends Context.Service<
   ShopAgentHost,

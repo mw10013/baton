@@ -260,6 +260,14 @@ export class OrderRepository extends Context.Service<
          */
         readonly fresh: boolean;
         /**
+         * The order row moved: `fresh`, or an `updatedAt` newer than the
+         * stored one. A write of the version already stored rewrites the row
+         * (rule 7 on `Domain.syncOrder`) and is `written` but not `changed`;
+         * `syncedAt` moves on every write and is left out because no screen
+         * shows it. One half of the signal `ShopAgent`'s `publish` gates on.
+         */
+        readonly changed: boolean;
+        /**
          * The write was a new order refused at
          * `Domain.ShopLimits.maxOrdersPerCycle` and nothing was stored. Checked
          * here, on the one path every ingestion shares, so a bulk stream that
@@ -853,11 +861,15 @@ export class OrderRepository extends Context.Service<
                   return {
                     written: false,
                     fresh: false,
+                    changed: false,
                     refused:
                       action._tag === "refuse" && action.reason === "ceiling",
                     afterWrite: Option.none<A>(),
                   };
                 const fresh = action.fresh;
+                const changed =
+                  fresh ||
+                  (stored !== undefined && order.updatedAt > stored.updatedAt);
                 const written = yield* sql`
                 insert into ShopOrder (
                   id, legacyId, name, processedAt, updatedAt,
@@ -886,6 +898,7 @@ export class OrderRepository extends Context.Service<
                   return {
                     written: false,
                     fresh: false,
+                    changed: false,
                     refused: false,
                     afterWrite: Option.none<A>(),
                   };
@@ -898,6 +911,7 @@ export class OrderRepository extends Context.Service<
                 return {
                   written: true,
                   fresh,
+                  changed,
                   refused: false,
                   afterWrite: after,
                 };

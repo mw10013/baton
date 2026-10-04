@@ -69,6 +69,7 @@ export default defineConfig(async () => {
       },
     },
     test: {
+      name: "integration",
       // TanStack server-fn RPC helpers read `process.env.TSS_SERVER_FN_BASE` at
       // runtime when building their request URL, so the worker test env must
       // inject it for direct RPC calls used by integration tests.

@@ -1,6 +1,6 @@
 import type * as ShopifyApi from "@shopify/shopify-api";
 
-import { Clock, Context, Effect, Layer, Schema } from "effect";
+import { Clock, Context, Effect, Layer, Option, Schema } from "effect";
 
 import { CurrentShopifySession } from "@/lib/CurrentShopifySession";
 import * as Domain from "@/lib/Domain";
@@ -12,6 +12,10 @@ import {
   toOrderLineItem,
   toShopOrder,
 } from "@/lib/OrderSync";
+import {
+  type ReconcileCounts,
+  reconcileCountsChanged,
+} from "@/lib/RunRepository";
 import { Shopify } from "@/lib/Shopify";
 import { ShopifyAdmin } from "@/lib/ShopifyAdmin";
 
@@ -53,13 +57,17 @@ const make = Effect.gen(function* () {
    * function it returns is the upsert's `afterWrite`. The caller supplies
    * it, so this module never reads shop work.
    *
+   * `changed` is the signal the rule on `ShopAgent`'s `publish` gates on:
+   * the upsert's `changed` (the order row moved) or a reconcile that wrote a
+   * run (`reconcileCountsChanged`).
+   *
    * The query asks for one page of 250 items and logs `hasNextPage`; the
    * rest are not stored (rule 10 on `Domain.syncOrder`).
    */
   const fetchAndUpsertOrder = <E, E2, R2>(
     { orderId }: { readonly orderId: string },
     reconciler: Effect.Effect<
-      (order: Domain.ShopOrder) => Effect.Effect<unknown, E>,
+      (order: Domain.ShopOrder) => Effect.Effect<ReconcileCounts, E>,
       E2,
       R2
     >,
@@ -79,7 +87,7 @@ const make = Effect.gen(function* () {
         yield* Effect.logWarning(
           `ShopAgent.fetchAndUpsertOrder: shop=${shop} orderId=${orderId}: order not found`,
         ).pipe(Effect.annotateLogs({ shop, orderId }));
-        return { written: false, gone: true };
+        return { written: false, gone: true, changed: false };
       }
       if (order.lineItems.pageInfo.hasNextPage)
         yield* Effect.logError(
@@ -96,17 +104,21 @@ const make = Effect.gen(function* () {
         node: order,
         syncedAt: yield* Clock.currentTimeMillis,
       });
-      const { written } = yield* (yield* OrderRepository).upsertOrder({
+      const upsert = yield* (yield* OrderRepository).upsertOrder({
         order: shopOrder,
         lineItems: order.lineItems.nodes.map((node) =>
           toOrderLineItem(order.id, node),
         ),
         afterWrite: reconcile(shopOrder),
       });
+      const { written } = upsert;
+      const changed =
+        upsert.changed ||
+        Option.exists(upsert.afterWrite, reconcileCountsChanged);
       yield* Effect.logInfo(
-        `ShopAgent.fetchAndUpsertOrder: shop=${shop} orderId=${orderId} written=${String(written)}`,
-      ).pipe(Effect.annotateLogs({ shop, orderId, written }));
-      return { written, gone: false };
+        `ShopAgent.fetchAndUpsertOrder: shop=${shop} orderId=${orderId} written=${String(written)} changed=${String(changed)}`,
+      ).pipe(Effect.annotateLogs({ shop, orderId, written, changed }));
+      return { written, gone: false, changed };
     });
 
   return { fetchAndUpsertOrder };
