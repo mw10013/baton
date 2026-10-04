@@ -1,8 +1,14 @@
 packages:
   - .
 
-ignoredBuiltDependencies:
-  - workerd
+allowBuilds:
+  workerd: true
+  "@mongodb-js/zstd": false
+  "@parcel/watcher": false
+  core-js-pure: false
+  esbuild: false
+  msgpackr-extract: false
+  msw: false
+  node-liblzma: false
 
-onlyBuiltDependencies:
-  - workerd
+minimumReleaseAge: 0

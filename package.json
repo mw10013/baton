@@ -124,8 +124,15 @@
     "vitest-browser-react": "2.2.0",
     "wrangler": "4.129.1"
   },
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": "26.10.0",
+      "onFail": "download"
+    }
+  },
   "engines": {
     "node": "^26.0.0"
   },
-  "packageManager": "pnpm@10.17.1"
+  "packageManager": "pnpm@12.9.1"
 }

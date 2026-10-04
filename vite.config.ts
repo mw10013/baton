@@ -69,6 +69,16 @@ const config = defineConfig({
      */
     strictPort: true,
     allowedHosts,
+    /**
+     * Keep the watcher out of `refs/`, the downloaded library source that the
+     * app never imports. Vite clears its tsconfig cache and sends a full reload
+     * for every `tsconfig.json` the watcher reports added, and in the main
+     * checkout (where `refs/` is a real directory, not a symlink) the crawl
+     * reported over a hundred of them at startup. Each reload invalidated the
+     * module graph mid-request, and SSR failed with two React copies
+     * (`Cannot read properties of null (reading 'useEffect')`).
+     */
+    watch: { ignored: ["**/refs/**"] },
   },
   // `vite-tsconfig-paths` should cover `@/*`, but Vite's dependency scan / SSR pre-bundling
   // doesn't always apply that resolver. This explicit alias ensures `@/…` imports resolve
