@@ -19,7 +19,7 @@ import {
   receivedInvalidations,
   receivesNoMore,
 } from "./agent-socket.ts";
-import { withMaxOrdersPerCycle } from "./order-ceiling.ts";
+import { storeOpenOrders, withMaxOpenOrders } from "./open-order-ceiling.ts";
 
 /**
  * Sync from Shopify through the object: the offline session is a row in D1
@@ -30,7 +30,8 @@ import { withMaxOrdersPerCycle } from "./order-ceiling.ts";
  * `globalThis.fetch`, so the stand-in replaces that registration. It answers
  * the one-order query for every `/admin/api/` request and delegates
  * everything else to the real `fetch`; vitest-pool-workers runs each file in
- * its own isolate, so no other file sees it. `shopifyHasOrder` false makes
+ * its own isolate, so no other file sees it. It answers the order the
+ * request names, `ORDER_ID` when it names none. `shopifyHasOrder` false makes
  * it answer `null`, as Shopify does for a deleted order.
  */
 const ORDER_ID = "gid://shopify/Order/1";
@@ -42,6 +43,8 @@ let productTags = ["engraved"];
 let orderUpdatedAt: string | null = null;
 /** The order's `cancelledAt` Shopify answers. */
 let orderCancelledAt: string | null = null;
+/** The order's `displayFulfillmentStatus` Shopify answers. */
+let orderFulfillmentStatus = "UNFULFILLED";
 const realFetch = globalThis.fetch;
 setAbstractFetchFunc(async (input, init) => {
   const request = new Request(input, init);
@@ -49,25 +52,29 @@ setAbstractFetchFunc(async (input, init) => {
   if (!url.pathname.startsWith("/admin/api/")) return realFetch(input, init);
   adminRequests.push(url.hostname);
   if (!shopifyHasOrder) return Response.json({ data: { order: null } });
+  const body: { readonly variables?: { readonly id?: string } } =
+    await request.json();
+  const id = body.variables?.id ?? ORDER_ID;
   const now = new Date().toISOString();
   const updatedAt = orderUpdatedAt ?? now;
   return Response.json({
     data: {
       order: {
-        id: ORDER_ID,
+        id,
         legacyResourceId: "1",
         name: "#1001",
         processedAt: now,
         updatedAt,
         cancelledAt: orderCancelledAt,
-        displayFulfillmentStatus: "UNFULFILLED",
+        displayFulfillmentStatus: orderFulfillmentStatus,
         fullyPaid: true,
         note: null,
         lineItems: {
           pageInfo: { hasNextPage: false },
           nodes: [
             {
-              id: "gid://shopify/LineItem/1",
+              // One item id per order: the item table's key is shop-wide.
+              id: `gid://shopify/LineItem/${id === ORDER_ID ? "1" : "2"}`,
               title: "Necklace",
               variantTitle: null,
               sku: null,
@@ -126,6 +133,7 @@ afterEach(async () => {
   productTags = ["engraved"];
   orderUpdatedAt = null;
   orderCancelledAt = null;
+  orderFulfillmentStatus = "UNFULFILLED";
   await env.D1.exec("delete from Team");
   await env.D1.exec("delete from ShopSession");
 });
@@ -435,43 +443,50 @@ describe("ShopAgent one-order sync", () => {
     screens.close();
   });
 
-  it("the order ceiling is read at the cycle the sync lands in: a sync after the cycle end is not refused at the old count", async () => {
-    /** A shop whose stored cycle ended at 10s past the epoch, counted at the ceiling. */
-    const atOldCeiling = async (shop: string) => {
-      await seedShop(shop);
-      const agent = await getAgentByName(env.SHOP_AGENT, shop);
-      await agent.setBillingCycle({
-        shopGid: Schema.decodeUnknownSync(Domain.ShopGid)(
-          "gid://shopify/Shop/1",
-        ),
-        cycleStartAt: 0,
-        cycleEndAt: 10_000,
-        memberCount: 0,
-      });
-      await runInDurableObject(env.SHOP_AGENT.getByName(shop), (object) => {
-        (object as unknown as { ctx: DurableObjectState }).ctx.storage.sql.exec(
-          "update ShopUsage set ordersThisCycle = 2 where id = 1",
-        );
-      });
-      return agent;
-    };
-    await withMaxOrdersPerCycle(2, async () => {
-      const webhookShop = "sync-order-cycle-webhook.myshopify.com";
-      const webhookAgent = await atOldCeiling(webhookShop);
-      await webhookAgent.syncOrderWebhook({
+  it("the order ceiling is read against the open orders stored: a fulfilled order makes room for a new one", async () => {
+    await withMaxOpenOrders(2, async () => {
+      const webhookShop = "sync-order-ceiling-webhook.myshopify.com";
+      await seedShop(webhookShop);
+      const webhookAgent = await getAgentByName(env.SHOP_AGENT, webhookShop);
+      await storeOpenOrders(webhookShop, 2);
+      const create = {
         orderId: ORDER_ID,
         topic: "orders/create",
         updatedAt: null,
+      };
+      await webhookAgent.syncOrderWebhook(create);
+      const refusedRows = await storedOrder(webhookShop);
+      strictEqual(refusedRows.length, 0);
+      strictEqual(adminRequests.length, 0);
+      orderFulfillmentStatus = "FULFILLED";
+      await webhookAgent.syncOrderWebhook({
+        orderId: "gid://shopify/Order/open-1",
+        topic: "orders/fulfilled",
+        updatedAt: null,
       });
-      const stored = await storedOrder(webhookShop);
-      strictEqual(stored.length, 1);
+      orderFulfillmentStatus = "UNFULFILLED";
+      await webhookAgent.syncOrderWebhook(create);
+      const storedRows = await storedOrder(webhookShop);
+      strictEqual(storedRows.length, 1);
       const usage = await webhookAgent.getUsage();
-      strictEqual(usage.ordersLimitedAt, null);
-      strictEqual(usage.cycleStartAt, 10_000);
-      strictEqual(usage.ordersThisCycle, 0);
+      strictEqual(usage.openOrders, 2);
+      // Stored again, but the refused delivery is still a gap: the flag
+      // stays until Sync open orders starts.
+      strictEqual(usage.ordersLimitedAt !== null, true);
 
-      const syncShop = "sync-order-cycle-sync.myshopify.com";
-      const syncAgent = await atOldCeiling(syncShop);
+      const syncShop = "sync-order-ceiling-sync.myshopify.com";
+      await seedShop(syncShop);
+      const syncAgent = await getAgentByName(env.SHOP_AGENT, syncShop);
+      await storeOpenOrders(syncShop, 2);
+      const refused = await syncAgent.syncOpenOrders();
+      strictEqual(refused._tag, "Refused");
+      const refusedUsage = await syncAgent.getUsage();
+      strictEqual(refusedUsage.ordersLimitedAt !== null, true);
+      await runInDurableObject(env.SHOP_AGENT.getByName(syncShop), (object) => {
+        (object as unknown as { ctx: DurableObjectState }).ctx.storage.sql.exec(
+          "update ShopOrder set fulfillmentStatus = 'FULFILLED' where id = 'gid://shopify/Order/open-1'",
+        );
+      });
       await using introspector = await introspectWorkflow(
         env.ORDERS_SYNC_WORKFLOW,
       );
@@ -496,10 +511,11 @@ describe("ShopAgent one-order sync", () => {
       });
       const started = await syncAgent.syncOpenOrders();
       strictEqual(started._tag, "Started");
+      // The start clears the flag (`OrderRepository.clearOrdersLimited`).
+      const startedUsage = await syncAgent.getUsage();
+      strictEqual(startedUsage.ordersLimitedAt, null);
       const [instance] = await introspector.get();
       await instance?.waitForStatus("complete");
-      const after = await syncAgent.getUsage();
-      strictEqual(after.ordersThisCycle, 0);
     });
   });
 });

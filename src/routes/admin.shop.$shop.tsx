@@ -335,6 +335,13 @@ function FoundShop({
               label="Database size"
               value={`${(usage.databaseSize / 1_000_000).toFixed(1)} MB`}
             />
+            {/* The ceiling's quantity against the ceiling: the operator's
+                signal for a shop approaching it (`Domain.openOrdersAtCeiling`),
+                beside the storage it drives. */}
+            <Field
+              label="Open orders"
+              value={`${formatNumber(usage.openOrders)} of ${formatNumber(Domain.ShopLimits.maxOpenOrders)}`}
+            />
             <Field
               label="Last retention sweep"
               value={

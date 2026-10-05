@@ -14,7 +14,7 @@ import {
   ShopifyAppEventsError,
 } from "@/lib/ShopifyAppEvents";
 
-import { withMaxOrdersPerCycle } from "./order-ceiling.ts";
+import { withMaxOpenOrders } from "./open-order-ceiling.ts";
 import { planOf, runInRepositoryCountingRows } from "./rows-read.ts";
 
 const runInRepository = <A, E>(
@@ -1527,62 +1527,70 @@ describe("OrderRepository usage", () => {
     deepStrictEqual(events, []);
   });
 
-  it("the ceiling counts orders work started on, not orders stored: a new order is refused at it and a stored one still updates", async () => {
-    await withMaxOrdersPerCycle(1, async () => {
-      const { first, uncounted, second, third, usage } = await runInRepository(
-        Effect.gen(function* () {
-          const repository = yield* OrderRepository;
-          yield* openCycle(repository);
-          const first = yield* upsert(repository, paid(1), []);
-          // Stored, uncounted: the ceiling is the metered count, so storage
-          // alone does not approach it ({@link OrderRepository.countOrder}).
-          const uncounted = yield* upsert(repository, paid(2), []);
-          yield* count(repository, 1);
-          const second = yield* upsert(repository, paid(3), []);
-          const third = yield* upsert(
-            repository,
-            paid(1, { updatedAt: CYCLE_START + 1, note: "still flows" }),
-            [],
-          );
-          return {
-            first,
-            uncounted,
-            second,
-            third,
-            usage: yield* repository.getUsage(),
-          };
-        }),
-      );
+  it("the ceiling counts open orders, not counted ones: a new order is refused at it, a stored one still updates, and a closed order makes no claim on it", async () => {
+    await withMaxOpenOrders(2, async () => {
+      const { refused, limited, update, retried, usage } =
+        await runInRepository(
+          Effect.gen(function* () {
+            const repository = yield* OrderRepository;
+            // Stored, uncounted: the ceiling reads open rows, so no run is
+            // needed to approach it, unlike the meter
+            // ({@link OrderRepository.countOrder}).
+            yield* upsert(repository, paid(1), []);
+            yield* upsert(repository, paid(2), []);
+            const refused = yield* upsert(repository, paid(3), []);
+            const limited = yield* repository.getUsage();
+            const update = yield* upsert(
+              repository,
+              paid(1, { updatedAt: CYCLE_START + 1, note: "still flows" }),
+              [],
+            );
+            yield* upsert(
+              repository,
+              paid(2, {
+                updatedAt: CYCLE_START + 1,
+                fulfillmentStatus: "FULFILLED",
+              }),
+              [],
+            );
+            const retried = yield* upsert(repository, paid(3), []);
+            return {
+              refused,
+              limited,
+              update,
+              retried,
+              usage: yield* repository.getUsage(),
+            };
+          }),
+        );
       const none = Option.none();
-      deepStrictEqual(first, {
-        written: true,
-        fresh: true,
-        changed: true,
-        refused: false,
-        afterWrite: none,
-      });
-      deepStrictEqual(uncounted, {
-        written: true,
-        fresh: true,
-        changed: true,
-        refused: false,
-        afterWrite: none,
-      });
-      deepStrictEqual(second, {
+      deepStrictEqual(refused, {
         written: false,
         fresh: false,
         changed: false,
         refused: true,
         afterWrite: none,
       });
-      deepStrictEqual(third, {
+      strictEqual(limited.openOrders, 2);
+      strictEqual(limited.ordersLimitedAt !== null, true);
+      deepStrictEqual(update, {
         written: true,
         fresh: false,
         changed: true,
         refused: false,
         afterWrite: none,
       });
-      strictEqual(usage.ordersThisCycle, 1);
+      deepStrictEqual(retried, {
+        written: true,
+        fresh: true,
+        changed: true,
+        refused: false,
+        afterWrite: none,
+      });
+      strictEqual(usage.ordersThisCycle, 0);
+      strictEqual(usage.openOrders, 2);
+      // The flag outlives the stored third: only Sync open orders clears it
+      // (`OrderRepository.clearOrdersLimited`).
       strictEqual(usage.ordersLimitedAt !== null, true);
     });
   });

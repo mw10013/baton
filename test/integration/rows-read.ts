@@ -9,7 +9,7 @@ import { RunRepository } from "@/lib/RunRepository";
 import { runShopAgentMigrations } from "@/lib/ShopAgentSchema";
 import { WorkflowRepository } from "@/lib/WorkflowRepository";
 
-import { withMaxOrdersPerCycle } from "./order-ceiling.ts";
+import { withMaxOpenOrders } from "./open-order-ceiling.ts";
 
 /** One statement the object's SQLite ran: its text, its parameters and its cursor. */
 export interface Executed {
@@ -80,12 +80,12 @@ type Services =
 /**
  * A fresh object with the three repositories over {@link countingStorage},
  * handing `program` the recorded statements. The order ceiling is lifted so a
- * seed can store more orders than one cycle allows.
+ * seed can store more orders than the ceiling allows.
  */
 export const runInRepositoryCountingRows = <A, E>(
   program: (captured: readonly Executed[]) => Effect.Effect<A, E, Services>,
 ): Promise<A> =>
-  withMaxOrdersPerCycle(1_000_000, () =>
+  withMaxOpenOrders(1_000_000, () =>
     runInDurableObject(
       env.TEST_SQL_DO.get(env.TEST_SQL_DO.idFromName(crypto.randomUUID())),
       (_instance, state) => {

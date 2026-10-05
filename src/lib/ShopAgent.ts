@@ -857,19 +857,21 @@ export class ShopAgent extends Agent {
           return { _tag: "InFlight" } satisfies Domain.OrdersSyncResult;
         }
         /**
-         * The order ceiling, read at the cycle the sync lands in (rule 5 on
-         * `Domain.syncOrder`). No storage guard beside it: the sync's fixed
-         * open-work query is what bounds how much this object can take on.
+         * The order ceiling, read against the open orders stored now (rule 5
+         * on `Domain.syncOrder`). No storage guard beside it: the ceiling is
+         * what bounds how much this object can take on.
          */
-        const usage = yield* repository.usageAtCycle(now);
-        if (Domain.cycleAtOrderCeiling(usage.ordersThisCycle)) {
+        const openOrders = yield* repository.countOpenOrders();
+        if (Domain.openOrdersAtCeiling(openOrders)) {
+          const limit = Domain.ShopLimits.maxOpenOrders;
           yield* Effect.logError(
-            `ShopAgent.syncOpenOrders: shop=${shop} status=order-ceiling ordersThisCycle=${String(usage.ordersThisCycle)}`,
+            `ShopAgent.syncOpenOrders: shop=${shop} status=order-ceiling openOrders=${String(openOrders)} limit=${String(limit)}`,
           ).pipe(
             Effect.annotateLogs({
               shop,
               status: "order-ceiling",
-              ordersThisCycle: usage.ordersThisCycle,
+              openOrders,
+              limit,
             }),
           );
           yield* repository.markOrdersLimited(now);
@@ -877,6 +879,9 @@ export class ShopAgent extends Agent {
           return { _tag: "Refused" } satisfies Domain.OrdersSyncResult;
         }
         yield* repository.clearSyncError();
+        // The start is what closes the gap the flag announced
+        // (`OrderRepository.clearOrdersLimited`).
+        yield* repository.clearOrdersLimited();
         const workflowId = yield* Effect.acquireUseRelease(
           Effect.sync(beginStarting),
           startWorkflow,
@@ -925,13 +930,13 @@ export class ShopAgent extends Agent {
           }).pipe(Effect.ensuring(flushUsageEvents));
           if (counts.ordersRefused > 0)
             yield* Effect.logError(
-              `ShopAgent.onOrdersStream: shop=${shop} status=order-ceiling ordersRefused=${String(counts.ordersRefused)} limit=${String(Domain.ShopLimits.maxOrdersPerCycle)}`,
+              `ShopAgent.onOrdersStream: shop=${shop} status=order-ceiling ordersRefused=${String(counts.ordersRefused)} limit=${String(Domain.ShopLimits.maxOpenOrders)}`,
             ).pipe(
               Effect.annotateLogs({
                 shop,
                 status: "order-ceiling",
                 ordersRefused: counts.ordersRefused,
-                limit: Domain.ShopLimits.maxOrdersPerCycle,
+                limit: Domain.ShopLimits.maxOpenOrders,
               }),
             );
           /**
@@ -1097,10 +1102,12 @@ export class ShopAgent extends Agent {
             return;
           }
           /**
-           * The enterprise ceiling, and the only hard stop on orders. It
-           * gates *new* orders only — `getOrderUpdatedAt` answering none is
-           * what makes it one — so every order Baton already carries
-           * keeps receiving its updates. The webhook still returns
+           * The order ceiling, and the only hard stop on orders, read
+           * against the open orders stored now (rule 5). It gates *new*
+           * orders only — `getOrderUpdatedAt` answering none is what makes
+           * it one, and the only case the count is read — so every order
+           * Baton already carries keeps receiving its updates. The webhook
+           * still returns
            * 2xx: a retry cannot change the answer, and making Shopify replay
            * a delivery for four hours to reach the same refusal helps nobody.
            *
@@ -1109,29 +1116,27 @@ export class ShopAgent extends Agent {
            * orders index's next loader read, since usage is deliberately
            * loader-only (the orders index's loader data).
            */
-          // One read serves both the ceiling and the sweep below: the row
-          // is the same one, and this is the webhook path, where every
-          // avoidable read is paid per delivery.
-          const usage = yield* repository.usageAtCycle(
-            yield* Clock.currentTimeMillis,
-          );
-          if (
-            Option.isNone(stored) &&
-            Domain.cycleAtOrderCeiling(usage.ordersThisCycle)
-          ) {
-            yield* repository.markOrdersLimited(yield* Clock.currentTimeMillis);
-            yield* Effect.logError(
-              `ShopAgent.syncOrderWebhook: shop=${shop} topic=${topic} status=order-ceiling limit=${String(Domain.ShopLimits.maxOrdersPerCycle)}`,
-            ).pipe(
-              Effect.annotateLogs({
-                shop,
-                topic,
-                orderId,
-                status: "order-ceiling",
-                limit: Domain.ShopLimits.maxOrdersPerCycle,
-              }),
-            );
-            return;
+          if (Option.isNone(stored)) {
+            const openOrders = yield* repository.countOpenOrders();
+            if (Domain.openOrdersAtCeiling(openOrders)) {
+              const limit = Domain.ShopLimits.maxOpenOrders;
+              yield* repository.markOrdersLimited(
+                yield* Clock.currentTimeMillis,
+              );
+              yield* Effect.logError(
+                `ShopAgent.syncOrderWebhook: shop=${shop} topic=${topic} status=order-ceiling openOrders=${String(openOrders)} limit=${String(limit)}`,
+              ).pipe(
+                Effect.annotateLogs({
+                  shop,
+                  topic,
+                  orderId,
+                  status: "order-ceiling",
+                  openOrders,
+                  limit,
+                }),
+              );
+              return;
+            }
           }
           yield* Effect.logInfo(
             `ShopAgent.syncOrderWebhook: shop=${shop} topic=${topic} orderId=${orderId} status=fetch`,
@@ -1142,9 +1147,9 @@ export class ShopAgent extends Agent {
           /**
            * The second retention carrier, rate-limited by `lastSweepAt`
            * rather than run on every delivery: a busy shop must not pay for
-           * a batch of deletes per webhook. The `ShopUsage` row it reads is
-           * the one the ceiling already read above, so the rate limit costs
-           * nothing extra per delivery.
+           * a batch of deletes per webhook. One column is read, not the
+           * usage row: that row counts the open orders, and a stored-order
+           * webhook, most of a shop's traffic, reads no count.
            *
            * With the open-orders sync, this is the whole of when orders age out.
            * There is no alarm, so a shop that receives no webhooks and runs
@@ -1154,9 +1159,10 @@ export class ShopAgent extends Agent {
            * ({@link Domain.ShopLimits.orderRetentionDays}).
            */
           const now = yield* Clock.currentTimeMillis;
+          const lastSweepAt = yield* repository.lastSweepAt();
           const swept =
-            usage.lastSweepAt === null ||
-            now - usage.lastSweepAt >= Domain.ShopLimits.sweepIntervalMs
+            lastSweepAt === null ||
+            now - lastSweepAt >= Domain.ShopLimits.sweepIntervalMs
               ? yield* repository.sweepExpiredOrders({ now })
               : { orders: 0, runs: 0 };
           const sweptAny = swept.orders > 0 || swept.runs > 0;

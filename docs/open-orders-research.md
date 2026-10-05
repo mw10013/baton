@@ -10,6 +10,10 @@ Everything below is read from the code and the two spec tables that govern it: t
 (`src/lib/domain/Orders.ts`) for what gets stored. The row counts are the ones measured in
 `docs/index-counts-performance-research.md` and pinned by its tests.
 
+Re-read against the code on 2026-10-04, after the broadcast-invalidation and AgentClient changes
+landed (`203540c`, `b28184a`). The reasoning holds. What the second reading changed is marked
+"Correction:" in place and collected under "Second reading" below; it raised one question, answered as decision 8.
+
 ## Short answer
 
 Baton has two populations of orders and they are not the same set:
@@ -66,14 +70,23 @@ After the 2026-10-04 change the reads are linear and the memo shares a computati
 tab with the same key, so the bill per push is:
 
 ```
-rows per push ≈ 44 × open orders                     (one computation per merchant filter in use)
+rows per push ≈ 44 × open orders                     (one computation per merchant query in use)
               + 10 × open runs on the teams × team sets in use
 ```
 
+Correction: the merchant memo is keyed by the whole query (`OrdersMemoKey` in
+`src/lib/agent/ShopWork.ts`: filter, team, page cursor, search and the shop's teams), not by the
+filter alone, so two merchants on different pages are two computations. The 44 and 10 are the
+measured ratios (44.2 rows per open order at 210 open, 10.0 per open run at 420 open, recorded in
+`docs/index-counts-performance-plan.md`); the tests pin the bounds, 60 and 12 ("the orders index
+default read reads at most 60 rows per open order", "the workflows list read reads at most 12 rows
+per open run" in `test/integration/list-reads-rows.test.ts`).
+
 Members no longer multiply it: twenty-five members on six teams are at most six member
-computations. Two merchants on the default filter are one. What multiplies it is pushes, and a push
-follows every write that changed something (the sites table on `ShopAgent.publish`): one per order
-webhook, one per task verb, one per attach, cancel, tag edit or switch.
+computations. Two merchants on the default filter and the first page are one. What multiplies it is
+pushes, and a push follows every write that changed something (the sites table on
+`ShopAgent.publish`): one per order webhook whose order moved, one per task verb, one per attach,
+cancel, tag edit or switch.
 
 So the monthly cost is pushes × open orders, and both grow with the shop. A shop taking twice the
 orders sends twice the webhooks and, at the same turnaround, holds twice the open orders: four
@@ -87,8 +100,9 @@ them apart. And the orders it does not count, unpaid and unmatched, it does not 
 
 ## What the ceiling fences today
 
-`ShopLimits.maxOrdersPerCycle` (100, provisional) is read against `ShopUsage.ordersThisCycle`,
-which is counted orders this billing cycle. `cycleAtOrderCeiling`'s own JSDoc says it is positioning,
+`ShopLimits.maxOrdersPerCycle` (100 when this was written, 2,500 since the interim change the same
+day, provisional) is read against `ShopUsage.ordersThisCycle`, which is counted orders this billing
+cycle. `cycleAtOrderCeiling`'s own JSDoc says it is positioning,
 not protection: "storage is nowhere near its limit at this volume, but a shop above it is outside
 what Baton is built for". It was never meant to bound the object's work; it bounds work started in a
 cycle, which is the billable quantity.
@@ -111,7 +125,9 @@ Shopify offers nothing here. App Pricing usage meters have no caps
 **A. Add an open-order ceiling and keep the per-cycle one.** A second `ShopLimits` entry,
 `maxOpenOrders`, read where new orders are gated today (before a webhook's fetch, before a sync
 starts, per new order in the write). The count is one statement over the partial index, about one
-row per open order, or a counter the sync and reconcile maintain. A new order at the ceiling is
+row per open order, or a counter the sync maintains. Correction: reconcile never changes whether an
+order is open; the open set moves on a sync write (a new open order, a stored order Shopify has
+fulfilled or cancelled) and on a retention delete, nowhere else. A new order at the ceiling is
 refused as at the cycle ceiling: 2xx to Shopify, nothing stored, a banner, and Sync open orders
 recovers the gap once orders are fulfilled, as long as they are inside its 30-day window. Two
 ceilings, two banners, two rows on `ShopUsage`.
@@ -217,6 +233,57 @@ open.
    lifts the ceiling (`withMaxOrdersPerCycle`). Recommendation: confirm, and the plan lists every
    site.
 
+## Second reading
+
+What the re-read against the code on 2026-10-04 found. Each item is either a correction to the
+text above (marked there too) or a fact the plan needs that the first reading did not state.
+
+1. **Every site that reads the cycle ceiling.** `ShopLimits.maxOrdersPerCycle` and
+   `cycleAtOrderCeiling` are read in: the Platform vocabulary's ceiling row; `Entitlements`,
+   `ShopUsage` (the `ordersThisCycle` and `ordersLimitedAt` JSDoc and assumption 3 under the
+   triggers table) and `cycleAtOrderCeiling` in `Billing.ts`; the `syncOrder` JSDoc in `Orders.ts`
+   (the gating paragraph, the `ceiling` column's definition, rule 5 and rule 8 with their pinned
+   titles, the `atCeiling` parameter, `OrdersSyncResult`); `OrderRepository` (`ShopUsageRow`'s
+   JSDoc, `upsertOrder`'s `refused` field and the `currentCycle` read inside it,
+   `markOrdersLimited`, `usageAtCycle`); `ShopAgentOrdersStream` (`ordersRefused`);
+   `ShopAgent.syncOpenOrders` and `syncOrderWebhook` (the read, the log lines, the JSDoc);
+   `QuotaBanners`; the admin shop page's "Orders limited" field; `README.md` line 24; the test
+   helper `withMaxOrdersPerCycle` and its seven callers (the ceiling suite's three tests, one in
+   `order-repository.test.ts`, one in `shop-agent-sync-order.test.ts`, two in
+   `orders-sync-workflow.test.ts`, and `rows-read.ts`, which lifts it to a million for the
+   row-count fixture); and the `Domain.cycleAtOrderCeiling` unit test. The reconcile triggers
+   table in `ShopWork.ts` says "order ceiling" in two `skipped when` cells and needs no change.
+2. **Sync from Shopify never meets the ceiling.** The order page exists only for a stored order,
+   and a stored order is never gated (rule 8). The `Stored`/`Gone` result needs no `Refused`.
+3. **Where the webhook's one usage read goes.** `syncOrderWebhook` reads `ShopUsage` once through
+   `usageAtCycle`, for the ceiling and for the sweep's `lastSweepAt`. With an open-order ceiling
+   the sweep still needs the row, and a new order needs a count; a stored order needs no count.
+   `usageAtCycle` (a roll-forward then a read) has no other caller and goes; the counting path
+   rolls the cycle on its own (`countOrder`).
+4. **The count's cost.** `count(*)` under the partial index's predicate is a covering scan of
+   `ShopOrder_open_idx`: one row per open order, at most the ceiling's worth, read only for a new
+   order. At 2,500 open orders that is 2,500 rows per new-order webhook and per new order in a
+   stream, about $0.0025 per thousand new orders. A stored counter would save that and could drift;
+   the statement cannot. The plan uses the statement.
+5. **What clears `ordersLimitedAt` is undecided.** Today the cycle clears it, in three writes:
+   the provisional cycle's open, the roll-forward in `currentCycle`, and the recount in
+   `setBillingCycle`. The decisions retire the cycle from the ceiling but name nothing in its
+   place. Decision 8.
+6. **The banner's date goes.** `QuotaBanners` says "Syncing resumes on <cycle end>". An
+   open-order ceiling has no date to name; the copy table's banner row (`CopySlot` in
+   `src/lib/Screen.ts`) wants the fact, its effect on this page, and what clears it.
+7. **The orders strip already counts open orders.** `counts.open` in `listOrders` is the same
+   predicate over the same index; the ceiling's count is a one-line statement beside it, and the
+   two agree by construction because both spell `OPEN` verbatim.
+8. **The seed stores open orders.** `seedOrders` writes through `upsertOrder`, so seeded orders
+   count toward an open-order ceiling. The dev and e2e seeds are a handful of orders; the
+   row-count fixture (2,100 open orders) runs under the lifted ceiling as today.
+9. **The home tile's copy contradicts the meter.** The Orders tile's detail says "Each order
+   synced from Shopify counts once." The meter's word is counted order: one Baton created a run
+   for (`OrderRepository.countOrder`); a synced order no workflow matches is never counted, and
+   this doc's whole point is that the two populations differ. The plan fixes the sentence with
+   the banner (phase 3): "Each order counts once, when work starts on it."
+
 ## Decisions
 
 Answered 2026-10-04 in Plannotator. All seven recommendations accepted as written:
@@ -230,10 +297,24 @@ Answered 2026-10-04 in Plannotator. All seven recommendations accepted as writte
 6. Turnaround assumed days to a few weeks; the first long-turnaround merchant raises the number.
 7. The trial rule goes with the cycle ceiling; the plan lists every site that read it.
 
+Answered 2026-10-04 in Plannotator, after the second reading:
+
+8. The refusal flag (`ordersLimitedAt`) is cleared when the next new order is stored. The three
+   cycle clears go. The banner says syncing stopped and stays until it has resumed.
+
+   Revised 2026-10-04, after the implementation review: the flag is cleared when Sync open orders
+   starts, and by nothing else (`OrderRepository.clearOrdersLimited`). A shop held at the ceiling
+   by its own incoming rate stores one order for every fulfilment, so a flag cleared by a stored
+   order would clear the banner within minutes of raising it, before the merchant read it, with
+   the refused orders still lost; and the way out the banner names is the sync, which decision 3
+   refuses at the ceiling, so the banner has to outlive the first stored order for the merchant to
+   take it. The flag means "there is a gap only Sync open orders closes" and the start is what
+   closes it. A stream that crosses the ceiling sets it again.
+
 Interim, before the plan runs: `maxOrdersPerCycle` was 100, a prototyping number that the pro
 plan's own copy outgrows, and is raised to 2,500 the same day so no shop meets it before the
 open-order ceiling replaces it. Still provisional.
 
 ## Open
 
-Nothing. The next step is a plan.
+Nothing. The plan is `docs/open-orders-plan.md`, not yet executed.

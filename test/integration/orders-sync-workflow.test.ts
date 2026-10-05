@@ -1,11 +1,11 @@
+import type * as Domain from "@/lib/Domain";
+
 import * as ShopifyApi from "@shopify/shopify-api";
 import { getAgentByName } from "agents";
 import { introspectWorkflow, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { Schema } from "effect";
 import { describe, expect, it, vi } from "vitest";
 
-import * as Domain from "@/lib/Domain";
 import { bulkOrdersQueryText } from "@/lib/OrdersBulkRepository";
 import {
   BULK_GIVE_UP_MS,
@@ -15,7 +15,7 @@ import {
 } from "@/lib/orderSyncConstants";
 
 import { openTwoScreens, receivedInvalidations } from "./agent-socket.ts";
-import { withMaxOrdersPerCycle } from "./order-ceiling.ts";
+import { storeOpenOrders, withMaxOpenOrders } from "./open-order-ceiling.ts";
 
 const sessionProps = (shop: string) =>
   new ShopifyApi.Session({
@@ -410,21 +410,9 @@ describe("OrdersSyncWorkflow shape", () => {
 
   it("a sync refused at the order ceiling flags the refusal, writes no error and tracks nothing", async () => {
     const shop = "orders-ceiling-refused.myshopify.com";
-    await withMaxOrdersPerCycle(2, async () => {
+    await withMaxOpenOrders(2, async () => {
       const agent = await getAgentByName(env.SHOP_AGENT, shop);
-      await agent.setBillingCycle({
-        shopGid: Schema.decodeUnknownSync(Domain.ShopGid)(
-          "gid://shopify/Shop/1",
-        ),
-        cycleStartAt: 0,
-        cycleEndAt: Date.now() + 86_400_000,
-        memberCount: 0,
-      });
-      await runInDurableObject(env.SHOP_AGENT.getByName(shop), (object) => {
-        sqlOf(object).exec(
-          "update ShopUsage set ordersThisCycle = 2 where id = 1",
-        );
-      });
+      await storeOpenOrders(shop, 2);
 
       const result = await agent.syncOpenOrders();
 
@@ -558,21 +546,9 @@ describe("OrdersSyncWorkflow publishes", () => {
     startedScreens.close();
 
     const refused = "orders-publish-refused.myshopify.com";
-    await withMaxOrdersPerCycle(2, async () => {
+    await withMaxOpenOrders(2, async () => {
       const agent = await getAgentByName(env.SHOP_AGENT, refused);
-      await agent.setBillingCycle({
-        shopGid: Schema.decodeUnknownSync(Domain.ShopGid)(
-          "gid://shopify/Shop/1",
-        ),
-        cycleStartAt: 0,
-        cycleEndAt: Date.now() + 86_400_000,
-        memberCount: 0,
-      });
-      await runInDurableObject(env.SHOP_AGENT.getByName(refused), (object) => {
-        sqlOf(object).exec(
-          "update ShopUsage set ordersThisCycle = 2 where id = 1",
-        );
-      });
+      await storeOpenOrders(refused, 2);
       const refusedScreens = await openTwoScreens(refused);
       const refusal = await agent.syncOpenOrders();
       expect(refusal._tag).toBe("Refused");

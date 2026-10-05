@@ -59,7 +59,7 @@ export const planOfHandle = (handle: PlanHandle): Plan =>
 
 /** What a plan includes: the $0.00 first tier of each meter. */
 export interface Entitlements {
-  /** Counted orders ({@link ShopUsage.ordersThisCycle}) included per billing cycle. Past this the usage meter bills; nothing blocks until {@link ShopLimits.maxOrdersPerCycle}. */
+  /** Counted orders ({@link ShopUsage.ordersThisCycle}) included per billing cycle. Past this the usage meter bills; nothing refuses an order but {@link ShopLimits.maxOpenOrders}, which reads open orders, not this count. */
   readonly ordersPerCycle: number;
   /**
    * Seats included; seats past this many are billed by the
@@ -214,7 +214,7 @@ export type AppSubscription = typeof AppSubscription.Type;
  * | Shopify refuses an event             | —           | —                       | `attempts` +1, `lastError` set                  | flush deletes accepted events and keeps refused ones with the error                           |
  * | an event's billing cycle ends unsent | —           | —                       | row deleted at the next flush, logged           | the flush deletes an event dated before the current cycle and logs it                         |
  *
- * The rows rely on three assumptions:
+ * The rows rely on two assumptions:
  *
  * 1. A billing cycle starts where the previous one ended. The seat mark's
  *    same-start check depends on it. A plan change starts a new app
@@ -223,9 +223,6 @@ export type AppSubscription = typeof AppSubscription.Type;
  * 2. Billing cycles are a month or less. The recount is wrong for a longer
  *    cycle (`OrderRepository.countedSince`), and the Partner Dashboard offers
  *    usage meters on monthly plans only.
- * 3. A trial's counted orders count toward {@link ShopLimits.maxOrdersPerCycle}.
- *    Decided, not an oversight: the ceiling is provisional, and the first
- *    billing cycle recounts them out and clears the refusal.
  */
 export const ShopUsage = Schema.Struct({
   /**
@@ -239,15 +236,17 @@ export const ShopUsage = Schema.Struct({
   cycleEndAt: Schema.NullOr(Schema.Number),
   /**
    * Counted orders this cycle: orders Baton created a run for, not orders
-   * stored (`OrderRepository.countOrder` is the rule). Never decremented. It
-   * is also what {@link cycleAtOrderCeiling} reads, so the ceiling bounds
-   * work started, which is the billable quantity, rather than rows.
+   * stored (`OrderRepository.countOrder` is the rule). Never decremented,
+   * never a ceiling: the meter bills, the open-order ceiling
+   * ({@link openOrdersAtCeiling}) refuses.
    */
   ordersThisCycle: Schema.Number,
-  /** Set when a new order was refused because of {@link ShopLimits.maxOrdersPerCycle}; null once the cycle rolls. */
+  /** Set when a new order was refused at {@link ShopLimits.maxOpenOrders}; cleared when Sync open orders starts, and by nothing else (`OrderRepository.clearOrdersLimited` holds the rule). */
   ordersLimitedAt: Schema.NullOr(Schema.Number),
   /** `ctx.storage.sql.databaseSize` at read time. */
   databaseSize: Schema.Number,
+  /** Open orders stored, at read time: the quantity {@link openOrdersAtCeiling} reads, shown on the admin shop page. Derived from the rows, never stored. */
+  openOrders: Schema.Number,
   lastSweepAt: Schema.NullOr(Schema.Number),
   /** Usage events queued for the current cycle and not yet accepted by Shopify. Non-zero for long is an operator signal, not a merchant-facing number. */
   pendingUsageEvents: Schema.Number,
@@ -338,29 +337,40 @@ export const usageEventIsExpired = (occurredAt: number, cycleStartAt: number) =>
   occurredAt < cycleStartAt;
 
 /**
- * The cycle is at its ceiling when {@link ShopUsage.ordersThisCycle} — orders
- * Baton created a run on, not orders stored — has reached
- * {@link ShopLimits.maxOrdersPerCycle}, past which no *new* order is stored for
- * the rest of the cycle.
+ * The shop is at its order ceiling when the open orders stored
+ * ({@link ShopUsage.openOrders}: not cancelled, not fulfilled) have reached
+ * {@link ShopLimits.maxOpenOrders}, past which no *new* order is stored until
+ * one closes.
+ *
+ * About the object's load, not billing. What a shop costs the object is the
+ * open orders it holds at one moment (incoming rate × turnaround): every
+ * orders index read and every member read is linear in them. Orders counted
+ * in a cycle do not measure that, so the ceiling reads rows Shopify has not
+ * closed, whether Baton billed them or not (unpaid, matched by no workflow)
+ * and whatever cycle they arrived in. It is not the usage meter:
+ * {@link ShopUsage.ordersThisCycle} has no ceiling of its own, and past the
+ * plan's included orders Baton bills and never refuses.
  *
  * The one hard stop on orders, and it is positioning rather than protection:
- * storage is nowhere near its limit at this volume, but a shop above it is
- * outside what Baton is built for, and saying so with a number the merchant can
- * read beats letting a sync fail late inside a stream. Updates to orders
- * already stored keep flowing — the shop must not lose the work it
- * is already carrying.
+ * a shop above it is outside what Baton is built for, and saying so with a
+ * number the merchant can read beats letting a read slow down unannounced.
+ * Updates to orders already stored keep flowing, and a fulfilled or cancelled
+ * one leaves the count: the shop must not lose the work it is already
+ * carrying.
  *
- * **An order refused here is lost to Baton for the rest of the cycle.** The
- * webhook path answers Shopify 2xx without storing it, because a 5xx would
- * only have Shopify retry for four hours against a condition that four hours
- * cannot clear; Shopify does not redeliver afterwards, and nothing re-reads
- * the gap. What recovers it is the merchant: once the cycle rolls over,
- * Sync open orders re-fetches whatever is still open
- * (`ShopAgent.syncOpenOrders`). `ShopUsage.ordersLimitedAt` is what raises the
- * banner saying so.
+ * **An order refused here is lost to Baton until the count drops and the
+ * merchant syncs.** The webhook path answers Shopify 2xx without storing it,
+ * because a 5xx would only have Shopify retry for four hours against a
+ * condition that only the merchant's own fulfilments clear; Shopify does not
+ * redeliver afterwards, and nothing re-reads the gap. What recovers it is the
+ * merchant: once orders are fulfilled or cancelled in Shopify, Sync open
+ * orders re-fetches whatever is still open and inside its 30-day window
+ * (`ShopAgent.syncOpenOrders`). `ShopUsage.ordersLimitedAt` is what raises
+ * the banner saying so, and that start is what clears it
+ * (`OrderRepository.clearOrdersLimited`).
  */
-export const cycleAtOrderCeiling = (ordersThisCycle: number) =>
-  ordersThisCycle >= ShopLimits.maxOrdersPerCycle;
+export const openOrdersAtCeiling = (openOrders: number) =>
+  openOrders >= ShopLimits.maxOpenOrders;
 
 /**
  * A shop's members are at their ceiling when there are

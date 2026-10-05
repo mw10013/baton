@@ -1244,12 +1244,12 @@ describe("Domain.membersAtCeiling", () => {
   });
 });
 
-describe("Domain.cycleAtOrderCeiling", () => {
-  it("the cycle is at its ceiling when the count has reached maxOrdersPerCycle", () => {
-    const { maxOrdersPerCycle } = Domain.ShopLimits;
-    strictEqual(Domain.cycleAtOrderCeiling(maxOrdersPerCycle - 1), false);
-    strictEqual(Domain.cycleAtOrderCeiling(maxOrdersPerCycle), true);
-    strictEqual(Domain.cycleAtOrderCeiling(maxOrdersPerCycle + 1), true);
+describe("Domain.openOrdersAtCeiling", () => {
+  it("the shop is at its order ceiling when the open orders have reached maxOpenOrders", () => {
+    const { maxOpenOrders } = Domain.ShopLimits;
+    strictEqual(Domain.openOrdersAtCeiling(maxOpenOrders - 1), false);
+    strictEqual(Domain.openOrdersAtCeiling(maxOpenOrders), true);
+    strictEqual(Domain.openOrdersAtCeiling(maxOpenOrders + 1), true);
   });
 });
 

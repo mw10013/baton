@@ -1,4 +1,3 @@
-import { LocalDateTime } from "@/components/LocalDateTime";
 import * as Domain from "@/lib/Domain";
 import { formatNumber } from "@/lib/format";
 
@@ -9,7 +8,10 @@ import { formatNumber } from "@/lib/format";
  * never arrived would be missed.
  *
  * `critical`, and shown only after the fact: once a new order was refused at
- * the order ceiling. It names what clears it.
+ * the order ceiling. It names what clears it: closing orders in Shopify, then
+ * Sync open orders, which stores the refused orders still open and inside its
+ * 30-day window. It stays until that press, even while new orders are stored
+ * again (`OrderRepository.clearOrdersLimited`): the gap is open until then.
  *
  * Going past the plan's included orders is not one of them: syncing continues
  * and the extra orders are billed at the plan's rate, so it is the plan
@@ -20,13 +22,7 @@ export function QuotaBanners({ usage }: { readonly usage: Domain.ShopUsage }) {
   if (usage.ordersLimitedAt === null) return null;
   return (
     <s-banner tone="critical">
-      {`New orders stopped syncing at ${formatNumber(Domain.ShopLimits.maxOrdersPerCycle)} this billing cycle.`}
-      {usage.cycleEndAt !== null && (
-        <>
-          {" Syncing resumes on "}
-          <LocalDateTime value={usage.cycleEndAt} />.
-        </>
-      )}
+      {`New orders stopped syncing at ${formatNumber(Domain.ShopLimits.maxOpenOrders)} open orders. Fulfill or cancel orders in Shopify, then Sync open orders.`}
     </s-banner>
   );
 }

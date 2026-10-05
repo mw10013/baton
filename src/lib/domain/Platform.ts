@@ -8,7 +8,7 @@
  * | word    | meaning                                                                                                | symbol                | screen                                                  |
  * | ------- | ------------------------------------------------------------------------------------------------------ | --------------------- | ------------------------------------------------------- |
  * | shop    | one Shopify store, the tenant                                                                          | `ShopSession`, `Shop` | store (Shopify's merchant word); its domain as the name |
- * | ceiling | a per-shop limit the object enforces: `maxOrdersPerCycle`, `maxMembers` on `ShopLimits` | `ShopLimits`          | the banner that names what stopped                      |
+ * | ceiling | a per-shop limit the object enforces: `maxOpenOrders`, `maxMembers` on `ShopLimits` | `ShopLimits`          | the banner that names what stopped                      |
  * | memo    | a list read's last answer, kept in the object's memory until the next publish | the Cache values in ShopWorkAgent | (none)                                                  |
  * | socket       | a tab's one WebSocket to its shop's object, for the life of the tab; a series of connections                                                | `ShopAgentSocket`, `ShopAgentSocketProvider`       | (none): Connecting |
  * | connection   | the object's end of one socket, from identify to close; carries who is on it                                                                | `ConnectionState` in ShopWork, `ConnectionRole`    | (none)             |
@@ -227,8 +227,16 @@ export const WorkflowLimits = {
 export const ShopLimits = {
   /** `Team` rows per shop. */
   maxTeams: 25,
-  /** `ShopUsage.ordersThisCycle` in Billing at which syncing of *new* orders stops for the rest of the cycle. Provisional; enterprise fencing, not a tier — see `cycleAtOrderCeiling` in Billing. */
-  maxOrdersPerCycle: 2500,
+  /**
+   * Open orders (`orderIsOpen` in Orders) stored at one moment, past which no
+   * *new* order is stored until one closes. The quantity that loads the
+   * object: every orders index read and every member read is linear in it,
+   * whatever cycle the orders arrived in. Provisional; enterprise fencing, not
+   * a tier, and plan-independent like `maxMembers`; the first long-turnaround
+   * merchant who meets it is the reason to raise it. See
+   * `openOrdersAtCeiling` in Billing.
+   */
+  maxOpenOrders: 2500,
   /** Members per shop on any plan; see `membersAtCeiling` in Billing. Provisional; enterprise fencing, not a tier. */
   maxMembers: 12,
   /** Line items fetched per order on either path; the rest are not stored. */

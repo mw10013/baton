@@ -42,8 +42,8 @@ export interface OrderUpsert<A = void, E = never> {
  *
  * The row holds everything the Worker needs to compare this shop against its
  * plan without the object knowing what the plan is: the billing cycle's
- * counted orders, when the order ceiling last refused something, and when
- * retention last swept.
+ * counted orders, when the order ceiling last refused something and how many
+ * open orders it carries, and when retention last swept.
  */
 export const ShopUsageRow = Schema.Struct({
   cycleStartAt: Schema.NullOr(Schema.Number),
@@ -53,6 +53,7 @@ export const ShopUsageRow = Schema.Struct({
   lastSweepAt: Schema.NullOr(Schema.Number),
   seatsThisCycle: Schema.Number,
   pendingUsageEvents: Schema.Number,
+  openOrders: Schema.Number,
 });
 export type ShopUsageRow = typeof ShopUsageRow.Type;
 
@@ -245,6 +246,10 @@ export class OrderRepository extends Context.Service<
      * Object's input gate on every `await` inside the fetch, so a webhook can
      * and will interleave between orders. Per-order atomicity is what keeps
      * either writer from observing half an order.
+     *
+     * A new order refused at the order ceiling sets the refusal flag
+     * (`Domain.ShopUsage.ordersLimitedAt`); a stored new order does not clear
+     * it ({@link clearOrdersLimited} is the rule).
      */
     readonly upsertOrder: <A = void, E = never>(
       input: OrderUpsert<A, E>,
@@ -269,7 +274,7 @@ export class OrderRepository extends Context.Service<
         readonly changed: boolean;
         /**
          * The write was a new order refused at
-         * `Domain.ShopLimits.maxOrdersPerCycle` and nothing was stored. Checked
+         * `Domain.ShopLimits.maxOpenOrders` and nothing was stored. Checked
          * here, on the one path every ingestion shares, so a bulk stream that
          * crosses the ceiling mid-file stops storing new orders at the line
          * where it crossed; the webhook path also checks before its fetch,
@@ -419,15 +424,12 @@ export class OrderRepository extends Context.Service<
       SqlError.SqlError | OrderRepositoryError
     >;
     /**
-     * Rule 5 on `Domain.syncOrder`: the ceiling is read at the cycle the sync
-     * lands in, after any roll-forward, wherever it is read. Resolves the
-     * cycle at `now` exactly as the write does, then reads the counters, so
-     * a cycle whose end has passed is rolled forward before the count is
-     * read.
+     * The open-order count, and its one definition: what
+     * `Domain.openOrdersAtCeiling` reads and what `Domain.ShopUsage.openOrders`
+     * reports. Spelled through `OPEN` so the partial index `ShopOrder_open_idx`
+     * serves it, one index entry per open order.
      */
-    readonly usageAtCycle: (
-      now: number,
-    ) => Effect.Effect<ShopUsageRow, SqlError.SqlError | OrderRepositoryError>;
+    readonly countOpenOrders: () => Effect.Effect<number, SqlError.SqlError>;
     /**
      * Records the shop's billing cycle (`Domain.BillingCycleInput`). What it
      * does to the counts and the queue is the three "cycle pushed" rows on
@@ -454,10 +456,24 @@ export class OrderRepository extends Context.Service<
     readonly setBillingCycle: (
       input: Domain.BillingCycleInput,
     ) => Effect.Effect<void, SqlError.SqlError | OrderRepositoryError>;
-    /** Flags that a new order was refused at `Domain.ShopLimits.maxOrdersPerCycle`; `coalesce` keeps the first refusal's instant. */
+    /** Flags that a new order was refused at `Domain.ShopLimits.maxOpenOrders`; `coalesce` keeps the first refusal's instant. */
     readonly markOrdersLimited: (
       now: number,
     ) => Effect.Effect<void, SqlError.SqlError>;
+    /**
+     * Clears the refusal flag (`Domain.ShopUsage.ordersLimitedAt`), and is
+     * the only thing that does. The flag means there is a gap: orders Shopify
+     * sent that Baton refused and nothing re-reads but Sync open orders. So
+     * the sync's start clears it (`ShopAgent.syncOpenOrders`), and a stored
+     * new order does not: a shop held at the ceiling by its own incoming rate
+     * stores one order for every fulfilment and would clear the banner before
+     * the merchant read it, with the gap still open. A stream that crosses
+     * the ceiling sets the flag again, which is the truth: that sync left a
+     * gap of its own.
+     */
+    readonly clearOrdersLimited: () => Effect.Effect<void, SqlError.SqlError>;
+    /** `lastSweepAt` alone, for the webhook's sweep rate limit: the full row (`getUsage`) carries the open-order count, which a stored-order webhook must not pay for. */
+    readonly lastSweepAt: () => Effect.Effect<number | null, SqlError.SqlError>;
     /**
      * One pass over the usage-event outbox: at most `ShopLimits.sweepBatch`
      * live rows, oldest first, each sent and then deleted or marked. Rows dated
@@ -698,7 +714,7 @@ export class OrderRepository extends Context.Service<
           const cycleStartAt = Domain.provisionalCycleStart(now);
           yield* sql`
             update ShopUsage
-            set cycleStartAt = ${cycleStartAt}, ordersThisCycle = 0, ordersLimitedAt = null,
+            set cycleStartAt = ${cycleStartAt}, ordersThisCycle = 0,
                 seatsThisCycle = 0
             where id = 1
           `;
@@ -719,7 +735,7 @@ export class OrderRepository extends Context.Service<
           yield* sql`
             update ShopUsage
             set cycleStartAt = cycleEndAt, cycleEndAt = null,
-                ordersThisCycle = ${count}, ordersLimitedAt = null,
+                ordersThisCycle = ${count},
                 seatsThisCycle = 0
             where id = 1
           `;
@@ -811,6 +827,15 @@ export class OrderRepository extends Context.Service<
         },
       );
 
+      const countOpenOrders = Effect.fn("OrderRepository.countOpenOrders")(
+        function* () {
+          const [row] = yield* sql<{
+            readonly openOrders: number;
+          }>`select count(*) as openOrders from ShopOrder where ${sql.literal(OPEN)}`;
+          return row?.openOrders ?? 0;
+        },
+      );
+
       const decodeUsage = decode(
         Schema.Array(ShopUsageRow),
         "Invalid ShopUsage row",
@@ -822,7 +847,8 @@ export class OrderRepository extends Context.Service<
             select cycleStartAt, cycleEndAt, ordersThisCycle, ordersLimitedAt,
                    lastSweepAt, seatsThisCycle,
                    (select count(*) from UsageEvent
-                    where cycleStartAt is null or occurredAt >= cycleStartAt) as pendingUsageEvents
+                    where cycleStartAt is null or occurredAt >= cycleStartAt) as pendingUsageEvents,
+                   (select count(*) from ShopOrder where ${sql.literal(OPEN)}) as openOrders
             from ShopUsage where id = 1
           `,
         );
@@ -853,15 +879,17 @@ export class OrderRepository extends Context.Service<
                   readonly updatedAt: number;
                 }>`select updatedAt from ShopOrder where id = ${order.id} limit 1`;
                 const stored = existing[0];
-                // Resolved on every path, before the insert, because the
-                // ceiling is a fact about the cycle this write lands in, after
-                // any roll-forward; `syncOrder` ignores `atCeiling` for a
-                // stored order (rule 8).
-                const cycle = yield* currentCycle(order.syncedAt);
+                // Counted inside the transaction, so a stream storing its
+                // two-thousandth order reads the 1,999 before it; `syncOrder`
+                // ignores `atCeiling` for a stored order (rule 8), so no count
+                // is read for one.
+                const atCeiling =
+                  stored === undefined &&
+                  Domain.openOrdersAtCeiling(yield* countOpenOrders());
                 const action = Domain.syncOrder({
                   stored: stored ?? null,
                   incoming: order,
-                  atCeiling: Domain.cycleAtOrderCeiling(cycle.ordersThisCycle),
+                  atCeiling,
                 });
                 if (action._tag === "refuse" && action.reason === "ceiling")
                   yield* markOrdersLimited(order.syncedAt);
@@ -1339,16 +1367,7 @@ export class OrderRepository extends Context.Service<
 
         getUsage: readUsage,
 
-        usageAtCycle: Effect.fn("OrderRepository.usageAtCycle")(function* (
-          now: number,
-        ) {
-          return yield* sql.withTransaction(
-            Effect.gen(function* () {
-              yield* currentCycle(now);
-              return yield* readUsage();
-            }),
-          );
-        }),
+        countOpenOrders,
 
         setBillingCycle: Effect.fn("OrderRepository.setBillingCycle")(
           function* (input: Domain.BillingCycleInput) {
@@ -1386,7 +1405,7 @@ export class OrderRepository extends Context.Service<
                 const count = yield* countedSince(input.cycleStartAt);
                 yield* sql`
                   update ShopUsage
-                  set ordersThisCycle = ${count}, ordersLimitedAt = null
+                  set ordersThisCycle = ${count}
                   where id = 1
                 `;
                 /**
@@ -1414,6 +1433,19 @@ export class OrderRepository extends Context.Service<
         ),
 
         markOrdersLimited,
+
+        clearOrdersLimited: Effect.fn("OrderRepository.clearOrdersLimited")(
+          function* () {
+            yield* sql`update ShopUsage set ordersLimitedAt = null where id = 1`;
+          },
+        ),
+
+        lastSweepAt: Effect.fn("OrderRepository.lastSweepAt")(function* () {
+          const [row] = yield* sql<{
+            readonly lastSweepAt: number | null;
+          }>`select lastSweepAt from ShopUsage where id = 1`;
+          return row?.lastSweepAt ?? null;
+        }),
 
         flushUsageEvents: Effect.fn("OrderRepository.flushUsageEvents")(
           function* (shop: string) {

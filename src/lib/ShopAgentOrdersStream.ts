@@ -60,7 +60,7 @@ export interface OrdersStreamCounts {
   readonly ordersTruncated: number;
   /** Orders this write created rather than updated, for the usage counter's log line. */
   readonly ordersInserted: number;
-  /** New orders refused at `Domain.ShopLimits.maxOrdersPerCycle`; the caller logs the total once. */
+  /** New orders refused at `Domain.ShopLimits.maxOpenOrders`; the caller logs the total once. */
   readonly ordersRefused: number;
 }
 

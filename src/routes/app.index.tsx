@@ -186,7 +186,7 @@ function RouteComponent() {
                 <>
                   {ordersOverBy > 0
                     ? `${formatNumber(ordersOverBy)} over. Extra orders are billed at your plan's rate.`
-                    : "Each order synced from Shopify counts once."}
+                    : "Each order counts once, when work starts on it."}
                   {ordersReset}
                 </>
               }
