@@ -8,6 +8,12 @@ import { createServerFn, useServerFn } from "@tanstack/react-start";
 import { Effect, Option, Schema } from "effect";
 
 import { LocalDateTime } from "@/components/LocalDateTime";
+import { EmptyLine } from "@/components/screen/EmptyLine";
+import { End } from "@/components/screen/End";
+import { Pairs } from "@/components/screen/Pairs";
+import { TableFrame } from "@/components/screen/TableFrame";
+import { Things } from "@/components/screen/Things";
+import { Token } from "@/components/screen/Token";
 import { UsedByCard } from "@/components/UsedByCard";
 import * as Domain from "@/lib/Domain";
 import { fieldError, mutationErrorMessage } from "@/lib/form";
@@ -173,24 +179,6 @@ const addTeamMembersFn = createServerFn({ method: "POST" })
     ),
   );
 
-/**
- * Polaris' empty-state composition without the illustration: a heading, one
- * sentence, one action, centered with block padding. An empty team is a state
- * to explain, not a footnote, and centering is what keeps it from reading as a
- * stray line in a box.
- */
-const emptyState = (heading: string, body: string, action: React.ReactNode) => (
-  <s-grid gap="base" justifyItems="center" paddingBlock="large-400">
-    <s-grid justifyItems="center" maxInlineSize="380px" gap="base">
-      <s-stack alignItems="center" gap="small-300">
-        <s-heading>{heading}</s-heading>
-        <s-paragraph color="subdued">{body}</s-paragraph>
-      </s-stack>
-      {action}
-    </s-grid>
-  </s-grid>
-);
-
 export const Route = createFileRoute("/app/teams/$teamId")({
   loader: ({ params }) => getLoaderData({ data: { teamId: params.teamId } }),
   component: RouteComponent,
@@ -354,36 +342,37 @@ function RouteComponent() {
 
   const renderMembers = () => {
     if (members.length === 0)
-      return emptyState(
-        "No members yet",
-        "This store has no members yet. Add them on Members, then put them on teams.",
-        <s-button href="/app/members">Add members</s-button>,
+      return (
+        <EmptyLine
+          heading="No members yet"
+          action={<s-button href="/app/members">Add members</s-button>}
+        >
+          This store has no members yet. Add them on Members, then put them on
+          teams.
+        </EmptyLine>
       );
     if (current.length === 0)
-      return emptyState(
-        "Nobody on this team yet",
-        "Nobody is on this team, so its tasks wait until a member joins.",
-        addButton(false),
+      return (
+        <EmptyLine heading="Nobody on this team yet" action={addButton(false)}>
+          Nobody is on this team, so its tasks wait until a member joins.
+        </EmptyLine>
       );
     return (
-      /* Bordered box around the table, as Polaris' details template does: the
-         section keeps its own padding (a `padding="none"` section loses the
-         inset on its heading too), so the table needs its own frame to stop
-         floating inside the card. */
-      <s-box border="base" borderRadius="base" overflow="hidden">
+      /* Framed inside the card ({@link TableFrame}). */
+      <TableFrame>
         <s-table>
           <s-table-header-row>
             <s-table-header listSlot="primary">Member</s-table-header>
             <s-table-header>On team since</s-table-header>
             <s-table-header>
-              <s-stack alignItems="end">Actions</s-stack>
+              <End>Actions</End>
             </s-table-header>
           </s-table-header-row>
           <s-table-body>
             {current.map((member) => (
               <s-table-row key={member.id} id={member.id}>
                 <s-table-cell>
-                  <s-text>{member.email}</s-text>
+                  <Token>{member.email}</Token>
                 </s-table-cell>
                 <s-table-cell>
                   {member.inTeamSince !== null && (
@@ -391,7 +380,7 @@ function RouteComponent() {
                   )}
                 </s-table-cell>
                 <s-table-cell>
-                  <s-stack alignItems="end">
+                  <End>
                     <s-button
                       variant="tertiary"
                       tone="critical"
@@ -403,13 +392,13 @@ function RouteComponent() {
                     >
                       Remove
                     </s-button>
-                  </s-stack>
+                  </End>
                 </s-table-cell>
               </s-table-row>
             ))}
           </s-table-body>
         </s-table>
-      </s-box>
+      </TableFrame>
     );
   };
 
@@ -455,7 +444,7 @@ function RouteComponent() {
       <SocketBanner />
 
       <s-section heading="Members">
-        <s-stack gap="base">
+        <Things>
           {mutationError && (
             <s-banner tone="critical">{mutationError}</s-banner>
           )}
@@ -463,24 +452,22 @@ function RouteComponent() {
             <s-banner tone="warning">{deleteBanner}</s-banner>
           )}
           {renderMembers()}
-        </s-stack>
+        </Things>
       </s-section>
 
       <UsedByCard workflows={teamWorkflows} />
 
       <s-section slot="aside" heading="Details" accessibilityLabel="Details">
-        <s-grid
-          gridTemplateColumns="max-content 1fr"
-          gap="small-200 base"
-          alignItems="center"
-        >
-          <s-text color="subdued">Members</s-text>
-          <s-text>{String(current.length)}</s-text>
-          <s-text color="subdued">Created</s-text>
-          <s-text>
-            <LocalDateTime value={team.createdAt} />
-          </s-text>
-        </s-grid>
+        <Pairs
+          pairs={[
+            { key: "members", label: "Members", value: String(current.length) },
+            {
+              key: "created",
+              label: "Created",
+              value: <LocalDateTime value={team.createdAt} />,
+            },
+          ]}
+        />
       </s-section>
 
       <s-modal
@@ -626,7 +613,7 @@ function RouteComponent() {
               : "Everyone is already on this team."}
           </s-paragraph>
         ) : (
-          <s-stack gap="base">
+          <Things>
             {candidates.length >= SEARCH_FROM && (
               <s-search-field
                 label="Search members by email"
@@ -666,7 +653,7 @@ function RouteComponent() {
                 })}
               </s-choice-list>
             )}
-          </s-stack>
+          </Things>
         )}
         <s-button
           slot="secondary-actions"

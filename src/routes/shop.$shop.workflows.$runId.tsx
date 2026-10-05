@@ -6,12 +6,15 @@ import { MemberBar } from "@/components/MemberBar";
 import {
   BlockBanner,
   ClosedLine,
-  Prose,
   RunItem,
   RunNote,
 } from "@/components/MemberRun";
 import { RunSteps } from "@/components/RunSteps";
 import { BlockModal, RunNoteModal } from "@/components/RunTextModals";
+import { Inline } from "@/components/screen/Inline";
+import { Lines } from "@/components/screen/Lines";
+import { PageBody } from "@/components/screen/PageBody";
+import { Prose } from "@/components/screen/Prose";
 import * as Domain from "@/lib/Domain";
 import { requireMember } from "@/lib/MemberAccess";
 import { memberServerFnMiddleware } from "@/lib/MemberServerFnMiddleware";
@@ -80,7 +83,7 @@ export const Route = createFileRoute("/shop/$shop/workflows/$runId")({
   head: ({ loaderData }) => ({
     meta: [
       {
-        title: `${loaderData?.page?.run.lineItemTitle ?? "Workflow not found"} — Baton`,
+        title: `${loaderData?.page === null || loaderData?.page === undefined ? "Workflow not found" : `${loaderData.page.run.orderName} · ${loaderData.page.run.lineItemTitle}`} — Baton`,
       },
     ],
   }),
@@ -239,7 +242,14 @@ function RouteComponent() {
           many — and the mark's link lands on the list the member left, state,
           team and depth included, because this page's URL carries their
           context too (`MemberSearch` in `shop.$shop.tsx`). */}
-      <s-page heading={run.lineItemTitle} inlineSize="small">
+      {/* The order number heads the page and the item heads its body.
+          `s-page` cuts its heading to one line, and an item title is Shopify
+          text of up to 255 characters; this page is the title's home, where
+          it prints whole (the Shopify-text row of the parts table on
+          `ScreenPart` in `Screen.ts`). An order number is short in practice,
+          and the order page, the modal headings and every row's line one
+          lead with it too. */}
+      <s-page heading={run.orderName} inlineSize="small">
         {/* Block stays a visible page action, not an overflow item: it says
             the worker can stop the line. It opens a modal, so no field is
             mounted for it on the visits that do not use it. */}
@@ -255,80 +265,77 @@ function RouteComponent() {
             {Domain.VERB_LABEL.block.member}
           </s-button>
         )}
-        {/* No `s-section` on this page: a top-level section is a card
-            whether or not it has a heading, and the item, the note and the
-            steps are plain text on the page, with the step boxes the only
-            borders. The stack gives them the spacing sections would, and
-            `.member-work` the phone inset (`styles.css`). */}
-        <div className="member-work">
-          <s-stack gap="base">
-            {/* Under the item heading, the run as both sides name it: the
-              workflow name is the noun the merchant's order page uses for
-              the same run, so a member and a merchant talking about one
-              thing say the same words, and the order is the qualifier. */}
-            <s-text color="subdued">{`${run.workflowName} workflow · ${run.orderName}`}</s-text>
-            <SocketBanner />
-            {/* Page-wide banners sit at page level, above the content they
+        {/* No `s-section` on this page: the item, the note and the steps
+            are plain text on the page, with the step boxes the only
+            borders ({@link PageBody}). */}
+        <PageBody>
+          {/* The item, whole and wrapping, then the run as both sides name
+              it: the workflow name is the noun the merchant's order page
+              uses for the same run, so a member and a merchant talking about
+              one thing say the same words. The order is the page heading. */}
+          <Lines>
+            <s-heading>{run.lineItemTitle}</s-heading>
+            <s-text color="subdued">{`${run.workflowName} workflow`}</s-text>
+          </Lines>
+          <SocketBanner />
+          {/* Page-wide banners sit at page level, above the content they
               concern and outside any card, as Polaris places them. */}
-            {actions.banner !== null && (
-              <s-banner tone="critical">{actions.banner}</s-banner>
-            )}
-            <BlockBanner run={run} actions={blockActions ?? reviewNote} />
-            {/* A closed run, reached by link: where the block banner would
+          {actions.banner !== null && (
+            <s-banner tone="critical">{actions.banner}</s-banner>
+          )}
+          <BlockBanner run={run} actions={blockActions ?? reviewNote} />
+          {/* A closed run, reached by link: where the block banner would
               be, why it ended and when ({@link Domain.ClosedReason}). Only
               the note is left to do on it ({@link Domain.runActions}). */}
-            {Domain.runIsClosed(run) && (
-              <s-banner tone="info" heading={Domain.RUN_STATE_LABEL.closed}>
-                <ClosedLine run={run} viewer="member" />
-              </s-banner>
-            )}
-            {/* Item first: what to make is why the page was opened. No age,
+          {Domain.runIsClosed(run) && (
+            <s-banner tone="info" heading={Domain.RUN_STATE_LABEL.closed}>
+              <ClosedLine run={run} viewer="member" />
+            </s-banner>
+          )}
+          {/* Item first: what to make is why the page was opened. No age,
               because a member cannot act on it and the workflows list
               carries it. No border, because two bordered blocks on
               one page compete. The Done badge stays: it is the only sign the
               page is read-only. */}
-            <s-stack gap="small-300">
-              {Domain.runIsDone(run) && (
-                <s-stack direction="inline" gap="small-300">
-                  <s-badge tone="neutral">
-                    {Domain.RUN_STATE_LABEL.done}
-                  </s-badge>
-                </s-stack>
-              )}
-              <RunItem run={run} />
-            </s-stack>
-            {/* The note sits above the tasks: it is the answer to "anything I
+          <Lines>
+            {Domain.runIsDone(run) && (
+              <Inline>
+                <s-badge tone="neutral">{Domain.RUN_STATE_LABEL.done}</s-badge>
+              </Inline>
+            )}
+            <RunItem run={run} />
+          </Lines>
+          {/* The note sits above the tasks: it is the answer to "anything I
               should know about this job", and a note under a task already
               done is a note nobody reads. Shopify's order note is read-only
               and folds in under it, so the page has one place for prose about
               the run. {@link RunNote} states the note's own shape. */}
-            {(hasNote || can.note || hasOrderNote) && (
-              <s-stack id="note" gap="small-300">
-                <RunNote
-                  note={run.note}
-                  canEdit={can.note}
-                  pending={actions.pending}
-                  onEdit={() => {
-                    showModal(NOTE_MODAL);
-                  }}
-                />
-                {hasOrderNote && (
-                  <s-stack gap="small-500">
-                    <s-text color="subdued">From the order:</s-text>
-                    <Prose>{page.orderNote}</Prose>
-                  </s-stack>
-                )}
-              </s-stack>
-            )}
-            {/* The step cards, shared with the order page's Manage drawer:
+          {(hasNote || can.note || hasOrderNote) && (
+            <Lines id="note">
+              <RunNote
+                note={run.note}
+                canEdit={can.note}
+                pending={actions.pending}
+                onEdit={() => {
+                  showModal(NOTE_MODAL);
+                }}
+              />
+              {hasOrderNote && (
+                <Lines>
+                  <s-text color="subdued">From the order:</s-text>
+                  <Prose>{page.orderNote}</Prose>
+                </Lines>
+              )}
+            </Lines>
+          )}
+          {/* The step cards, shared with the order page's Manage drawer:
               {@link RunSteps} states their shape. */}
-            <RunSteps
-              tasks={page.tasks}
-              showInstructions
-              renderActions={taskButtons}
-            />
-          </s-stack>
-        </div>
+          <RunSteps
+            tasks={page.tasks}
+            showInstructions
+            renderActions={taskButtons}
+          />
+        </PageBody>
         <RunNoteModal
           id={NOTE_MODAL}
           note={run.note}

@@ -1,5 +1,7 @@
 import * as React from "react";
 
+import { Clamp } from "@/components/screen/Clamp";
+import { Lines } from "@/components/screen/Lines";
 import * as Domain from "@/lib/Domain";
 import { formatNumber } from "@/lib/format";
 import * as PolarisModal from "@/lib/polarisModal";
@@ -34,6 +36,7 @@ const countdown = (draft: string, maxLength: number) =>
 function TextModal({
   id,
   heading,
+  subject,
   label,
   labelHidden,
   saved,
@@ -46,6 +49,8 @@ function TextModal({
 }: {
   readonly id: string;
   readonly heading: string;
+  /** The body's first line: the thing the heading's verb acts on, clamped ({@link Clamp}). */
+  readonly subject?: string;
   readonly label: string;
   /** Hide the label visually when the heading already says it; screen readers still get it. */
   readonly labelHidden?: boolean;
@@ -103,22 +108,25 @@ function TextModal({
         setError(null);
       }}
     >
-      <s-text-area
-        ref={field}
-        label={label}
-        {...(labelHidden === true
-          ? { labelAccessibilityVisibility: "exclusive" as const }
-          : {})}
-        rows={6}
-        value={value}
-        disabled={pending}
-        {...countdown(value, maxLength)}
-        {...(error === null ? {} : { error })}
-        onInput={(event) => {
-          setDraft(event.currentTarget.value);
-          setError(null);
-        }}
-      />
+      <Lines>
+        {subject !== undefined && <Clamp>{subject}</Clamp>}
+        <s-text-area
+          ref={field}
+          label={label}
+          {...(labelHidden === true
+            ? { labelAccessibilityVisibility: "exclusive" as const }
+            : {})}
+          rows={6}
+          value={value}
+          disabled={pending}
+          {...countdown(value, maxLength)}
+          {...(error === null ? {} : { error })}
+          onInput={(event) => {
+            setDraft(event.currentTarget.value);
+            setError(null);
+          }}
+        />
+      </Lines>
       <s-button slot="secondary-actions" onClick={close}>
         Cancel
       </s-button>
@@ -172,8 +180,11 @@ export function RunNoteModal({
 }
 
 /**
- * Block: the heading asks the question, naming the run as the member's row
- * does ("Block <item> on <order>?"), and the primary is a critical Block.
+ * Block: the heading asks the question and names the order ("Block
+ * #1008?"), and the body's first line names the item, clamped to two lines
+ * (the copy table's heading row on `CopySlot`): an item title is Shopify
+ * text of up to 255 characters, and in the heading it made a seven-line
+ * question. The primary is a critical Block.
  * A standing block's reason is not edited: Unblock, then Block with the new
  * reason ({@link Domain.runActions}). The field has no placeholder: it is free text and the label
  * says what goes in, so a placeholder could only ask a question or give an
@@ -187,14 +198,18 @@ export function BlockModal({
   onBlock,
 }: {
   readonly id: string;
-  readonly run: Pick<Domain.Run, "lineItemTitle" | "orderName">;
+  readonly run: Pick<
+    Domain.Run,
+    "lineItemTitle" | "variantTitle" | "quantity" | "orderName"
+  >;
   readonly pending: boolean;
   readonly onBlock: (reason: string) => Promise<string | null>;
 }) {
   return (
     <TextModal
       id={id}
-      heading={`Block ${run.lineItemTitle} on ${run.orderName}?`}
+      heading={`Block ${run.orderName}?`}
+      subject={Domain.itemTitle(run)}
       label="Reason"
       saved=""
       maxLength={Domain.BLOCK_REASON_MAX_LENGTH}

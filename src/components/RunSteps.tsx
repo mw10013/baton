@@ -1,6 +1,10 @@
 import * as React from "react";
 
 import { LocalDateTime } from "@/components/LocalDateTime";
+import { Inline } from "@/components/screen/Inline";
+import { Lines } from "@/components/screen/Lines";
+import { Prose } from "@/components/screen/Prose";
+import { StepList } from "@/components/screen/StepList";
 import * as Domain from "@/lib/Domain";
 import * as WorkflowLayout from "@/lib/WorkflowLayout";
 
@@ -72,11 +76,9 @@ const taskState = (
  * merchant's Manage drawer both draw, so a worker and a merchant looking at
  * the same run see the same thing. The rules both pages agree on:
  *
- * - **One caption and one box per step.** A subdued `Step n` caption over a
- *   bordered box; parallel tasks share the box, separated by rules the way the
- *   workflows list separates rows, so a step reads as one stop before the caption is
- *   read. A single-task step is a caption over one row. The steps are an
- *   ordered list, which is what they are.
+ * - **One caption and one box per step** ({@link StepList}): parallel
+ *   tasks share the box, separated by rules. A single-task step is a caption
+ *   over one row.
  * - **The badge states the task's state and the line never repeats it** (see
  *   `taskState`).
  * - **The team leads the subdued line** under the task name rather than
@@ -91,7 +93,7 @@ const taskState = (
  * returns the button row's contents or null for no row.
  *
  * `showInstructions` is a prop because the two pages differ on it: the worker
- * reads a task's instructions here, at the bench, while the merchant wrote
+ * reads a task's instructions here, at the bench, as typed ({@link Prose}), while the merchant wrote
  * them and reads them on the merchant's workflow page, so the Manage drawer leaves them
  * out rather than repeat the definition under every run.
  */
@@ -104,48 +106,35 @@ export function RunSteps<T extends RunStepTask>({
   readonly showInstructions: boolean;
   readonly renderActions: (task: T) => React.ReactElement | null;
 }) {
-  const renderTask = (task: T, first: boolean) => {
+  const renderTask = (task: T) => {
     const state = taskState(task);
     const actions = renderActions(task);
     return (
-      <s-box
-        key={task.id}
-        padding="small"
-        borderWidth={first ? "none" : "base none none none"}
-      >
-        <s-stack gap="small-300">
-          <s-stack direction="inline" gap="small-300" alignItems="center">
-            <s-text type="strong">{task.name}</s-text>
-            {state.badge !== null && (
-              <s-badge tone={state.badge.tone}>{state.badge.label}</s-badge>
-            )}
-          </s-stack>
-          <s-text color="subdued">{state.text}</s-text>
-          {showInstructions && task.instructions !== null && (
-            <s-text>{task.instructions}</s-text>
+      <Lines key={task.id}>
+        <Inline>
+          <s-heading>{task.name}</s-heading>
+          {state.badge !== null && (
+            <s-badge tone={state.badge.tone}>{state.badge.label}</s-badge>
           )}
-          {actions !== null && (
-            <s-stack direction="inline" gap="base" alignItems="center">
-              {actions}
-            </s-stack>
-          )}
-        </s-stack>
-      </s-box>
+        </Inline>
+        <s-text color="subdued">{state.text}</s-text>
+        {showInstructions && task.instructions !== null && (
+          <Prose>{task.instructions}</Prose>
+        )}
+        {actions !== null && <Inline>{actions}</Inline>}
+      </Lines>
     );
   };
   return (
-    <s-stack accessibilityRole="ordered-list" gap="base">
-      {WorkflowLayout.stepsOf(tasks).map((group) => {
+    <StepList
+      steps={WorkflowLayout.stepsOf(tasks).map((group) => {
         const step = group[0]?.step ?? 0;
-        return (
-          <s-stack key={step} accessibilityRole="list-item" gap="small-300">
-            <s-text color="subdued">{`Step ${String(step)}`}</s-text>
-            <s-box borderWidth="base" borderRadius="base">
-              {group.map((task, index) => renderTask(task, index === 0))}
-            </s-box>
-          </s-stack>
-        );
+        return {
+          key: step,
+          caption: `Step ${String(step)}`,
+          entries: group.map(renderTask),
+        };
       })}
-    </s-stack>
+    />
   );
 }

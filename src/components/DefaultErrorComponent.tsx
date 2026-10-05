@@ -4,6 +4,8 @@ import type { ErrorComponentProps } from "@tanstack/react-router";
 
 import { useMatches, useNavigate, useRouter } from "@tanstack/react-router";
 
+import { CodeBlock } from "@/components/screen/CodeBlock";
+
 /**
  * `ErrorComponentProps["error"]` is `unknown` — a boundary catches whatever was
  * thrown, which need not be an `Error`. Normalizing here keeps the banner
@@ -21,18 +23,7 @@ export function DefaultErrorComponent({ error }: ErrorComponentProps) {
     <s-page heading="Something went wrong">
       <s-section>
         <s-banner heading={caught.message} tone="critical">
-          {caught.stack && (
-            <s-box
-              padding="base"
-              borderWidth="base"
-              borderRadius="base"
-              background="subdued"
-            >
-              <pre style={{ margin: 0 }}>
-                <code>{caught.stack}</code>
-              </pre>
-            </s-box>
-          )}
+          {caught.stack && <CodeBlock>{caught.stack}</CodeBlock>}
           {/* router.invalidate() not reset(): default boundary catches errors
               from any source; only invalidate covers route-load errors
               (reloads loader + resets boundary). reset() alone re-throws

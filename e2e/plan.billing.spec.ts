@@ -143,8 +143,9 @@ test("switching plans on Shopify's pricing page moves the ceiling on the Plan ca
 
 /**
  * The operator console's cache fields for one shop, read as `label: value`
- * pairs. Each `Field` renders a `div.admin-field` holding its label and its
- * value, so the pairs come off the DOM without a bespoke test id per row.
+ * pairs. Each `Field` is a `Lines` stack directly inside the `Tiles` grid,
+ * holding its label and its value, so the pairs come off the DOM without a
+ * bespoke test id per row.
  *
  * The match is anchored to the start of the row because one label contains
  * another: `hasText` is a case-insensitive substring, so a bare "Billing
@@ -163,7 +164,7 @@ const readAdminFields = async (page: Page, labels: readonly string[]) => {
   const rows: Record<string, string> = {};
   for (const label of labels) {
     const field = page
-      .locator("div.admin-field")
+      .locator("s-grid > s-stack")
       .filter({ hasText: new RegExp(`^${label}`, "u") })
       .first();
     await expect(field).toBeVisible({ timeout: 30_000 });

@@ -1,5 +1,3 @@
-import * as React from "react";
-
 import {
   createFileRoute,
   useNavigate,
@@ -8,12 +6,24 @@ import {
 import { createServerFn } from "@tanstack/react-start";
 import { Effect, Schema } from "effect";
 
-import { ListSearchField } from "@/components/ListSearchField";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { MemberBar } from "@/components/MemberBar";
 import { ClosedLine } from "@/components/MemberRun";
+import { Clamp } from "@/components/screen/Clamp";
+import { EmptyLine } from "@/components/screen/EmptyLine";
+import { FilterRow } from "@/components/screen/FilterRow";
+import { IndexSection } from "@/components/screen/IndexSection";
+import { ListSearchField } from "@/components/screen/ListSearchField";
+import { Name } from "@/components/screen/Name";
+import {
+  ResourceRow,
+  RowLine,
+  type RowHead,
+} from "@/components/screen/ResourceRow";
+import { SearchLine } from "@/components/screen/SearchLine";
+import { ShowMore } from "@/components/screen/ShowMore";
+import { Strip } from "@/components/screen/Strip";
 import * as Domain from "@/lib/Domain";
-import { formatNumber } from "@/lib/format";
 import { requireMember } from "@/lib/MemberAccess";
 import { memberServerFnMiddleware } from "@/lib/MemberServerFnMiddleware";
 import { ANY_OPTION_VALUE } from "@/lib/Screen";
@@ -137,91 +147,27 @@ export const Route = createFileRoute("/shop/$shop/workflows/")({
 });
 
 /**
- * What every button inside a row must do first.
- *
- * `s-clickable` renders an `<a href>` in its shadow root and slots the row
- * into it — the shape Polaris's own resource-list composition uses
- * (`refs/shopify-docs/docs/api/app-home/latest/patterns/compositions/resource-list.md`,
- * "Provide search, filtering, and row selection for a resource list") — so a
- * click on a button inside the row reaches that anchor. `preventDefault` is
- * what stops the anchor navigating and `stopPropagation` is what stops the
- * row's own handler: neither does the other's job, because `stopPropagation`
- * silences listeners rather than an ancestor's default action. Verified
- * against the CDN `polaris.js` for both mouse and Enter.
- *
- * `s-menu` is the one thing this cannot cover: the menu puts an item's
- * activation on the row whatever the item's own handler does, so a row's menu
- * is rendered beside its clickable rather than inside it.
+ * Line one of every row ({@link ResourceRow}): the order number, then the
+ * piece ({@link Domain.itemPiece}), then `×n`. The order number is the
+ * row's, not the piece's, so the row puts it there.
  */
-const insideRow = (event: {
-  preventDefault: () => void;
-  stopPropagation: () => void;
-}) => {
-  event.preventDefault();
-  event.stopPropagation();
+const headOf = (run: Domain.RunListRun | Domain.Run): RowHead => {
+  const piece = Domain.itemPiece(run);
+  return { lead: run.orderName, title: piece.name, trail: piece.quantity };
 };
 
 /**
- * Line one of every row: the piece ({@link Domain.itemPiece}), its name
- * clamped to two lines and `×n` beside it outside the clamp, and the order
- * number in a cell of its own at the end. The count and the order number sit
- * outside the clamp because a clamp never reaches them: a long title ends in
- * an ellipsis and both stay on screen. The workflow name is not here. The
- * simple setup names a workflow after its product, so beside the item it
- * read as the item said twice, and the item already says which workflow the
- * row is; the name is line three's, beside the step.
- *
- * No Blocked badge: under Blocked it would repeat the filter, and elsewhere
- * the block line says it.
+ * The workflow name on a Done or closed row, when it differs from the item
+ * ({@link Domain.workflowNamesItem}), as on an open row; no step, because
+ * a done task's step is history and a {@link Domain.RecentItem} carries no
+ * step count.
  */
-function PieceLine({ run }: { readonly run: Domain.RunListRun | Domain.Run }) {
-  const piece = Domain.itemPiece(run);
-  return (
-    <s-grid
-      gridTemplateColumns="minmax(0, 1fr) auto"
-      gap="small-300"
-      alignItems="start"
-    >
-      <s-stack direction="inline" gap="small-300" alignItems="center">
-        <div className="run-line">
-          {/* `.run-title-clip` in `styles.css` cuts it to two lines. */}
-          <div className="run-title-clip">
-            <s-text type="strong">{piece.name}</s-text>
-          </div>
-          {piece.quantity !== null && (
-            <Keep>
-              <s-text type="strong">{` ${piece.quantity}`}</s-text>
-            </Keep>
-          )}
-        </div>
-      </s-stack>
-      <div className="run-order">
-        <s-text color="subdued">{run.orderName}</s-text>
-      </div>
-    </s-grid>
+const workflowLine = (run: Domain.Run) =>
+  Domain.workflowNamesItem(run) ? null : (
+    <RowLine>
+      <Name color="subdued">{run.workflowName}</Name>
+    </RowLine>
   );
-}
-
-/**
- * A line of the row other than the first, in one line: its {@link Clip}
- * parts are the free-length names (a task, a team, a reason, a workflow),
- * cut with an ellipsis, and its {@link Keep} parts are the short fixed words
- * (a state, the step, who did it), which are never cut. So a long name never
- * pushes the row taller and never pushes the fixed words off it.
- */
-function RowLine({ children }: { readonly children: React.ReactNode }) {
-  return <div className="run-line">{children}</div>;
-}
-
-/** The part of a {@link RowLine} that ends in an ellipsis when the line is full. */
-function Clip({ children }: { readonly children: React.ReactNode }) {
-  return <div className="run-line-clip">{children}</div>;
-}
-
-/** The part of a {@link RowLine} that is never cut; it keeps its leading space. */
-function Keep({ children }: { readonly children: React.ReactNode }) {
-  return <div className="run-line-keep">{children}</div>;
-}
 
 /**
  * Who did a Done or closed task entry, spelled as the waiting rows spell an actor:
@@ -379,39 +325,45 @@ function RouteComponent() {
 
   const showTeam = Domain.rowShowsTeam(teams.length, team, q);
 
+  /** The row's link: the real `href` and the client navigation beside it. */
+  const linkOf = (run: Domain.RunListRun | Domain.Run) => ({
+    href: router.buildLocation(workflowLocation(run.id)).href,
+    accessibilityLabel: `Open ${Domain.itemTitle(run)} on ${run.orderName}`,
+    onNavigate: () => {
+      void router.navigate(workflowLocation(run.id));
+    },
+  });
+
   /**
-   * One row per run: the whole row is one link to the workflow page, and
-   * the kebab beside it is the only thing in it that is not. It replaced
-   * three targets with three results — order link, expand, action — of which
-   * only the first looked interactive; the workflow page shows everything the
-   * expanded row used to and the run history, the editors and a printable
-   * ticket besides, for the same single tap.
+   * One row per run ({@link ResourceRow}): the whole row is one link to the
+   * workflow page, and the menu beside line one is the only thing in it that
+   * is not. It replaced three targets with three results — order link,
+   * expand, action — of which only the first looked interactive; the
+   * workflow page shows everything the expanded row used to and the run
+   * history, the editors and a printable ticket besides, for the same
+   * single tap.
    *
-<   * Three parts, one kind of fact each. Line one is the piece
-   * ({@link PieceLine}): what to make, and for which order. Then the work:
-   * one line per current task, `Task (Team) · <state>`, then the block when
-   * there is one. Last the recipe: `<workflow> · Step k of n`. What each line
-   * prints, and when, is {@link Domain.runRowLines}; the row only lays it out.
+   * One kind of fact per line. Line one is the order and the piece: what to
+   * make, and for which order. Then the work: one line per current task,
+   * `Task (Team) · <state>`, the task a capped name that wraps whole, then
+   * the block reason clamped to two lines when there is one. Last the
+   * recipe: `Step k of n`, after the workflow name when it differs from the
+   * item. What each line prints, and when, is {@link Domain.runRowLines}; how
+   * each kind of text fits is the parts table's (`ScreenPart` in
+   * `Screen.ts`); the row only places them.
    */
-  const renderItem = (item: Domain.RunListItem, first: boolean) => {
+  const renderItem = (item: Domain.RunListItem) => {
     const { run, tasks } = item;
     const blocked = Domain.runIsBlocked(run);
     const [, ...rest] = tasks;
-    const menuId = `run-actions-${run.id}`;
     const lines = Domain.runRowLines(item, {
       memberEmail,
       showTeam,
       state: q === null ? state : null,
     });
     /**
-     * Every verb the row offers, inside the row's menu — the shape Polaris's
-     * own resource list gives a row
-     * (`refs/shopify-docs/docs/api/app-home/latest/patterns/compositions/resource-list.md`,
-     * "Provide search, filtering, and row selection for a resource list"):
-     * one tertiary `menu-horizontal` button in the `auto` cell, no labelled
-     * verb and no primary ({@link Domain.taskActions}). One fixed-size control
-     * per row is also what stops the action column resizing itself row by row
-     * and dragging the text column's edge with it.
+     * Every verb the row offers, inside the row's menu: no labelled verb and
+     * no primary ({@link Domain.taskActions}).
      *
      * Every verb is a field of {@link Domain.runActions} or
      * {@link Domain.taskActions}; the row decides only which of the allowed
@@ -514,83 +466,47 @@ function RouteComponent() {
     };
     const items = menuItems();
     return (
-      /* The separator above every row but the list's first, and nothing else.
-         A blocked row used to draw a rule down its leading edge as well; it
-         went the way of the subdued surface that marked a row in hand, and
-         for the same reason. A block puts the row in the Blocked state
-         ({@link Domain.listStateOf}) and nowhere else, so the mark fired on every
-         row of the only state it could appear on and separated nothing. It also
-         ran past the list container's rounded corner, which a radius does not
-         clip without `overflow: hidden`. */
-      <s-box key={run.id} borderWidth={first ? "none" : "base none none none"}>
-        <s-clickable
-          href={router.buildLocation(workflowLocation(run.id)).href}
-          accessibilityLabel={`Open ${Domain.itemTitle(run)} on ${run.orderName}`}
-          padding="small-100 base"
-          onClick={(event) => {
-            event.preventDefault();
-            void router.navigate(workflowLocation(run.id));
-          }}
-        >
-          <s-grid
-            gridTemplateColumns="minmax(0, 1fr) auto"
-            gap="small-300"
-            alignItems="center"
-          >
-            <s-stack gap="small-500">
-              <PieceLine run={run} />
-              {lines.tasks.map((each) => (
-                <RowLine key={each.id}>
-                  <Clip>
-                    <s-text>{each.name}</s-text>
-                    {each.team !== null && (
-                      <s-text color="subdued">{` (${each.team})`}</s-text>
-                    )}
-                  </Clip>
-                  {each.state !== null && (
-                    <Keep>
-                      <s-text color="subdued">{` · ${each.state}`}</s-text>
-                    </Keep>
-                  )}
-                </RowLine>
-              ))}
-              {lines.block !== null && (
-                <RowLine>
-                  <Clip>
-                    <s-text color="subdued">{lines.block}</s-text>
-                  </Clip>
-                </RowLine>
-              )}
-              <RowLine>
-                <Clip>
-                  <s-text color="subdued">{lines.recipe.workflow}</s-text>
-                </Clip>
-                <Keep>
-                  <s-text color="subdued">{` · ${lines.recipe.step}`}</s-text>
-                </Keep>
-              </RowLine>
-            </s-stack>
-            {items.length > 0 && (
-              <s-button
-                icon="menu-horizontal"
-                variant="tertiary"
-                accessibilityLabel={`Actions for ${run.orderName}`}
-                disabled={actions.pending}
-                commandFor={menuId}
-                onClick={insideRow}
-              />
+      <ResourceRow
+        key={run.id}
+        head={headOf(run)}
+        menu={
+          items.length > 0
+            ? {
+                label: `Actions for ${run.orderName}`,
+                disabled: actions.pending,
+                items,
+              }
+            : null
+        }
+        {...linkOf(run)}
+      >
+        {lines.tasks.map((each) => (
+          <RowLine key={each.id}>
+            <Name>{each.name}</Name>
+            {each.team !== null && (
+              <s-text color="subdued">{` (${each.team})`}</s-text>
             )}
-          </s-grid>
-        </s-clickable>
-        {items.length > 0 && (
-          <s-menu
-            id={menuId}
-            accessibilityLabel={`Actions for ${run.orderName}`}
-          >
-            {items}
-          </s-menu>
+            {each.state !== null && (
+              <s-text color="subdued">{` · ${each.state}`}</s-text>
+            )}
+          </RowLine>
+        ))}
+        {lines.block !== null && (
+          <RowLine>
+            <Clamp color="subdued">{lines.block}</Clamp>
+          </RowLine>
         )}
-      </s-box>
+        <RowLine>
+          {lines.recipe.workflow !== null && (
+            <Name color="subdued">{lines.recipe.workflow}</Name>
+          )}
+          <s-text color="subdued">
+            {lines.recipe.workflow === null
+              ? lines.recipe.step
+              : ` · ${lines.recipe.step}`}
+          </s-text>
+        </RowLine>
+      </ResourceRow>
     );
   };
 
@@ -604,14 +520,13 @@ function RouteComponent() {
 
   /**
    * A done task's row, the same shape as an open one: the row is a link
-   * to the workflow page and a kebab beside it holds Undo. Line one is the
-   * piece, as on every row ({@link PieceLine}), so a member scanning Done or
+   * to the workflow page and a menu beside line one holds Undo. Line one is
+   * the order and the piece, as on every row, so a member scanning Done or
    * closed for the thing they marked by mistake reads the same column they
-   * read everywhere else. Line two is the task and who did it when; line
-   * three the workflow name alone, without the step: a done task's step is
-   * history, and a {@link Domain.RecentItem} carries no step count.
+   * read everywhere else. Then the task and who did it when, wrapping, and
+   * the note clamped to two lines when there is one.
    *
-   * The kebab is there only while Undo is allowed. The rule used to be the
+   * The menu is there only while Undo is allowed. The rule used to be the
    * other way — a disabled button beside the clause naming its blocker, on
    * the reasoning that a missing control reads as a row that was never
    * reopenable while a disabled one reads as the refusal it is. That holds
@@ -619,153 +534,82 @@ function RouteComponent() {
    * moment anything downstream starts, so a busy shop's Done or closed list was mostly
    * dead buttons each explaining itself in a third line. When most rows can
    * offer nothing, absence is the norm a reader learns in two rows and the
-   * kebab is the signal. The workflow page the row links to shows the later
+   * menu is the signal. The workflow page the row links to shows the later
    * step's task started, for the reader who went looking.
    */
-  const renderDone = (
-    entry: Extract<Domain.RecentItem, { kind: "task" }>,
-    first: boolean,
-  ) => {
-    const menuId = `run-reopen-${entry.task.id}`;
-    const reopenable = reopenOf(entry);
-    return (
-      <s-box
-        key={entry.task.id}
-        borderWidth={first ? "none" : "base none none none"}
-      >
-        <s-clickable
-          href={router.buildLocation(workflowLocation(entry.run.id)).href}
-          accessibilityLabel={`Open ${Domain.itemTitle(entry.run)} on ${entry.run.orderName}`}
-          padding="small-100 base"
-          onClick={(event) => {
-            event.preventDefault();
-            void router.navigate(workflowLocation(entry.run.id));
-          }}
-        >
-          <s-grid
-            gridTemplateColumns="minmax(0, 1fr) auto"
-            gap="small-300"
-            alignItems="center"
-          >
-            <s-stack gap="small-500">
-              <PieceLine run={entry.run} />
-              <RowLine>
-                <Clip>
-                  <s-text>{entry.task.name}</s-text>
-                </Clip>
-                <Keep>
-                  <s-text color="subdued">
-                    {` · ${Domain.TASK_STATE_LABEL.done} by ${doneActorLabel(entry.task, memberEmail)} at `}
-                    <LocalDateTime
-                      value={entry.task.doneAt ?? 0}
-                      format="time"
-                    />
-                  </s-text>
-                </Keep>
-                {entry.run.note !== null && (
-                  <Clip>
-                    <s-text color="subdued">{` · Note: ${entry.run.note}`}</s-text>
-                  </Clip>
-                )}
-              </RowLine>
-              <RowLine>
-                <Clip>
-                  <s-text color="subdued">{entry.run.workflowName}</s-text>
-                </Clip>
-              </RowLine>
-            </s-stack>
-            {reopenable && (
-              <s-button
-                icon="menu-horizontal"
-                variant="tertiary"
-                accessibilityLabel={`Actions for ${entry.run.orderName}`}
-                disabled={actions.pending}
-                commandFor={menuId}
-                onClick={insideRow}
-              />
-            )}
-          </s-grid>
-        </s-clickable>
-        {reopenable && (
-          <s-menu
-            id={menuId}
-            accessibilityLabel={`Actions for ${entry.run.orderName}`}
-          >
-            <s-button
-              onClick={() => {
-                actions.reopen.mutate(entry.task.id);
-              }}
-            >
-              {Domain.VERB_LABEL.reopen.member}
-            </s-button>
-          </s-menu>
-        )}
-      </s-box>
-    );
-  };
+  const renderDone = (entry: Extract<Domain.RecentItem, { kind: "task" }>) => (
+    <ResourceRow
+      key={entry.task.id}
+      head={headOf(entry.run)}
+      menu={
+        reopenOf(entry)
+          ? {
+              label: `Actions for ${entry.run.orderName}`,
+              disabled: actions.pending,
+              items: (
+                <s-button
+                  onClick={() => {
+                    actions.reopen.mutate(entry.task.id);
+                  }}
+                >
+                  {Domain.VERB_LABEL.reopen.member}
+                </s-button>
+              ),
+            }
+          : null
+      }
+      {...linkOf(entry.run)}
+    >
+      <RowLine>
+        <Name>{entry.task.name}</Name>
+        <s-text color="subdued">
+          {` · ${Domain.TASK_STATE_LABEL.done} by ${doneActorLabel(entry.task, memberEmail)} · `}
+          <LocalDateTime value={entry.task.doneAt ?? 0} format="time" />
+        </s-text>
+      </RowLine>
+      {entry.run.note !== null && (
+        <RowLine>
+          <Clamp color="subdued">{`Note: ${entry.run.note}`}</Clamp>
+        </RowLine>
+      )}
+      {workflowLine(entry.run)}
+    </ResourceRow>
+  );
 
   /**
-   * A closed run's Done or closed row ({@link Domain.RecentItem}): line one is the
-   * piece, as on every row ({@link PieceLine}), line two "Closed · <reason> ·
-   * <time>" ({@link ClosedLine}), line three the workflow name. A link to
-   * the workflow page and nothing else: closing is a notice, not a to-do, and a
-   * closed run offers no verb but the note.
+   * A closed run's Done or closed row ({@link Domain.RecentItem}): line one
+   * the order and the piece, as on every row, then "Closed · <reason> ·
+   * <time>" ({@link ClosedLine}), then the workflow name when it differs from
+   * the item. A link to the workflow page and nothing else: closing is a
+   * notice, not a to-do, and a closed run offers no verb but the note.
    */
   const renderClosed = (
     entry: Extract<Domain.RecentItem, { kind: "closed" }>,
-    first: boolean,
   ) => (
-    <s-box
+    <ResourceRow
       key={`closed-${entry.run.id}`}
-      borderWidth={first ? "none" : "base none none none"}
+      head={headOf(entry.run)}
+      menu={null}
+      {...linkOf(entry.run)}
     >
-      <s-clickable
-        href={router.buildLocation(workflowLocation(entry.run.id)).href}
-        accessibilityLabel={`Open ${Domain.itemTitle(entry.run)} on ${entry.run.orderName}`}
-        padding="small-100 base"
-        onClick={(event) => {
-          event.preventDefault();
-          void router.navigate(workflowLocation(entry.run.id));
-        }}
-      >
-        <s-stack gap="small-500">
-          <PieceLine run={entry.run} />
-          <RowLine>
-            <Clip>
-              <ClosedLine run={entry.run} viewer="member" prefix />
-            </Clip>
-          </RowLine>
-          <RowLine>
-            <Clip>
-              <s-text color="subdued">{entry.run.workflowName}</s-text>
-            </Clip>
-          </RowLine>
-        </s-stack>
-      </s-clickable>
-    </s-box>
+      <RowLine>
+        <ClosedLine run={entry.run} viewer="member" prefix />
+      </RowLine>
+      {workflowLine(entry.run)}
+    </ResourceRow>
   );
 
-  const renderRecent = (entry: Domain.RecentItem, first: boolean) =>
-    entry.kind === "task"
-      ? renderDone(entry, first)
-      : renderClosed(entry, first);
+  const renderRecent = (entry: Domain.RecentItem) =>
+    entry.kind === "task" ? renderDone(entry) : renderClosed(entry);
 
-  /**
-   * "Show 25 more of N". The button is the only way past the chosen state's cut
-   * and it asks the object for the deeper read rather than revealing rows the
-   * page already holds, so the count it names is the object's count.
-   */
+  /** The deeper read ({@link ShowMore}): it asks the object for more rather than revealing rows the page holds. */
   const renderMore = (hidden: number) => (
-    <s-box padding="small-300 base">
-      <s-button
-        variant="tertiary"
-        inlineSize="fill"
-        disabled={limit >= Domain.RUN_LIMIT_MAX}
-        onClick={showMore}
-      >
-        {`Show ${String(Math.min(Domain.RUN_PAGE, hidden))} more of ${String(hidden)}`}
-      </s-button>
-    </s-box>
+    <ShowMore
+      hidden={hidden}
+      page={Domain.RUN_PAGE}
+      disabled={limit >= Domain.RUN_LIMIT_MAX}
+      onShowMore={showMore}
+    />
   );
 
   /**
@@ -810,94 +654,41 @@ function RouteComponent() {
     ) : null;
 
   /**
-   * One cell of the strip, the metrics-card composition
-   * (`refs/shopify-docs/docs/api/app-home/latest/patterns/compositions/metrics-card.md`)
-   * as on the orders index: the state's name over its count, the whole cell a
-   * one-click filter. The strip is the heading, now that the page has none:
-   * every state with its count, the chosen one filled.
-   *
-   * The strip is the state filter and the only one: every state is on it,
-   * so there is no State select, which on the orders index holds the
-   * values its strip has no cell for. The chosen cell is filled
-   * (`background="subdued"`). Not `aria-current`: `s-clickable` leaves it on
-   * the host, and the native button in its shadow root, which is what a
-   * screen reader reads, never gets it; the accessibility label says
-   * "selected" instead, since that label does reach the button.
-   *
-   * A count always renders, at zero if need be, so nothing on the strip
-   * appears or disappears with the data, and a zero-count state stays
-   * enabled, because an empty list with its empty state is a valid screen to
-   * land on and the count already says zero. Done or closed is a cell like
-   * the others, history and all: it is the member's undo, and its count is
-   * bounded to the last day. No cell is red: a member is not usually the one
-   * who clears a block.
-   *
-   * On a phone the three-word labels wrap and "Ready" does not, so the cell
-   * fills its grid track and the count sits at the cell's foot: the counts
-   * on a line share a baseline and the chosen cell's fill is the line's full
-   * height, whatever each label did.
-   */
-  const stripCell = (each: Domain.WorkflowsListState) => {
-    const chosen = each === state;
-    const n = list.counts[each];
-    return (
-      <s-clickable
-        key={each}
-        paddingBlock="small-400"
-        paddingInline="small-100"
-        borderRadius="base"
-        blockSize="100%"
-        background={chosen ? "subdued" : "transparent"}
-        accessibilityLabel={`${STATE_LABEL[each]}, ${formatNumber(n)}${chosen ? ", selected" : ""}`}
-        onClick={() => {
-          selectState(each);
-        }}
-      >
-        <s-grid gap="small-300" blockSize="100%" alignContent="space-between">
-          <s-heading>{STATE_LABEL[each]}</s-heading>
-          <s-text>{formatNumber(n)}</s-text>
-        </s-grid>
-      </s-clickable>
-    );
-  };
-
-  /**
-   * Three columns at every width, so the strip is always two lines: the three
-   * states with work in hand, then Blocked and Done or closed. Not five where
-   * there is room, as on the orders index: the page is `inlineSize="small"`,
-   * so the section is under 600px wide at every viewport, and five cells in
-   * it wrap "Started by you" and "Done or closed" onto two lines while Ready
-   * and Blocked keep one, which leaves the counts at two heights. In three
-   * columns every label is one line from a 600px viewport up. A grid rather
-   * than a scroller or a wrapping row, so a count crossing a digit changes a
-   * cell and never the layout. Not sticky: it scrolls away with the page.
+   * The strip ({@link Strip}), the state filter and the only one: every
+   * state is on it, so there is no State select, which on the orders index
+   * holds the values its strip has no cell for. The strip is the heading,
+   * now that the page has none: every state with its count, the chosen one
+   * filled. A zero-count state stays enabled, because an empty list with its
+   * empty state is a valid screen to land on and the count already says
+   * zero. Done or closed is a cell like the others, history and all: it is
+   * the member's undo, and its count is bounded to the last day. No cell is
+   * red: a member is not usually the one who clears a block.
    */
   const strip = (
-    <s-grid gridTemplateColumns="1fr 1fr 1fr" gap="small">
-      {STATES.map(stripCell)}
-    </s-grid>
+    <Strip
+      cells={STATES.map((each) => ({
+        key: each,
+        label: STATE_LABEL[each],
+        count: list.counts[each],
+        chosen: each === state,
+        onSelect: () => {
+          selectState(each);
+        },
+      }))}
+    />
   );
 
   /**
-   * The filter row under the strip: the search, then the Team select. It
-   * renders under a search too, so the field stays where the member typed.
-   * With one team the search is alone and full width.
+   * The filter row ({@link FilterRow}) under the strip: the search, then the
+   * Team select. It renders under a search too, so the field stays where
+   * the member typed. With one team the search is alone and full width.
    */
-  const filterRow =
-    teamSelect === null ? (
-      <ListSearchField value={q} onSubmit={setSearch} />
-    ) : (
-      <s-query-container>
-        <s-grid
-          gridTemplateColumns="@container (inline-size > 480px) 1fr 12rem, 1fr"
-          gap="small-300"
-          alignItems="end"
-        >
-          <ListSearchField value={q} onSubmit={setSearch} />
-          {teamSelect}
-        </s-grid>
-      </s-query-container>
-    );
+  const filterRow = (
+    <FilterRow
+      search={<ListSearchField value={q} onSubmit={setSearch} />}
+      secondary={teamSelect}
+    />
+  );
 
   /** The search as the screen prints it (`Domain.searchTermText`): `#1001`, or the typed words. */
   const term = q === null ? null : Domain.searchTermText(Domain.searchTerm(q));
@@ -917,97 +708,133 @@ function RouteComponent() {
    */
   const goTo = STATE_EMPTY[state].goTo;
   const renderEmpty = () => (
-    <s-stack gap="small-300">
-      <s-paragraph color="subdued">{STATE_EMPTY[state].text}</s-paragraph>
-      {goTo !== null && list.counts[goTo] > 0 && (
-        <s-button
-          variant="tertiary"
-          onClick={() => {
-            selectState(goTo);
-          }}
-        >
-          {`Go to ${STATE_LABEL[goTo]} · ${String(list.counts[goTo])}`}
-        </s-button>
-      )}
-    </s-stack>
+    <EmptyLine
+      action={
+        goTo !== null && list.counts[goTo] > 0 ? (
+          <s-button
+            variant="tertiary"
+            onClick={() => {
+              selectState(goTo);
+            }}
+          >
+            {`Go to ${STATE_LABEL[goTo]} · ${String(list.counts[goTo])}`}
+          </s-button>
+        ) : undefined
+      }
+    >
+      {STATE_EMPTY[state].text}
+    </EmptyLine>
   );
-  const renderList = () => (
-    <s-box borderWidth="base" borderRadius="base">
-      {Domain.workflowsListStateIsDone(state)
-        ? list.recent.map((entry, index) => renderRecent(entry, index === 0))
-        : list.items.map((item, index) => renderItem(item, index === 0))}
-      {hidden > 0 && renderMore(hidden)}
-    </s-box>
-  );
+  const renderRows = () => {
+    if (loading) return <EmptyLine>Loading&hellip;</EmptyLine>;
+    if (total === 0) return renderEmpty();
+    return (
+      <>
+        {Domain.workflowsListStateIsDone(state)
+          ? list.recent.map(renderRecent)
+          : list.items.map(renderItem)}
+        {hidden > 0 && renderMore(hidden)}
+      </>
+    );
+  };
+
+  const banner =
+    actions.banner === null ? null : (
+      <s-banner tone="critical">{actions.banner}</s-banner>
+    );
+
   /**
    * Under a search (`Domain.RunQuery`, which ignores the state and the team):
    * the strip gives way to one line, how many rows match and Clear search
-   * (`Control` in `Screen.ts`, "a search is on"); the rows are the open
-   * matches, then the Done or closed matches under a divider, so a member who
-   * marked the wrong thing done finds it by number. N is every match before
-   * the cut (`Domain.WorkflowsListData.matches`), each half is cut to the
-   * depth, and Show more deepens both, so a match past the cut is reachable.
-   * Nothing matching is one sentence and Clear search.
+   * ({@link SearchLine}); the rows are the open matches, then the Done or
+   * closed matches in a second section of their own, so a member who marked
+   * the wrong thing done finds it by number. N is every match before the cut
+   * (`Domain.WorkflowsListData.matches`), each half is cut to the depth, and
+   * Show more, at the foot of the last list, deepens both, so a match past
+   * the cut is reachable. Nothing matching is one sentence and Clear search
+   * in the list's place.
    */
   const renderSearch = (text: string) => {
     const shown = list.items.length + list.recent.length;
     const matches = list.matches ?? shown;
+    const more = matches > shown ? renderMore(matches - shown) : null;
     if (matches === 0)
       return (
-        <s-stack gap="small-300">
-          <s-paragraph color="subdued">{`${SEARCH_EMPTY} ${text}`}</s-paragraph>
-          <s-button variant="tertiary" onClick={clearSearch}>
-            Clear search
-          </s-button>
-        </s-stack>
+        <IndexSection
+          label="Workflows"
+          head={
+            <>
+              {banner}
+              {filterRow}
+            </>
+          }
+        >
+          <EmptyLine
+            action={
+              <s-button variant="tertiary" onClick={clearSearch}>
+                Clear search
+              </s-button>
+            }
+          >{`${SEARCH_EMPTY} ${text}`}</EmptyLine>
+        </IndexSection>
       );
     return (
       <>
-        <s-stack direction="inline" gap="base" alignItems="center">
-          <s-text>
-            {matches === 1
-              ? `1 workflow matches ${text}`
-              : `${formatNumber(matches)} workflows match ${text}`}
-          </s-text>
-          <s-button onClick={clearSearch}>Clear search</s-button>
-        </s-stack>
-        {list.items.length > 0 && (
-          <s-box borderWidth="base" borderRadius="base">
-            {list.items.map((item, index) => renderItem(item, index === 0))}
-          </s-box>
-        )}
-        {list.items.length > 0 && list.recent.length > 0 && <s-divider />}
+        <IndexSection
+          label="Workflows"
+          head={
+            <>
+              {banner}
+              <SearchLine
+                count={matches}
+                noun={["workflow", "workflows"]}
+                term={text}
+                onClear={clearSearch}
+              />
+              {filterRow}
+            </>
+          }
+        >
+          {list.items.map(renderItem)}
+          {list.recent.length === 0 && more}
+        </IndexSection>
         {list.recent.length > 0 && (
-          <s-box borderWidth="base" borderRadius="base">
-            {list.recent.map((entry, index) =>
-              renderRecent(entry, index === 0),
-            )}
-          </s-box>
+          <IndexSection
+            label={STATE_LABEL.done}
+            head={<s-heading>{STATE_LABEL.done}</s-heading>}
+          >
+            {list.recent.map(renderRecent)}
+            {more}
+          </IndexSection>
         )}
-        {matches > shown && renderMore(matches - shown)}
       </>
     );
-  };
-  const renderRuns = () => {
-    if (loading)
-      return <s-paragraph color="subdued">Loading&hellip;</s-paragraph>;
-    if (total === 0) return renderEmpty();
-    return renderList();
   };
 
   const renderBody = () => {
     if (teams.length === 0)
       return (
-        <s-paragraph color="subdued">
-          You&rsquo;re not on a team yet. Ask the merchant to add you to a team.
-        </s-paragraph>
+        <IndexSection label="Workflows">
+          <EmptyLine>
+            You&rsquo;re not on a team yet. Ask the merchant to add you to a
+            team.
+          </EmptyLine>
+        </IndexSection>
       );
+    if (term !== null) return renderSearch(term);
     return (
-      <>
-        {term === null && strip}
-        {filterRow}
-        {term === null ? renderRuns() : renderSearch(term)}
-      </>
+      <IndexSection
+        label="Workflows"
+        head={
+          <>
+            {banner}
+            {strip}
+            {filterRow}
+          </>
+        }
+      >
+        {renderRows()}
+      </IndexSection>
     );
   };
 
@@ -1021,14 +848,7 @@ function RouteComponent() {
           landmark are the places the page's own noun does work. */}
       <s-page inlineSize="small">
         <SocketBanner />
-        <s-section accessibilityLabel="Workflows">
-          <s-stack gap="base">
-            {actions.banner !== null && (
-              <s-banner tone="critical">{actions.banner}</s-banner>
-            )}
-            {renderBody()}
-          </s-stack>
-        </s-section>
+        {renderBody()}
       </s-page>
     </>
   );

@@ -2,6 +2,8 @@ import * as React from "react";
 
 import { Schema } from "effect";
 
+import { Fields } from "@/components/screen/Fields";
+import { Inline } from "@/components/screen/Inline";
 import * as Domain from "@/lib/Domain";
 import * as PolarisModal from "@/lib/polarisModal";
 import { workflowResultMessage } from "@/lib/workflowShared";
@@ -16,6 +18,10 @@ const MODAL = "workflow-tag";
  *
  * The result comes back rather than a throw so `TagTaken` can be rendered
  * under the field rather than in a banner.
+ *
+ * The button alone, no chip of the tag beside it: a tag may be 255
+ * characters and a chip cuts to one line with no way to read the rest. The
+ * workflow page prints the tag whole in the sentence above this button.
  */
 export function WorkflowTag({
   tag,
@@ -72,8 +78,7 @@ export function WorkflowTag({
 
   return (
     <>
-      <s-stack direction="inline" gap="small-300" alignItems="center">
-        <s-chip>{tag}</s-chip>
+      <Inline>
         <s-button
           disabled={busy}
           onClick={() => {
@@ -83,9 +88,9 @@ export function WorkflowTag({
         >
           Edit tag
         </s-button>
-      </s-stack>
+      </Inline>
       <s-modal id={MODAL} ref={modal} heading="Edit tag">
-        <s-stack gap="base">
+        <Fields>
           <s-paragraph>
             Put this tag on the products this workflow should build, in Shopify.
             Changing it here changes nothing on your products.
@@ -102,7 +107,7 @@ export function WorkflowTag({
               setError(null);
             }}
           />
-        </s-stack>
+        </Fields>
         <s-button
           slot="secondary-actions"
           disabled={saving}

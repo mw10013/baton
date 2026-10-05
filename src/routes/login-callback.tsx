@@ -2,6 +2,7 @@ import { createFileRoute, redirect } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { Effect, Option } from "effect";
 
+import { Things } from "@/components/screen/Things";
 import { Auth } from "@/lib/Auth";
 import { CurrentRequest } from "@/lib/CurrentRequest";
 import * as Domain from "@/lib/Domain";
@@ -59,10 +60,10 @@ function RouteComponent() {
   return (
     <s-page heading="Sign-in failed" inlineSize="small">
       <s-section accessibilityLabel="Sign-in failed">
-        <s-stack gap="base">
+        <Things>
           <s-banner tone="critical">{error}</s-banner>
           <s-link href="/login">Request a new magic link</s-link>
-        </s-stack>
+        </Things>
       </s-section>
     </s-page>
   );

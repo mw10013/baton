@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 
+import { Things } from "@/components/screen/Things";
 const collectItems = [
   "Shopify shop domain and Shopify shop identifier.",
   "Shopify authentication details that keep the app securely connected to your store, including the permissions you granted.",
@@ -46,7 +47,7 @@ function RouteComponent() {
       <s-link slot="breadcrumb-actions" href="/">
         Baton
       </s-link>
-      <s-stack gap="base">
+      <Things>
         <s-text tone="neutral">Last updated: September 15, 2026</s-text>
         <s-paragraph>
           Baton is a Shopify admin app. This Privacy Policy explains what
@@ -56,7 +57,7 @@ function RouteComponent() {
         <s-paragraph>
           Baton is operated by Michael Wu. Contact us at support@mw10013.com.
         </s-paragraph>
-      </s-stack>
+      </Things>
       <PolicySection heading="Information We Collect">
         <s-paragraph>
           When a merchant installs or uses Baton, we collect the information
@@ -195,7 +196,7 @@ function PolicySection({
 }) {
   return (
     <s-section heading={heading}>
-      <s-stack gap="base">{children}</s-stack>
+      <Things>{children}</Things>
     </s-section>
   );
 }

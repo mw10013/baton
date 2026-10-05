@@ -18,7 +18,7 @@
 // table on `ConnectionRole` in src/lib/domain/Platform.ts, the socket's
 // authorization rule.
 //
-//   node scripts/spec.ts check   parse both action tables, refuse overlapping rows, check the vocabulary, its contexts, its screen columns, its stored cells against the DDL and its Screens table, parse the triggers table, the four reconcile tables, the four sync tables on syncOrder (refusing overlapping actions rows), the sync pipeline table, both data-model tables, the three publish tables and the connection table and refuse a pinned title no test carries (in either test project) and a data-model row pinned by (none yet), parse the copy and controls tables in src/lib/Screen.ts and refuse an example no screen shows (exit 1 on any failure)
+//   node scripts/spec.ts check   parse both action tables, refuse overlapping rows, check the vocabulary, its contexts, its screen columns, its stored cells against the DDL and its Screens table, parse the triggers table, the four reconcile tables, the four sync tables on syncOrder (refusing overlapping actions rows), the sync pipeline table, both data-model tables, the three publish tables and the connection table and refuse a pinned title no test carries (in either test project) and a data-model row pinned by (none yet), parse the copy, controls and parts tables in src/lib/Screen.ts and refuse an example no screen shows, a part whose component does not exist and a used-on or Screens template word outside ScreenTemplate (exit 1 on any failure)
 //   node scripts/spec.ts print   render the parsed rows and how many fixtures each expands to, then the triggers rows, then the reconcile rows and how many are pinned by (none yet), then the four sync tables, the actions' fixture counts and the count of rows pinned by (none yet), then the sync pipeline rows, then the publish and connection rows, then the data-model rows and how many are pinned by (none yet)
 
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
@@ -137,8 +137,11 @@ const readTestSources = Effect.sync(() =>
   ),
 );
 
+const PARTS = new URL("../src/components/screen/", import.meta.url).pathname;
+
 const readScreen = Effect.sync(() => ({
   source: readFileSync(SCREEN, "utf8"),
+  partFiles: readdirSync(PARTS),
   screens: Object.fromEntries(
     copyFiles().map((file) => [file, readFileSync(file, "utf8")]),
   ),
@@ -222,7 +225,11 @@ const checkCommand = Command.make(
         contexts.ShopWork,
         Domain.OrderIssue.literals,
       ),
-      ...ActionTable.checkScreens(barrel, routeFiles),
+      ...ActionTable.checkScreens(
+        barrel,
+        routeFiles,
+        Screen.ScreenTemplate.literals,
+      ),
       ...ActionTable.checkShapeFamilies(
         barrel,
         shapeSources(contexts, routeFiles),
@@ -311,6 +318,18 @@ const checkCommand = Command.make(
         onFailure: (error) => [error.message],
         onSuccess: () => [],
       }),
+      ...Result.match(
+        ActionTable.parsePartsTable(
+          screen.source,
+          Screen.ScreenPart.literals,
+          Screen.ScreenTemplate.literals,
+          screen.partFiles,
+        ),
+        {
+          onFailure: (error) => [error.message],
+          onSuccess: () => [],
+        },
+      ),
     ];
     for (const failure of failures) yield* Console.error(failure);
     if (failures.length > 0)
@@ -321,7 +340,7 @@ const checkCommand = Command.make(
   }),
 ).pipe(
   Command.withDescription(
-    "Parse the action tables and the four reconcile tables (triggers, actions, effects, pass rules) in domain/ShopWork.ts, the four sync tables on syncOrder in domain/Orders.ts, the sync pipeline table in agent/Host.ts and the three publish tables (InvalidatedMessage in domain/Platform.ts, publish in ShopAgent.ts, useLiveQuery) and the connection table (ConnectionRole in domain/Platform.ts), check the vocabulary in Domain.ts and domain/ and its stored cells against the DDL in ShopAgentSchema.ts, check the triggers table on ShopUsage in domain/Billing.ts and the data-model tables in ShopAgentSchema.ts and D1Schema.ts (none pinned by (none yet)), and check the copy and controls tables in Screen.ts; exit 1 on any failure",
+    "Parse the action tables and the four reconcile tables (triggers, actions, effects, pass rules) in domain/ShopWork.ts, the four sync tables on syncOrder in domain/Orders.ts, the sync pipeline table in agent/Host.ts and the three publish tables (InvalidatedMessage in domain/Platform.ts, publish in ShopAgent.ts, useLiveQuery) and the connection table (ConnectionRole in domain/Platform.ts), check the vocabulary in Domain.ts and domain/ and its stored cells against the DDL in ShopAgentSchema.ts, check the triggers table on ShopUsage in domain/Billing.ts and the data-model tables in ShopAgentSchema.ts and D1Schema.ts (none pinned by (none yet)), check the copy, controls and parts tables in Screen.ts (each part's component exists, its used-on cell names only template words) and the Screens table's template column; exit 1 on any failure",
   ),
 );
 

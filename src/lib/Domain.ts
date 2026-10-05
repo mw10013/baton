@@ -127,25 +127,27 @@
  *
  * Screens. A JSDoc, a test or a research doc names a screen by its spec
  * name, never by its route segment and never with "run". The heading is
- * what the person sees on the page. Two screens share the spec name
+ * what the person sees on the page. The template is the Shopify template
+ * the screen is an instance of (the templates table in `Screen.ts`), which
+ * says which parts it is built from (the parts table beside it). Two screens share the spec name
  * "workflow page", one per side; a JSDoc that mentions both sides
  * qualifies with "the merchant's" or "the member's".
  *
- * | side     | route file                        | heading                      | spec name                   |
- * | -------- | --------------------------------- | ---------------------------- | --------------------------- |
- * | merchant | `app.index`                       | Baton                        | the home page               |
- * | merchant | `app.orders.index`                | Orders                       | the orders index            |
- * | merchant | `app.orders.$orderId`             | the order's name             | the order page              |
- * | merchant | `app.workflows.index`             | Workflows                    | the workflows index         |
- * | merchant | `app.workflows.$workflowId`       | the workflow's name          | the workflow page           |
- * | merchant | `app.workflows.$workflowId_.edit` | the workflow's name          | the workflow editor         |
- * | merchant | `app.teams.index`                 | Teams                        | the teams index             |
- * | merchant | `app.teams.$teamId`               | the team's name              | the team page               |
- * | merchant | `app.members`                     | Members                      | the members page            |
- * | member   | `shop.index`                      | Your stores                  | the shop list               |
- * | member   | `shop.$shop.workflows.index`      | Workflows                    | the workflows list          |
- * | member   | `shop.$shop.workflows.$runId`     | the item's title             | the workflow page           |
- * | member   | `shop.$shop_.lapsed`              | the shop's domain            | the lapsed page             |
+ * | side     | route file                        | heading             | spec name           | template |
+ * | -------- | --------------------------------- | ------------------- | ------------------- | -------- |
+ * | merchant | `app.index`                       | Baton               | the home page       | homepage |
+ * | merchant | `app.orders.index`                | Orders              | the orders index    | index    |
+ * | merchant | `app.orders.$orderId`             | the order's name    | the order page      | details  |
+ * | merchant | `app.workflows.index`             | Workflows           | the workflows index | index    |
+ * | merchant | `app.workflows.$workflowId`       | the workflow's name | the workflow page   | details  |
+ * | merchant | `app.workflows.$workflowId_.edit` | the workflow's name | the workflow editor | editor   |
+ * | merchant | `app.teams.index`                 | Teams               | the teams index     | index    |
+ * | merchant | `app.teams.$teamId`               | the team's name     | the team page       | details  |
+ * | merchant | `app.members`                     | Members             | the members page    | index    |
+ * | member   | `shop.index`                      | Your stores         | the shop list       | index    |
+ * | member   | `shop.$shop.workflows.index`      | Workflows           | the workflows list  | index    |
+ * | member   | `shop.$shop.workflows.$runId`     | the order's name    | the workflow page   | details  |
+ * | member   | `shop.$shop_.lapsed`              | the shop's domain   | the lapsed page     | details  |
  *
  * The orders index's strip and Show select speak the two order tables plus
  * Open, Issues and All (`ORDERS_SHOW_LABEL` in ShopWork); the member's

@@ -15,7 +15,8 @@
  * ({@link loaderDataExportHits}) on every file under `src/`; and, in the
  * context files, the shapes' one-way dependency
  * ({@link modelShapeReferenceHits}); and, in the object, nothing that keeps
- * it from hibernating ({@link hibernationBlockerHits}).
+ * it from hibernating ({@link hibernationBlockerHits}); and, in a route or a
+ * component outside `src/components/screen/`, no layout ({@link layoutHits}).
  *
  * A grep, not an oxlint rule: the pattern is three tokens and has stayed
  * quiet. Union narrowing on `actor.role` and the connection state's `role`
@@ -37,6 +38,7 @@ import {
   RESERVED_STEMS,
   reservedStemHits,
   retiredCopyHits,
+  layoutHits,
   shapeSuffixes,
   textAreaPlaceholderHits,
 } from "./lib/rules-lint.ts";
@@ -183,7 +185,24 @@ const hibernationHits = walk(ROOT).flatMap((path) => {
 
 for (const hit of hibernationHits) console.error(hit);
 
+const layoutViolations = [
+  ...walk(join(ROOT, "routes")),
+  ...walk(join(ROOT, "components")).filter(
+    (path) => !relative(ROOT, path).startsWith("components/screen/"),
+  ),
+]
+  .filter((path) => path.endsWith(".tsx"))
+  .flatMap((path) =>
+    layoutHits(readFileSync(path, "utf8")).map(
+      ({ line, text }) =>
+        `rules-lint: src/${relative(ROOT, path)}:${String(line)} ${text}; only src/components/screen/ lays out, routes and components compose its parts (the rule on layoutHits)`,
+    ),
+  );
+
+for (const hit of layoutViolations) console.error(hit);
+
 if (
+  layoutViolations.length > 0 ||
   hibernationHits.length > 0 ||
   importHits.length > 0 ||
   objectHits.length > 0 ||

@@ -17,6 +17,15 @@ import {
 } from "@/components/MemberRun";
 import { RunSteps } from "@/components/RunSteps";
 import { BlockModal, RunNoteModal } from "@/components/RunTextModals";
+import { Clamp } from "@/components/screen/Clamp";
+import { Inline } from "@/components/screen/Inline";
+import { Lines } from "@/components/screen/Lines";
+import { type Pair, Pairs } from "@/components/screen/Pairs";
+import { Panel } from "@/components/screen/Panel";
+import { Prose } from "@/components/screen/Prose";
+import { SelectRow } from "@/components/screen/SelectRow";
+import { Things } from "@/components/screen/Things";
+import { Token } from "@/components/screen/Token";
 import {
   CANCEL_WARNING,
   cancelHeading,
@@ -177,17 +186,14 @@ const lineItemTitle = ({ title, variantTitle }: Domain.OrderLineItem) =>
   variantTitle === null ? title : `${title} — ${variantTitle}`;
 
 /**
- * One row of the facts grid, as a `label | value` pair filling the grid's two
- * columns. Empty facts return nothing rather than an em dash: a column of
- * placeholder dashes is noise that pushes the facts that do exist off screen.
+ * One row of the facts ({@link Pairs}). Empty facts return nothing rather
+ * than an em dash: a column of placeholder dashes is noise that pushes the
+ * facts that do exist off screen.
  */
-const fact = (label: string, value: React.ReactNode) =>
-  value === null || value === undefined || value === "" ? null : (
-    <React.Fragment key={label}>
-      <s-text color="subdued">{label}</s-text>
-      <s-text>{value}</s-text>
-    </React.Fragment>
-  );
+const fact = (label: string, value: React.ReactNode): readonly Pair[] =>
+  value === null || value === undefined || value === ""
+    ? []
+    : [{ key: label, label, value }];
 
 const stepCount = (tasks: readonly Domain.RunTask[]) =>
   tasks.reduce((max, task) => Math.max(max, task.step), 0);
@@ -196,7 +202,7 @@ const stepCount = (tasks: readonly Domain.RunTask[]) =>
  * Where the run is, as the card's one read-only answer: `Step 1 of 3 · Cut ·
  * since 3:10 PM`, or `Step 2 of 3 · 3 tasks · since 3:10 PM` on a parallel
  * step. Position and task names only: the team is inside Manage, on
- * its own line under the task, where a 64-character team name has room. It
+ * its own line under the task, where a 32-character team name has room. It
  * replaced the inline task trail, which said the same thing in a notation the
  * merchant had to learn — a step number, bold for current, `✓` and `●` marks,
  * the team in parentheses.
@@ -276,15 +282,13 @@ const unassignedRows = (
     .filter(({ actions }) => actions.assign)
     .filter((task) => Domain.runTaskIsUnassigned(task, teams))
     .map((task) => (
-      <s-stack
-        key={task.id}
-        direction="inline"
-        gap="small-300"
-        alignItems="center"
-      >
+      <Lines key={task.id}>
+        {/* The semantic `<strong>` only: at Polaris's regular weight it
+            reads as the line's emphasis to a screen reader, and the select
+            under it is what the eye goes to. */}
         <s-text type="strong">{`${task.name}: assign a team.`}</s-text>
         {assign(task.id)}
-      </s-stack>
+      </Lines>
     ));
 
 /**
@@ -304,7 +308,7 @@ const teamIssueRows = (
 ) => {
   const unassigned = unassignedRows(tasks, teams, assign);
   if (unassigned.length === 0) return null;
-  return <s-stack gap="small-500">{unassigned}</s-stack>;
+  return <Lines>{unassigned}</Lines>;
 };
 
 const OrderParams = Schema.Struct({ legacyId: Schema.String });
@@ -674,36 +678,35 @@ function RouteComponent() {
    * The select starts empty so Assign stays disabled until a team is chosen.
    */
   const assignTeam = (runTaskId: string) => (
-    <s-grid
-      gridTemplateColumns="minmax(0, 16rem) auto"
-      gap="small-300"
-      alignItems="end"
-      justifyContent="start"
-    >
-      <s-select
-        label={Domain.VERB_LABEL.assign.merchant}
-        labelAccessibilityVisibility="exclusive"
-        placeholder={Domain.VERB_LABEL.assign.merchant}
-        value={assignChoice[runTaskId] ?? ""}
-        disabled={pending}
-        onChange={(event) => {
-          const teamId = event.currentTarget.value;
-          setAssignChoice((choice) => ({ ...choice, [runTaskId]: teamId }));
-        }}
-      >
-        {teamOptions(teams)}
-      </s-select>
-      <s-button
-        variant="secondary"
-        disabled={pending || !assignChoice[runTaskId]}
-        onClick={() => {
-          const teamId = assignChoice[runTaskId];
-          if (teamId) assign.mutate({ runTaskId, teamId });
-        }}
-      >
-        Assign
-      </s-button>
-    </s-grid>
+    <SelectRow
+      select={
+        <s-select
+          label={Domain.VERB_LABEL.assign.merchant}
+          labelAccessibilityVisibility="exclusive"
+          placeholder={Domain.VERB_LABEL.assign.merchant}
+          value={assignChoice[runTaskId] ?? ""}
+          disabled={pending}
+          onChange={(event) => {
+            const teamId = event.currentTarget.value;
+            setAssignChoice((choice) => ({ ...choice, [runTaskId]: teamId }));
+          }}
+        >
+          {teamOptions(teams)}
+        </s-select>
+      }
+      submit={
+        <s-button
+          variant="secondary"
+          disabled={pending || !assignChoice[runTaskId]}
+          onClick={() => {
+            const teamId = assignChoice[runTaskId];
+            if (teamId) assign.mutate({ runTaskId, teamId });
+          }}
+        >
+          Assign
+        </s-button>
+      }
+    />
   );
 
   /**
@@ -743,12 +746,11 @@ function RouteComponent() {
   ) => {
     const byId = new Map(tasks.map((task) => [task.id, task.actions]));
     const runRow = actions.block || actions.cancel || change !== null;
-    /* A subdued panel so the disclosure reads as a drawer the header's Manage
-       button owns, not as more card. */
+    /* A drawer ({@link Panel}) the header's Manage button owns. */
     return (
-      <s-box background="subdued" borderRadius="base" padding="base">
-        <s-stack gap="small-300">
-          <s-text type="strong">{`${run.workflowName} workflow`}</s-text>
+      <Panel kind="drawer">
+        <Lines>
+          <s-heading>{`${run.workflowName} workflow`}</s-heading>
           <RunSteps
             tasks={tasks}
             showInstructions={false}
@@ -835,7 +837,7 @@ function RouteComponent() {
             /* One row for everything that acts on the whole run. Block leads
                because it is the intervention a merchant reaches for most.
                Cancel and Change are the rare ones and sit after it. */
-            <s-stack direction="inline" gap="small-300">
+            <Inline>
               {actions.block && (
                 <s-button
                   variant="secondary"
@@ -867,10 +869,10 @@ function RouteComponent() {
                 </s-button>
               )}
               {change}
-            </s-stack>
+            </Inline>
           )}
-        </s-stack>
-      </s-box>
+        </Lines>
+      </Panel>
     );
   };
 
@@ -982,7 +984,7 @@ function RouteComponent() {
         </s-button>
       );
     return (
-      <s-stack key={run.id} gap="small-300">
+      <Lines key={run.id}>
         <ClosedLine run={run} viewer="merchant" />
         <BlockBanner
           run={run}
@@ -990,7 +992,7 @@ function RouteComponent() {
             /* No `slot` on the buttons, so they sit in the banner body,
                which puts no gap between children; the stack supplies it. */
             actions.unblock ? (
-              <s-stack direction="inline" gap="small-300">
+              <Inline>
                 <s-button
                   variant="secondary"
                   disabled={pending}
@@ -1003,7 +1005,7 @@ function RouteComponent() {
                 >
                   {Domain.VERB_LABEL.unblock.merchant}
                 </s-button>
-              </s-stack>
+              </Inline>
             ) : null
           }
         />
@@ -1017,7 +1019,7 @@ function RouteComponent() {
           }}
         />
         {teamIssues}
-        <s-stack direction="inline">
+        <Inline>
           <s-button
             variant="secondary"
             icon={managingRun(run) ? "chevron-up" : "chevron-down"}
@@ -1031,9 +1033,9 @@ function RouteComponent() {
           >
             Manage
           </s-button>
-        </s-stack>
+        </Inline>
         {managingRun(run) && manageRows(run, tasks, actions, change)}
-      </s-stack>
+      </Lines>
     );
   };
 
@@ -1049,12 +1051,9 @@ function RouteComponent() {
    * not pull in. On a closed item the closed workflow is among them; picking
    * it starts a fresh run.
    *
-   * A grid, not an inline stack: a Polaris form control fills the inline size
-   * it is given and has no width prop, so `s-select` in an inline stack takes
-   * the whole row and pushes the submit onto the next line at every window
-   * width. The leading label cell is an `s-text` rather than the select's own
-   * label so the visible word stays "Workflow" while the accessible name
-   * stays the verb.
+   * A {@link SelectRow}. The leading label is an `s-text` rather than the
+   * select's own label so the visible word stays "Workflow" while the
+   * accessible name stays the verb.
    */
   const workflowSelect = (
     item: Domain.OrderLineItem,
@@ -1063,54 +1062,53 @@ function RouteComponent() {
   ) => {
     const chosen = attachChoice[item.id];
     return (
-      <s-grid
-        gridTemplateColumns="max-content minmax(0, 20rem) auto"
-        gap="base"
-        alignItems="center"
-        justifyContent="start"
-      >
-        <s-text color="subdued">Workflow</s-text>
-        <s-select
-          label="Workflow"
-          labelAccessibilityVisibility="exclusive"
-          placeholder="Choose workflow"
-          value={chosen ?? ""}
-          disabled={pending}
-          onChange={(event) => {
-            const workflowId = event.currentTarget.value;
-            setAttachChoice((choice) => ({
-              ...choice,
-              [item.id]: workflowId,
-            }));
-          }}
-        >
-          {options.map((workflow, index) => (
-            <React.Fragment key={workflow.id}>
-              {/* Polaris `s-select` has no option groups, so a disabled
+      <SelectRow
+        label={<s-text color="subdued">Workflow</s-text>}
+        select={
+          <s-select
+            label="Workflow"
+            labelAccessibilityVisibility="exclusive"
+            placeholder="Choose workflow"
+            value={chosen ?? ""}
+            disabled={pending}
+            onChange={(event) => {
+              const workflowId = event.currentTarget.value;
+              setAttachChoice((choice) => ({
+                ...choice,
+                [item.id]: workflowId,
+              }));
+            }}
+          >
+            {options.map((workflow, index) => (
+              <React.Fragment key={workflow.id}>
+                {/* Polaris `s-select` has no option groups, so a disabled
                   option is the rule between the matches and the rest. */}
-              {index > 0 && index === matched.length && (
-                <s-option value="" disabled>
-                  —
-                </s-option>
-              )}
-              <s-option value={workflow.id}>{workflow.name}</s-option>
-            </React.Fragment>
-          ))}
-        </s-select>
-        <s-button
-          variant="secondary"
-          disabled={pending || !chosen}
-          onClick={() => {
-            if (chosen)
-              attachMutation.mutate({
-                lineItemId: item.id,
-                workflowId: chosen,
-              });
-          }}
-        >
-          {Domain.VERB_LABEL.attachWorkflow.merchant}
-        </s-button>
-      </s-grid>
+                {index > 0 && index === matched.length && (
+                  <s-option value="" disabled>
+                    —
+                  </s-option>
+                )}
+                <s-option value={workflow.id}>{workflow.name}</s-option>
+              </React.Fragment>
+            ))}
+          </s-select>
+        }
+        submit={
+          <s-button
+            variant="secondary"
+            disabled={pending || !chosen}
+            onClick={() => {
+              if (chosen)
+                attachMutation.mutate({
+                  lineItemId: item.id,
+                  workflowId: chosen,
+                });
+            }}
+          >
+            {Domain.VERB_LABEL.attachWorkflow.merchant}
+          </s-button>
+        }
+      />
     );
   };
 
@@ -1208,21 +1206,22 @@ function RouteComponent() {
        the title twice. The `s-heading` inside is the section's name. */
     return (
       <s-section key={item.id}>
-        <s-stack gap="small-100">
+        <Lines>
           {/* The facts sit under the title as its subtitle, tight to it, so
               the card opens with one block rather than a title and a lone
               "× 1" a full gap apart. The run's badges end the facts line
               ({@link runBadges}). */}
-          <s-stack gap="small-500">
+          <Lines>
             <s-heading>{lineItemTitle(item)}</s-heading>
-            <s-stack direction="inline" gap="small-300" alignItems="center">
-              <s-text color="subdued">{facts}</s-text>
+            <Inline>
+              {/* A token: a SKU is one unspaced word and may be long. */}
+              <Token color="subdued">{facts}</Token>
               {item.currentQuantity === 0 && (
                 <s-badge tone="critical">Removed</s-badge>
               )}
               {withRun !== null && runBadges(withRun.run, withRun.tasks)}
-            </s-stack>
-          </s-stack>
+            </Inline>
+          </Lines>
 
           {/* "Properties" is Shopify's merchant-facing name for the list: the
               Help Center says "line item properties", REST and Liquid say
@@ -1231,16 +1230,14 @@ function RouteComponent() {
               item's card. The rows are the member's workflow page's
               ({@link LineItemProperties}). */}
           {item.properties.length > 0 && (
-            <s-stack gap="small-300">
+            <Lines>
               <s-text color="subdued">Properties</s-text>
               <LineItemProperties properties={item.properties} />
-            </s-stack>
+            </Lines>
           )}
 
-          {body !== null && body !== undefined && (
-            <s-stack gap="small-100">{body}</s-stack>
-          )}
-        </s-stack>
+          {body !== null && body !== undefined && <Lines>{body}</Lines>}
+        </Lines>
       </s-section>
     );
   };
@@ -1278,29 +1275,28 @@ function RouteComponent() {
       </s-button>
 
       <SocketBanner />
-      {(banner !== null || state === "made") && (
-        /* In the main column, not `slot="supplemental-start"`: that slot
-           renders above the main column only, so anything in it pushes the
-           first card below the top of the aside. Here the banners are the
-           first thing in the column and the card under them still lines up
-           with the aside's top edge. */
-        <s-stack gap="base">
-          {/* No banner for a closed order ({@link Domain.orderIsOpen}): the
-              sidebar's Fulfillment and Cancelled lines say it, each closed
-              run says why on its own card ({@link ClosedLine}), and nothing
-              is waiting on the merchant. */}
-          {state === "made" && (
-            <s-banner tone="success">
-              Every item is done.{" "}
-              <s-link href={adminOrderUrl(order)} target={resourceLinkTarget}>
-                Fulfill in Shopify
-              </s-link>
-              .
-            </s-banner>
-          )}
-          {banner !== null && <s-banner tone="critical">{banner}</s-banner>}
-        </s-stack>
+      {/* In the main column, not `slot="supplemental-start"`: that slot
+          renders above the main column only, so anything in it pushes the
+          first card below the top of the aside. Here the banners are the
+          first thing in the column and the card under them still lines up
+          with the aside's top edge. Direct children of the page, not in a
+          stack of their own: `s-page` spaces its direct children, and a
+          wrapping stack sat flush against the first card.
+
+          No banner for a closed order ({@link Domain.orderIsOpen}): the
+          sidebar's Fulfillment and Cancelled lines say it, each closed run
+          says why on its own card ({@link ClosedLine}), and nothing is
+          waiting on the merchant. */}
+      {state === "made" && (
+        <s-banner tone="success">
+          Every item is done.{" "}
+          <s-link href={adminOrderUrl(order)} target={resourceLinkTarget}>
+            Fulfill in Shopify
+          </s-link>
+          .
+        </s-banner>
       )}
+      {banner !== null && <s-banner tone="critical">{banner}</s-banner>}
 
       {lineItems.length === 0 ? (
         <s-paragraph color="subdued">No items.</s-paragraph>
@@ -1319,7 +1315,7 @@ function RouteComponent() {
           setChanging(null);
         }}
       >
-        <s-stack gap="base">
+        <Things>
           <s-select
             label="Workflow"
             placeholder="Choose workflow"
@@ -1344,7 +1340,7 @@ function RouteComponent() {
             ))}
           </s-select>
           <s-paragraph>{changingWarning}</s-paragraph>
-        </s-stack>
+        </Things>
         {/* No onClick: `onAfterHide` is the one reset, for Keep, the backdrop and
             Escape alike, and it runs after the close so the label does not
             flip to "Cancel" mid-animation. */}
@@ -1384,15 +1380,16 @@ function RouteComponent() {
       <s-modal
         id={CANCEL_RUN_MODAL}
         heading={
-          cancelling === null
-            ? ""
-            : cancelHeading(cancelling.workflowName, cancelling.item)
+          cancelling === null ? "" : cancelHeading(cancelling.workflowName)
         }
         onAfterHide={() => {
           setCancelling(null);
         }}
       >
-        <s-paragraph>{CANCEL_WARNING}</s-paragraph>
+        <Lines>
+          {cancelling !== null && <Clamp>{cancelling.item}</Clamp>}
+          <s-paragraph>{CANCEL_WARNING}</s-paragraph>
+        </Lines>
         <s-button
           slot="secondary-actions"
           commandFor={CANCEL_RUN_MODAL}
@@ -1410,7 +1407,7 @@ function RouteComponent() {
             if (cancelling !== null)
               cancel.mutate({
                 runId: cancelling.runId,
-                toast: `${cancelling.workflowName} cancelled on ${cancelling.item}`,
+                toast: `${cancelling.workflowName} cancelled`,
               });
           }}
         >
@@ -1494,7 +1491,12 @@ function RouteComponent() {
           /* The run left the page under an open modal (a socket refresh after
              a Change workflow): the heading names the order and a stand-in for
              the item, and the submit answers that the workflow is gone. */
-          modalRun ?? { lineItemTitle: "this item", orderName: order.name }
+          modalRun ?? {
+            lineItemTitle: "this item",
+            variantTitle: null,
+            quantity: 1,
+            orderName: order.name,
+          }
         }
         pending={pending}
         onBlock={(reason) =>
@@ -1512,33 +1514,31 @@ function RouteComponent() {
 
       {order.note !== null && (
         <s-section slot="aside" heading="Order note">
-          <s-paragraph>{order.note}</s-paragraph>
+          <Prose>{order.note}</Prose>
         </s-section>
       )}
 
       <s-section slot="aside" heading="Order details">
-        <s-grid
-          gridTemplateColumns="max-content 1fr"
-          gap="small-200 base"
-          alignItems="center"
-        >
-          {fact("Placed", <LocalDateTime value={order.processedAt} />)}
-          {fact(
-            "Payment",
-            <s-stack direction="inline">
-              <s-badge tone={order.fullyPaid ? "success" : "warning"}>
-                {order.fullyPaid ? "Paid" : "Unpaid"}
-              </s-badge>
-            </s-stack>,
-          )}
-          {fact("Fulfillment", formatStatus(order.fulfillmentStatus))}
-          {fact(
-            "Cancelled",
-            order.cancelledAt === null ? null : (
-              <LocalDateTime value={order.cancelledAt} />
+        <Pairs
+          pairs={[
+            ...fact("Placed", <LocalDateTime value={order.processedAt} />),
+            ...fact(
+              "Payment",
+              <Inline>
+                <s-badge tone={order.fullyPaid ? "success" : "warning"}>
+                  {order.fullyPaid ? "Paid" : "Unpaid"}
+                </s-badge>
+              </Inline>,
             ),
-          )}
-        </s-grid>
+            ...fact("Fulfillment", formatStatus(order.fulfillmentStatus)),
+            ...fact(
+              "Cancelled",
+              order.cancelledAt === null ? null : (
+                <LocalDateTime value={order.cancelledAt} />
+              ),
+            ),
+          ]}
+        />
       </s-section>
     </s-page>
   );

@@ -1,5 +1,10 @@
 import type * as React from "react";
 
+import { Connector } from "@/components/screen/Connector";
+import { Lines } from "@/components/screen/Lines";
+import { Panel } from "@/components/screen/Panel";
+import { Prose } from "@/components/screen/Prose";
+import { SelectableCard } from "@/components/screen/SelectableCard";
 import * as Domain from "@/lib/Domain";
 import * as WorkflowLayout from "@/lib/WorkflowLayout";
 import { emptyTeamLine, unassignedLine } from "@/lib/workflowShared";
@@ -32,13 +37,13 @@ export function TeamLine({ task }: { readonly task: Domain.TaskWithTeamName }) {
 
 function TaskBody({ task }: { readonly task: Domain.TaskWithTeamName }) {
   return (
-    <s-stack gap="small-500">
-      <s-text type="strong">{task.name}</s-text>
+    <Lines>
+      <s-heading>{task.name}</s-heading>
       <TeamLine task={task} />
       {task.instructions !== null && (
-        <s-text color="subdued">{task.instructions}</s-text>
+        <Prose color="subdued">{task.instructions}</Prose>
       )}
-    </s-stack>
+    </Lines>
   );
 }
 
@@ -57,32 +62,20 @@ function TaskCard({
 }) {
   if (onSelect === undefined)
     return (
-      <s-box padding="base" border="base base solid" borderRadius="base">
+      <Panel kind="card">
         <TaskBody task={task} />
-      </s-box>
+      </Panel>
     );
   return (
-    <s-clickable
-      padding="base"
-      border={selected ? "base strong solid" : "base base solid"}
-      borderRadius="base"
-      background={selected ? "subdued" : "base"}
+    <SelectableCard
+      selected={selected}
       accessibilityLabel={`Edit ${task.name}`}
-      aria-pressed={selected}
-      onClick={() => {
+      onSelect={() => {
         onSelect(task.id);
       }}
     >
       <TaskBody task={task} />
-    </s-clickable>
-  );
-}
-
-function Connector() {
-  return (
-    <s-stack direction="inline" justifyContent="center">
-      <s-icon type="arrow-down" color="subdued" size="small" />
-    </s-stack>
+    </SelectableCard>
   );
 }
 
@@ -106,12 +99,12 @@ export function StepFlow({
 }) {
   const groups = WorkflowLayout.stepsOf(tasks);
   return (
-    <s-stack gap="small-300">
+    <Lines>
       {trigger}
       {groups.map((group, index) => {
         const step = group[0]?.step ?? index + 1;
         return (
-          <s-stack key={step} gap="small-300">
+          <Lines key={step}>
             {(trigger !== undefined || index > 0) && <Connector />}
             <s-text color="subdued">{`Step ${String(index + 1)}`}</s-text>
             {group.map((task) => (
@@ -125,16 +118,16 @@ export function StepFlow({
               />
             ))}
             {renderStepFooter?.(step)}
-          </s-stack>
+          </Lines>
         );
       })}
       {footer !== undefined && (
-        <s-stack gap="small-300">
+        <Lines>
           {groups.length > 0 && <Connector />}
           {footer}
-        </s-stack>
+        </Lines>
       )}
-    </s-stack>
+    </Lines>
   );
 }
 

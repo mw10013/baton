@@ -1,6 +1,7 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 
-import { BatonMark } from "@/components/BatonMark";
+import { BatonMark } from "@/components/screen/BatonMark";
+import { Things } from "@/components/screen/Things";
 
 export const Route = createFileRoute("/")({
   beforeLoad: ({ location }) => {
@@ -26,13 +27,13 @@ function RouteComponent() {
   return (
     <s-page heading="Baton" inlineSize="small">
       <s-section accessibilityLabel="Baton overview">
-        <s-stack gap="base">
+        <Things>
           <BatonMark size={56} />
           <s-paragraph>
             Baton gives made-to-order Shopify merchants a clear production
             workflow from order to completion.
           </s-paragraph>
-        </s-stack>
+        </Things>
       </s-section>
       <s-section accessibilityLabel="Member login">
         <s-link href="/login">Sign in</s-link>

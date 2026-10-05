@@ -3,6 +3,7 @@ import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
 import { createServerFn, useServerFn } from "@tanstack/react-start";
 import { Effect } from "effect";
 
+import { Inline } from "@/components/screen/Inline";
 import { adminServerFnMiddleware } from "@/lib/AdminServerFnMiddleware";
 import { Auth } from "@/lib/Auth";
 import { CurrentRequest } from "@/lib/CurrentRequest";
@@ -54,25 +55,25 @@ function RouteComponent() {
         Sign out
       </s-button>
       <s-section accessibilityLabel="Admin overview">
-        <s-stack gap="base" alignItems="start">
-          <s-heading>Shops</s-heading>
-          <s-paragraph>
-            View connected shops and their stored Shopify sessions.
-          </s-paragraph>
+        <s-heading>Shops</s-heading>
+        <s-paragraph>
+          View connected shops and their stored Shopify sessions.
+        </s-paragraph>
+        <Inline>
           <s-button
             variant="primary"
             onClick={() => void router.navigate({ to: "/admin/shops" })}
           >
             View shops
           </s-button>
-        </s-stack>
+        </Inline>
       </s-section>
       <s-section accessibilityLabel="Shop Agent objects overview">
-        <s-stack gap="base" alignItems="start">
-          <s-heading>Shop Agent Objects</s-heading>
-          <s-paragraph>
-            View Cloudflare Durable Objects for Shop Agent instances.
-          </s-paragraph>
+        <s-heading>Shop Agent Objects</s-heading>
+        <s-paragraph>
+          View Cloudflare Durable Objects for Shop Agent instances.
+        </s-paragraph>
+        <Inline>
           <s-button
             variant="primary"
             onClick={() =>
@@ -81,15 +82,15 @@ function RouteComponent() {
           >
             View objects
           </s-button>
-        </s-stack>
+        </Inline>
       </s-section>
       <s-section accessibilityLabel="Orphan Shop Agent objects overview">
-        <s-stack gap="base" alignItems="start">
-          <s-heading>Orphan Shop Agent Objects</s-heading>
-          <s-paragraph>
-            Find Shop Agent objects with no installed shop and destroy them,
-            without re-creating any.
-          </s-paragraph>
+        <s-heading>Orphan Shop Agent Objects</s-heading>
+        <s-paragraph>
+          Find Shop Agent objects with no installed shop and destroy them,
+          without re-creating any.
+        </s-paragraph>
+        <Inline>
           <s-button
             variant="primary"
             onClick={() =>
@@ -98,7 +99,7 @@ function RouteComponent() {
           >
             View orphans
           </s-button>
-        </s-stack>
+        </Inline>
       </s-section>
     </s-page>
   );

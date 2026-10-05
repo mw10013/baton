@@ -21,7 +21,7 @@ export function BatonMark({ size = 24 }: { readonly size?: number }) {
       width={size}
       height={size}
       aria-hidden="true"
-      style={{ display: "block", flexShrink: 0 }}
+      className="baton-mark"
     >
       <rect width="1200" height="1200" rx="263" fill="#1F4FD8" />
       <g transform="translate(52.3 45.7) scale(0.955)">

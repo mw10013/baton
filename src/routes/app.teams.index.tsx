@@ -8,6 +8,11 @@ import { createServerFn, useServerFn } from "@tanstack/react-start";
 import { Effect, Schema } from "effect";
 
 import { LocalDateTime } from "@/components/LocalDateTime";
+import { EmptyLine } from "@/components/screen/EmptyLine";
+import { FilterRow } from "@/components/screen/FilterRow";
+import { IndexSection } from "@/components/screen/IndexSection";
+import { Inline } from "@/components/screen/Inline";
+import { SearchLine } from "@/components/screen/SearchLine";
 import * as Domain from "@/lib/Domain";
 import { fieldError, mutationErrorMessage } from "@/lib/form";
 import { Repository } from "@/lib/Repository";
@@ -150,26 +155,14 @@ function RouteComponent() {
   const renderRows = () => {
     if (teams.length === 0)
       return (
-        <s-box padding="base">
-          <s-grid gap="base" justifyItems="center" paddingBlock="large-400">
-            <s-grid justifyItems="center" maxInlineSize="450px" gap="base">
-              <s-stack alignItems="center" gap="small-300">
-                <s-heading>No teams yet</s-heading>
-                <s-paragraph color="subdued">
-                  A team is who can work a task; assign one to each task in a
-                  workflow.
-                </s-paragraph>
-              </s-stack>
-              {createButton(false)}
-            </s-grid>
-          </s-grid>
-        </s-box>
+        <EmptyLine heading="No teams yet" action={createButton(false)}>
+          A team is who can work a task; assign one to each task in a workflow.
+        </EmptyLine>
       );
     if (rows.length === 0)
       return (
-        <s-box padding="base">
-          <s-stack gap="base" alignItems="start">
-            <s-paragraph color="subdued">No teams match.</s-paragraph>
+        <EmptyLine
+          action={
             <s-button
               variant="secondary"
               onClick={() => {
@@ -178,8 +171,10 @@ function RouteComponent() {
             >
               Clear search
             </s-button>
-          </s-stack>
-        </s-box>
+          }
+        >
+          No teams match.
+        </EmptyLine>
       );
     return (
       <s-table>
@@ -198,19 +193,19 @@ function RouteComponent() {
             return (
               <s-table-row key={team.id} id={team.id}>
                 <s-table-cell>
-                  <s-stack direction="inline" gap="small-300">
+                  <Inline>
                     <s-link href={`/app/teams/${team.id}`}>{team.name}</s-link>
                     {team.memberCount === 0 && (
                       <s-badge tone="warning">No members</s-badge>
                     )}
-                  </s-stack>
+                  </Inline>
                 </s-table-cell>
                 <s-table-cell>{team.memberCount}</s-table-cell>
                 <s-table-cell>
                   {workflows.length === 0 ? (
                     <s-text color="subdued">—</s-text>
                   ) : (
-                    <s-stack direction="inline" gap="small-300">
+                    <Inline>
                       {workflows.map((workflow, index) => (
                         <React.Fragment key={workflow.workflowId}>
                           {index > 0 && <s-text color="subdued">,</s-text>}
@@ -221,7 +216,7 @@ function RouteComponent() {
                           </s-link>
                         </React.Fragment>
                       ))}
-                    </s-stack>
+                    </Inline>
                   )}
                 </s-table-cell>
                 <s-table-cell>
@@ -249,43 +244,49 @@ function RouteComponent() {
 
       {banner !== null && <s-banner tone="critical">{banner}</s-banner>}
 
-      {/* `padding="none"` so the table runs edge to edge; the description
-          goes inside a padded intro box instead of a slotted heading. */}
-      <s-section padding="none" accessibilityLabel="Teams">
-        {/* Only with rows: on empty the centred empty state already says what
-            a team is, and this paragraph said it a second time. */}
-        {teams.length > 0 && (
-          <s-box padding="base" paddingBlockEnd="none">
-            <s-paragraph color="subdued">
-              A team is who can work a task. Assign one to each task in a
-              workflow.
-            </s-paragraph>
-          </s-box>
-        )}
-
-        {teams.length > 0 && (
-          <s-box padding="base">
-            <s-stack gap="small-300">
-              <s-search-field
-                label="Search teams by name"
-                labelAccessibilityVisibility="exclusive"
-                placeholder="Search by name"
-                value={query}
-                onInput={(event) => {
-                  setQuery(event.currentTarget.value);
-                }}
-              />
-              {trimmed !== "" && (
-                <s-paragraph color="subdued">
-                  {`Showing ${String(rows.length)} of ${String(teams.length)} teams.`}
-                </s-paragraph>
+      {/* The description sits in the section's head, above the search,
+          only with rows: on empty the centred empty state already says what
+          a team is, and this paragraph said it a second time. The search
+          narrows the loaded teams as you type; while it is on, how many
+          match and Clear search sit above it ({@link SearchLine}). */}
+      <IndexSection
+        label="Teams"
+        head={
+          teams.length > 0 && (
+            <>
+              <s-paragraph color="subdued">
+                A team is who can work a task. Assign one to each task in a
+                workflow.
+              </s-paragraph>
+              {trimmed !== "" && rows.length > 0 && (
+                <SearchLine
+                  count={rows.length}
+                  noun={["team", "teams"]}
+                  term={trimmed}
+                  onClear={() => {
+                    setQuery("");
+                  }}
+                />
               )}
-            </s-stack>
-          </s-box>
-        )}
-
+              <FilterRow
+                search={
+                  <s-search-field
+                    label="Search teams by name"
+                    labelAccessibilityVisibility="exclusive"
+                    placeholder="Search by name"
+                    value={query}
+                    onInput={(event) => {
+                      setQuery(event.currentTarget.value);
+                    }}
+                  />
+                }
+              />
+            </>
+          )
+        }
+      >
         {renderRows()}
-      </s-section>
+      </IndexSection>
 
       <s-modal
         id={CREATE_MODAL}

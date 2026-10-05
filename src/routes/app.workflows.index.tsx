@@ -11,10 +11,16 @@ import {
 import { createServerFn } from "@tanstack/react-start";
 import { Effect, Schema } from "effect";
 
-import { ListSearchField } from "@/components/ListSearchField";
 import { LocalDateTime } from "@/components/LocalDateTime";
+import { EmptyLine } from "@/components/screen/EmptyLine";
+import { Fields } from "@/components/screen/Fields";
+import { FilterRow } from "@/components/screen/FilterRow";
+import { IndexSection } from "@/components/screen/IndexSection";
+import { Inline } from "@/components/screen/Inline";
+import { ListSearchField } from "@/components/screen/ListSearchField";
+import { SearchLine } from "@/components/screen/SearchLine";
+import { Token } from "@/components/screen/Token";
 import * as Domain from "@/lib/Domain";
-import { formatNumber } from "@/lib/format";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
@@ -36,7 +42,7 @@ const decodeWorkflowResult = Schema.decodeUnknownPromise(
  * derived by the object on every read.
  */
 export const stateBadges = (workflow: Domain.WorkflowSummary) => (
-  <s-stack direction="inline" gap="small-300">
+  <Inline>
     {Domain.workflowIsOn(workflow) ? (
       <s-badge tone="success">{Domain.WORKFLOW_STATE_LABEL.on}</s-badge>
     ) : (
@@ -53,7 +59,7 @@ export const stateBadges = (workflow: Domain.WorkflowSummary) => (
         {Domain.WORKFLOW_FAULT_LABEL.empty_team}
       </s-badge>
     )}
-  </s-stack>
+  </Inline>
 );
 
 type WorkflowsIndexLoaderData = Domain.WorkflowsIndexData;
@@ -283,31 +289,22 @@ function RouteComponent() {
   const renderRows = () => {
     if (unfiltered && workflows.length === 0)
       return (
-        <s-box padding="base">
-          <s-grid gap="base" justifyItems="center" paddingBlock="large-400">
-            <s-grid justifyItems="center" maxInlineSize="450px" gap="base">
-              <s-heading>No workflows yet</s-heading>
-              {createButton(false)}
-            </s-grid>
-          </s-grid>
-        </s-box>
+        <EmptyLine heading="No workflows yet" action={createButton(false)} />
       );
     if (q !== undefined && workflows.length === 0)
       return (
-        <s-box padding="base">
-          <s-stack gap="base" alignItems="start">
-            <s-paragraph color="subdued">{`No workflow matches ${q}`}</s-paragraph>
+        <EmptyLine
+          action={
             <s-button variant="secondary" onClick={clearSearch}>
               Clear search
             </s-button>
-          </s-stack>
-        </s-box>
+          }
+        >{`No workflow matches ${q}`}</EmptyLine>
       );
     if (workflows.length === 0)
       return (
-        <s-box padding="base">
-          <s-stack gap="base" alignItems="start">
-            <s-paragraph color="subdued">No workflows match.</s-paragraph>
+        <EmptyLine
+          action={
             <s-button
               variant="secondary"
               onClick={() => {
@@ -316,8 +313,10 @@ function RouteComponent() {
             >
               Clear filters
             </s-button>
-          </s-stack>
-        </s-box>
+          }
+        >
+          No workflows match.
+        </EmptyLine>
       );
     return (
       <s-table
@@ -345,8 +344,12 @@ function RouteComponent() {
                 </s-link>
               </s-table-cell>
               <s-table-cell>{stateBadges(workflow)}</s-table-cell>
+              {/* The tag as subdued text that wraps anywhere (a token, the
+                  parts table's token row), not a badge: a tag may be 255
+                  characters and a badge cuts to one line with no way to read
+                  the rest. */}
               <s-table-cell>
-                <s-badge>{workflow.tag}</s-badge>
+                <Token color="subdued">{workflow.tag}</Token>
               </s-table-cell>
               <s-table-cell>{workflow.stepCount}</s-table-cell>
               <s-table-cell>
@@ -374,56 +377,51 @@ function RouteComponent() {
 
       {banner !== null && <s-banner tone="critical">{banner}</s-banner>}
 
-      {/* `padding="none"` so the table runs edge to edge; the filters go
-          inside a padded box instead of a slotted heading. The card carries no
-          description: the badges and the Turn on / Turn off buttons already
-          say what a workflow is and what its state means. */}
-      <s-section padding="none" accessibilityLabel="Workflows">
-        {!(unfiltered && workflows.length === 0) && (
-          <s-box padding="base">
-            <s-grid
-              gridTemplateColumns="auto 1fr"
-              gap="base"
-              alignItems="center"
-            >
-              {/* A search ignores the state filter, so the buttons give way
-                  to how many workflows match and Clear search (`Control` in
-                  `Screen.ts`, "a search is on"). */}
-              {q === undefined ? (
-                <s-stack direction="inline" gap="small-300">
-                  {stateButton("All")}
-                  {stateButton(Domain.WORKFLOW_STATE_LABEL.on, "on")}
-                  {stateButton(Domain.WORKFLOW_STATE_LABEL.off, "off")}
-                </s-stack>
-              ) : (
-                // A search that matched nothing says so in the list's place,
-                // with its own Clear search.
-                <s-stack direction="inline" gap="base" alignItems="center">
-                  {matches !== null && matches > 0 && (
-                    <>
-                      <s-text>
-                        {matches === 1
-                          ? `1 workflow matches ${q}`
-                          : `${formatNumber(matches)} workflows match ${q}`}
-                      </s-text>
-                      <s-button onClick={clearSearch}>Clear search</s-button>
-                    </>
-                  )}
-                </s-stack>
+      {/* The card carries no description: the badges and the Turn on / Turn
+          off buttons already say what a workflow is and what its state
+          means. The head is gated on there being something to filter. A
+          search ignores the state filter, so the buttons give way to how many
+          workflows match and Clear search ({@link SearchLine}); a search
+          that matched nothing says so in the list's place instead. */}
+      <IndexSection
+        label="Workflows"
+        head={
+          unfiltered && workflows.length === 0 ? null : (
+            <>
+              {q !== undefined && matches !== null && matches > 0 && (
+                <SearchLine
+                  count={matches}
+                  noun={["workflow", "workflows"]}
+                  term={q}
+                  onClear={clearSearch}
+                />
               )}
-              <ListSearchField
-                value={q ?? null}
-                placeholder="Search by name"
-                onSubmit={(next) => {
-                  setFilters({ q: next });
-                }}
+              <FilterRow
+                main={
+                  q === undefined ? (
+                    <Inline>
+                      {stateButton("All")}
+                      {stateButton(Domain.WORKFLOW_STATE_LABEL.on, "on")}
+                      {stateButton(Domain.WORKFLOW_STATE_LABEL.off, "off")}
+                    </Inline>
+                  ) : undefined
+                }
+                search={
+                  <ListSearchField
+                    value={q ?? null}
+                    placeholder="Search by name"
+                    onSubmit={(next) => {
+                      setFilters({ q: next });
+                    }}
+                  />
+                }
               />
-            </s-grid>
-          </s-box>
-        )}
-
+            </>
+          )
+        }
+      >
         {renderRows()}
-      </s-section>
+      </IndexSection>
 
       <s-modal
         id={CREATE_MODAL}
@@ -433,7 +431,7 @@ function RouteComponent() {
            typed (the Add member dialog in `app.members.tsx` did exactly that). */
         onAfterHide={resetCreateForm}
       >
-        <s-stack gap="base">
+        <Fields>
           <s-text-field
             label="Name"
             placeholder="e.g. Engraved ring"
@@ -456,7 +454,7 @@ function RouteComponent() {
               setTagError(null);
             }}
           />
-        </s-stack>
+        </Fields>
         <s-button
           slot="secondary-actions"
           commandFor={CREATE_MODAL}

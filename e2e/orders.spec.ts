@@ -288,7 +288,7 @@ test("the orders index searches by order number and clears back to the list", as
   await searchField(frame).fill("9999");
   await searchField(frame).press("Enter");
   await expect(
-    frame.getByRole("heading", { name: "No order matches #9999" }),
+    frame.getByText("No order matches #9999", { exact: true }),
   ).toBeVisible();
   await frame.getByRole("button", { name: "Clear search" }).click();
   await expect(
@@ -574,7 +574,8 @@ test("the merchant blocks a run with a reason, notes the run, and unblocks it", 
 
   const blockModal = frame.locator("s-modal#run-block");
   await frame.getByRole("button", { name: "Block", exact: true }).click();
-  await expect(blockModal.getByText("Block E2E Cuff on #9303?")).toBeVisible();
+  await expect(blockModal.getByText("Block #9303?")).toBeVisible();
+  await expect(blockModal.getByText("E2E Cuff", { exact: true })).toBeVisible();
   await blockModal
     .getByRole("textbox", { name: "Reason" })
     .fill("Out of walnut stock");
@@ -691,7 +692,7 @@ test("the order card puts the run's badges on the title line, Manage above its d
   await expect(item.getByText("\u2014", { exact: true })).toBeVisible();
 
   /* Cut to three lines, then shown whole. */
-  const reason = banner.locator(".member-prose").first();
+  const reason = banner.locator(".prose").first();
   const clamped = await reason.boundingBox();
   await banner.getByText("Show more", { exact: true }).click();
   await expect(banner.getByText("Show less", { exact: true })).toBeVisible();
@@ -707,13 +708,13 @@ test("the order card puts the run's badges on the title line, Manage above its d
   await manage.click();
   const drawer = item.getByText("E2E Card Board workflow", { exact: true });
   await expect(drawer).toBeVisible();
-  /* `s-text` lays out as `display: contents` and has no box, so the drawer
-     is placed by document order rather than by position. */
+  /* Placed by document order rather than by position: the drawer's header
+     is an `s-heading` inside a subdued panel. */
   const drawerFollowsManage = await item.evaluate((section) => {
     const button = [...section.querySelectorAll("s-button")].find(
       (element) => element.textContent?.trim() === "Manage",
     );
-    const header = [...section.querySelectorAll("s-text")].find(
+    const header = [...section.querySelectorAll("s-heading")].find(
       (element) => element.textContent === "E2E Card Board workflow",
     );
     return (

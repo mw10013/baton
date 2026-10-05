@@ -105,11 +105,8 @@ describe("changeWarning", () => {
 });
 
 describe("cancelHeading", () => {
-  it("the cancel question names the workflow and the item; the warning says work stops, done steps stay on record, and another workflow can be attached", () => {
-    strictEqual(
-      cancelHeading(from, "Leather journal — A5"),
-      "Cancel Engraving on Leather journal — A5?",
-    );
+  it("the cancel question names the workflow, the item goes in the body; the warning says work stops, done steps stay on record, and another workflow can be attached", () => {
+    strictEqual(cancelHeading(from), "Cancel Engraving?");
     strictEqual(
       CANCEL_WARNING,
       "Work on it stops. Steps already done stay on record. You can attach another workflow to the item afterwards.",

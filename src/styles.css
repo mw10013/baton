@@ -4,11 +4,18 @@
    fits. Nothing here paints html/body or measures against their height, so the
    full-viewport floor bought nothing. */
 
-/* Opaque identifiers (shopAgentId, GIDs, tokens) are unbroken 64-char strings.
-   `anywhere` rather than `break-word` because only `anywhere` shrinks the
-   min-content size, which is what lets an auto-fit grid track hold them. */
-.admin-field {
-  overflow-wrap: anywhere;
+/* The Baton mark (`BatonMark` in `src/components/screen/`): a block, so no
+   line-height gap under the svg, and never squeezed by a flex row. */
+.baton-mark {
+  display: block;
+  flex-shrink: 0;
+}
+
+/* A stack trace (`CodeBlock` in `src/components/screen/`): no browser margin,
+   and a long line scrolls inside its box rather than widen the page. */
+.code-block {
+  margin: 0;
+  overflow-x: auto;
 }
 
 .capacity-meter {
@@ -89,17 +96,61 @@ details[open] > .live-value-summary .live-value-preview {
 }
 
 /*
- * Free text a person typed: a run note, a block reason, an order note.
- * Every one of them is one field, editable by anyone, last write wins and no
- * history — so the line breaks the writer put in are the only structure the
- * text has, and collapsing them (the HTML default) loses the dated, initialled
- * running log people write by hand. `overflow-wrap: anywhere` is for the other
- * half of typed-at-a-bench text: an unspaced SKU or URL must not widen a phone
- * card past the viewport.
+ * Free text a person typed (`Prose` and `ClampedProse` in
+ * `src/components/screen/`): a run note, a block reason, task instructions,
+ * an order note. Every one of them is one field, editable by anyone, last
+ * write wins and no history — so the line breaks the writer put in are the
+ * only structure the text has, and collapsing them (the HTML default) loses
+ * the dated, initialled running log people write by hand. `overflow-wrap:
+ * anywhere` is for the other half of typed-at-a-bench text: an unspaced SKU or
+ * URL must not widen a phone card past the viewport.
  */
-.member-prose {
+.prose {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/*
+ * A token or an identity (`Token` in `src/components/screen/`): a SKU, a tag,
+ * an order number, an email, a shop domain. It has no word break, so it
+ * breaks anywhere rather than widen its box past the screen. `anywhere`, not
+ * `break-word`, because only `anywhere` shrinks the min-content size, which
+ * is what lets a grid track or a table cell hold it.
+ */
+.token {
+  overflow-wrap: anywhere;
+}
+
+/*
+ * A resource row's line one: the clamped title shrinks and the trail (`×n`)
+ * never does, so a long title ends in an ellipsis and the count stays at the
+ * end of its first line. `pre` keeps the trail's leading space.
+ */
+.row-head {
+  display: flex;
+  align-items: baseline;
+  min-inline-size: 0;
+}
+
+.row-head-title {
+  min-inline-size: 0;
+}
+
+.row-head-trail {
+  flex: none;
+  white-space: pre;
+}
+
+/*
+ * The menu cell of a resource row (`ResourceRow` in `src/components/screen/`):
+ * one line of text tall, so the button sits beside line one and a one-line
+ * head leaves no gap under it. The button is taller than the line and
+ * overflows it evenly.
+ */
+.resource-row-menu {
+  display: flex;
+  align-items: center;
+  block-size: 20px;
 }
 
 .live-memory-list {
@@ -142,6 +193,18 @@ details[open] > .live-value-summary .live-value-preview {
     max-block-size: none;
     overflow: visible;
   }
+}
+
+/*
+ * The member area's root (`MemberArea` in `src/components/screen/`): an
+ * unspaced token anywhere on a member screen (an email, a SKU, a shop domain,
+ * a long word in an item title) breaks inside itself rather than widen a
+ * phone screen. `anywhere`, not `break-word`, so a grid track or flex item
+ * holding one can shrink to the screen. Inherited through Polaris's shadow
+ * roots, which take inherited properties from their host.
+ */
+.member-area {
+  overflow-wrap: anywhere;
 }
 
 /* The member area's top bar (`MemberBar.tsx`): the one bar above `s-page`. */
@@ -198,70 +261,15 @@ details[open] > .live-value-summary .live-value-preview {
 }
 
 /*
- * The member's workflow page's body (`shop.$shop.workflows.$runId.tsx`) is plain
- * content with no `s-section`, and `s-page` insets only its heading on a
- * phone: below 507px it pads its children 0.5rem, which suits full-width
- * cards, and the heading 1.5rem. The extra 1rem lines the text up with the
- * heading. The breakpoint is `s-page`'s own, measured: it has no custom
- * property or container name to hook, so this repeats it.
+ * A page body of plain content (`PageBody` in `src/components/screen/`), the
+ * member's workflow page: `s-page` insets only its heading on a phone: below
+ * 507px it pads its children 0.5rem, which suits full-width cards, and the
+ * heading 1.5rem. The extra 1rem lines the text up with the heading. The
+ * breakpoint is `s-page`'s own, measured: it has no custom property or
+ * container name to hook, so this repeats it.
  */
 @media (width < 507px) {
-  .member-work {
+  .page-body {
     padding-inline: 1rem;
   }
-}
-
-/*
- * The member's workflows list (`shop.$shop.workflows.index.tsx`). Here rather than inline because
- * the clamp needs three declarations React's `style` types deprecate, and
- * because the file already owns the member area's other plain-element rules.
- */
-
-/*
- * A row's item title, cut to two lines with an ellipsis: Shopify allows a
- * 255-character title, and the row is not where it is read — the workflow
- * page the row links to heads with the whole thing. `-webkit-box` is still
- * the only clamp Safari honours.
- */
-.run-title-clip {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  overflow: hidden;
-  min-inline-size: 0;
-}
-
-/*
- * The order number at the end of a row's line one: on the cell's end edge, so
- * `#1015` and `#1008` line up down the list, and never wrapped.
- */
-.run-order {
-  display: flex;
-  justify-content: flex-end;
-  white-space: nowrap;
-}
-
-/*
- * A row's line, as parts: `.run-line-clip` holds the free-length names and
- * shrinks, ending in an ellipsis; `.run-line-keep` holds the fixed words (a
- * state, the step, the count) and never shrinks. `pre` keeps the leading
- * space a kept part opens with, which a block would otherwise drop.
- */
-.run-line {
-  display: flex;
-  align-items: baseline;
-  min-inline-size: 0;
-}
-
-.run-line-clip {
-  min-inline-size: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.run-line-keep {
-  flex: none;
-  white-space: pre;
 }

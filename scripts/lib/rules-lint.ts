@@ -543,3 +543,39 @@ export const hibernationBlockerHits = (
     }),
   );
 };
+
+/** One layout primitive or layout prop in a route: its line and the text that matched. */
+export interface RouteLayoutHit {
+  readonly line: number;
+  readonly text: string;
+}
+
+const ROUTE_LAYOUT =
+  /<s-(?:grid|stack|box|query-container)\b|\b(?:gap|padding(?:Block|Inline)?(?:Start|End)?|gridTemplateColumns|className|style)\s*[=:]/gu;
+
+/**
+ * **Layout primitives and layout props are refused outside
+ * src/components/screen/.** In a route or a component (every `.tsx` under
+ * `src/routes/` and `src/components/` but `src/components/screen/`), the
+ * elements `s-grid`, `s-stack`, `s-box` and `s-query-container`, and the
+ * props `gap`, `padding`, `paddingBlock*`, `paddingInline*`,
+ * `gridTemplateColumns`, `className` and `style`, as JSX attributes or as
+ * keys of a spread object. Content elements (`s-text`, `s-heading`,
+ * `s-paragraph`, `s-badge`, `s-button`, `s-link`, `s-table`, `s-section`,
+ * the form fields) stay allowed. Routes and components compose the parts of
+ * the parts table (`ScreenPart` in `src/lib/Screen.ts`), which own every
+ * spacing value and breakpoint, so a screen cannot choose a different gap
+ * because it cannot choose a gap; and a route cannot dodge the rule by
+ * moving its layout into a component beside it. A screen that needs a shape
+ * no part has gets a part and a row. Comments are blanked before the scan,
+ * so a JSDoc may name an element.
+ */
+export const layoutHits = (source: string): readonly RouteLayoutHit[] => {
+  const blanked = source.replaceAll(COMMENT, (text) =>
+    text.replaceAll(/[^\n]/gu, " "),
+  );
+  return [...blanked.matchAll(ROUTE_LAYOUT)].map(({ index, 0: text }) => ({
+    line: blanked.slice(0, index).split("\n").length,
+    text,
+  }));
+};

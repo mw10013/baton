@@ -2735,8 +2735,10 @@ export type RunListItem = typeof RunListItem.Type;
  * The digits are grouped as every count on a screen is ({@link formatNumber}).
  *
  * In two parts because the row clamps `name` and never `quantity`; a long
- * title ends in an ellipsis and the count stays. {@link itemTitle} is the
- * two joined, for the row's accessible label, which is never clamped.
+ * title ends in an ellipsis and the count stays. The order number is the
+ * row's, not the piece's: the row leads line one with it. {@link itemTitle}
+ * is the two joined, for the row's accessible label, which is never
+ * clamped.
  */
 export const itemPiece = (run: {
   readonly lineItemTitle: string;
@@ -2777,8 +2779,23 @@ export const rowShowsTeam = (
 ) => teamCount > 1 && (team === null || q !== null);
 
 /**
+ * Whether a run's workflow is named after its item: the workflow name and
+ * the item title are equal once surrounding spaces are trimmed and case is
+ * ignored. "Signet ring" and " signet RING " are one name to a reader; a
+ * variant or a word more ("Signet ring, rush") is a different one. A row
+ * prints the workflow name only when this is false ({@link runRowLines}).
+ */
+export const workflowNamesItem = (run: {
+  readonly workflowName: string;
+  readonly lineItemTitle: string;
+}) =>
+  run.workflowName.trim().toLowerCase() ===
+  run.lineItemTitle.trim().toLowerCase();
+
+/**
  * Lines two and three of a member's open row, as data: the route renders
- * them, this decides them. Line one is the piece ({@link itemTitle}); line
+ * them, this decides them. Line one is the order number and the piece
+ * ({@link itemPiece}); line
  * two is the work, one entry of `tasks` per current task on the member's
  * teams in `position` order, then `block`; line three, `recipe`, is the
  * recipe the item follows. One kind of fact per line, so a reader learns the
@@ -2812,11 +2829,20 @@ export const rowShowsTeam = (
  * and `Blocked` when there is no reason, except under Blocked, where it is
  * null because the filter already says it. An open row's `block` is null.
  *
- * **The recipe line is `<workflow> · Step k of n`** on every open row
- * whatever its state: k is the step the current tasks share and n is
- * {@link RunListItem}'s `stepCount`. In two parts, `workflow` and `step`,
- * because the row clamps the name and never the step; for the same reason a
- * task's `state` is apart from its name and team.
+ * **The recipe line is `Step k of n`** on every open row whatever its
+ * state: k is the step the current tasks share and n is
+ * {@link RunListItem}'s `stepCount`.
+ *
+ * **The workflow name is on the row only when it differs from the item
+ * title,** compared with surrounding spaces trimmed and case ignored
+ * ({@link workflowNamesItem}); then the line is `<workflow> · Step k of n`
+ * and otherwise `workflow` is null. The simple setup names a workflow after
+ * its product, so on most rows the name is the item said twice, on the line
+ * the eye lands on second; the name is news only when it differs, as for a
+ * Rush workflow or an item in two workflows. In two parts, `workflow` and
+ * `step`, because a workflow name is a capped name that wraps and the step
+ * is fixed words after it; for the same reason a task's `state` is apart
+ * from its name and team.
  */
 export const runRowLines = (
   { run, tasks, stepCount }: RunListItem,
@@ -2834,7 +2860,7 @@ export const runRowLines = (
     readonly state: string | null;
   }[];
   readonly block: string | null;
-  readonly recipe: { readonly workflow: string; readonly step: string };
+  readonly recipe: { readonly workflow: string | null; readonly step: string };
 } => {
   const { memberEmail, showTeam, state } = context;
   const blocked = runIsBlocked(run);
@@ -2869,7 +2895,7 @@ export const runRowLines = (
     })),
     block: block(),
     recipe: {
-      workflow: run.workflowName,
+      workflow: workflowNamesItem(run) ? null : run.workflowName,
       step: `Step ${String(first.step)} of ${String(stepCount)}`,
     },
   };

@@ -4,6 +4,7 @@ import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { Effect, Schema } from "effect";
 
+import { IndexSection } from "@/components/screen/IndexSection";
 import { adminServerFnMiddleware } from "@/lib/AdminServerFnMiddleware";
 import { Repository } from "@/lib/Repository";
 import { ShopAgentObjects } from "@/lib/ShopAgentObjects";
@@ -78,10 +79,7 @@ function RouteComponent() {
       >
         Admin
       </s-link>
-      <s-section
-        padding="none"
-        accessibilityLabel="Orphan Shop Agent objects table"
-      >
+      <IndexSection label="Orphan Shop Agent objects table">
         <s-table
           paginate={history.length > 0 || hasNextPage}
           hasPreviousPage={history.length > 0}
@@ -151,7 +149,7 @@ function RouteComponent() {
             ))}
           </s-table-body>
         </s-table>
-      </s-section>
+      </IndexSection>
       {page.orphans.length === 0 &&
         (hasNextPage ? (
           <s-banner tone="info">

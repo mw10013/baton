@@ -3,6 +3,8 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { createServerFn, useServerFn } from "@tanstack/react-start";
 import { Effect } from "effect";
 
+import { Inline } from "@/components/screen/Inline";
+import { Things } from "@/components/screen/Things";
 import { memberServerFnMiddleware } from "@/lib/MemberServerFnMiddleware";
 import { signOutFn } from "@/lib/memberSignOut";
 import { Repository } from "@/lib/Repository";
@@ -40,17 +42,17 @@ function RouteComponent() {
             email on their Members page.
           </s-paragraph>
         ) : (
-          <s-stack gap="base">
+          <Things>
             {shops.map((shop) => (
               <Link key={shop} to="/shop/$shop/workflows" params={{ shop }}>
                 {shop}
               </Link>
             ))}
-          </s-stack>
+          </Things>
         )}
       </s-section>
       <s-section accessibilityLabel="Session">
-        <s-stack alignItems="start">
+        <Inline>
           <s-button
             variant="tertiary"
             {...(signOutMutation.isPending ? { loading: true } : {})}
@@ -60,7 +62,7 @@ function RouteComponent() {
           >
             Sign out
           </s-button>
-        </s-stack>
+        </Inline>
       </s-section>
     </s-page>
   );

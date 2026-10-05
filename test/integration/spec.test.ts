@@ -504,7 +504,13 @@ describe("action table parser", () => {
     );
 
     it("Domain.ts passes", () => {
-      expect(ActionTable.checkScreens(source, routeFiles)).toEqual([]);
+      expect(
+        ActionTable.checkScreens(
+          source,
+          routeFiles,
+          Screen.ScreenTemplate.literals,
+        ),
+      ).toEqual([]);
     });
 
     it("a row with no route file, and a screen with no row, are reported", () => {
@@ -513,9 +519,32 @@ describe("action table parser", () => {
         "| merchant | `app.people`                      |",
       );
       expect(doctored).not.toBe(source);
-      expect(ActionTable.checkScreens(doctored, routeFiles)).toEqual([
+      expect(
+        ActionTable.checkScreens(
+          doctored,
+          routeFiles,
+          Screen.ScreenTemplate.literals,
+        ),
+      ).toEqual([
         "Vocabulary: Screens: no route file app.people.tsx",
         "Vocabulary: Screens: app.members.tsx has no row",
+      ]);
+    });
+
+    it("every screen's template is a ScreenTemplate word", () => {
+      const doctored = source.replace(
+        /(?<cells>\| the members page +\| )index /u,
+        "$<cells>list  ",
+      );
+      expect(doctored).not.toBe(source);
+      expect(
+        ActionTable.checkScreens(
+          doctored,
+          routeFiles,
+          Screen.ScreenTemplate.literals,
+        ),
+      ).toEqual([
+        'Vocabulary: Screens: the members page has template "list"; expected one of: index, details, homepage, editor',
       ]);
     });
   });
@@ -1347,6 +1376,75 @@ describe("sync pipeline table parser", () => {
         ),
       ),
     ).toMatch(/empty store/u);
+  });
+});
+
+/** The basenames under src/components/screen/, as `readdirSync` lists them. */
+const partFiles = Object.keys(
+  import.meta.glob("/src/components/screen/*", { eager: false }),
+).map((path) => path.slice("/src/components/screen/".length));
+
+const partsTableOf = (row: string) =>
+  [
+    "/**",
+    " * | part | job | component | fixes | used on | never |",
+    " * | - | - | - | - | - | - |",
+    ` * ${row}`,
+    " */",
+    "export const ScreenPart = 0;",
+  ].join("\n");
+
+describe("the parts table on ScreenPart", () => {
+  const templates = Screen.ScreenTemplate.literals;
+
+  it("has one row per part, each naming a component that exists and only template words", () => {
+    const rows = Result.getOrThrow(
+      ActionTable.parsePartsTable(
+        screenSource,
+        Screen.ScreenPart.literals,
+        templates,
+        partFiles,
+      ),
+    );
+    expect(rows.map((row) => row.part)).toEqual([
+      ...Screen.ScreenPart.literals,
+    ]);
+  });
+
+  it("refuses a missing part, a component that is not a part file or a Polaris part, and a word outside the templates", () => {
+    const message = (row: string, parts: readonly string[]) => {
+      const parsed = ActionTable.parsePartsTable(
+        partsTableOf(row),
+        parts,
+        templates,
+        ["Strip.tsx"],
+      );
+      if (Result.isSuccess(parsed)) throw new Error("parsed");
+      return parsed.failure.message;
+    };
+    expect(
+      message("| strip | a | `Strip` | b | index | c |", ["strip", "token"]),
+    ).toContain("no row for token");
+    expect(
+      message("| strip | a | `Stripe` | b | index | c |", ["strip"]),
+    ).toContain(
+      "component `Stripe` is neither a file under src/components/screen/",
+    );
+    expect(
+      message("| strip | a | `Strip` | b | list | c |", ["strip"]),
+    ).toContain("used on list; expected template words");
+    expect(
+      Result.isSuccess(
+        ActionTable.parsePartsTable(
+          partsTableOf(
+            "| strip | a | `Strip`, `s-table` | b | index, details | c |",
+          ),
+          ["strip"],
+          templates,
+          ["Strip.tsx"],
+        ),
+      ),
+    ).toBe(true);
   });
 });
 

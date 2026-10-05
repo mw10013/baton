@@ -67,7 +67,10 @@ test("members screen adds, puts on teams, normalizes, and removes a member", asy
   /* Edit teams replaces the whole set; unchecking the only team shows the
      "No teams" badge, re-checking brings the chip back. */
   await frame.getByRole("button", { name: "Edit teams" }).click();
-  await expect(frame.getByText(`Teams for ${MEMBER_EMAIL}`)).toBeVisible();
+  /* The modal is headed `Teams`; the member's email is the body's first line. */
+  await expect(
+    editModal.getByText(MEMBER_EMAIL, { exact: true }),
+  ).toBeVisible();
   await editModal.getByLabel(TEAM).uncheck();
   await frame.getByRole("button", { name: "Save" }).click();
   await expect(frame.getByText("No teams", { exact: true })).toBeVisible();

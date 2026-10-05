@@ -2,6 +2,8 @@ import type * as Domain from "@/lib/Domain";
 
 import { Match } from "effect";
 
+import { Inline } from "@/components/screen/Inline";
+
 /**
  * Renders a shop's cached plan entry as an admin needs to read it: the tier, or
  * the reason there is no tier, beside the handle exactly as stored.
@@ -43,9 +45,9 @@ export function PlanCache({
   const { tone, label } = badge(plan);
   const handle = storedHandle(plan);
   return (
-    <s-stack direction="inline" gap="small-200" alignItems="center">
+    <Inline>
       <s-badge tone={tone}>{label}</s-badge>
       {handle === null ? null : <s-text>{handle}</s-text>}
-    </s-stack>
+    </Inline>
   );
 }

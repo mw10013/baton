@@ -1,5 +1,8 @@
 import type * as Domain from "@/lib/Domain";
 
+import { Inline } from "@/components/screen/Inline";
+import { Lines } from "@/components/screen/Lines";
+
 /**
  * The aside card answering "where is this team used?": the workflows whose
  * tasks point at the team, each a link to where those tasks are edited.
@@ -24,20 +27,15 @@ export function UsedByCard({
       {workflows.length === 0 ? (
         <s-paragraph color="subdued">Not used by any workflow yet.</s-paragraph>
       ) : (
-        <s-stack gap="small-300" alignItems="start">
+        <Lines>
           {workflows.map((workflow) => (
-            <s-stack
-              key={workflow.workflowId}
-              direction="inline"
-              gap="small-300"
-              alignItems="center"
-            >
+            <Inline key={workflow.workflowId}>
               <s-link href={`/app/workflows/${workflow.workflowId}`}>
                 {workflow.workflowName}
               </s-link>
-            </s-stack>
+            </Inline>
           ))}
-        </s-stack>
+        </Lines>
       )}
     </s-section>
   );

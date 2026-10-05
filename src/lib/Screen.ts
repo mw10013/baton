@@ -1,8 +1,8 @@
 /**
- * The screens' spec: what each kind of text slot is for and which
- * control does which job. The vocabulary in `Domain.ts` owns the words; this
- * file owns the sentences and the controls around them. Two tables and a
- * tone list, in the shape of the action matrices on `Domain.runActions` and
+ * The screens' spec: what each kind of text slot is for, which control does
+ * which job, and which part draws each shape. The vocabulary in `Domain.ts`
+ * owns the words; this file owns the sentences, the controls around them
+ * and the shapes they sit in. Three tables and a tone list, in the shape of the action matrices on `Domain.runActions` and
  * the data-model rows on `D1_TABLES`: a copy change starts at the row, and a
  * component whose JSDoc explains its copy names the slot it fills and links
  * here rather than restating the rule. A site that follows a different rule
@@ -13,12 +13,15 @@
  * and labels. A "page" is one route on it, a "modal" is a dialog over one,
  * and "copy" is its words.
  *
- * `pnpm spec check` parses both tables: every {@link CopySlot} literal has
- * one row, and each row's example is found verbatim in a merchant or member
- * screen, so the table cannot cite copy that was since rewritten.
+ * `pnpm spec check` parses the three tables: every {@link CopySlot} literal
+ * has one row, and each row's example is found verbatim in a merchant or
+ * member screen, so the table cannot cite copy that was since rewritten;
+ * every {@link ScreenPart} literal has one row, naming a component that
+ * exists and only {@link ScreenTemplate} words.
  * `scripts/copy-audit.ts` inventories the screens by these slots.
  * `scripts/lib/rules-lint.ts` holds the mechanical half: the retired words,
- * the copy words wrong in every slot, and no placeholder on a text area.
+ * the copy words wrong in every slot, no placeholder on a text area, and no
+ * layout in a route (`layoutHits`).
  *
  */
 import { Schema } from "effect";
@@ -55,7 +58,7 @@ import { Schema } from "effect";
  *
  * | slot        | job                                                                                             | form                                                                                                         | empty when                                                             | example                                     | never                                                          |
  * | ----------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------- | ------------------------------------------- | -------------------------------------------------------------- |
- * | heading     | says what the page or modal is; a modal that asks, asks                                         | a noun phrase, or a question ending in "?" that names the thing ("Block <item> on <order>?")                 | (never)                                                                | Change workflow?                            | repeats the nav; explains                                      |
+ * | heading     | says what the page or modal is; a modal that asks, asks                                         | a noun phrase, or a question ending in "?" that names the order or the record ("Block <order>?"); an item goes in the body | (never)                                                                | Change workflow?                            | repeats the nav; explains                                      |
  * | label       | names the field                                                                                 | a noun                                                                                                       | hidden when the heading or the placeholder already says it             | Reason                                      | a sentence; a question                                         |
  * | placeholder | shows the shape of a value, names a search's target, or is a select's unselected option         | "e.g." + a value; "Search by <field>"; "Choose <noun>"                                                       | the field is free text; the label already says what goes in           | e.g. Engrave                                | a question; an instruction; filler                             |
  * | help        | states a constraint or consequence the person can trip on                                       | one or two sentences, present tense                                                                          | there is none                                                          | Optional. A member with no team has nothing to do yet. | tells the future ("You'll add X next"); restates the label |
@@ -136,3 +139,138 @@ export type Control = typeof Control.Type;
  * on render; it never reaches a URL or a read.
  */
 export const ANY_OPTION_VALUE = "any";
+
+/**
+ * The template a screen is an instance of: Shopify's App Home templates
+ * (`refs/shopify-docs/docs/api/app-home/latest/patterns/templates/`), so a
+ * merchant moving from the Shopify admin to Baton, and a member moving
+ * between Baton's screens, meet the same anatomy each time. The Screens table
+ * in `Domain.ts` gives every screen one in its `template` column, and the
+ * parts table's `used on` column names these words only.
+ *
+ * | template | Shopify's        | what it is                                                                   |
+ * | -------- | ---------------- | ---------------------------------------------------------------------------- |
+ * | index    | Index            | a list of one kind of record: a frame, its filters and its rows              |
+ * | details  | Details          | one record: a heading that names it and cards of its facts                   |
+ * | homepage | Homepage         | the app's landing page: what needs the merchant, and where to go             |
+ * | editor   | Details, editing | one record being changed, with a save bar: the workflow editor               |
+ */
+export const ScreenTemplate = Schema.Literals([
+  "index",
+  "details",
+  "homepage",
+  "editor",
+]);
+export type ScreenTemplate = typeof ScreenTemplate.Type;
+
+/**
+ * The parts: the spec for shape, beside the copy table (words) and the
+ * controls table (jobs). A part is a component under
+ * `src/components/screen/`, or a Polaris element where Polaris has the shape;
+ * it takes content (children, strings, data) and never a spacing or layout
+ * prop, and it uses only the three distances and the one breakpoint in
+ * `src/components/screen/layout.ts`. Routes and the other components
+ * compose parts and lay out nothing: `scripts/lib/rules-lint.ts` refuses a
+ * layout primitive or a layout prop in `src/routes/` and in
+ * `src/components/` outside `src/components/screen/` (`layoutHits`). So a
+ * screen cannot choose a different gap, because it cannot choose a gap, and
+ * two screens that show the same kind of thing render the same component
+ * rather than agree to build it alike.
+ *
+ * Order of work: a shape change starts at the row, then the part, then the
+ * kit page (`/dev/kit`, every part once with the seed's worst cases), then
+ * the screens. A screen that needs a shape no part has gets a new part and a
+ * row, the way a new word gets a vocabulary row. A part's JSDoc holds its
+ * reasoning and names its row.
+ *
+ * Parts, one row per part. `component` names a file under
+ * `src/components/screen/` or a Polaris element; `used on` names
+ * {@link ScreenTemplate} words:
+ *
+ * | part           | job                                                                                  | component                           | fixes                                                                                                      | used on                           | never                                               |
+ * | -------------- | ------------------------------------------------------------------------------------ | ----------------------------------- | ---------------------------------------------------------------------------------------------------------- | --------------------------------- | --------------------------------------------------- |
+ * | index section  | the list's frame: one card holding its head (banners, strip or search line, filter row) and the list | `IndexSection`  | frame, padding none; `base` around and between the head's things                                           | index                             | a card in a card; a second list in one card         |
+ * | strip          | counts that are also the main filter                                                 | `Strip`                             | one column per cell above the breakpoint and three below; cell padding; the count at the cell's foot      | index                             | a red cell; a cell that comes and goes with the data |
+ * | filter row     | the main filter, the search and a secondary filter                                   | `FilterRow`                         | columns (10rem, the rest, 12rem) above the breakpoint, stacked below                                      | index                             | a visible label over the row; the table's filters slot |
+ * | search field   | the list's search                                                                    | `ListSearchField`                   | submits on Enter and blur                                                                                  | index                             | a debounce; a character counter                     |
+ * | search line    | how many rows a search matches, and Clear search, in the filters' place              | `SearchLine`                        | the sentence's form; `base` to its button                                                                  | index                             | filters that look set but do nothing                |
+ * | index table    | the merchant's rows                                                                  | `s-table`                           | columns, pagination, the list slots on a phone                                                             | index                             | a resource row                                      |
+ * | resource row   | the member's row: line one and the menu side by side, the lines below the full width | `ResourceRow`                       | line one's clamp and weight; the menu cell one line tall; `small-300` between lines; the rule above       | index                             | a second link; a verb outside the menu              |
+ * | show more      | the deeper read at a list's foot                                                     | `ShowMore`                          | padding; the rule above; "Show n more of N"                                                               | index                             | revealing rows the page already holds               |
+ * | empty line     | one sentence in the list's place, and at most one way out                            | `EmptyLine`                         | centred; at most 450px wide                                                                                | index                             | an illustration; a link to an act on this screen    |
+ * | details card   | a section of a details page                                                          | `s-section`                         | Polaris's card padding                                                                                     | details, homepage, editor         | a card inside a card                                |
+ * | member area    | the member area's root: every member screen inside it                               | `MemberArea`                        | `overflow-wrap: anywhere` for every token on a member screen                                               | index, details                    | a table or badge a mid-word break would spoil       |
+ * | page body      | a page of plain content rather than cards: the member's workflow page                | `PageBody`                          | `base` between things; the phone inset that lines text up with the heading                                | details                           | a card around the content                           |
+ * | lines          | the lines of one thing: a label over its value, a note over its button              | `Lines`                             | `small-300` between lines                                                                                  | index, details, homepage, editor  | two things that do not belong together              |
+ * | inline row     | things side by side, wrapping: a name and its badge, a row of buttons               | `Inline`                            | `small-300` between things; centred on the line                                                            | index, details, homepage, editor  | a column layout                                     |
+ * | framed list    | entries that make one stop, in one bordered box with a rule between them             | `FramedList`                        | the border, the rules, `small-300` padding                                                                 | details                           | a box per entry                                     |
+ * | step list      | a run's steps in order: a caption over each step's framed list                       | `StepList`                          | an ordered list; `base` between steps, `small-300` from caption to box                                     | details                           | a step without its caption                          |
+ * | pairs          | label / value pairs in two aligned columns: an item's properties                     | `Pairs`                             | the label column `minmax(0, max-content)`; the label a token                                              | details                           | a label column wider than the screen                |
+ * | things         | things in one place that are not one thing's lines: a section's banners and content    | `Things`                            | `base` between things                                                                                      | index, details, homepage, editor  | the lines of one thing                              |
+ * | fields         | a form's fields, stacked                                                             | `Fields`                            | `base` between fields, so one field's error never runs into the next label                               | index, details, editor            | a field beside a field                              |
+ * | panel          | a box inside a card: a task card, the order page's Manage drawer, the editor's add form | `Panel`                           | `base` padding; a solid border, a subdued fill or a dashed border by kind                                  | details, editor                   | a box inside a panel                                |
+ * | select row     | a select and the button that submits it, side by side                                | `SelectRow`                         | the select at most 20rem and shrinking; the button beside it at every width                               | details                           | a select that pushes its button to the next line    |
+ * | tiles          | tiles side by side where there is room, one column where there is not               | `Tiles`                             | `repeat(auto-fit, minmax(300px, 1fr))`; `base` between tiles                                              | homepage, details                 | a breakpoint                                        |
+ * | meter tile     | one capacity meter as a link: dimension, number, bar, sentence                       | `MeterTile`                         | `base` padding, the border, `small-300` between lines                                                      | homepage                          | a bar rescaled past its limit                       |
+ * | table frame    | a table inside a details card, framed                                               | `TableFrame`                        | the border and its rounded corners                                                                         | details                           | a table floating in a padded card                   |
+ * | end            | content set at the end of its cell: a table's action column                          | `End`                               | the end edge                                                                                               | details                           | a column of buttons at ragged positions             |
+ * | empty aside    | an aside with nothing in it, holding the page's aside column open                    | `EmptyAside`                        | the aside column's width while nothing is selected                                                         | editor                            | a card with nothing in it                           |
+ * | top bar        | the member area's bar above the page: the mark and shop as the link home, the session at the end | `TopBar`  | the bar's border and padding; start and end, wrapping on a narrow phone                                    | index, details                    | anything that belongs to the screen below it        |
+ * | mark           | the Baton mark                                                                       | `BatonMark`                         | a block that never shrinks in a row                                                                        | index, details                    | text beside it inside the svg                       |
+ * | selectable card | a card that can be chosen: a task card in the workflow editor                       | `SelectableCard`                    | the card's padding; the chosen card filled with a strong border                                            | editor                            | a card that moves when it becomes choosable         |
+ * | connector      | the arrow between two stops of a step flow                                           | `Connector`                         | centred on the column                                                                                      | details, editor                   | an arrow before the first stop                      |
+ * | code block     | preformatted text in a subdued box: a stack trace                                    | `CodeBlock`                         | `base` padding; a long line scrolls inside the box                                                         | details                           | a line that widens the page                         |
+ * | capped name    | a team, task or workflow name                                                        | `Name`                              | on a list: whole, wraps; on its home: whole, wraps; in a cutting control: allowed                         | index, details, homepage, editor  | an ellipsis on a list                               |
+ * | Shopify text   | an item title, a variant, an item property                                           | `Clamp`                             | on a list: two lines and an ellipsis; on its home: whole, wraps; in a cutting control: never              | index, details, homepage, editor  | a badge, chip or select option                      |
+ * | free text      | a block reason, a note, task instructions, an order note                             | `Clamp`, `Prose`, `ClampedProse`    | on a list: two lines; on its home: `Prose`, a block reason `ClampedProse`; in a cutting control: never   | index, details, homepage, editor  | collapsed line breaks                               |
+ * | token          | a SKU, a tag, an order number, an email, a shop domain                               | `Token`                             | on a list: whole, wraps anywhere; on its home: the same; in a cutting control: the order number only     | index, details, homepage, editor  | a box wider than the screen                         |
+ * | fixed words    | a state, the step, a count, a time                                                   | `s-text`                            | after a name that wraps, or ahead of a clamp                                                               | index, details, homepage, editor  | inside a clamp, or after one on its line            |
+ *
+ * The text-fit rows (capped name to fixed words) sort every printed value by
+ * where it comes from and whether it is capped. Baton chose the caps on a
+ * capped name, so its worst case is known and it is shown whole. Shopify text
+ * and free text are uncapped or long, so a list clamps them, and each has one
+ * home where it prints whole (the member's workflow page and the order page;
+ * a tag's is the merchant's workflow page). A cutting control (a badge, chip,
+ * select option, title bar or toast) cuts to one line with no way to read the
+ * rest, so it takes only a capped value.
+ */
+export const ScreenPart = Schema.Literals([
+  "index section",
+  "strip",
+  "filter row",
+  "search field",
+  "search line",
+  "index table",
+  "resource row",
+  "show more",
+  "empty line",
+  "details card",
+  "member area",
+  "page body",
+  "lines",
+  "inline row",
+  "framed list",
+  "step list",
+  "pairs",
+  "things",
+  "fields",
+  "panel",
+  "select row",
+  "tiles",
+  "meter tile",
+  "table frame",
+  "end",
+  "empty aside",
+  "top bar",
+  "mark",
+  "selectable card",
+  "connector",
+  "code block",
+  "capped name",
+  "Shopify text",
+  "free text",
+  "token",
+  "fixed words",
+]);
+export type ScreenPart = typeof ScreenPart.Type;

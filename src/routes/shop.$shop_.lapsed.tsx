@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 
+import { Things } from "@/components/screen/Things";
 /**
  * Where `requireMember` sends a member it refuses. Deliberately static: no
  * loader, no `requireMember`, no socket. A loader would re-run the very check
@@ -23,14 +24,14 @@ function RouteComponent() {
   return (
     <s-page heading={shop} inlineSize="small">
       <s-section heading={heading} accessibilityLabel={heading}>
-        <s-stack gap="base">
+        <Things>
           <s-paragraph>
             This store’s Baton subscription is not active, so its workflows are
             unavailable. Ask the merchant to renew the subscription from the
             Baton app in their Shopify admin.
           </s-paragraph>
           <Link to="/shop">Your stores</Link>
-        </s-stack>
+        </Things>
       </s-section>
     </s-page>
   );

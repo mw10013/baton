@@ -1,6 +1,7 @@
 import { createFileRoute, Outlet } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 
+import { MemberArea } from "@/components/screen/MemberArea";
 import { memberServerFnMiddleware } from "@/lib/MemberServerFnMiddleware";
 
 const requireUserFn = createServerFn({ method: "GET" })
@@ -17,5 +18,9 @@ const requireUserFn = createServerFn({ method: "GET" })
 export const Route = createFileRoute("/shop")({
   beforeLoad: () => requireUserFn(),
   head: () => ({ meta: [{ title: "Your stores — Baton" }] }),
-  component: () => <Outlet />,
+  component: () => (
+    <MemberArea>
+      <Outlet />
+    </MemberArea>
+  ),
 });

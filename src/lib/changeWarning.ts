@@ -72,9 +72,15 @@ export const changeWarning = (
   return `${lead} Change to ${to} anyway? ${listed.charAt(0).toUpperCase()}${listed.slice(1)} will not carry over.`;
 };
 
-/** The Cancel workflow modal's heading: the question, naming the workflow and the item. */
-export const cancelHeading = (workflow: Domain.WorkflowName, item: string) =>
-  `Cancel ${workflow} on ${item}?`;
+/**
+ * The Cancel workflow modal's heading: the question, naming the workflow, a
+ * capped name that wraps (the copy table's heading row on `CopySlot`). The
+ * item is the body's first line, clamped to two lines: an item title is
+ * Shopify text of up to 255 characters, and in the heading it made a
+ * seven-line question.
+ */
+export const cancelHeading = (workflow: Domain.WorkflowName) =>
+  `Cancel ${workflow}?`;
 
 /**
  * The Cancel workflow modal's body. Cancel workflow closes the run
@@ -82,7 +88,8 @@ export const cancelHeading = (workflow: Domain.WorkflowName, item: string) =>
  * already done stay on the run as the record, and nothing starts on the item
  * until the merchant chooses a workflow (`Domain.RunState`). There is no way
  * back, so this is the guard against a mistaken cancel. The heading
- * ({@link cancelHeading}) names what is cancelled, so the body does not.
+ * ({@link cancelHeading}) and the item line above this name what is
+ * cancelled, so this does not.
  */
 export const CANCEL_WARNING =
   "Work on it stops. Steps already done stay on record. You can attach another workflow to the item afterwards.";

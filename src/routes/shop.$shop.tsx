@@ -11,6 +11,7 @@ import {
 } from "@tanstack/react-router";
 import { Effect, Schema, SchemaGetter } from "effect";
 
+import { Things } from "@/components/screen/Things";
 import * as Domain from "@/lib/Domain";
 import { lenientSearchKey, ListSearchParam } from "@/lib/searchParams";
 import { ShopAgentSocketProvider } from "@/lib/ShopAgentSocketHost";
@@ -125,12 +126,12 @@ function NotFoundComponent() {
   return (
     <s-page heading="No access" inlineSize="small">
       <s-section accessibilityLabel="No access">
-        <s-stack gap="base">
+        <Things>
           <s-paragraph color="subdued">
             You no longer have access to this store.
           </s-paragraph>
           <Link to="/shop">Your stores</Link>
-        </s-stack>
+        </Things>
       </s-section>
     </s-page>
   );

@@ -11,6 +11,11 @@ import { createServerFn } from "@tanstack/react-start";
 import { Effect, Match, Schema } from "effect";
 
 import { LocalDateTime } from "@/components/LocalDateTime";
+import { EmptyAside } from "@/components/screen/EmptyAside";
+import { Inline } from "@/components/screen/Inline";
+import { Lines } from "@/components/screen/Lines";
+import { Panel } from "@/components/screen/Panel";
+import { Things } from "@/components/screen/Things";
 import { StepFlow, TeamFaultBanners } from "@/components/WorkflowSteps";
 import { WorkflowSwitch } from "@/components/WorkflowSwitch";
 import * as Domain from "@/lib/Domain";
@@ -504,11 +509,11 @@ function RouteComponent() {
   );
 
   const addForm = (step: number | null) => (
-    <s-box padding="base" border="base subdued dashed" borderRadius="base">
-      <s-stack gap="small-300">
-        <s-text type="strong">
+    <Panel kind="draft">
+      <Lines>
+        <s-heading>
           {step === null ? "New step" : `New task in step ${String(step)}`}
-        </s-text>
+        </s-heading>
         <s-text-field
           label="Name"
           placeholder="e.g. Engrave"
@@ -540,7 +545,7 @@ function RouteComponent() {
             );
           }}
         />
-        <s-stack direction="inline" gap="small-300">
+        <Inline>
           <s-button
             variant="primary"
             loading={addStepMutation.isPending}
@@ -569,9 +574,9 @@ function RouteComponent() {
           >
             Cancel
           </s-button>
-        </s-stack>
-      </s-stack>
-    </s-box>
+        </Inline>
+      </Lines>
+    </Panel>
   );
 
   const openAdd = (step: number | null) => {
@@ -590,7 +595,7 @@ function RouteComponent() {
     if (selected === null || selected.step !== step || teams.length === 0)
       return null;
     return (
-      <s-stack direction="inline">
+      <Inline>
         <s-button
           variant="tertiary"
           icon="plus"
@@ -601,7 +606,7 @@ function RouteComponent() {
         >
           Add task
         </s-button>
-      </s-stack>
+      </Inline>
     );
   };
 
@@ -609,16 +614,16 @@ function RouteComponent() {
   const canvasFooter = () => {
     if (teams.length === 0)
       return (
-        <s-stack gap="small-300">
+        <Lines>
           <s-paragraph color="subdued">
             Create a team before adding steps.
           </s-paragraph>
           <s-link href="/app/teams">Teams</s-link>
-        </s-stack>
+        </Lines>
       );
     if (adding !== null && adding.step === null) return addForm(null);
     return (
-      <s-stack direction="inline">
+      <Inline>
         <s-button
           icon="plus"
           disabled={busy}
@@ -628,7 +633,7 @@ function RouteComponent() {
         >
           Add step
         </s-button>
-      </s-stack>
+      </Inline>
     );
   };
 
@@ -707,7 +712,7 @@ function RouteComponent() {
       <SocketBanner />
 
       <s-section accessibilityLabel="Steps">
-        <s-stack gap="base">
+        <Things>
           {banner !== null && <s-banner tone="critical">{banner}</s-banner>}
           {/* Only while the header offers Turn on or Apply: a workflow that is
               on with no draft has neither, and its unassigned tasks are
@@ -751,27 +756,23 @@ function RouteComponent() {
               </>
             )}
           </s-text>
-        </s-stack>
+        </Things>
       </s-section>
 
       {/*
-        Something is always in the `aside` slot: `s-page` gives the aside a
-        column of its own only while it is filled, so dropping it reflows the
-        canvas from 606px to 934px and back on every card click (measured
-        2026-09-17). With nothing selected that something is an empty `s-box`
-        rather than an empty `s-section`, which would draw a card with nothing
-        in it. No standing caption either — two sentences explaining what
-        clicking a card does are a caption on a control the merchant is
-        already looking at.
+        Something is always in the `aside` slot ({@link EmptyAside}). No
+        standing caption either — two sentences explaining what clicking a
+        card does are a caption on a control the merchant is already looking
+        at.
       */}
       {selected === null ? (
-        <s-box slot="aside" />
+        <EmptyAside />
       ) : (
         <s-section
           slot="aside"
           heading={sharesStep(selected) ? "Task" : "Step"}
         >
-          <s-stack gap="base">
+          <Things>
             <s-text-field
               label="Name"
               value={edit.name}
@@ -895,7 +896,7 @@ function RouteComponent() {
                 Save
               </s-button>
             </s-button-group>
-          </s-stack>
+          </Things>
         </s-section>
       )}
 
@@ -951,7 +952,7 @@ function RouteComponent() {
           setNameError(null);
         }}
       >
-        <s-stack gap="small-300">
+        <Lines>
           <s-text-field
             label={RENAME_FIELD_LABEL}
             value={name}
@@ -967,7 +968,7 @@ function RouteComponent() {
           <s-text color="subdued">
             {`${String(name.length)}/${String(Domain.NAME_MAX_LENGTH)}`}
           </s-text>
-        </s-stack>
+        </Lines>
         <s-button
           slot="secondary-actions"
           commandFor={RENAME_MODAL}

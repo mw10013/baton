@@ -4,7 +4,9 @@ import { createFileRoute } from "@tanstack/react-router";
 import { createServerFn, useServerFn } from "@tanstack/react-start";
 import { Config, Effect, Schema } from "effect";
 
-import { BatonMark } from "@/components/BatonMark";
+import { BatonMark } from "@/components/screen/BatonMark";
+import { Inline } from "@/components/screen/Inline";
+import { Things } from "@/components/screen/Things";
 import { Auth, magicLinkKvKey } from "@/lib/Auth";
 import { CloudflareEnv } from "@/lib/CloudflareEnv";
 import { CurrentRequest } from "@/lib/CurrentRequest";
@@ -119,14 +121,16 @@ function RouteComponent() {
   return (
     <s-page heading="Sign in" inlineSize="small">
       <s-section accessibilityLabel="Baton">
-        <s-stack direction="inline" gap="small-300" alignItems="center">
+        <Inline>
           <BatonMark size={32} />
+          {/* The semantic `<strong>` only: the wordmark beside the logo,
+              not a heading over the form. */}
           <s-text type="strong">Baton</s-text>
-        </s-stack>
+        </Inline>
       </s-section>
       {sent ? (
         <s-section heading="Check your email">
-          <s-stack gap="base">
+          <Things>
             <s-paragraph color="subdued">
               If that email has access to a shop, a magic sign-in link has been
               sent.
@@ -136,11 +140,11 @@ function RouteComponent() {
                 Open your magic link
               </s-link>
             )}
-          </s-stack>
+          </Things>
         </s-section>
       ) : (
         <s-section heading="Sign in" accessibilityLabel="Sign in">
-          <s-stack gap="base">
+          <Things>
             <s-paragraph color="subdued">
               {isDemoMode
                 ? "Demo mode: no emails are sent — the magic link appears here after you submit."
@@ -153,7 +157,7 @@ function RouteComponent() {
                 void form.handleSubmit();
               }}
             >
-              <s-stack gap="base">
+              <Things>
                 <form.Field name="email">
                   {(field) => (
                     <s-email-field
@@ -169,7 +173,7 @@ function RouteComponent() {
                     />
                   )}
                 </form.Field>
-                <s-stack alignItems="start">
+                <Inline>
                   <s-button
                     type="submit"
                     variant="primary"
@@ -177,10 +181,10 @@ function RouteComponent() {
                   >
                     Send magic link
                   </s-button>
-                </s-stack>
-              </s-stack>
+                </Inline>
+              </Things>
             </form>
-          </s-stack>
+          </Things>
         </s-section>
       )}
     </s-page>

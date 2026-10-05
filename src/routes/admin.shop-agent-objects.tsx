@@ -4,6 +4,7 @@ import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { Effect, Schema } from "effect";
 
+import { IndexSection } from "@/components/screen/IndexSection";
 import { adminServerFnMiddleware } from "@/lib/AdminServerFnMiddleware";
 import { ShopAgentObjects } from "@/lib/ShopAgentObjects";
 
@@ -67,7 +68,7 @@ function RouteComponent() {
       >
         Admin
       </s-link>
-      <s-section padding="none" accessibilityLabel="Shop Agent objects table">
+      <IndexSection label="Shop Agent objects table">
         <s-table
           paginate={hasPreviousPage || hasNextPage}
           hasPreviousPage={hasPreviousPage}
@@ -131,7 +132,7 @@ function RouteComponent() {
             ))}
           </s-table-body>
         </s-table>
-      </s-section>
+      </IndexSection>
       {data.objects.length === 0 && (
         <s-banner tone="info">No Shop Agent objects found.</s-banner>
       )}

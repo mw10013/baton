@@ -25,6 +25,7 @@ import { Route as AppMembersRouteImport } from './routes/app.members'
 import { Route as AppOrdersRouteImport } from './routes/app.orders'
 import { Route as AppWorkflowsRouteImport } from './routes/app.workflows'
 import { Route as AuthSplatRouteImport } from './routes/auth.$'
+import { Route as DevKitRouteImport } from './routes/dev.kit'
 import { Route as ShopIndexRouteImport } from './routes/shop.index'
 import { Route as ShopShopRouteImport } from './routes/shop.$shop'
 import { Route as WebhooksComplianceRouteImport } from './routes/webhooks.compliance'
@@ -126,6 +127,11 @@ const AppWorkflowsRoute = AppWorkflowsRouteImport.update({
 const AuthSplatRoute = AuthSplatRouteImport.update({
   id: '/auth/$',
   path: '/auth/$',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DevKitRoute = DevKitRouteImport.update({
+  id: '/dev/kit',
+  path: '/dev/kit',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ShopIndexRoute = ShopIndexRouteImport.update({
@@ -251,6 +257,7 @@ export interface FileRoutesByFullPath {
   '/app/orders': typeof AppOrdersRouteWithChildren
   '/app/workflows': typeof AppWorkflowsRouteWithChildren
   '/auth/$': typeof AuthSplatRoute
+  '/dev/kit': typeof DevKitRoute
   '/shop/$shop': typeof ShopShopRouteWithChildren
   '/webhooks/compliance': typeof WebhooksComplianceRoute
   '/webhooks/orders': typeof WebhooksOrdersRoute
@@ -285,6 +292,7 @@ export interface FileRoutesByTo {
   '/admin/shops': typeof AdminShopsRoute
   '/app/members': typeof AppMembersRoute
   '/auth/$': typeof AuthSplatRoute
+  '/dev/kit': typeof DevKitRoute
   '/webhooks/compliance': typeof WebhooksComplianceRoute
   '/webhooks/orders': typeof WebhooksOrdersRoute
   '/admin': typeof AdminIndexRoute
@@ -324,6 +332,7 @@ export interface FileRoutesById {
   '/app/orders': typeof AppOrdersRouteWithChildren
   '/app/workflows': typeof AppWorkflowsRouteWithChildren
   '/auth/$': typeof AuthSplatRoute
+  '/dev/kit': typeof DevKitRoute
   '/shop/$shop': typeof ShopShopRouteWithChildren
   '/webhooks/compliance': typeof WebhooksComplianceRoute
   '/webhooks/orders': typeof WebhooksOrdersRoute
@@ -365,6 +374,7 @@ export interface FileRouteTypes {
     | '/app/orders'
     | '/app/workflows'
     | '/auth/$'
+    | '/dev/kit'
     | '/shop/$shop'
     | '/webhooks/compliance'
     | '/webhooks/orders'
@@ -399,6 +409,7 @@ export interface FileRouteTypes {
     | '/admin/shops'
     | '/app/members'
     | '/auth/$'
+    | '/dev/kit'
     | '/webhooks/compliance'
     | '/webhooks/orders'
     | '/admin'
@@ -437,6 +448,7 @@ export interface FileRouteTypes {
     | '/app/orders'
     | '/app/workflows'
     | '/auth/$'
+    | '/dev/kit'
     | '/shop/$shop'
     | '/webhooks/compliance'
     | '/webhooks/orders'
@@ -471,6 +483,7 @@ export interface RootRouteChildren {
   PrivacyRoute: typeof PrivacyRoute
   ShopRoute: typeof ShopRouteWithChildren
   AuthSplatRoute: typeof AuthSplatRoute
+  DevKitRoute: typeof DevKitRoute
   WebhooksComplianceRoute: typeof WebhooksComplianceRoute
   WebhooksOrdersRoute: typeof WebhooksOrdersRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
@@ -591,6 +604,13 @@ declare module '@tanstack/react-router' {
       path: '/auth/$'
       fullPath: '/auth/$'
       preLoaderRoute: typeof AuthSplatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dev/kit': {
+      id: '/dev/kit'
+      path: '/dev/kit'
+      fullPath: '/dev/kit'
+      preLoaderRoute: typeof DevKitRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/shop/': {
@@ -852,6 +872,7 @@ const rootRouteChildren: RootRouteChildren = {
   PrivacyRoute: PrivacyRoute,
   ShopRoute: ShopRouteWithChildren,
   AuthSplatRoute: AuthSplatRoute,
+  DevKitRoute: DevKitRoute,
   WebhooksComplianceRoute: WebhooksComplianceRoute,
   WebhooksOrdersRoute: WebhooksOrdersRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,

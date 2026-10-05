@@ -398,24 +398,22 @@ const rowLink = (page: Page, orderName: string) =>
   });
 
 /**
- * The row for one order: the innermost `s-box` holding that order's
- * link. `.last()`, not `.first()`: the state's list container is an `s-box`
- * around every row and so matches the same filter, and it is the ancestor, so
- * document order puts it first.
+ * The row for one order: the resource row (`ResourceRow` in
+ * `src/components/screen/`) holding that order's link.
  */
 const card = (page: Page, orderName: string) =>
   page
-    .locator("s-box")
-    .filter({ has: rowLink(page, orderName) })
-    .last();
+    .locator("[data-part=resource-row]")
+    .filter({ has: rowLink(page, orderName) });
 
 /**
- * A row's lines, top to bottom, as a reader sees them: each line is a few
- * elements (a name, the team, the state), so a line is read by its whole
- * text rather than by one element's.
+ * A row's lines, top to bottom, as a reader sees them: line one (the order
+ * and the piece), then each line of the body. Each line is a few elements (a
+ * name, the team, the state), so a line is read by its whole text rather
+ * than by one element's.
  */
 const rowLines = (page: Page, orderName: string) =>
-  card(page, orderName).locator(".run-line");
+  card(page, orderName).locator("[data-part=row-head], [data-part=row-line]");
 
 /**
  * A row's kebab: every verb a row offers is inside the menu it opens, which
@@ -551,7 +549,7 @@ test("a run's row opens the workflow page and its menu does not", async ({
   /* The row body, not the order number: the number is plain text now and the
      whole row is the target. */
   await rowLink(page, RING_ORDER).click();
-  await expect(page.locator(`s-page[heading="${RING_ITEM}"]`)).toBeVisible();
+  await expect(page.locator(`s-page[heading="${RING_ORDER}"]`)).toBeVisible();
 
   await page.goBack();
   /* Wait for the workflows list itself, not for the row's text: until Back
@@ -816,14 +814,13 @@ test("line one shows the variant title", async ({ browser }) => {
   const config = seedConfig();
   await seedRuns(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
   const mate = await openRuns(browser, config, mateState, "ready");
-  await expect(
-    card(mate, BOX_ORDER).getByText(`E2E Gift Box · ${BOX_VARIANT}`, {
-      exact: true,
-    }),
-  ).toBeVisible();
-  await expect(
-    card(mate, RING_ORDER).getByText(RING_ITEM, { exact: true }),
-  ).toBeVisible();
+  /* The order number leads line one, then the piece. */
+  await expect(rowLines(mate, BOX_ORDER).first()).toHaveText(
+    `${BOX_ORDER} · E2E Gift Box · ${BOX_VARIANT}`,
+  );
+  await expect(rowLines(mate, RING_ORDER).first()).toHaveText(
+    `${RING_ORDER} · ${RING_ITEM}`,
+  );
 });
 
 /**
@@ -851,7 +848,7 @@ test("a parallel row has a line per task, each with its own state", async ({
   await rowAction(mate, SPLIT_ORDER, "Start · Pack");
   await selectState(mate, "started_by_you", STARTED_BY_YOU);
   await expect(rowLines(mate, SPLIT_ORDER)).toHaveText([
-    "E2E Split ×2",
+    `${SPLIT_ORDER} · E2E Split ×2`,
     `Cut (${CUT_TEAM}) · ${STARTED_BY_MAKER}`,
     `Pack (${PACK_TEAM})`,
     "E2E Runs Split · Step 1 of 1",
@@ -875,7 +872,7 @@ test("under a search every task line prints its state", async ({ browser }) => {
   await search.fill(RING_ORDER.slice(1));
   await search.press("Enter");
   await expect(rowLines(mate, RING_ORDER)).toHaveText([
-    RING_ITEM,
+    `${RING_ORDER} · ${RING_ITEM}`,
     `Cut (${CUT_TEAM}) · ${READY}`,
     RING_RECIPE,
   ]);
@@ -1142,7 +1139,7 @@ test("the bar's mark returns to the screen the member left", async ({
   const team = teamParam(page);
 
   await rowLink(page, RING_ORDER).click();
-  await expect(page.locator(`s-page[heading="${RING_ITEM}"]`)).toBeVisible();
+  await expect(page.locator(`s-page[heading="${RING_ORDER}"]`)).toBeVisible();
   await expect(page).toHaveURL(/[?&]state=ready(?:&|$)/u);
   await expect(page).toHaveURL(
     new RegExp(`[?&]team=${String(team)}(&|$)`, "u"),
@@ -1162,7 +1159,7 @@ test("the bar's mark returns to the screen the member left", async ({
   await expectLeftScreen();
 
   await rowLink(page, RING_ORDER).click();
-  await expect(page.locator(`s-page[heading="${RING_ITEM}"]`)).toBeVisible();
+  await expect(page.locator(`s-page[heading="${RING_ORDER}"]`)).toBeVisible();
   await page.goBack();
   await expectLeftScreen();
 });
@@ -1251,7 +1248,7 @@ test("undo puts a done task back to Ready", async ({ browser }) => {
      entry says "by you" rather than the reader's own address, which on this
      state is the longest and least informative text on the page. */
   await selectState(page, "done", DONE_OR_CLOSED);
-  await expect(page.getByText("by you at")).toBeVisible();
+  await expect(page.getByText("by you · ")).toBeVisible();
 
   await rowAction(page, RING_ORDER, "Undo");
   await expect(page.getByText(EMPTY_DONE)).toBeVisible();
@@ -1306,7 +1303,7 @@ test("a done run's workflow page offers Undo on its last task", async ({
   await seedRuns(config, { cutMembers: [MAKER], keepIdentities: true });
   const page = await openRuns(browser, config, makerState, "ready");
   await rowLink(page, RING_ORDER).click();
-  await expect(page.locator(`s-page[heading="${RING_ITEM}"]`)).toBeVisible();
+  await expect(page.locator(`s-page[heading="${RING_ORDER}"]`)).toBeVisible();
 
   await clickWhenEnabled(
     page.getByRole("button", { name: "Done", exact: true }),
@@ -1378,7 +1375,7 @@ test("a blocked undo offers nothing and explains nothing, on the row or the work
 
   await expect(rowMenu(maker, BAND_ORDER)).toHaveCount(0);
   await rowLink(maker, BAND_ORDER).click();
-  await expect(maker.locator(`s-page[heading="${BAND_ITEM}"]`)).toBeVisible();
+  await expect(maker.locator(`s-page[heading="${BAND_ORDER}"]`)).toBeVisible();
   /* The blocker itself is the explanation: Polish is on the page, under the
      task that cannot be undone, with the badge that says why. */
   await expect(maker.getByText(`${PACK_TEAM} · ${MATE} · since`)).toBeVisible();
@@ -1411,7 +1408,7 @@ test("the run note opens in a modal and the task cards carry no note button", as
   await seedRuns(config, { cutMembers: [MAKER], keepIdentities: true });
   const page = await openRuns(browser, config, makerState, "ready");
   await rowLink(page, RING_ORDER).click();
-  await expect(page.locator(`s-page[heading="${RING_ITEM}"]`)).toBeVisible();
+  await expect(page.locator(`s-page[heading="${RING_ORDER}"]`)).toBeVisible();
 
   /* The task sits under its `Step 1` label and its header line is the task
      alone; the team is the line under it, and the badge's word appears
@@ -1484,7 +1481,7 @@ test("the workflow page shows the task history and takes a note, a block, and Do
   });
   const page = await openRuns(browser, config, makerState, "ready");
   await rowLink(page, BAND_ORDER).click();
-  await expect(page.locator(`s-page[heading="${BAND_ITEM}"]`)).toBeVisible();
+  await expect(page.locator(`s-page[heading="${BAND_ORDER}"]`)).toBeVisible();
   await expect(page.getByText("Quantity 1", { exact: true })).toBeVisible();
 
   const noteModal = page.locator("s-modal#run-note");
@@ -1507,9 +1504,9 @@ test("the workflow page shows the task history and takes a note, a block, and Do
   await clickWhenEnabled(
     page.getByRole("button", { name: "Block", exact: true }),
   );
-  await expect(
-    blockModal.getByText(`Block ${BAND_ITEM} on ${BAND_ORDER}?`),
-  ).toBeVisible();
+  /* The heading names the order and the body's first line the item. */
+  await expect(blockModal.getByText(`Block ${BAND_ORDER}?`)).toBeVisible();
+  await expect(blockModal.getByText(BAND_ITEM, { exact: true })).toBeVisible();
   await blockModal
     .getByRole("textbox", { name: "Reason" })
     .fill("Waiting on stones");
@@ -1561,7 +1558,7 @@ test("the workflow page shows the task history and takes a note, a block, and Do
   ).toHaveCount(0);
   await page.keyboard.press("Escape");
   await rowLink(page, BAND_ORDER).click();
-  await expect(page.locator(`s-page[heading="${BAND_ITEM}"]`)).toBeVisible();
+  await expect(page.locator(`s-page[heading="${BAND_ORDER}"]`)).toBeVisible();
 
   await clickWhenEnabled(page.getByRole("button", { name: "Unblock" }));
   await clickWhenEnabled(
@@ -1694,7 +1691,7 @@ const openPair = async (browser: Browser) => {
   await seedPair(config);
   const page = await openRuns(browser, config, makerState, "ready");
   await rowLink(page, PAIR_ORDER).click();
-  await expect(page.locator(`s-page[heading="${PAIR_ITEM}"]`)).toBeVisible();
+  await expect(page.locator(`s-page[heading="${PAIR_ORDER}"]`)).toBeVisible();
   const boxes = page
     .locator('s-stack[accessibilityRole="ordered-list"]')
     .locator('s-box[borderWidth="base"]');
@@ -1783,10 +1780,10 @@ test("a merchant's completion reads as Merchant on the workflows list and the wo
 
   await expect(stateCount(page, DONE_OR_CLOSED, 1)).toBeVisible();
   await selectState(page, "done", DONE_OR_CLOSED);
-  await expect(page.getByText("by Merchant at")).toBeVisible();
+  await expect(page.getByText("by Merchant · ")).toBeVisible();
 
   await rowLink(page, BAND_ORDER).click();
-  await expect(page.locator(`s-page[heading="${BAND_ITEM}"]`)).toBeVisible();
+  await expect(page.locator(`s-page[heading="${BAND_ORDER}"]`)).toBeVisible();
   await expect(page.getByText(`${CUT_TEAM} · Merchant`)).toBeVisible();
 
   /* The maker takes it back, and Cut is ready again. Start is offered because
@@ -1798,4 +1795,142 @@ test("a merchant's completion reads as Merchant on the workflows list and the wo
   await expect(
     page.getByRole("button", { name: "Done", exact: true }),
   ).toBeVisible();
+});
+
+/**
+ * Long names on the workflows list (the text-fit rows of the parts table on
+ * `ScreenPart` in `src/lib/Screen.ts`), on a phone-width screen. A
+ * spec-local fixture: a third member whose address is 60 characters, the
+ * seed's first member, so the seed's Start and Block are theirs, and the
+ * maker reads the rows. Three members, within `membersIncluded`.
+ */
+const LONG_EMAIL =
+  "alexandra.featherstonehaugh@example-workshop-and-studios.com";
+/** 64 characters, the task name cap (`NAME_MAX_LENGTH`). */
+const TASK_64 =
+  "Condition and burnish the edges against the customer's reference";
+const LONG_REASON =
+  "The crest is a scan of a wax seal and the fine lines fill in at this depth; we have tried three passes and it still reads as a smudge, so we are waiting on vector artwork from the customer.";
+const LONG_ORDER = "#9406";
+/** 255 characters, Shopify's title limit. */
+const TITLE_255 =
+  "E2E Long engraved cutting board, extra large end-grain walnut with a hand-cut juice groove, rounded finger grips, a personalized inscription across the front face, a food-safe oil finish, and gift wrapping for the day it is given, packed in a gift box now";
+const SAME_ORDER = "#9407";
+
+const seedLong = (config: SeedConfig) =>
+  seedMembers(
+    config,
+    [LONG_EMAIL, MAKER, MATE],
+    [{ name: CUT_TEAM, members: [LONG_EMAIL, MAKER, MATE] }],
+    [
+      {
+        name: "E2E Runs Long",
+        tag: "e2e-runs-long",
+        tasks: [{ name: TASK_64, team: CUT_TEAM }],
+      },
+      {
+        /* The item's title in other case: still the same name. */
+        name: "e2e same item",
+        tag: "e2e-runs-same",
+        tasks: [{ name: CUT_TASK, team: CUT_TEAM }],
+      },
+    ],
+    [
+      {
+        n: 9406,
+        started: true,
+        lineItems: [{ title: TITLE_255, quantity: 1, tags: ["e2e-runs-long"] }],
+      },
+      {
+        n: 9407,
+        blocked: LONG_REASON,
+        lineItems: [
+          { title: "E2E Same Item", quantity: 1, tags: ["e2e-runs-same"] },
+        ],
+      },
+    ],
+    { keepIdentities: true },
+  );
+
+/** The maker's workflows list at 375px, on `state`, after the long fixture. */
+const openLong = async (browser: Browser, state: string) => {
+  await seedLong(seedConfig());
+  const page = await openRuns(browser, seedConfig(), makerState, state);
+  await page.setViewportSize({ width: 375, height: 800 });
+  return page;
+};
+
+/** Whether an element's content is wider than its box. */
+const overflows = (locator: Locator) =>
+  locator.evaluate((element) => element.scrollWidth > element.clientWidth);
+
+test("a 64-character task name is shown whole on the workflows list", async ({
+  browser,
+}) => {
+  const page = await openLong(browser, "started_by_others");
+  const line = rowLines(page, LONG_ORDER).nth(1);
+  await expect(line).toHaveText(`${TASK_64} · Started by ${LONG_EMAIL}`);
+  expect(await overflows(line)).toBe(false);
+});
+
+test("a block reason shows two lines on the workflows list", async ({
+  browser,
+}) => {
+  const page = await openLong(browser, "blocked");
+  const reason = card(page, SAME_ORDER).locator("s-paragraph");
+  await expect(reason).toHaveText(LONG_REASON);
+  /* The clamp is inside the paragraph's shadow root: two line heights tall,
+     and the rest of the reason clipped. */
+  const lines = await reason.evaluate((element) => {
+    const inner = element.shadowRoot?.firstElementChild;
+    if (!(inner instanceof HTMLElement)) return null;
+    const lineHeight = Number(
+      getComputedStyle(inner).lineHeight.replace("px", ""),
+    );
+    return {
+      shown: Math.round(inner.clientHeight / lineHeight),
+      clipped: inner.scrollHeight > inner.clientHeight + 1,
+    };
+  });
+  expect(lines).toEqual({ shown: 2, clipped: true });
+});
+
+test("an email in Started by does not widen the row", async ({ browser }) => {
+  const page = await openLong(browser, "started_by_others");
+  await expect(rowLink(page, LONG_ORDER)).toBeVisible();
+  expect(await overflows(card(page, LONG_ORDER))).toBe(false);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+});
+
+test("the workflow name is printed only when it differs from the item title", async ({
+  browser,
+}) => {
+  const page = await openLong(browser, "started_by_others");
+  await expect(rowLines(page, LONG_ORDER).last()).toHaveText(
+    "E2E Runs Long · Step 1 of 1",
+  );
+  await selectState(page, "blocked", BLOCKED);
+  await expect(rowLines(page, SAME_ORDER).last()).toHaveText("Step 1 of 1");
+});
+
+test("the member's workflow page is headed by the order and prints the item title whole", async ({
+  browser,
+}) => {
+  const page = await openLong(browser, "started_by_others");
+  await rowLink(page, LONG_ORDER).click();
+  await expect(page.locator(`s-page[heading="${LONG_ORDER}"]`)).toBeVisible();
+  const title = page.getByRole("heading", { name: TITLE_255, exact: true });
+  await expect(title).toBeVisible();
+  /* Whole: no clamp clips it inside its shadow root. */
+  expect(
+    await title.evaluate((element) => {
+      const host = element.closest("s-heading") ?? element;
+      const inner = host.shadowRoot?.firstElementChild ?? host;
+      return inner.scrollHeight <= inner.clientHeight + 1;
+    }),
+  ).toBe(true);
 });

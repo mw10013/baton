@@ -3,6 +3,12 @@ import * as React from "react";
 import { Match } from "effect";
 
 import { LocalDateTime } from "@/components/LocalDateTime";
+import { ClampedProse } from "@/components/screen/ClampedProse";
+import { Inline } from "@/components/screen/Inline";
+import { Lines } from "@/components/screen/Lines";
+import { Pairs } from "@/components/screen/Pairs";
+import { Prose } from "@/components/screen/Prose";
+import { Token } from "@/components/screen/Token";
 import * as Domain from "@/lib/Domain";
 import { formatNumber } from "@/lib/format";
 
@@ -67,30 +73,6 @@ export function ClosedLine({
   );
 }
 
-/**
- * Free text exactly as a member typed it: `.member-prose` in `styles.css`
- * keeps the line breaks and says why. A wrapper rather than a class on the
- * Polaris element because `class` is not in these components' JSX props;
- * `white-space` inherits, so the text inside is governed either way.
- */
-export function Prose({
-  children,
-  color,
-}: {
-  readonly children: React.ReactNode;
-  readonly color?: "subdued";
-}) {
-  return (
-    <div className="member-prose">
-      {color === undefined ? (
-        <s-paragraph>{children}</s-paragraph>
-      ) : (
-        <s-text color={color}>{children}</s-text>
-      )}
-    </div>
-  );
-}
-
 /** The person behind a block, as the banner's attribution line names them ("m2@m.com · 3m ago", "Merchant · 3m ago"). */
 export const blockedByLabel = (run: {
   readonly blockedBy: Domain.ActorDisplay | null;
@@ -99,11 +81,11 @@ export const blockedByLabel = (run: {
 /**
  * An item's properties as label / value rows rather than one joined string:
  * "Engraving: The Millers · est. 2019" is the thing the worker will make and
- * deserves a line of its own. A two-column `s-grid` keeps labels aligned; at
- * phone width the value column still wraps inside its cell.
+ * deserves a line of its own. {@link Pairs} keeps labels aligned; at phone
+ * width the value column still wraps inside its cell, and a long key wraps
+ * rather than overflow.
  *
- * The key is subdued and the value strong, so a key never reads as a label of
- * Baton's own. A null value is drawn as an em dash rather than hidden or left
+ * The key is subdued, so a key never reads as a label of Baton's own. A null value is drawn as an em dash rather than hidden or left
  * empty: an empty cell leaves the key standing alone, where it reads as a
  * heading, and hiding the row loses "the customer left the gift note blank",
  * which the maker needs when the product offers one.
@@ -121,14 +103,13 @@ export function LineItemProperties({
 }) {
   if (properties.length === 0) return null;
   return (
-    <s-grid gridTemplateColumns="max-content 1fr" gap="small-500 base">
-      {properties.map(({ key, value }) => (
-        <React.Fragment key={key}>
-          <s-text color="subdued">{key}</s-text>
-          <s-text type="strong">{value ?? "\u2014"}</s-text>
-        </React.Fragment>
-      ))}
-    </s-grid>
+    <Pairs
+      pairs={properties.map(({ key, value }) => ({
+        key,
+        label: key,
+        value: value ?? "\u2014",
+      }))}
+    />
   );
 }
 
@@ -140,91 +121,22 @@ export function LineItemProperties({
  */
 export function RunItem({ run }: { readonly run: Domain.Run }) {
   return (
-    <s-stack gap="small-500">
+    <Lines>
+      {/* The semantic `<strong>` only: the line sits under the page heading,
+          and weight here would compete with it. */}
       <s-text type="strong">
         {`${run.variantTitle === null ? "" : `${run.variantTitle} · `}Quantity ${formatNumber(run.quantity)}`}
       </s-text>
-      {run.sku !== null && <s-text color="subdued">{`SKU ${run.sku}`}</s-text>}
+      {run.sku !== null && <Token color="subdued">{`SKU ${run.sku}`}</Token>}
       <LineItemProperties properties={run.lineItemProperties} />
-    </s-stack>
-  );
-}
-
-/**
- * Prose cut to `lines` lines, with a Show more / Show less toggle only when
- * the cut hides something. A block reason may run to
- * {@link Domain.BLOCK_REASON_MAX_LENGTH} characters, and at full length the
- * banner holding it is taller than the rest of the card; typical reasons fit
- * in one or two lines and never see the toggle.
- *
- * Whether the cut hides anything depends on the width, so it is measured, not
- * guessed from the character count: a count threshold either clamps a reason
- * that fits (a Show more that reveals nothing) or leaves one uncut that does
- * not. `s-paragraph`'s `lineClamp` clamps an element inside its open shadow
- * root, rendered synchronously on connect, and that element's `scrollHeight`
- * exceeding its `clientHeight` is the overflow. If the element is not there
- * (Polaris changed its markup) the text renders in full rather than clipped
- * with no way to expand it.
- *
- * The caller keys it on the text, so a new reason or note starts collapsed and is
- * measured afresh: a text that goes from three lines to four keeps the same
- * clamped height, and no resize would fire to say it now overflows.
- */
-export function ClampedProse({
-  lines,
-  children,
-}: {
-  readonly lines: number;
-  readonly children: string;
-}) {
-  const ref = React.useRef<React.ComponentRef<"s-paragraph">>(null);
-  const [expanded, setExpanded] = React.useState(false);
-  const [overflow, setOverflow] = React.useState<
-    "unknown" | "none" | "clipped" | "unmeasurable"
-  >("unknown");
-  React.useLayoutEffect(() => {
-    const inner = ref.current?.shadowRoot?.firstElementChild;
-    const observer = new ResizeObserver(() => {
-      if (inner instanceof HTMLElement && !expanded)
-        setOverflow(
-          inner.scrollHeight > inner.clientHeight + 1 ? "clipped" : "none",
-        );
-    });
-    if (inner instanceof HTMLElement) observer.observe(inner);
-    else setOverflow("unmeasurable");
-    return () => {
-      observer.disconnect();
-    };
-  }, [expanded]);
-  const clamp = !expanded && overflow !== "unmeasurable";
-  return (
-    <s-stack gap="small-500">
-      <div className="member-prose">
-        <s-paragraph ref={ref} lineClamp={clamp ? lines : undefined}>
-          {children}
-        </s-paragraph>
-      </div>
-      {/* A link, not a tertiary button: the button's inline padding sets
-          it off from the text's left edge, where a link lines up. */}
-      {(expanded || overflow === "clipped") && (
-        <s-text>
-          <s-link
-            onClick={() => {
-              setExpanded((current) => !current);
-            }}
-          >
-            {expanded ? "Show less" : "Show more"}
-          </s-link>
-        </s-text>
-      )}
-    </s-stack>
+    </Lines>
   );
 }
 
 /**
  * The one banner every screen shows for a blocked run
  * ({@link Domain.runIsBlocked}): heading "Blocked", body the reason as typed
- * ({@link ClampedProse}, three lines), and under both a subdued line naming
+ * ({@link ClampedProse}), and under both a subdued line naming
  * who and when. Critical: the work has stopped and someone has to act. The
  * reason is the blocker's words and is not edited: a new reason is Unblock,
  * then Block.
@@ -250,17 +162,15 @@ export function BlockBanner({
   const actor = blockedByLabel(run);
   return (
     <s-banner tone="critical" heading={Domain.RUN_STATE_LABEL.blocked}>
-      <s-stack gap="small-500">
+      <Lines>
         {run.blockReason !== null && (
-          <ClampedProse key={run.blockReason} lines={3}>
-            {run.blockReason}
-          </ClampedProse>
+          <ClampedProse key={run.blockReason}>{run.blockReason}</ClampedProse>
         )}
         <s-text color="subdued">
           {actor === null ? "" : `${actor} · `}
           <LocalDateTime value={run.blockedAt} format="relative" />
         </s-text>
-      </s-stack>
+      </Lines>
       {actions}
     </s-banner>
   );
@@ -291,15 +201,15 @@ export function RunNote({
   const hasNote = note !== null && note.length > 0;
   if (!hasNote && !canEdit) return null;
   return (
-    <s-stack gap="small-300">
+    <Lines>
       {hasNote && <Prose>{note}</Prose>}
       {canEdit && (
-        <s-stack direction="inline">
+        <Inline>
           <s-button variant="secondary" disabled={pending} onClick={onEdit}>
             {Domain.VERB_LABEL.note.member}
           </s-button>
-        </s-stack>
+        </Inline>
       )}
-    </s-stack>
+    </Lines>
   );
 }

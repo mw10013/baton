@@ -1,32 +1,18 @@
 import { useMutation } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 
-import { BatonMark } from "@/components/BatonMark";
+import { Token } from "@/components/screen/Token";
+import { TopBar } from "@/components/screen/TopBar";
 import { signOutFn } from "@/lib/memberSignOut";
 
 /**
  * The member area's one piece of chrome, above `s-page` on every
- * `/shop/$shop/*` screen: the Baton mark ({@link BatonMark}), the
- * shop, and Sign out. It answers "where am I and who am I signed in as" on a
- * phone page that scrolls its heading away at once. Polaris `s-page` has no
- * slot for chrome above the heading, so this is a plain bordered `div`
- * (`.member-bar` in `styles.css`) holding an inline `s-stack`. Hidden in
- * print (`.print-hide`): a printed workflow page is a job ticket, and the ticket
- * needs no sign-out button.
+ * `/shop/$shop/*` screen: the Baton mark, the shop, and Sign out, laid out
+ * by {@link TopBar}. It answers "where am I and who am I signed in as" on a
+ * phone page that scrolls its heading away at once.
  *
- * **The mark is home.** The link around it goes to `/shop/$shop/workflows`,
- * the workflows list, and it lands on the list the member left — same state, same team, same
- * depth — because the layout's middleware puts their context on every link
- * built under `/shop/$shop` (`MemberSearch` in `src/routes/shop.$shop.tsx`).
- * This bar is the only chrome the member area has, so the mark is the only
- * standing way home and is styled to read as one: `.member-bar-home` in
- * `styles.css` rings the mark on hover and focus. The shop domain — the only
- * name Baton stores for the shop — is inside the same link rather than beside
- * it, because the mark alone is 24 px and Polaris's minimum touch target is
- * 44; it stays plain, so the mark is what reads as the control, and it is the
- * link's accessible name, so a screen reader hears which shop rather than a
- * label the mark already means.
+ * **The mark is home** ({@link TopBar} says how): the bar is the only
+ * chrome the member area has, so the mark is the only standing way home.
  *
  * `email` is the "who am I" half, and it lives here rather than under a page
  * heading so it is answered on every screen at the cost of one line on none
@@ -47,25 +33,11 @@ export function MemberBar({
   const signOut = useServerFn(signOutFn);
   const signOutMutation = useMutation({ mutationFn: () => signOut({}) });
   return (
-    <div className="member-bar print-hide">
-      <s-stack
-        direction="inline"
-        gap="small-300"
-        alignItems="center"
-        justifyContent="space-between"
-      >
-        <Link
-          to="/shop/$shop/workflows"
-          params={{ shop }}
-          className="member-bar-home"
-        >
-          <s-stack direction="inline" gap="small-300" alignItems="center">
-            <BatonMark />
-            <s-text type="strong">{shop}</s-text>
-          </s-stack>
-        </Link>
-        <s-stack direction="inline" gap="small-300" alignItems="center">
-          {email !== undefined && <s-text color="subdued">{email}</s-text>}
+    <TopBar
+      shop={shop}
+      end={
+        <>
+          {email !== undefined && <Token color="subdued">{email}</Token>}
           <s-button
             variant="tertiary"
             {...(signOutMutation.isPending ? { loading: true } : {})}
@@ -75,8 +47,8 @@ export function MemberBar({
           >
             Sign out
           </s-button>
-        </s-stack>
-      </s-stack>
-    </div>
+        </>
+      }
+    />
   );
 }

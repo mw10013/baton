@@ -1,5 +1,3 @@
-import type { ReactNode } from "react";
-
 import { createFileRoute } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { Effect, Match, Schema } from "effect";
@@ -7,6 +5,10 @@ import { Effect, Match, Schema } from "effect";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { ManagePlanButton } from "@/components/ManagePlanButton";
 import { QuotaBanners } from "@/components/QuotaBanners";
+import { Inline } from "@/components/screen/Inline";
+import { MeterTile } from "@/components/screen/MeterTile";
+import { Things } from "@/components/screen/Things";
+import { Tiles } from "@/components/screen/Tiles";
 import * as Domain from "@/lib/Domain";
 import { formatNumber } from "@/lib/format";
 import { Repository } from "@/lib/Repository";
@@ -81,53 +83,6 @@ export const Route = createFileRoute("/app/")({
 });
 
 /**
- * One dimension of the plan: what the tier grants as the denominator, what the
- * shop has as the numerator, and a line saying what passing the denominator
- * means.
- *
- * `limit` is the entitlement and never the count, so the bar measures the same
- * thing at every usage. HTML clamps `value` to `max`, so a shop past its
- * allowance renders a full bar and never overflows. The meter this is ported
- * from (`refs/bang/src/routes/app.index.tsx`, `CapacityTile`'s ancestor) takes
- * `Math.max(limit, count)` instead, which rescales the bar back to a fraction
- * at the point the shop passed the limit. Each tile says what passing its
- * limit means, so `detail` is the tile's own.
- *
- * The headline carries both numbers because the bar shows only a ratio.
- */
-function CapacityTile({
-  heading,
-  href,
-  headline,
-  count,
-  limit,
-  detail,
-}: {
-  readonly heading: string;
-  readonly href: string;
-  readonly headline: string;
-  readonly count: number;
-  readonly limit: number;
-  readonly detail: ReactNode;
-}) {
-  return (
-    <s-clickable href={href} padding="base" border="base" borderRadius="base">
-      <s-grid gap="small-200">
-        <s-heading>{heading}</s-heading>
-        <s-heading>{headline}</s-heading>
-        <progress
-          className="capacity-meter"
-          aria-label={heading}
-          max={limit}
-          value={count}
-        />
-        <s-paragraph color="subdued">{detail}</s-paragraph>
-      </s-grid>
-    </s-clickable>
-  );
-}
-
-/**
  * Home is the shop's standing against its plan, as two meters and, if the
  * merchant has cancelled, the date it ends.
  *
@@ -166,17 +121,11 @@ function RouteComponent() {
     <s-page heading="Baton" inlineSize="large">
       <QuotaBanners usage={usage} />
       <s-section heading="Usage and capacity">
-        <s-stack gap="base">
-          {/* `auto-fit` down to 300px: two tiles side by side where the
-              embedded pane is wide enough for both, one column where it is
-              not, with no breakpoint to keep in sync. */}
-          <s-grid
-            gridTemplateColumns="repeat(auto-fit, minmax(300px, 1fr))"
-            gap="base"
-          >
+        <Things>
+          <Tiles>
             {/* Used against included, in that order: the number a merchant is
                 looking for is what they have spent, not what they were sold. */}
-            <CapacityTile
+            <MeterTile
               heading="Orders this billing cycle"
               href="/app/orders"
               headline={`${formatNumber(usage.ordersThisCycle)} of ${formatNumber(entitlements.ordersPerCycle)} included`}
@@ -191,7 +140,7 @@ function RouteComponent() {
                 </>
               }
             />
-            <CapacityTile
+            <MeterTile
               heading="Members"
               href="/app/members"
               headline={`${formatNumber(memberCount)} ${memberCount === 1 ? "member" : "members"}, ${formatNumber(entitlements.membersIncluded)} included`}
@@ -203,11 +152,11 @@ function RouteComponent() {
                   : "Members sign in with their email."
               }
             />
-          </s-grid>
-          <s-stack alignItems="start">
+          </Tiles>
+          <Inline>
             <ManagePlanButton url={managePlanUrl} />
-          </s-stack>
-        </s-stack>
+          </Inline>
+        </Things>
       </s-section>
     </s-page>
   );

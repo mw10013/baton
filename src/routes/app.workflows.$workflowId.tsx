@@ -12,6 +12,10 @@ import { createServerFn } from "@tanstack/react-start";
 import { Effect, Schema } from "effect";
 
 import { LocalDateTime } from "@/components/LocalDateTime";
+import { Lines } from "@/components/screen/Lines";
+import { Panel } from "@/components/screen/Panel";
+import { Things } from "@/components/screen/Things";
+import { Token } from "@/components/screen/Token";
 import { StepFlow, TeamFaultBanners } from "@/components/WorkflowSteps";
 import {
   switchResultMessage,
@@ -297,7 +301,6 @@ function RouteComponent() {
           )}
         </>
       )}
-      <s-badge slot="accessory">{workflow.tag}</s-badge>
       <s-button
         slot="secondary-actions"
         icon="edit"
@@ -347,7 +350,7 @@ function RouteComponent() {
       </s-paragraph>
 
       <s-section accessibilityLabel="Workflow">
-        <s-stack gap="base">
+        <Things>
           {banner !== null && <s-banner tone="critical">{banner}</s-banner>}
           {showSwitch && !on && blocker !== null && (
             <s-banner tone="info" heading="Turn on is unavailable">
@@ -363,16 +366,12 @@ function RouteComponent() {
           <StepFlow
             tasks={tasks}
             trigger={
-              <s-box
-                padding="base"
-                border="base subdued solid"
-                borderRadius="base"
-              >
-                <s-stack gap="small-300">
-                  <s-text type="strong">Tag</s-text>
-                  <s-text color="subdued">
-                    {itemTriggerLine(workflow.tag)}
-                  </s-text>
+              <Panel kind="card">
+                <Lines>
+                  <s-heading>Tag</s-heading>
+                  {/* The tag's home: printed whole, wrapping anywhere (a
+                      token), where a badge or chip would cut it. */}
+                  <Token color="subdued">{itemTriggerLine(workflow.tag)}</Token>
                   {/* The tag is not drafted, so this is the workflow's own and the write lands immediately. */}
                   <WorkflowTag.WorkflowTag
                     tag={workflow.tag}
@@ -388,11 +387,11 @@ function RouteComponent() {
                         })
                     }
                   />
-                </s-stack>
-              </s-box>
+                </Lines>
+              </Panel>
             }
           />
-        </s-stack>
+        </Things>
       </s-section>
 
       <s-modal
@@ -402,7 +401,7 @@ function RouteComponent() {
           setNameError(null);
         }}
       >
-        <s-stack gap="small-300">
+        <Lines>
           <s-text-field
             label={RENAME_FIELD_LABEL}
             value={name}
@@ -418,7 +417,7 @@ function RouteComponent() {
           <s-text color="subdued">
             {`${String(name.length)}/${String(Domain.NAME_MAX_LENGTH)}`}
           </s-text>
-        </s-stack>
+        </Lines>
         <s-button
           slot="secondary-actions"
           commandFor={RENAME_MODAL}
@@ -449,7 +448,7 @@ function RouteComponent() {
            in `app.members.tsx` did exactly that). */
         onAfterHide={seedDuplicateForm}
       >
-        <s-stack gap="base">
+        <Things>
           <s-text-field
             label="Name"
             value={copy.name}
@@ -478,7 +477,7 @@ function RouteComponent() {
               setCopyTagError(null);
             }}
           />
-        </s-stack>
+        </Things>
         <s-button
           slot="secondary-actions"
           commandFor={DUPLICATE_MODAL}

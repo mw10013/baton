@@ -4,6 +4,7 @@ import { Effect, Schema } from "effect";
 
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { PlanCache } from "@/components/PlanCache";
+import { IndexSection } from "@/components/screen/IndexSection";
 import { adminServerFnMiddleware } from "@/lib/AdminServerFnMiddleware";
 import * as Domain from "@/lib/Domain";
 import { Repository } from "@/lib/Repository";
@@ -80,7 +81,7 @@ function RouteComponent() {
       >
         Admin
       </s-link>
-      <s-section padding="none" accessibilityLabel="Shops table">
+      <IndexSection label="Shops table">
         <s-table
           paginate={page.hasPreviousPage || page.hasNextPage}
           hasPreviousPage={page.hasPreviousPage}
@@ -192,7 +193,7 @@ function RouteComponent() {
             ))}
           </s-table-body>
         </s-table>
-      </s-section>
+      </IndexSection>
       {page.shopSessions.length === 0 && (
         <s-banner tone="info">No sessions.</s-banner>
       )}

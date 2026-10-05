@@ -7,6 +7,11 @@ import { Clock, Effect, Match, Option, Schema } from "effect";
 
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { PlanCache } from "@/components/PlanCache";
+import { Inline } from "@/components/screen/Inline";
+import { Lines } from "@/components/screen/Lines";
+import { Things } from "@/components/screen/Things";
+import { Tiles } from "@/components/screen/Tiles";
+import { Token } from "@/components/screen/Token";
 import { adminServerFnMiddleware } from "@/lib/AdminServerFnMiddleware";
 import { CloudflareEnv } from "@/lib/CloudflareEnv";
 import * as Domain from "@/lib/Domain";
@@ -147,18 +152,14 @@ function Field({
   readonly children?: ReactNode;
 }) {
   return (
-    <div className="admin-field">
-      <s-stack gap="small-200">
-        <s-text tone="neutral">{label}</s-text>
-        {children ?? (
-          <s-text>
-            {value === null || value === undefined || value === ""
-              ? "—"
-              : value}
-          </s-text>
-        )}
-      </s-stack>
-    </div>
+    <Lines>
+      <s-text tone="neutral">{label}</s-text>
+      {children ?? (
+        <Token>
+          {value === null || value === undefined || value === "" ? "—" : value}
+        </Token>
+      )}
+    </Lines>
   );
 }
 
@@ -255,11 +256,8 @@ function FoundShop({
       ) : null}
 
       <s-section heading="Plan" accessibilityLabel="Cached plan entry">
-        <s-stack gap="base">
-          <s-grid
-            gridTemplateColumns="repeat(auto-fit, minmax(240px, 1fr))"
-            gap="base"
-          >
+        <Things>
+          <Tiles>
             <Field label="Cached plan">
               <PlanCache plan={plan} />
             </Field>
@@ -350,32 +348,31 @@ function FoundShop({
                 )
               }
             />
-          </s-grid>
-          <s-stack alignItems="start" gap="small-200">
-            <s-button
-              variant="secondary"
-              loading={refreshing}
-              onClick={onRefresh}
-            >
-              Refresh plan
-            </s-button>
+          </Tiles>
+          <Lines>
+            <Inline>
+              <s-button
+                variant="secondary"
+                loading={refreshing}
+                onClick={onRefresh}
+              >
+                Refresh plan
+              </s-button>
+            </Inline>
             <s-paragraph color="subdued">
               Asks Shopify for the current app subscription and rewrites the
               cache. Use it when a merchant reports a subscription change that
               has not taken effect.
             </s-paragraph>
-          </s-stack>
-        </s-stack>
+          </Lines>
+        </Things>
       </s-section>
 
       <s-section
         heading="Shopify session"
         accessibilityLabel="Stored Shopify session"
       >
-        <s-grid
-          gridTemplateColumns="repeat(auto-fit, minmax(240px, 1fr))"
-          gap="base"
-        >
+        <Tiles>
           <Field label="Shop GID" value={shopSession.shopGid} />
           <Field label="Scope" value={shopSession.scope} />
           <Field label="Shop Agent ID" value={shopSession.shopAgentId} />
@@ -383,10 +380,10 @@ function FoundShop({
             {shopSession.shopAgentId === derivedShopAgentId ? (
               <s-badge tone="success">Matches</s-badge>
             ) : (
-              <s-stack gap="small-200">
+              <Lines>
                 <s-badge tone="critical">Mismatch</s-badge>
-                <s-text>{derivedShopAgentId}</s-text>
-              </s-stack>
+                <Token>{derivedShopAgentId}</Token>
+              </Lines>
             )}
           </Field>
           <Field
@@ -417,7 +414,7 @@ function FoundShop({
               {shopSession.hasRefreshToken ? "Present" : "Missing"}
             </s-badge>
           </Field>
-        </s-grid>
+        </Tiles>
       </s-section>
     </>
   );

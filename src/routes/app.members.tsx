@@ -9,6 +9,14 @@ import { Effect, Option, Schema } from "effect";
 
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { MemberTeamsFields } from "@/components/MemberTeamsFields";
+import { EmptyLine } from "@/components/screen/EmptyLine";
+import { Fields } from "@/components/screen/Fields";
+import { FilterRow } from "@/components/screen/FilterRow";
+import { IndexSection } from "@/components/screen/IndexSection";
+import { Inline } from "@/components/screen/Inline";
+import { SearchLine } from "@/components/screen/SearchLine";
+import { Things } from "@/components/screen/Things";
+import { Token } from "@/components/screen/Token";
 import * as Domain from "@/lib/Domain";
 import { fieldError, mutationErrorMessage } from "@/lib/form";
 import { Repository, RepositoryError } from "@/lib/Repository";
@@ -292,40 +300,29 @@ function RouteComponent() {
     const shown = memberTeamRows.slice(0, MAX_CHIPS);
     const overflow = memberTeamRows.length - shown.length;
     return (
-      <s-stack direction="inline" gap="small-300" alignItems="center">
+      <Inline>
         {shown.map((row) => (
           <s-chip key={row.teamId}>{row.teamName}</s-chip>
         ))}
         {overflow > 0 && (
           <s-text color="subdued">{`+${String(overflow)}`}</s-text>
         )}
-      </s-stack>
+      </Inline>
     );
   };
 
   const renderRows = () => {
     if (members.length === 0)
       return (
-        <s-box padding="base">
-          <s-grid gap="base" justifyItems="center" paddingBlock="large-400">
-            <s-grid justifyItems="center" maxInlineSize="450px" gap="base">
-              <s-stack alignItems="center" gap="small-300">
-                <s-heading>No members yet</s-heading>
-                <s-paragraph color="subdued">
-                  Members sign in with their email. Put each one on a team, or
-                  they have nothing to do.
-                </s-paragraph>
-              </s-stack>
-              {addButton(false)}
-            </s-grid>
-          </s-grid>
-        </s-box>
+        <EmptyLine heading="No members yet" action={addButton(false)}>
+          Members sign in with their email. Put each one on a team, or they have
+          nothing to do.
+        </EmptyLine>
       );
     if (rows.length === 0)
       return (
-        <s-box padding="base">
-          <s-stack gap="base" alignItems="start">
-            <s-paragraph color="subdued">No members match.</s-paragraph>
+        <EmptyLine
+          action={
             <s-button
               variant="secondary"
               onClick={() => {
@@ -334,8 +331,10 @@ function RouteComponent() {
             >
               Clear search
             </s-button>
-          </s-stack>
-        </s-box>
+          }
+        >
+          No members match.
+        </EmptyLine>
       );
     return (
       <s-table>
@@ -349,14 +348,14 @@ function RouteComponent() {
           {rows.map((member) => (
             <s-table-row key={member.id} id={member.id}>
               <s-table-cell>
-                <s-text>{member.email}</s-text>
+                <Token>{member.email}</Token>
               </s-table-cell>
               <s-table-cell>{teamsCell(member)}</s-table-cell>
               <s-table-cell>
                 <LocalDateTime value={member.createdAt} />
               </s-table-cell>
               <s-table-cell>
-                <s-stack direction="inline" gap="small-300">
+                <Inline>
                   <s-button
                     variant="tertiary"
                     onClick={() => {
@@ -377,7 +376,7 @@ function RouteComponent() {
                   >
                     Remove
                   </s-button>
-                </s-stack>
+                </Inline>
               </s-table-cell>
             </s-table-row>
           ))}
@@ -402,43 +401,49 @@ function RouteComponent() {
 
       {mutationError && <s-banner tone="critical">{mutationError}</s-banner>}
 
-      {/* `padding="none"` so the table runs edge to edge; the description
-          goes inside a padded intro box instead of a slotted heading. */}
-      <s-section padding="none" accessibilityLabel="Members">
-        {/* Only with rows: on empty the centred empty state carries this same
-            sentence, so showing both said it twice. */}
-        {members.length > 0 && (
-          <s-box padding="base" paddingBlockEnd="none">
-            <s-paragraph color="subdued">
-              Members sign in with their email. Put each one on a team, or they
-              have nothing to do.
-            </s-paragraph>
-          </s-box>
-        )}
-
-        {members.length > 0 && (
-          <s-box padding="base">
-            <s-stack gap="small-300">
-              <s-search-field
-                label="Search members by email"
-                labelAccessibilityVisibility="exclusive"
-                placeholder="Search by email"
-                value={query}
-                onInput={(event) => {
-                  setQuery(event.currentTarget.value);
-                }}
-              />
-              {trimmed !== "" && (
-                <s-paragraph color="subdued">
-                  {`Showing ${String(rows.length)} of ${String(members.length)} members.`}
-                </s-paragraph>
+      {/* The description sits in the section's head, above the search,
+          only with rows: on empty the centred empty state carries this same
+          sentence, so showing both said it twice. The search narrows the
+          loaded members as you type; while it is on, how many match and
+          Clear search sit above it ({@link SearchLine}). */}
+      <IndexSection
+        label="Members"
+        head={
+          members.length > 0 && (
+            <>
+              <s-paragraph color="subdued">
+                Members sign in with their email. Put each one on a team, or
+                they have nothing to do.
+              </s-paragraph>
+              {trimmed !== "" && rows.length > 0 && (
+                <SearchLine
+                  count={rows.length}
+                  noun={["member", "members"]}
+                  term={trimmed}
+                  onClear={() => {
+                    setQuery("");
+                  }}
+                />
               )}
-            </s-stack>
-          </s-box>
-        )}
-
+              <FilterRow
+                search={
+                  <s-search-field
+                    label="Search members by email"
+                    labelAccessibilityVisibility="exclusive"
+                    placeholder="Search by email"
+                    value={query}
+                    onInput={(event) => {
+                      setQuery(event.currentTarget.value);
+                    }}
+                  />
+                }
+              />
+            </>
+          )
+        }
+      >
         {renderRows()}
-      </s-section>
+      </IndexSection>
 
       <s-modal
         id={ADD_MODAL}
@@ -456,7 +461,7 @@ function RouteComponent() {
             void form.handleSubmit();
           }}
         >
-          <s-stack gap="base">
+          <Fields>
             <form.Field name="email">
               {(field) => (
                 <s-email-field
@@ -482,7 +487,7 @@ function RouteComponent() {
                 />
               )}
             </form.Field>
-          </s-stack>
+          </Fields>
         </form>
         <s-button
           slot="secondary-actions"
@@ -503,15 +508,24 @@ function RouteComponent() {
         </s-button>
       </s-modal>
 
-      <s-modal
-        id={EDIT_TEAMS_MODAL}
-        heading={editing === null ? "Teams" : `Teams for ${editing.email}`}
-      >
-        <MemberTeamsFields
-          teams={teams}
-          value={editingTeamIds}
-          onChange={setEditingTeamIds}
-        />
+      {/* Headed `Teams`, the member in the body: an email is an uncapped
+          token, and a modal heading is a cutting control that takes only a
+          capped value (the token row of the parts table on `ScreenPart`),
+          as a modal on an item names the order and puts the item in the
+          body (the heading row of the copy table on `CopySlot`). */}
+      <s-modal id={EDIT_TEAMS_MODAL} heading="Teams">
+        <Things>
+          {editing !== null && (
+            <s-paragraph>
+              <Token>{editing.email}</Token>
+            </s-paragraph>
+          )}
+          <MemberTeamsFields
+            teams={teams}
+            value={editingTeamIds}
+            onChange={setEditingTeamIds}
+          />
+        </Things>
         <s-button
           slot="secondary-actions"
           commandFor={EDIT_TEAMS_MODAL}

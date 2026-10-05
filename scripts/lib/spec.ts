@@ -914,11 +914,14 @@ export const checkOrderIssues = (
  * not-found `s-page` is the layout's, not a screen), and a redirect renders
  * nothing. Other route files (`admin.*`, `auth.*`, `webhooks.*`, `login*`,
  * `privacy`, `index`) are not merchant or member screens. Headings are not
- * checked: several are the record's own name. Reports each miss.
+ * checked: several are the record's own name. Every row's `template` is one
+ * of `templates` (`ScreenTemplate` in `src/lib/Screen.ts`). Reports each
+ * miss.
  */
 export const checkScreens = (
   source: string,
   routeFiles: Readonly<Record<string, string>>,
+  templates: readonly string[],
 ): readonly string[] => {
   const table = vocabularyTables(source).find((each) =>
     each.intro.startsWith("Screens."),
@@ -928,6 +931,12 @@ export const checkScreens = (
     (row) => `${(row["route file"] ?? "").replaceAll("`", "")}.tsx`,
   );
   return [
+    ...table.rows
+      .filter((row) => !templates.includes(row.template ?? ""))
+      .map(
+        (row) =>
+          `Vocabulary: Screens: ${row["spec name"] ?? ""} has template "${row.template ?? ""}"; expected one of: ${templates.join(", ")}`,
+      ),
     ...named
       .filter((file) => !(file in routeFiles))
       .map((file) => `Vocabulary: Screens: no route file ${file}`),
@@ -2497,6 +2506,114 @@ export const parseControls = (
               )
             : Result.succeed({ line, job: values[0] ?? "" });
         }),
+      ),
+  );
+
+/** The Polaris elements a parts-table row may name as its component: where Polaris has the shape, a part is Polaris's. */
+export const POLARIS_PARTS = ["s-table", "s-section", "s-text"] as const;
+
+/** One parsed row of the parts table on `ScreenPart` in `src/lib/Screen.ts`. */
+export interface PartRow {
+  readonly line: number;
+  readonly part: string;
+  readonly components: readonly string[];
+  readonly usedOn: readonly string[];
+}
+
+/**
+ * Read the parts table out of the JSDoc on `ScreenPart` in
+ * `src/lib/Screen.ts`. The header is `part | job | component | fixes | used
+ * on | never`, every cell non-empty, and:
+ *
+ * - `part` is one of `parts`, each exactly once;
+ * - `component` is one or more backticked names joined with ", ", each a
+ *   file `<name>.tsx` in `partFiles` (the basenames under
+ *   `src/components/screen/`, passed in so the test runs without a file
+ *   system) or one of {@link POLARIS_PARTS};
+ * - `used on` is one or more of `templates`, joined with ", ".
+ *
+ * Fails with a message naming the line and the offending cell.
+ */
+export const parsePartsTable = (
+  source: string,
+  parts: readonly string[],
+  templates: readonly string[],
+  partFiles: readonly string[],
+): Result.Result<readonly PartRow[], ParseError> =>
+  Result.flatMap(
+    firstTable(source, "ScreenPart", [
+      "part",
+      "job",
+      "component",
+      "fixes",
+      "used on",
+      "never",
+    ]),
+    ({ body }) =>
+      Result.flatMap(
+        Result.all(
+          body.map(({ line, text }): Result.Result<PartRow, ParseError> => {
+            const fail = (message: string) =>
+              Result.fail(
+                new ParseError({
+                  message: `ScreenPart, line ${String(line)}: ${message}`,
+                }),
+              );
+            const values = cellsOf(text);
+            if (values.length !== 6)
+              return fail(
+                `${String(values.length)} cells, expected 6: ${text}`,
+              );
+            if (values.some((cell) => cell === "")) return fail("empty cell");
+            const [part = "", , component = "", , usedOnCell = ""] = values;
+            if (!parts.includes(part))
+              return fail(
+                `unknown part "${part}"; expected one of: ${parts.join(", ")}`,
+              );
+            const components = component.split(", ");
+            const unknown = components.filter((each) => {
+              const name = /^`(?<name>[\w-]+)`$/u.exec(each)?.groups?.name;
+              return (
+                name === undefined ||
+                !(
+                  partFiles.includes(`${name}.tsx`) ||
+                  POLARIS_PARTS.some((tag) => tag === name)
+                )
+              );
+            });
+            if (unknown.length > 0)
+              return fail(
+                `component ${unknown.join(", ")} is neither a file under src/components/screen/ nor one of ${POLARIS_PARTS.join(", ")}`,
+              );
+            const usedOn = usedOnCell.split(", ");
+            const strays = usedOn.filter((each) => !templates.includes(each));
+            if (strays.length > 0)
+              return fail(
+                `used on ${strays.join(", ")}; expected template words: ${templates.join(", ")}`,
+              );
+            return Result.succeed({
+              line,
+              part,
+              components: components.map((each) => each.replaceAll("`", "")),
+              usedOn,
+            });
+          }),
+        ),
+        (rows) => {
+          const seen = rows.map((row) => row.part);
+          const missing = parts.filter((part) => !seen.includes(part));
+          const doubled = seen.filter((part, i) => seen.indexOf(part) !== i);
+          return missing.length > 0 || doubled.length > 0
+            ? Result.fail(
+                new ParseError({
+                  message: `ScreenPart: ${[
+                    ...missing.map((part) => `no row for ${part}`),
+                    ...doubled.map((part) => `two rows for ${part}`),
+                  ].join("; ")}`,
+                }),
+              )
+            : Result.succeed(rows);
+        },
       ),
   );
 

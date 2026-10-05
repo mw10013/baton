@@ -10,9 +10,15 @@ import {
 import { createServerFn } from "@tanstack/react-start";
 import { Effect, Match, Schema } from "effect";
 
-import { ListSearchField } from "@/components/ListSearchField";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { QuotaBanners } from "@/components/QuotaBanners";
+import { EmptyLine } from "@/components/screen/EmptyLine";
+import { FilterRow } from "@/components/screen/FilterRow";
+import { IndexSection } from "@/components/screen/IndexSection";
+import { Inline } from "@/components/screen/Inline";
+import { ListSearchField } from "@/components/screen/ListSearchField";
+import { SearchLine } from "@/components/screen/SearchLine";
+import { Strip } from "@/components/screen/Strip";
 import * as Domain from "@/lib/Domain";
 import { formatNumber } from "@/lib/format";
 import { adminOrderUrl, useResourceLinkTarget } from "@/lib/orderLinks";
@@ -423,19 +429,9 @@ function RouteComponent() {
    * back empty.
    */
   const emptyState = () => (
-    <s-box padding="base">
-      <s-grid gap="base" justifyItems="center" paddingBlock="large-400">
-        <s-grid justifyItems="center" maxInlineSize="450px" gap="base">
-          <s-stack alignItems="center" gap="small-300">
-            <s-heading>No open orders</s-heading>
-            <s-paragraph color="subdued">
-              {`Sync open orders to pull in what is on the bench, or wait for the next order. The sync takes the open, unfulfilled orders from the last ${String(ORDER_SYNC_WINDOW_DAYS)} days; after that, order webhooks keep them current.`}
-            </s-paragraph>
-          </s-stack>
-          {syncButton(false)}
-        </s-grid>
-      </s-grid>
-    </s-box>
+    <EmptyLine heading="No open orders" action={syncButton(false)}>
+      {`Sync open orders to pull in what is on the bench, or wait for the next order. The sync takes the open, unfulfilled orders from the last ${String(ORDER_SYNC_WINDOW_DAYS)} days; after that, order webhooks keep them current.`}
+    </EmptyLine>
   );
 
   /** The search as the screen prints it (`Domain.searchTermText`): `#1001`, or the typed words. */
@@ -447,9 +443,8 @@ function RouteComponent() {
   /**
    * The filter slot: Show, the search, then Team, labels hidden on screen
    * (the controls table's row for a filter beside a search, `Control` in
-   * `Screen.ts`). Rendered in the table's
-   * `filters` slot when there are rows, and above the empty sentence when
-   * there are none, so the controls that emptied the list stay in reach.
+   * `Screen.ts`), in a {@link FilterRow} above the table or the empty
+   * sentence, so the controls that emptied the list stay in reach.
    *
    * The selects are disabled under a search, because the read ignores them
    * (`Domain.ListOrdersInput.q`) and a filter that looks set but does
@@ -467,85 +462,69 @@ function RouteComponent() {
    * aggregate on every refresh of a live screen, which is the cost
    * `Domain.OrderCounts` is bounded to avoid.
    *
-   * In the table's slot the box adds `small-200` above and at the sides:
-   * `s-table` pads its filters slot by half the card's `base`, so without it
-   * the row sat 8px under the strip and 8px left of it, and the gap read as
-   * tight beside a filled cell. With it both states measure the same, 16px
-   * under the strip and flush with its cells.
-   *
    * No chips: both filters are selects that always show their value, so a
    * chip per chosen value would repeat it, and the select already clears it.
    */
-  const filters = (slotted: boolean) => (
-    <s-box
-      {...(slotted
-        ? {
-            slot: "filters",
-            paddingBlockStart: "small-200",
-            paddingInline: "small-200",
-          }
-        : {})}
-    >
-      <s-query-container>
-        <s-grid
-          gridTemplateColumns="@container (inline-size > 560px) 10rem 1fr 12rem, 1fr"
-          gap="small-300"
-          alignItems="end"
+  const filters = () => (
+    <FilterRow
+      main={
+        <s-select
+          label="Show"
+          labelAccessibilityVisibility="exclusive"
+          value={show ?? "open"}
+          disabled={q !== null}
+          onChange={(event) => {
+            const value = event.currentTarget.value;
+            setFilters({
+              show: SHOW.find((each) => each === value) ?? null,
+            });
+          }}
         >
-          <s-select
-            label="Show"
-            labelAccessibilityVisibility="exclusive"
-            value={show ?? "open"}
-            disabled={q !== null}
-            onChange={(event) => {
-              const value = event.currentTarget.value;
-              setFilters({
-                show: SHOW.find((each) => each === value) ?? null,
-              });
-            }}
-          >
-            {SHOW.map((each) => (
-              <s-option key={each ?? "open"} value={each ?? "open"}>
-                {Domain.ORDERS_SHOW_LABEL[each ?? "open"]}
-              </s-option>
-            ))}
-          </s-select>
-          <ListSearchField
-            value={q}
-            onSubmit={(next) => {
-              setFilters({ q: next });
-            }}
-          />
-          <s-select
-            label="Team"
-            labelAccessibilityVisibility="exclusive"
-            value={team ?? ANY_OPTION_VALUE}
-            disabled={q !== null}
-            onChange={(event) => {
-              const value = event.currentTarget.value;
-              setFilters({
-                team: data?.teams.find(({ id }) => id === value)?.id ?? null,
-              });
-            }}
-          >
-            <s-option value={ANY_OPTION_VALUE}>Any team</s-option>
-            {data?.teams.map(({ id, name }) => (
-              <s-option key={id} value={id}>
-                {name}
-              </s-option>
-            ))}
-            {/* A link that set `?team=` outlives the team it named. Without
-              this the control would read "Any team" while the list stayed
-              filtered to nothing. */}
-            {team !== null && !teamName.has(team) && (
-              <s-option disabled value={team}>
-                Deleted team
-              </s-option>
-            )}
-          </s-select>
-        </s-grid>
-      </s-query-container>
-    </s-box>
+          {SHOW.map((each) => (
+            <s-option key={each ?? "open"} value={each ?? "open"}>
+              {Domain.ORDERS_SHOW_LABEL[each ?? "open"]}
+            </s-option>
+          ))}
+        </s-select>
+      }
+      search={
+        <ListSearchField
+          value={q}
+          onSubmit={(next) => {
+            setFilters({ q: next });
+          }}
+        />
+      }
+      secondary={
+        <s-select
+          label="Team"
+          labelAccessibilityVisibility="exclusive"
+          value={team ?? ANY_OPTION_VALUE}
+          disabled={q !== null}
+          onChange={(event) => {
+            const value = event.currentTarget.value;
+            setFilters({
+              team: data?.teams.find(({ id }) => id === value)?.id ?? null,
+            });
+          }}
+        >
+          <s-option value={ANY_OPTION_VALUE}>Any team</s-option>
+          {data?.teams.map(({ id, name }) => (
+            <s-option key={id} value={id}>
+              {name}
+            </s-option>
+          ))}
+          {/* A link that set `?team=` outlives the team it named. Without
+            this the control would read "Any team" while the list stayed
+            filtered to nothing. */}
+          {team !== null && !teamName.has(team) && (
+            <s-option disabled value={team}>
+              Deleted team
+            </s-option>
+          )}
+        </s-select>
+      }
+    />
   );
 
   const renderOrders = () => {
@@ -555,48 +534,22 @@ function RouteComponent() {
      * socket, a Durable Object fault all look identical to a slow fetch, and
      * the only way to see the cause is the browser console.
      */
-    if (ordersQuery.isError)
-      return (
-        <s-box padding="base">
-          <s-banner tone="critical">
-            {ordersQuery.error instanceof Error
-              ? ordersQuery.error.message
-              : "Couldn't load orders."}
-          </s-banner>
-        </s-box>
-      );
+    if (ordersQuery.isError) return null;
     /**
-     * An empty filtered list or a search that missed: centred like
-     * `emptyState`, since a lone line in the card's corner read as leftover
-     * text rather than the answer. The search names what it did not find,
-     * because what the merchant typed is the whole question they asked, and
-     * offers Clear search (the controls table's rule for a search with
-     * nothing matching); the filter copy answers a different question and
-     * would read as a non sequitur under a search that missed.
+     * An empty filtered list or a search that missed: one sentence in the
+     * list's place ({@link EmptyLine}). The search names what it did not
+     * find, because what the merchant typed is the whole question they
+     * asked, and offers Clear search (the controls table's rule for a search
+     * with nothing matching); the filter copy answers a different question
+     * and would read as a non sequitur under a search that missed.
      */
     if (orders.length === 0 && filtered)
-      return (
-        <>
-          <s-box padding="base" paddingBlockEnd="none">
-            {filters(false)}
-          </s-box>
-          <s-box padding="base">
-            <s-grid justifyItems="center" paddingBlock="large-400">
-              <s-grid justifyItems="center" maxInlineSize="450px" gap="base">
-                {term === null ? (
-                  <s-paragraph color="subdued">
-                    {emptyText(show, team)}
-                  </s-paragraph>
-                ) : (
-                  <>
-                    <s-heading>{`No order matches ${term}`}</s-heading>
-                    <s-button onClick={clearSearch}>Clear search</s-button>
-                  </>
-                )}
-              </s-grid>
-            </s-grid>
-          </s-box>
-        </>
+      return term === null ? (
+        <EmptyLine>{emptyText(show, team)}</EmptyLine>
+      ) : (
+        <EmptyLine
+          action={<s-button onClick={clearSearch}>Clear search</s-button>}
+        >{`No order matches ${term}`}</EmptyLine>
       );
     if (orders.length === 0) return emptyState();
     return (
@@ -611,7 +564,6 @@ function RouteComponent() {
           if (next !== null) nextPage(next);
         }}
       >
-        {filters(true)}
         {/* Status and Issues are two columns because they are two facts:
             an order has one position and any number of issues. "Status" is
             right for a column, which holds exactly one value per row; the
@@ -650,9 +602,7 @@ function RouteComponent() {
                   cell's reason: emptiness is the point, and a merchant
                   scanning down the column sees the badges at once. */}
               <s-table-cell>
-                <s-stack direction="inline" gap="small-300">
-                  {issueBadges(row)}
-                </s-stack>
+                <Inline>{issueBadges(row)}</Inline>
               </s-table-cell>
               <s-table-cell>{formatNumber(row.itemUnits)}</s-table-cell>
               {/* The order in the Shopify admin, where a made order is
@@ -677,67 +627,46 @@ function RouteComponent() {
   };
 
   /**
-   * One cell of the strip, the metrics-card composition
-   * (`refs/shopify-docs/docs/api/app-home/latest/patterns/compositions/metrics-card.md`):
-   * the value's name over its count, the whole cell a radio button over the
-   * Show filter. Choosing a cell sets Show to its value, so at most one cell
-   * is chosen, and none under Fulfilled, Cancelled or All, which have no
-   * cell; the Show select names those. Each count is the list its cell
-   * opens ({@link Domain.OrderCounts}).
-   *
-   * The chosen cell is filled (`background="subdued"`). Not `aria-current`:
-   * `s-clickable` leaves it on the host, and the native button in its shadow
-   * root, which is what a screen reader reads, never gets it; the
-   * accessibility label says "selected" instead, since that label does
-   * reach the button. A count always renders, at zero if need be,
-   * so nothing on the strip appears or disappears with the data. No cell is
-   * red: the alarm colour belongs with the remedy, on the Issues badges.
+   * The strip ({@link Strip}): each cell a radio button over the Show
+   * filter. Choosing a cell sets Show to its value, so at most one cell is
+   * chosen, and none under Fulfilled, Cancelled or All, which have no cell;
+   * the Show select names those. Each count is the list its cell opens
+   * ({@link Domain.OrderCounts}). No cell is red: the alarm colour belongs
+   * with the remedy, on the Issues badges.
    */
-  const stripCell = (key: (typeof STRIP)[number]) => {
-    const label = Domain.ORDERS_SHOW_LABEL[key];
-    const n = data?.page.counts[key] ?? 0;
-    const value = key === "open" ? null : key;
-    const chosen = show === value;
-    return (
-      <s-clickable
-        key={key}
-        paddingBlock="small-400"
-        paddingInline="small-100"
-        borderRadius="base"
-        background={chosen ? "subdued" : "transparent"}
-        accessibilityLabel={`${label}, ${formatNumber(n)}${chosen ? ", selected" : ""}`}
-        onClick={() => {
-          setFilters({ show: value });
-        }}
-      >
-        <s-grid gap="small-300">
-          <s-heading>{label}</s-heading>
-          <s-text>{formatNumber(n)}</s-text>
-        </s-grid>
-      </s-clickable>
-    );
-  };
+  const strip = (
+    <Strip
+      cells={STRIP.map((key) => {
+        const value = key === "open" ? null : key;
+        return {
+          key,
+          label: Domain.ORDERS_SHOW_LABEL[key],
+          count: data?.page.counts[key] ?? 0,
+          chosen: show === value,
+          onSelect: () => {
+            setFilters({ show: value });
+          },
+        };
+      })}
+    />
+  );
 
   /**
-   * What replaces the strip under a search (`Control` in `Screen.ts`, "a
-   * search is on"): how many stored orders match, and Clear search. The
-   * count is the search's own (`Domain.OrdersPage.matches`), over every page.
-   * A search that matched nothing says so in the list's place instead.
+   * What replaces the strip under a search ({@link SearchLine}): how many
+   * stored orders match, and Clear search. The count is the search's own
+   * (`Domain.OrdersPage.matches`), over every page. A search that matched
+   * nothing says so in the list's place instead.
    */
-  const searchLine = () => {
-    const matches = data?.page.matches ?? 0;
-    if (term === null || matches === 0) return null;
-    return (
-      <s-stack direction="inline" gap="base" alignItems="center">
-        <s-text>
-          {matches === 1
-            ? `1 order matches ${term}`
-            : `${formatNumber(matches)} orders match ${term}`}
-        </s-text>
-        <s-button onClick={clearSearch}>Clear search</s-button>
-      </s-stack>
+  const matches = data?.page.matches ?? 0;
+  const searchLine =
+    term === null || matches === 0 ? null : (
+      <SearchLine
+        count={matches}
+        noun={["order", "orders"]}
+        term={term}
+        onClear={clearSearch}
+      />
     );
-  };
 
   const syncError = data?.syncState.lastError ?? null;
   const syncStatus = syncStatusText(data, ordersQuery.isError);
@@ -754,45 +683,37 @@ function RouteComponent() {
           https://shopify.dev/docs/api/app-home/latest/patterns/templates/resource-index */}
       {syncButton(true)}
 
-      <s-section padding="none" accessibilityLabel="Orders">
-        {/* Rendered only with something in it: an empty box would still add
-            its padding above the strip's own. */}
-        {(syncError !== null || syncStatus !== null) && (
-          <s-box padding="base" paddingBlockEnd="none">
-            <s-stack gap="small-300">
-              {syncError !== null && (
-                <s-banner tone="critical">{syncError}</s-banner>
-              )}
-              {syncStatus !== null && (
-                <s-paragraph color="subdued">{syncStatus}</s-paragraph>
-              )}
-            </s-stack>
-          </s-box>
-        )}
-        {/* Gated on there being something to filter: see `neverStored`. The
-            strip, or under a search the line that replaces it, then the
-            table with its filter slot. Five columns where the card has room,
-            three below. The track lists carry no commas, here and in the
-            filter slot: a comma separates a responsive value's conditions. */}
-        {!neverStored && q === null && (
-          <s-box padding="base" paddingBlockEnd="none">
-            <s-query-container>
-              <s-grid
-                gridTemplateColumns="@container (inline-size > 600px) 1fr 1fr 1fr 1fr 1fr, 1fr 1fr 1fr"
-                gap="small"
-              >
-                {STRIP.map(stripCell)}
-              </s-grid>
-            </s-query-container>
-          </s-box>
-        )}
-        {!neverStored && q !== null && searchLine() !== null && (
-          <s-box padding="base" paddingBlockEnd="none">
-            {searchLine()}
-          </s-box>
-        )}
+      {/* The head, in order: the sync's error and status, then the strip
+          or under a search the line that replaces it, then the filter row.
+          The strip and the filters are gated on there being something to
+          filter: see `neverStored`. A failed read renders as a failure
+          rather than "Loading orders…" forever: a decode mismatch, a dropped
+          socket and a Durable Object fault all look like a slow fetch
+          otherwise. */}
+      <IndexSection
+        label="Orders"
+        head={
+          <>
+            {syncError !== null && (
+              <s-banner tone="critical">{syncError}</s-banner>
+            )}
+            {syncStatus !== null && (
+              <s-paragraph color="subdued">{syncStatus}</s-paragraph>
+            )}
+            {ordersQuery.isError && (
+              <s-banner tone="critical">
+                {ordersQuery.error instanceof Error
+                  ? ordersQuery.error.message
+                  : "Couldn't load orders."}
+              </s-banner>
+            )}
+            {!neverStored && (q === null ? strip : searchLine)}
+            {!neverStored && filters()}
+          </>
+        }
+      >
         {renderOrders()}
-      </s-section>
+      </IndexSection>
     </s-page>
   );
 }

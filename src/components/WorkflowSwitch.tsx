@@ -2,6 +2,7 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { useMutation } from "@tanstack/react-query";
 import { Match, Schema } from "effect";
 
+import { Things } from "@/components/screen/Things";
 import * as Domain from "@/lib/Domain";
 import { hideModal } from "@/lib/polarisModal";
 import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
@@ -146,12 +147,12 @@ export function WorkflowSwitch({
         ))}
 
       <s-modal id={TURN_ON_MODAL} heading={`Turn on ${workflow.name}?`}>
-        <s-stack gap="base">
+        <Things>
           <s-paragraph>{turnOnBody}</s-paragraph>
           {appliesFirst && (
             <s-paragraph>Your tasks are applied at the same time.</s-paragraph>
           )}
-        </s-stack>
+        </Things>
         <s-button
           slot="secondary-actions"
           commandFor={TURN_ON_MODAL}

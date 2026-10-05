@@ -689,7 +689,7 @@ describe("Domain.runRowLines", () => {
     strictEqual(blockOf(withTasks([["Cut", "Cutting"]]), null), null);
   });
 
-  it("the recipe line is the workflow name and step k of n, on every open row whatever its state", () => {
+  it("the recipe line is step k of n, after the workflow name when it differs from the item, on every open row whatever its state", () => {
     const recipe = (item: Domain.RunListItem) =>
       Domain.runRowLines(item, {
         memberEmail: ME,
@@ -698,7 +698,7 @@ describe("Domain.runRowLines", () => {
       }).recipe;
     const joined = (item: Domain.RunListItem) => {
       const { workflow, step } = recipe(item);
-      return `${workflow} · ${step}`;
+      return workflow === null ? step : `${workflow} · ${step}`;
     };
     strictEqual(
       joined(withTasks([["Cut", "Cutting"]])),
@@ -708,6 +708,41 @@ describe("Domain.runRowLines", () => {
       joined(withTasks([["Cut", "Cutting"]], { reason: "x" })),
       "Signet ring · Step 2 of 3",
     );
+  });
+});
+
+const namesItem = (workflowName: string, lineItemTitle: string) =>
+  Domain.workflowNamesItem({ workflowName, lineItemTitle });
+
+describe("Domain.workflowNamesItem", () => {
+  it("the workflow name is on the row only when it differs from the item title", () => {
+    const recipe = (workflowName: string) => {
+      const item = withTasks([["Cut", "Cutting"]]);
+      return Domain.runRowLines(
+        {
+          ...item,
+          run: {
+            ...item.run,
+            workflowName: Schema.decodeUnknownSync(Domain.WorkflowName)(
+              workflowName,
+            ),
+          },
+        },
+        { memberEmail: ME, showTeam: false, state: null },
+      ).recipe;
+    };
+    deepStrictEqual(recipe("Ring"), { workflow: null, step: "Step 2 of 3" });
+    deepStrictEqual(recipe("Signet ring, rush"), {
+      workflow: "Signet ring, rush",
+      step: "Step 2 of 3",
+    });
+  });
+
+  it("the comparison ignores case and surrounding spaces", () => {
+    strictEqual(namesItem(" signet RING ", "Signet ring"), true);
+    strictEqual(namesItem("Signet ring", "  signet ring"), true);
+    strictEqual(namesItem("Signet  ring", "Signet ring"), false);
+    strictEqual(namesItem("Signet ring · Gold", "Signet ring"), false);
   });
 });
 

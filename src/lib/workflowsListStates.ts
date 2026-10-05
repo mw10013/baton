@@ -4,9 +4,10 @@ import type * as Domain from "@/lib/Domain";
  * The strip's order, left to right, answers who has the work: the member,
  * then someone else, then nobody (ready for anyone on the member's teams),
  * then a person holding it back (blocked), then nobody any more (done or
- * closed). The strip is three columns, so its first line is Started by
- * you, Started by others and Ready: the two Started states side by side,
- * and the three with work in hand together. The member's own state leads because it is
+ * closed). On a phone the strip is three columns (`Strip` in
+ * `src/components/screen/`), so its first line is Started by you, Started by
+ * others and Ready: the two Started states side by side, and the three with
+ * work in hand together. The member's own state leads because it is
  * the one the member lands on and returns to between tasks; Blocked does not
  * have to lead to be seen, because its count is on the strip whatever
  * value is chosen.

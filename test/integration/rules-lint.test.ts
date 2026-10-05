@@ -527,3 +527,46 @@ describe("the object holds nothing that keeps it from hibernating", () => {
     ).toHaveLength(0);
   });
 });
+
+describe("layout primitives and layout props are refused outside src/components/screen/", () => {
+  it("layout elements, layout attributes and spread layout keys are refused", () => {
+    const source = [
+      '<s-stack gap="base">',
+      '  <s-box padding="base" paddingBlockEnd="none">',
+      '    <s-grid gridTemplateColumns="1fr auto">',
+      '      <div className="x" style={{}} />',
+      "    </s-grid>",
+      "  </s-box>",
+      "</s-stack>",
+      "<s-query-container />",
+      'const slotted = { paddingInlineStart: "small" };',
+    ].join("\n");
+    expect(
+      RulesLint.layoutHits(source).map(({ line, text }) => [line, text]),
+    ).toEqual([
+      [1, "<s-stack"],
+      [1, "gap="],
+      [2, "<s-box"],
+      [2, "padding="],
+      [2, "paddingBlockEnd="],
+      [3, "<s-grid"],
+      [3, "gridTemplateColumns="],
+      [4, "className="],
+      [4, "style="],
+      [8, "<s-query-container"],
+      [9, "paddingInlineStart:"],
+    ]);
+  });
+
+  it("content elements and comments naming a layout element are allowed", () => {
+    const source = [
+      "/** The row is an `s-grid` with `gap` in the part. */",
+      '<s-section heading="Items">',
+      '  {/* not an <s-box padding="base"> */}',
+      '  <s-text color="subdued">Ready</s-text>',
+      "  <s-table><s-table-body /></s-table>",
+      "</s-section>",
+    ].join("\n");
+    expect(RulesLint.layoutHits(source)).toEqual([]);
+  });
+});
