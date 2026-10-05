@@ -147,16 +147,15 @@ function NotFoundComponent() {
  * same-origin upgrade on its own, and which the Worker's connect gate reads to
  * resolve the membership it forwards to the object.
  *
- * `enabled: hydrated` for the same reason as `/app`: `useAgent` evaluates its
- * connection during render, including SSR, where there is no WebSocket to
- * open. The page still server-renders — the loader, not the socket, is what
- * paints it.
+ * `enabled: hydrated` for the same reason as `/app`: the provider creates the
+ * socket in an effect after hydration; there is no WebSocket on the server.
+ * The page still server-renders — the loader, not the socket, is what paints
+ * it.
  *
  * `Domain.CONNECTION_CLOSE_REVOKED` is the object saying this member's teams
- * or membership changed while they were connected. The socket comes back —
- * `ShopAgentSocketHost` re-arms it on that code, because `agents` treats a
- * 4000-range close as terminal and will not reconnect on its own — which
- * re-runs the gate and returns with the new membership; what this handler adds
+ * or membership changed while they were connected. The socket comes back on its
+ * own: 3401 is not a terminal close to the SDK, so partysocket reconnects
+ * through the gate, which returns with the new membership; what this handler adds
  * is invalidating the router, because the page's loader data was resolved from
  * the *old* membership and nothing else would refetch it. The loader is also
  * where a revoked member finds out they are gone: `requireMember` answers

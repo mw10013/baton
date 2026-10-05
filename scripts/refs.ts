@@ -157,7 +157,7 @@ const REFS: readonly Ref[] = [
   {
     // Named for the repo, not for the pin: this one checkout answers questions about two
     // of its packages. `packages/partysocket` is the reconnecting WebSocket client under
-    // `useAgent`; `packages/partyserver` is the Durable Object runtime that agents 0.22.0
+    // `AgentClient`; `packages/partyserver` is the Durable Object runtime that agents 0.22.0
     // vendored into `agents/lifecycle`, and reading the pre-vendoring original is how
     // `this.name` / `__ps_name` / connection questions get settled. Naming the ref after
     // either package would hide the other. (Unlike tan-start/tan-router, which are two

@@ -114,10 +114,9 @@ const connecting = () =>
  * until the new key's read returns, so a chip press re-renders the list
  * rather than the screen's connecting state.
  *
- * `agent` is `null` until the socket host first commits (see
- * `ShopAgentContext.tsx`); `identified` is `false` whenever it is, so the
- * query is disabled and the effects no-op until the identify flip re-renders
- * with the published socket.
+ * `agent` is `null` until the provider's effect creates the socket after
+ * hydration; `identified` is `false` whenever it is, so the query is disabled
+ * and the effects no-op until the identify flip.
  */
 export const useLiveQuery = <A, Initial extends A | undefined>({
   queryKey,

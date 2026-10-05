@@ -3,7 +3,7 @@ import type { ShopAgentSocket } from "@/lib/ShopAgentContext";
 
 import * as React from "react";
 
-import { useAgent } from "agents/react";
+import { AgentClient } from "agents/client";
 
 import * as Domain from "@/lib/Domain";
 import {
@@ -15,22 +15,23 @@ import {
 } from "@/lib/ShopAgentContext";
 
 /**
- * What `useAgent` puts in the socket URL's query string, or `undefined` for a
- * socket that carries no query at all.
+ * What the socket URL's query string carries, or `undefined` for a socket
+ * that carries no query at all.
  *
  * Merchants send `{ token }` — a freshly minted App Bridge ID token, because a
  * browser cannot set a header on a WebSocket upgrade. Members send nothing:
  * their better-auth cookie rides the upgrade automatically because the socket
  * is same-origin. Both are read by the one gate in `src/worker.ts`.
+ * Partysocket calls the function on every connect attempt, so a reconnect
+ * carries a token minted for it and nothing caches one.
  */
 export type SocketQuery =
   | (() => Promise<Record<string, string | null>>)
   | undefined;
 
 /**
- * Shares the per-shop `ShopAgent` socket with a subtree via
- * `ShopAgentProvider`, with the socket itself in {@link ShopAgentSocketHost}
- * behind its own Suspense boundary.
+ * Opens the per-shop `ShopAgent` socket and shares it with a subtree via
+ * `ShopAgentProvider`.
  *
  * Both populations mount this: `/app` for merchants, passing the App Bridge
  * `idToken` query the Worker's gate verifies, and `/shop/$shop` for members,
@@ -38,144 +39,35 @@ export type SocketQuery =
  * browser sends on a same-origin upgrade, which the same gate reads. Nothing
  * else differs, which is why the two share one host rather than two that drift.
  *
- * Why its own Suspense boundary: `useAgent` suspends whenever its token `query`
- * re-runs — on the hydration flip and, critically, on every socket drop
- * (its `onClose` deletes the query cache with a sync, non-transition
- * setState, so the next render hits `use(pendingPromise)`). A suspending
- * render hides everything up to the nearest Suspense boundary; when the
- * hook lived in this component, that boundary was the router's match-level
- * one and a reconnect blanked the whole `/app` subtree to white. Hosting the
- * hook in a render-`null` leaf inside its own `fallback={null}` boundary
- * makes every such suspend hide only an invisible speck — the page never
- * changes during reconnects.
+ * The socket is an `AgentClient`, created once per mount in an effect and held
+ * in state, so the context value changes when it exists. `identified` is this
+ * component's state: true on the `cf_agent_identity` frame (`onIdentity`),
+ * false on every close. The client also sets `identified` on itself; nothing
+ * reads it, because a field mutated in place re-renders no one. In development
+ * Strict Mode runs the effect twice, so one socket opens and closes before the
+ * kept one. Callers' `query` and `onSocketClose` are read through effect
+ * events (`useEffectEvent`), so a caller passing a new function identity each
+ * render never recreates the socket and partysocket still calls the latest
+ * `query` on every connect. A member's `undefined` query becomes an empty
+ * one, which adds nothing to the URL.
  *
- * The context value reads the socket through a getter, not a captured
- * reference: this component renders (and memoizes the value) *before* its
- * child `ShopAgentSocketHost` runs `useAgent` and publishes into `agentRef`,
- * so an eager read here would freeze the first-pass `null` into the memoized
- * value. The getter defers the read to consumer render time — normally the
- * host (an earlier sibling of `Outlet`) has rendered by then and the ref is
- * populated. It still returns `null` whenever the host has never completed a
- * render: on a fresh document load of a consumer route, the host's first
- * render can suspend on the token query before the ref write (a
- * post-hydration mount sees `useHydrated() === true` from its first render),
- * while lazy Suspense hydration lets the route content render in that same
- * pass. `null` is therefore part of the context contract, not a can't-happen
- * state — consumers gate on it; see `ShopAgentContext.tsx`.
+ * `enabled` is hydration (`useHydrated()`): no connect happens on the server
+ * or before the App Bridge token can be minted, so the first connect already
+ * carries the token. A member socket has no token to wait for, but gates the
+ * same way so both connect from one code path.
  *
- * `identified` reactivity: consumers re-render only when this state flips
- * (the memoized context value is keyed on it; see `ShopAgentContext.tsx`).
- * It flips false synchronously via the host's `onClose` (honest per-consumer
- * "connecting" gates during a reconnect) and true via the host's
- * post-identify effect. During the gap, consumers holding a stale `agent`
- * keep working: `useAgent` routes stale references through its live-socket
- * ref and queues never-transmitted calls until the next socket opens.
+ * Revocation needs nothing here. `AgentClient` stops reconnecting on 1008 and
+ * every 4000-4999 close (`isTerminalCloseEvent` in
+ * `refs/agents/packages/agents/src/client.ts`), so
+ * `Domain.CONNECTION_CLOSE_FORBIDDEN` stays closed;
+ * `Domain.CONNECTION_CLOSE_REVOKED` is a 3xxx code, not terminal to it, so
+ * partysocket reconnects through the gate on its own backoff.
  *
  * `onSocketClose` is the escape hatch for a close code the subtree cares
  * about: both `/app` and `/shop/$shop` use it for
  * `Domain.CONNECTION_CLOSE_REVOKED` to invalidate the router, so the loaders
  * re-run against whatever the gate now says. The reconnect that must follow
- * that same close is not their business — {@link ShopAgentSocketHost} owns it.
- */
-export function ShopAgentSocketProvider({
-  shop,
-  query,
-  enabled,
-  onSocketClose,
-  children,
-}: {
-  readonly shop: string;
-  readonly query: SocketQuery;
-  readonly enabled: boolean;
-  readonly onSocketClose?: (event: CloseEvent) => void;
-  readonly children: React.ReactNode;
-}) {
-  const agentRef = React.useRef<ShopAgentSocket | null>(null);
-  const [identified, setIdentified] = React.useState(false);
-  const shopAgent = React.useMemo(
-    () => ({
-      get agent(): ShopAgentSocket | null {
-        return agentRef.current;
-      },
-      identified,
-    }),
-    [identified],
-  );
-  return (
-    <ShopAgentProvider value={shopAgent}>
-      <React.Suspense fallback={null}>
-        <ShopAgentSocketHost
-          shop={shop}
-          query={query}
-          enabled={enabled}
-          agentRef={agentRef}
-          onIdentifiedChange={setIdentified}
-          onSocketClose={onSocketClose}
-        />
-      </React.Suspense>
-      {children}
-    </ShopAgentProvider>
-  );
-}
-
-/**
- * Render-nothing host for the `useAgent` socket. Exists so the hook's
- * suspending renders are absorbed by the `fallback={null}` boundary in
- * {@link ShopAgentSocketProvider} instead of blanking the page — see the
- * reason for its own Suspense boundary there.
- *
- * Publishes the socket by writing `agentRef` during render (not an effect):
- * later siblings (`Outlet` consumers) read it via the context getter in this
- * same render pass, before any effect could run. The write is idempotent per
- * render, and a suspending render never reaches it — `use()` throws first —
- * so the ref always holds the last successfully rendered socket, which stale
- * consumers can safely keep calling (see `socketRef` routing in
- * `agents/react`). Before the first commit there is no such socket and
- * consumers observe `null` (see `ShopAgentContext.tsx`).
- *
- * Revocation needs nothing here. `agents` treats 1008 and every 4000-4999
- * close as terminal and stops reconnecting (`isTerminalCloseEvent` in
- * `refs/agents/packages/agents/src/client.ts`), so
- * `Domain.CONNECTION_CLOSE_FORBIDDEN` stays closed; `Domain.CONNECTION_CLOSE_REVOKED`
- * is a 3xxx code, not terminal to it, so partysocket reconnects through the
- * gate on its own backoff.
- *
- * `identified` is lifted up, not read down: the parent can't observe the
- * hook's internal identity state, and reading `agent.identified` off the ref
- * wouldn't re-render consumers (it mutates in place; see
- * `ShopAgentContext.tsx`). `onClose` flips it false immediately — it fires
- * from the socket event even while a reconnect render sits suspended —
- * and the effect below syncs it true after the `cf_agent_identity`
- * handshake commits.
- *
- * Hydration gating: `useAgent` evaluates `query` during render — including
- * SSR — but the merchant's `shopify.idToken()` is a browser-only App Bridge
- * API that throws in a server environment. Callers pass `enabled` from
- * `useHydrated()`, which is `false` on the server and the first client render,
- * so the token query stays disabled until hydration; the component still SSRs
- * normally. Once hydrated, `queryDeps` triggers the token fetch and the socket
- * connects client-side. (`ssr: 'data-only'` is not viable for the `/app` route
- * — skipping component SSR drops the App Bridge script, breaking
- * `useAppBridge`.)
- *
- * `enabled` gates the socket itself: without it the first pre-hydration client
- * render would connect with no `?token=` param (query still `undefined`), get
- * rejected by the worker's `authorizeShopAgentRequest` gate, then reconnect
- * once hydrated. Gating on hydration skips that wasted tokenless attempt so
- * the first connection already carries the token. A member socket has no
- * token to wait for, but gates the same way so both connect from one code
- * path.
- *
- * `cacheTtl` overrides `useAgent`'s 5-min default, whose proactive timer
- * re-runs `query` → new token → new partysocket URL memo key → socket
- * replacement every 5 min. 7d removes that rotation. It must stay under the
- * ~24.8d 32-bit `setTimeout` ceiling (a larger value overflows to a negative
- * delay and loops re-render → re-query → re-schedule), and can't be 0 — the
- * same TTL is the dedup-cache lifetime guarding the inline
- * (new-identity-per-render) `query` from calling `idToken()` every render.
- * Reconnect freshness is unaffected: every close reaches `onClose`, which
- * invalidates the query cache and re-fetches a token independent of
- * `cacheTtl`.
+ * that same close is not their business — the socket owns it.
  *
  * `defaultCallTimeout` lowers the SDK's 30s RPC timeout to 20s — the
  * *backstop* stale-socket detector behind the watchdog and pre-flight (see
@@ -200,9 +92,10 @@ export function ShopAgentSocketProvider({
  *   platform-variant behavior. Suspended timers resume within seconds of machine wake, so the
  *   first tick heals a stale socket after a wake from sleep even when the tab was visible
  *   throughout (no `visibilitychange`). A heal runs the ordinary reconnect
- *   machinery — synthetic close → `identified` false → "Connecting" badge →
- *   fresh token → open → re-identify — and the close's query invalidation
- *   refetches the state whose invalidations the stale socket swallowed.
+ *   machinery — close → `identified` false → "Connecting" badge →
+ *   fresh token → open → re-identify — and the reconnect's identify
+ *   refetches the state whose invalidations the stale socket swallowed (the
+ *   identify row of the events table on `useLiveQuery`).
  * - Keepalive: sends the edge-answered ping (see `SOCKET_KEEPALIVE_MS` for
  *   cadence and trade-offs). Independent churn reduction, shares no state
  *   with the watchdog: pings send blind, never touch `lastFrameAt`, and a
@@ -215,54 +108,69 @@ export function ShopAgentSocketProvider({
  * merged: one effect per concern, so each layer can be removed or reasoned
  * about without touching the others.
  */
-function ShopAgentSocketHost({
+export function ShopAgentSocketProvider({
   shop,
   query,
   enabled,
-  agentRef,
-  onIdentifiedChange,
   onSocketClose,
+  children,
 }: {
   readonly shop: string;
   readonly query: SocketQuery;
   readonly enabled: boolean;
-  readonly agentRef: React.RefObject<ShopAgentSocket | null>;
-  readonly onIdentifiedChange: (identified: boolean) => void;
   readonly onSocketClose?: (event: CloseEvent) => void;
+  readonly children: React.ReactNode;
 }) {
-  const agent = useAgent<ShopAgent, unknown>({
-    agent: "shop-agent",
-    name: shop,
-    query: enabled ? query : undefined,
-    queryDeps: [shop, enabled],
-    enabled,
-    cacheTtl: 7 * 24 * 60 * 60 * 1000,
-    defaultCallTimeout: 20_000,
-    onClose: (event: CloseEvent) => {
-      onIdentifiedChange(false);
-      onSocketClose?.(event);
-    },
+  const readQuery = React.useEffectEvent(
+    () => query?.() ?? Promise.resolve({}),
+  );
+  const onClose = React.useEffectEvent((event: CloseEvent) => {
+    onSocketClose?.(event);
   });
-  agentRef.current = agent;
+  const [agent, setAgent] = React.useState<ShopAgentSocket | null>(null);
+  const [identified, setIdentified] = React.useState(false);
   React.useEffect(() => {
-    onIdentifiedChange(agent.identified);
-    // oxlint-disable-next-line react-hooks/exhaustive-deps -- agent.identified mutates without replacing agent, so it is a required, not redundant, dependency
-  }, [agent, agent.identified, onIdentifiedChange]);
+    if (!enabled) return;
+    const client = new AgentClient<ShopAgent>({
+      agent: "shop-agent",
+      name: shop,
+      host: window.location.host,
+      query: () => readQuery(),
+      defaultCallTimeout: 20_000,
+      onIdentity: () => {
+        setIdentified(true);
+      },
+    });
+    const onSocketClosed = (event: CloseEvent) => {
+      setIdentified(false);
+      onClose(event);
+    };
+    client.addEventListener("close", onSocketClosed);
+    // oxlint-disable-next-line react-hooks/set-state-in-effect -- the socket is the external system this effect creates; state is how the context learns it exists
+    setAgent(client);
+    // oxlint-disable-next-line typescript/consistent-return -- an effect returns a cleanup only when it opened something
+    return () => {
+      client.removeEventListener("close", onSocketClosed);
+      client.close();
+      setAgent(null);
+      setIdentified(false);
+    };
+  }, [shop, enabled]);
   React.useEffect(() => {
     const touch = () => {
       markSocketFrame();
     };
     touch();
-    agent.addEventListener("open", touch);
-    agent.addEventListener("message", touch);
+    agent?.addEventListener("open", touch);
+    agent?.addEventListener("message", touch);
     return () => {
-      agent.removeEventListener("open", touch);
-      agent.removeEventListener("message", touch);
+      agent?.removeEventListener("open", touch);
+      agent?.removeEventListener("message", touch);
     };
   }, [agent]);
   React.useEffect(() => {
     const check = () => {
-      reconnectIfSocketStale(agent);
+      if (agent) reconnectIfSocketStale(agent);
     };
     const intervalId = setInterval(check, SOCKET_WATCHDOG_MS);
     const onVisibilityChange = () => {
@@ -276,12 +184,16 @@ function ShopAgentSocketHost({
   }, [agent]);
   React.useEffect(() => {
     const intervalId = setInterval(() => {
-      if (agent.readyState === WebSocket.OPEN)
+      if (agent?.readyState === WebSocket.OPEN)
         agent.send(Domain.SocketKeepalivePing);
     }, SOCKET_KEEPALIVE_MS);
     return () => {
       clearInterval(intervalId);
     };
   }, [agent]);
-  return null;
+  const shopAgent = React.useMemo(
+    () => ({ agent, identified }),
+    [agent, identified],
+  );
+  return <ShopAgentProvider value={shopAgent}>{children}</ShopAgentProvider>;
 }

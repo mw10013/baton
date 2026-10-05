@@ -6,12 +6,12 @@ import * as Domain from "@/lib/Domain";
  * A WebSocket against a `ShopAgent` instance, plus the agents-SDK RPC wire
  * protocol spoken by hand.
  *
- * Why by hand: the client half of that protocol lives in `agents/react`, which
- * needs a DOM and a real origin, and the browser `useAgent` hook is not what
- * these tests are about. The frames are three fields wide — a request is
+ * Why by hand: the client half of that protocol lives in `agents/client`, whose
+ * `AgentClient` needs a DOM and a real origin, and the browser socket is not
+ * what these tests are about. The frames are three fields wide — a request is
  * `{ type: "rpc", id, method, args }` and the reply is
  * `{ type: "rpc", id, success, result | error, done }` — so speaking them
- * directly is cheaper than standing up the hook, and it is the same surface a
+ * directly is cheaper than standing up the client, and it is the same surface a
  * hostile client would have.
  *
  * {@link openAgentSocket} talks to the Durable Object stub directly rather than

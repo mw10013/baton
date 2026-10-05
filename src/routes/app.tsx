@@ -160,9 +160,8 @@ export const Route = createFileRoute("/app")({
  * Auth: browser `WebSocket` cannot carry custom headers on the upgrade,
  * so the Shopify session token (JWT) is passed as a `?token=…` query
  * parameter. `shopify.idToken()` mints a fresh 60s-lifetime token on
- * every call; `useAgent`'s async `query` cache is auto-invalidated on
- * disconnect, so reconnects re-fetch a fresh token. `queryDeps: [shop]`
- * ties the cache to the active shop.
+ * every call; partysocket calls `query` on every connect, so each reconnect
+ * carries a token minted for it.
  *
  * The token is verified server-side at the worker `routeAgentRequest`
  * gate (`authorizeShopAgentRequest`), which checks the token's `dest`
@@ -172,9 +171,9 @@ export const Route = createFileRoute("/app")({
  *
  * That connect-time-only check bounds how stale the plan can get here: a
  * merchant who lapses mid-session keeps a working socket until it drops,
- * which `cacheTtl` below stretches to as long as the tab lives. Accepted
- * rather than re-checking per RPC — the alternative is giving `ShopAgent`
- * billing state, and the exposure is one open tab.
+ * which the keepalive (`SOCKET_KEEPALIVE_MS`) stretches to as long as the
+ * tab lives. Accepted rather than re-checking per RPC — the alternative is
+ * giving `ShopAgent` billing state, and the exposure is one open tab.
  */
 function RouteComponent() {
   const { shop } = Route.useRouteContext();
@@ -222,13 +221,13 @@ function AppProvider({ children }: { readonly children: React.ReactNode }) {
  * Renders the `/app` shell (nav + `Outlet`) inside the shared
  * `ShopAgentSocketProvider`, which owns the per-shop socket and the context
  * consumers read it through (`src/lib/ShopAgentSocketHost.tsx` carries the
- * Suspense boundary, `identified`, and lifecycle rationale).
+ * `identified` and lifecycle rationale).
  *
  * What is specific to `/app` and stays here is the credential: `query` mints a
  * fresh App Bridge ID token per connect, because a browser cannot set a header
  * on a WebSocket upgrade. `shopify.idToken()` is browser-only and throws
- * during SSR, which is why `enabled` is `useHydrated()` — the same flag the
- * provider passes on to `useAgent`.
+ * during SSR, which is why `enabled` is `useHydrated()` — the flag the
+ * provider waits for before it creates the socket.
  *
  * The token is verified server-side at the worker `routeAgentRequest` gate
  * (`authorizeShopAgentRequest`), which checks the token's `dest` matches the
