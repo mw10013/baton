@@ -24,13 +24,28 @@ const parsePreview = Schema.decodeUnknownSync(
 );
 
 function invoke(...args: readonly string[]) {
+  const textIndex = args.indexOf("--text");
+  const cliArgs =
+    textIndex === -1
+      ? ["gen", ...args]
+      : [
+          "gen",
+          args[textIndex + 1],
+          ...args.filter(
+            (_, index) => index !== textIndex && index !== textIndex + 1,
+          ),
+        ];
+  return invokeCommand(...cliArgs);
+}
+
+function invokeCommand(...cliArgs: readonly string[]) {
   // eslint-disable-next-line prefer-object-spread -- Wrangler narrows ProcessEnv to deployment literals; this child process uses a test account instead.
   const env = Object.assign({}, process.env, {
     CLOUDFLARE_ACCOUNT_ID: "0".repeat(32),
     CLOUDFLARE_API_TOKEN: "",
     NO_COLOR: "1",
   });
-  const result = spawnSync(process.execPath, [SCRIPT, ...args], {
+  const result = spawnSync(process.execPath, [SCRIPT, ...cliArgs], {
     cwd: dirname(REPO_ROOT),
     encoding: "utf8",
     env,
@@ -45,7 +60,6 @@ void test("help is available without text or credentials through --help and -h",
     const result = invoke(flag);
     assert.equal(result.status, 0, result.stderr);
     for (const option of [
-      "--text",
       "--model",
       "--voice",
       "--output",
@@ -54,8 +68,8 @@ void test("help is available without text or credentials through --help and -h",
     ]) {
       assert.ok(result.stdout.includes(option));
     }
-    assert.match(result.stdout, /pnpm tts --text/u);
-    assert.match(result.stdout, /tmp\/tts\/<timestamp>-<id>\/speech\.mp3/u);
+    assert.match(result.stdout, /pnpm tts gen/u);
+    assert.ok(result.stdout.includes("<YYYYMMDD>-<NN>-<excerpt>"));
     assert.match(result.stdout, /aura-1 \(default\)/u);
     assert.match(result.stdout, /aura-2 \(English\)/u);
     assert.match(result.stdout, /default: luna/u);
@@ -72,6 +86,34 @@ void test("help is available without text or credentials through --help and -h",
       assert.ok(result.stdout.includes(voice));
     }
   }
+});
+
+void test("gen accepts positional text with options before or after it and rejects extra arguments", () => {
+  for (const args of [
+    ["Hello!", "--voice", "athena"],
+    ["--voice", "athena", "Hello!"],
+  ]) {
+    const result = invokeCommand("gen", ...args, "--dry-run");
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(parsePreview(result.stdout).text, "Hello!");
+    assert.equal(parsePreview(result.stdout).speaker, "athena");
+  }
+  const extra = invokeCommand("gen", "Hello", "world", "--dry-run");
+  assert.notEqual(extra.status, 0);
+});
+
+void test("root and play help are available without text or credentials", () => {
+  const root = invokeCommand("--help");
+  assert.equal(root.status, 0, root.stderr);
+  assert.match(root.stdout, /gen/u);
+  assert.match(root.stdout, /play/u);
+  const play = invokeCommand("play", "--help");
+  assert.equal(play.status, 0, play.stderr);
+  assert.match(play.stdout, /mpv/u);
+  const invalid = invokeCommand("play", "not-a-recording.wav");
+  assert.notEqual(invalid.status, 0);
+  assert.match(invalid.stdout + invalid.stderr, /Playback path must end/u);
+  assert.doesNotMatch(invalid.stdout + invalid.stderr, /CLOUDFLARE_API_TOKEN/u);
 });
 
 void test("shared female voices work with both models", () => {
@@ -156,7 +198,7 @@ void test("CLI names select only these supported models; aura-2 means English", 
     assert.equal(preview.speaker, "luna");
     assert.equal(preview.estimatedNeurons, Math.round(5 * neurons * 100) / 100);
     assert.equal(preview.estimatedOverageUsd, 5 * usd);
-    assert.ok(preview.output.endsWith("/speech.mp3"));
+    assert.ok(preview.output.endsWith("/hello.mp3"));
   }
 });
 
@@ -180,7 +222,7 @@ void test("blank or oversized text is rejected before credentials are loaded", (
   for (const text of ["", " \n\t ", "a".repeat(501)]) {
     const result = invoke("--text", text);
     assert.notEqual(result.status, 0);
-    assert.match(result.stdout + result.stderr, /--text must contain/u);
+    assert.match(result.stdout + result.stderr, /Text must contain/u);
     assert.doesNotMatch(result.stdout + result.stderr, /CLOUDFLARE_API_TOKEN/u);
   }
 });
@@ -211,7 +253,7 @@ void test("count Unicode code points, not UTF-16 units, for validation and estim
   assert.equal(preview.estimatedOverageUsd, 500 * 0.000015);
   const oversized = invoke("--text", `${text}😀`, "--dry-run");
   assert.notEqual(oversized.status, 0);
-  assert.match(oversized.stdout + oversized.stderr, /--text must contain/u);
+  assert.match(oversized.stdout + oversized.stderr, /Text must contain/u);
 });
 
 void test("generated output groups each recording under the repo root without writing during a dry run", () => {
@@ -221,11 +263,11 @@ void test("generated output groups each recording under the repo root without wr
     const preview = parsePreview(result.stdout);
     assert.equal(preview.dryRun, true);
     assert.ok(preview.output.startsWith(`${resolve(REPO_ROOT, "tmp/tts")}/`));
-    assert.match(preview.output, /\/[\dT.Z-]+-[a-f\d]{8}\/speech\.mp3$/u);
+    assert.match(preview.output, /\/\d{8}-\d{2,}-hello\/hello\.mp3$/u);
     assert.equal(existsSync(dirname(preview.output)), false);
     return preview.output;
   });
-  assert.notEqual(outputs[0], outputs[1]);
+  assert.equal(outputs[0], outputs[1]);
 });
 
 void test("explicit output is a repo-relative or absolute MP3 file path", () => {

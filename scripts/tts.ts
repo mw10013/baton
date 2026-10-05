@@ -9,8 +9,9 @@ import {
   Redacted,
   Schema,
 } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
+import { Argument, Command, Flag } from "effect/unstable/cli";
 import { parse, type ParseError } from "jsonc-parser";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   access,
@@ -24,6 +25,9 @@ import {
 } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { recordingOutput } from "./lib/tts-naming.ts";
+import { latestRecording } from "./lib/tts-playback.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("../", import.meta.url));
 /**
@@ -302,6 +306,7 @@ function synthesize(
           });
         }
         const metadata = {
+          createdAt: new Date().toISOString(),
           output,
           accountId: account,
           model,
@@ -313,7 +318,7 @@ function synthesize(
           cfRay: ray,
         };
         const metadataSaved = await writeFile(
-          `${output}.metadata.json`,
+          `${output.slice(0, -4)}.metadata.json`,
           `${JSON.stringify(metadata, null, 2)}\n`,
           {
             flag: "wx",
@@ -337,8 +342,8 @@ function synthesize(
   });
 }
 
-const command = Command.make(
-  "tts",
+const gen = Command.make(
+  "gen",
   {
     model: Flag.choice("model", ["aura-1", "aura-2"]).pipe(
       Flag.withDescription(
@@ -350,14 +355,14 @@ const command = Command.make(
       Flag.withDescription(`Female voice (default: luna). ${VOICE_HELP}`),
       Flag.withDefault("luna"),
     ),
-    text: Flag.string("text").pipe(
-      Flag.withDescription(
+    text: Argument.string("text").pipe(
+      Argument.withDescription(
         "Required text to speak (1–500 Unicode code points); quote it as one argument",
       ),
     ),
     output: Flag.string("output").pipe(
       Flag.withDescription(
-        "MP3 file path, absolute or relative to the repo root; defaults to tmp/tts/<timestamp>-<id>/speech.mp3; creates parent directories; never overwrites",
+        "MP3 file path, absolute or relative to the repo root; defaults to tmp/tts/<YYYYMMDD>-<NN>-<excerpt>/<excerpt>.mp3; creates parent directories; never overwrites",
       ),
       Flag.withDefault(""),
     ),
@@ -382,15 +387,26 @@ const command = Command.make(
       yield* Effect.fail(
         new SpeechError({
           message:
-            "--text must contain non-whitespace text and at most 500 Unicode code points.",
+            "Text must contain non-whitespace text and at most 500 Unicode code points.",
         }),
       );
     }
-    const output = resolve(
-      REPO_ROOT,
-      options.output ||
-        `tmp/tts/${new Date().toISOString().replaceAll(":", "-")}-${randomUUID().slice(0, 8)}/speech.mp3`,
-    );
+    const chooseOutput = (reserve: boolean) =>
+      Effect.tryPromise({
+        try: () =>
+          options.output
+            ? Promise.resolve(resolve(REPO_ROOT, options.output))
+            : recordingOutput(
+                resolve(REPO_ROOT, "tmp/tts"),
+                options.text,
+                reserve,
+              ),
+        catch: () =>
+          new SpeechError({
+            message: "Cannot choose or reserve the output folder.",
+          }),
+      });
+    const output = yield* chooseOutput(false);
     if (!output.endsWith(".mp3"))
       yield* Effect.fail(
         new SpeechError({ message: "--output must end in .mp3." }),
@@ -436,10 +452,11 @@ const command = Command.make(
         new SpeechError({ message: "CLOUDFLARE_API_TOKEN is blank." }),
       );
     const account = yield* accountId;
+    const reservedOutput = yield* chooseOutput(true);
     const result = yield* synthesize(
       account,
       token,
-      output,
+      reservedOutput,
       options.text,
       model.id,
       options.voice,
@@ -452,8 +469,85 @@ const command = Command.make(
   }),
 ).pipe(
   Command.withDescription(
-    'Generate one MP3. Defaults to Aura-1 and the luna voice; use --model aura-2 for Aura-2 English. No retries. Example: pnpm tts --text "Hello from Baton." --model aura-2 --voice athena. Use --output to choose a file or --dry-run to preview. Text is stored in the metadata sidecar and may appear in shell history and process listings.',
+    "Generate one MP3. Defaults to Aura-1 and luna. Example: pnpm tts gen 'Hello from Baton!' --model aura-2 --voice athena. No retries. Text is stored in metadata and may appear in shell history and process listings.",
   ),
+);
+
+const play = Command.make(
+  "play",
+  {
+    path: Argument.string("path").pipe(
+      Argument.withDescription(
+        "MP3 path or daily sequence number (newest matching date); defaults to the latest recording in tmp/tts",
+      ),
+      Argument.withDefault(""),
+    ),
+    device: Flag.string("device").pipe(
+      Flag.withDescription(
+        "mpv output device identifier; defaults to Speakers + BlackHole; use auto for normal system output or mpv --audio-device=help to list devices",
+      ),
+      Flag.withDefault("coreaudio/~:AMS2_StackedOutput:0"),
+    ),
+  },
+  Effect.fnUntraced(function* ({ path, device }) {
+    const sequence = /^\d+$/u.test(path) ? Number(path) : undefined;
+    if (
+      sequence !== undefined &&
+      (!Number.isSafeInteger(sequence) || sequence < 1)
+    )
+      yield* Effect.fail(
+        new SpeechError({
+          message: "Recording number must be a positive safe integer.",
+        }),
+      );
+    const output = yield* Effect.tryPromise({
+      try: () =>
+        path && sequence === undefined
+          ? Promise.resolve(resolve(REPO_ROOT, path))
+          : latestRecording(resolve(REPO_ROOT, "tmp/tts"), sequence),
+      catch: () =>
+        new SpeechError({
+          message:
+            sequence === undefined
+              ? "No audio found or the recording directory could not be read."
+              : `No playable recording numbered ${sequence.toString()} found or the recording directory could not be read.`,
+        }),
+    });
+    if (!output.endsWith(".mp3"))
+      yield* Effect.fail(
+        new SpeechError({ message: "Playback path must end in .mp3." }),
+      );
+    yield* Console.log(`Playing ${output} on ${device}`);
+    yield* Effect.tryPromise({
+      try: () =>
+        new Promise<void>((complete, fail) => {
+          const child = spawn(
+            "mpv",
+            ["--no-config", "--no-video", `--audio-device=${device}`, output],
+            { stdio: "inherit" },
+          );
+          child.once("error", fail);
+          child.once("exit", (code) => {
+            if (code === 0) complete();
+            else fail(new Error("Playback failed"));
+          });
+        }),
+      catch: () =>
+        new SpeechError({
+          message:
+            "Playback failed. Check the MP3 path and output device; mpv must be installed (brew install mpv).",
+        }),
+    });
+  }),
+).pipe(
+  Command.withDescription(
+    "Play the latest recording, a daily sequence number, or a specific MP3 using mpv; output defaults to Speakers + BlackHole",
+  ),
+);
+
+const command = Command.make("tts").pipe(
+  Command.withDescription("Generate and play speech recordings"),
+  Command.withSubcommands([gen, play]),
   Command.run({ version: "0.1.0" }),
   Effect.provide(NodeServices.layer),
 );
