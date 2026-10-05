@@ -21,12 +21,7 @@ import {
 import { FetchHttpClient } from "effect/unstable/http";
 
 import { BillingAgent } from "@/lib/agent/Billing";
-import {
-  type PublishScope,
-  type PublishTeams,
-  ShopAgentHost,
-  unionTeams,
-} from "@/lib/agent/Host";
+import { ShopAgentHost } from "@/lib/agent/Host";
 import { OrdersAgent } from "@/lib/agent/Orders";
 import { ShopWorkAgent } from "@/lib/agent/ShopWork";
 import { instrumentationIsOn } from "@/lib/CloudflareEnv";
@@ -104,28 +99,12 @@ const connectionStateFromHeaders = (headers: Headers): unknown => {
         teamIds: (headers.get(Domain.CONNECTION_TEAM_IDS_HEADER) ?? "")
           .split(",")
           .filter((teamId) => teamId.length > 0),
-        subscription: null,
       }
-    : { role, subscription: null };
+    : { role };
 };
 
 /** The tag every member connection carries, so a membership change can find and close it. */
 const memberConnectionTag = (memberId: string) => `member:${memberId}`;
-
-/**
- * Writes a subscription without disturbing the identity beside it — the reason
- * `Domain.ConnectionState` nests `subscription` rather than being it. An
- * unidentified connection is left alone: it is already being closed.
- */
-const setSubscription = (
-  connection: Connection,
-  subscription: Domain.Subscription | null,
-) => {
-  Option.match(connectionState(connection), {
-    onNone: () => null,
-    onSome: (state) => connection.setState({ ...state, subscription }),
-  });
-};
 
 /**
  * Refused because of *who* is calling, not what they sent. A typed failure
@@ -148,8 +127,6 @@ class ShopAgentForbiddenError extends Schema.TaggedError<ShopAgentForbiddenError
  * - `"member"` — a member connection only; it is also the source of the
  *   `memberId` / `teamIds` the method writes with, so there is nowhere else
  *   the identity could come from.
- * - `"any"` — any identified connection. Exactly one method wants this:
- *   `unsubscribe`, the other half of the subscribe cycle both populations run.
  * - `"rpc"` — not reachable from a socket at all. These methods are not
  *   `@callable()`, so the SDK already refuses to dispatch them over a
  *   connection; naming the role states the intent and catches a stray
@@ -165,7 +142,7 @@ class ShopAgentForbiddenError extends Schema.TaggedError<ShopAgentForbiddenError
  * reaches the method body. `"member"` is the exception because it needs an
  * identity, not just trust.
  */
-type CallerRole = "merchant" | "member" | "any" | "rpc";
+type CallerRole = "merchant" | "member" | "rpc";
 
 const forbidden = (detail: string) =>
   Effect.fail(
@@ -196,7 +173,7 @@ const connectionRoleGuard = (
     const state = connectionState(connection);
     if (Option.isNone(state)) return forbidden("unidentified connection");
     if (role === "rpc") return forbidden("not reachable over a socket");
-    if (role !== "any" && state.value.role !== role)
+    if (state.value.role !== role)
       return forbidden(`role=${state.value.role} cannot call a ${role} method`);
     return Effect.succeed(state);
   });
@@ -407,7 +384,7 @@ const OrdersStreamInput = Schema.Struct({ url: Schema.String });
  * application lock. Durable Objects run one synchronous JavaScript turn at a time;
  * `SqlStorage.exec()` is synchronous, and Cloudflare input gates protect the
  * Promise-based `storage.transaction()` used by Effect's SQLite adapter. Once a
- * transaction completes, subscription updates and WebSocket sends below
+ * transaction completes, connection state writes and WebSocket sends below
  * are synchronous in the resumed turn. `blockConcurrencyWhile()` is therefore only
  * needed for constructor migrations. Revisit this only if a state transition starts
  * awaiting non-storage I/O such as `fetch()`.
@@ -440,12 +417,7 @@ export class ShopAgent extends Agent {
     );
     this.runEffect = makeRunEffect(env, ctx.storage, {
       shop: () => this.name,
-      publish: (touched, teams) => this.publish(touched, teams),
-      setSubscription: (subscription) =>
-        Effect.sync(() => {
-          const { connection } = getCurrentAgent<ShopAgent>();
-          if (connection) setSubscription(connection, subscription);
-        }),
+      publish: Effect.suspend(() => this.publish()),
       closeMemberConnections: (memberIds) =>
         this.closeMemberConnections(memberIds),
       databaseSize: Effect.sync(() => this.ctx.storage.sql.databaseSize),
@@ -479,10 +451,6 @@ export class ShopAgent extends Agent {
    * with malformed ones is a gate that forwarded something wrong, and an
    * unidentified connection would otherwise sit open failing every callable's
    * role check one confusing error at a time.
-   *
-   * The subscription starts `null`: a fresh connection is subscribed to
-   * nothing, which is already what the reconnect path in `useSubscribedQuery`
-   * assumes.
    */
   override onConnect(connection: Connection, ctx: ConnectionContext) {
     const shop = this.name;
@@ -547,13 +515,6 @@ export class ShopAgent extends Agent {
     );
   }
 
-  private subscription(connection: Connection): Domain.Subscription | null {
-    return Option.match(connectionState(connection), {
-      onNone: () => null,
-      onSome: (state) => state.subscription,
-    });
-  }
-
   private connections() {
     return Effect.try({
       try: () => [...this.getConnections()],
@@ -563,29 +524,16 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * Sends one connection the invalidation when its subscription is in scope
-   * (the delivery table on `Domain.Subscription`), and answers the role it
-   * sent to, or `null`; a send that throws answers `null`.
+   * Sends one identified connection the invalidation and answers the role it
+   * sent to, or `null`; an unidentified connection, or a send that throws,
+   * answers `null`.
    */
-  private publishTo(
-    connection: Connection,
-    touched: PublishScope,
-    teams: PublishTeams,
-  ) {
+  private publishTo(connection: Connection) {
     const shop = this.name;
     return Effect.try({
       try: () => {
         const state = Option.getOrNull(connectionState(connection));
-        const subscription = state?.subscription;
-        if (!state || !subscription) return null;
-        const inScope =
-          state.role === "member"
-            ? teams === "all" ||
-              state.teamIds.some((teamId) => teams.includes(teamId))
-            : touched === "all" ||
-              subscription.orderId === null ||
-              touched.includes(subscription.orderId);
-        if (!inScope) return null;
+        if (!state) return null;
         connection.send(
           JSON.stringify({
             type: "invalidated",
@@ -716,27 +664,27 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * **A publish follows a write that changed a stored row or a run; a call
-   * that changed nothing publishes nothing.** The webhook path and the
-   * one-order sync hold it through `OrdersAgent`'s `fetchAndUpsertOrder`
-   * `changed`: the order row moved (`fresh`, or a newer `updatedAt`; never
-   * `syncedAt`, which no screen shows) or the reconcile created, resized or
-   * closed a run. A redelivery, or an edit that fetched the version already
-   * stored, writes the same row and reconciles to the same runs, and no
-   * subscribed screen would read anything new. The sites that publish
-   * without that signal are the rows below whose `when` is not `changed`.
+   * **A publish follows a write that succeeded, and goes to every
+   * connection.** The webhook path and the one-order sync hold "succeeded"
+   * through `OrdersAgent`'s `fetchAndUpsertOrder` `changed`: the order row
+   * moved (`fresh`, or a newer `updatedAt`; never `syncedAt`, which no screen
+   * shows) or the reconcile created, resized or closed a run. A redelivery,
+   * or an edit that fetched the version already stored, writes the same row
+   * and reconciles to the same runs, and no live screen would read anything
+   * new. A publish names nothing: every identified connection receives the
+   * invalidation, and every mounted live screen re-reads. The tab's throttle
+   * (`INVALIDATION_THROTTLE_MS` on `useLiveQuery`) is what bounds the cost.
    *
    * **A publish clears the list memo before the first invalidation goes
    * out.** The memo holds each list read's last answer per key, in the
-   * object's memory: the orders index page (`ShopWorkAgent`'s `readOrders`)
+   * object's memory: the orders index page (`ShopWorkAgent`'s `listOrders`)
    * and the rows a team set owns on the workflows list (`readRuns`). Every
    * tab refetches after an invalidation, so the tabs that share a key share
    * one computation instead of one each; and because the clear happens before
    * any invalidation is sent, a refetch after one always computes fresh. It
-   * runs with no connections too: a loader read is memoized the same way. A
-   * write that publishes nothing leaves the memo as it is, which is the same
-   * write leaving every open tab as it is; so every write a list shows must
-   * publish, the retention sweep included. A lookup in flight when the clear
+   * runs with no connections too: a loader read is memoized the same way.
+   * Every write that succeeded publishes, the retention sweep included, so
+   * the memo and the screens move together. A lookup in flight when the clear
    * runs is dropped from the memo, never stored: its caller still gets the
    * value, correct for the moment it asked, and is about to be told to
    * refetch (Effect's `Cache.invalidateAll`). The memo is not state: it
@@ -745,59 +693,49 @@ export class ShopAgent extends Agent {
    * need a table and a read on every hit, which is the cost it exists to
    * avoid.
    *
-   * The sites: every write that publishes, and what it names. `orders` is the
-   * orders half of the scope (`touched`, the parameter): `all` or `the
-   * order`. `teams` is the teams half: `all`, `the order's teams` (every
-   * team with a task on any run of the order, `RunRepository.listOrderTeamIds`,
-   * read after the write), `before ∪ after` (that read on both sides of the
-   * write, because a write can take a team's last task away as readily as
-   * give one), `the order's teams, read before the write`, or `(none)`. Who
-   * receives each scope is the delivery table on `Domain.Subscription`.
-   * `when` is `changed` (the first rule above), `written` (after a write
-   * that succeeded, changed or not; a refused call publishes nothing, since
-   * it wrote nothing a screen shows and the refused tab refetches itself on
-   * every result, `publishIfOk` in `ShopWorkAgent`), `always` (every call of
-   * the trigger, refused or not, because the refusal is itself what the
-   * screen shows, or because a refused Delete team still nulls dangling
-   * team pointers and reconciles), or `swept` (the retention sweep deleted
-   * a row).
+   * The sites: every write that publishes. `when` is `changed` where the
+   * write reports whether it changed anything (the two fetch paths, and the
+   * retention sweep, which reports the rows it deleted); `written` after a
+   * call whose result is `Ok`, through `publishIfOk` in `ShopWorkAgent`; a
+   * refused call publishes nothing, since it wrote nothing a live screen
+   * shows and the refused tab re-reads on its own result. Three `written`
+   * rows publish on every call because the call is the write: the
+   * open-orders sync's start or refusal and its endings change what the
+   * orders index shows (its sync state, the ceiling banner), and Delete
+   * team's `NotFound` still nulls dangling team pointers and reconciles.
    *
-   * | trigger                                                                     | orders    | teams                                    | when    | pinned by                                                                                                                                                                                                                                   |
-   * | --------------------------------------------------------------------------- | --------- | ---------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-   * | order webhook (create, paid, cancelled, fulfilled, edited)                  | the order | before ∪ after                           | changed | a webhook on the same version whose reconcile creates a run publishes; a webhook that moves the order's updatedAt publishes even when no run moved; a webhook publishes to the teams on the order before and after, and to no other team |
-   * | order webhook, the retention sweep deleted something                        | all       | all                                      | swept   | a webhook whose sweep deletes an order publishes and the orders index stops showing it                                                                                                                                                      |
-   * | order webhook, new order at the cycle ceiling                               | the order | (none)                                   | always  | a new order refused at the ceiling publishes to the merchant and no member                                                                                                                                                                  |
-   * | Sync open orders pressed, started or refused (in flight publishes nothing) | all       | all                                      | always  | Sync open orders publishes to every screen when it starts or is refused                                                                                                                                                                     |
-   * | the open-orders stream finishes                                             | all       | all                                      | always  | the open-orders stream publishes to every screen when it finishes                                                                                                                                                                           |
-   * | the sync workflow completes, or fails (its error sink, then its callback)  | all       | all                                      | always  | the open-orders sync publishes to every screen when its workflow completes; the open-orders sync publishes to every screen when its workflow fails                                                                                          |
-   * | Sync this order pressed                                                     | the order | all                                      | changed | Sync this order publishes the order to every team when it changed something, and nothing when it did not                                                                                                                                   |
-   * | Edit tag, Apply                                                             | all       | all                                      | written | Edit tag and Apply publish to every screen whether or not a run moved; a refused call publishes nothing                                                                                                                                      |
-   * | the on/off switch, the editor's Turn on, Delete workflow                    | all       | all                                      | written | turning a workflow on or off, deleting it, or deleting a team publishes to every screen; a refused call publishes nothing                                                                                                                    |
-   * | Delete team                                                                 | all       | all                                      | always  | turning a workflow on or off, deleting it, or deleting a team publishes to every screen                                                                                                                                                     |
-   * | Assign a task's team                                                        | all       | before ∪ after                           | written | assigning a task's team publishes to the teams before and after                                                                                                                                                                             |
-   * | Attach workflow                                                             | the order | all                                      | written | Attach workflow publishes the order to every team                                                                                                                                                                                           |
-   * | Cancel workflow                                                             | the order | the order's teams, read before the write | written | Cancel workflow publishes the order to the teams it had                                                                                                                                                                                     |
-   * | a merchant run or task verb, through `publishToTeams`                       | the order | the order's teams                        | written | completes a member's task over a merchant socket and publishes it to the team; a refused call publishes nothing                                                                                                                              |
-   * | a member run or task verb, through `publishToTeams`                         | the order | the order's teams                        | written | a task verb reaches the orders index and the order's page, and not another order's page; publishes a completed task to the team, and not to a team with no work on that order; a refused call publishes nothing                              |
-   * | seed (dev)                                                                  | all       | all                                      | written | the seed publishes once to every screen                                                                                                                                                                                                     |
+   * | trigger                                                                    | when    | pinned by |
+   * | -------------------------------------------------------------------------- | ------- | --------- |
+   * | order webhook (create, paid, cancelled, fulfilled, edited)                 | changed | a webhook on the same version whose reconcile creates a run publishes; a webhook that moves the order's updatedAt publishes even when no run moved |
+   * | order webhook, the retention sweep deleted something                       | changed | a webhook whose sweep deletes an order publishes and the orders index stops showing it |
+   * | Sync open orders pressed, started or refused (in flight publishes nothing) | written | Sync open orders publishes to every screen when it starts or is refused |
+   * | the open-orders stream finishes                                            | written | the open-orders stream publishes to every screen when it finishes |
+   * | the sync workflow completes, or fails (its error sink, then its callback)  | written | the open-orders sync publishes to every screen when its workflow completes; the open-orders sync publishes to every screen when its workflow fails |
+   * | Sync this order pressed                                                    | changed | Sync this order publishes when it changed something, and nothing when it did not |
+   * | Edit tag, Apply                                                            | written | Edit tag and Apply publish to every screen whether or not a run moved; a refused call publishes nothing |
+   * | the on/off switch, the editor's Turn on, Delete workflow, Delete team      | written | turning a workflow on or off, deleting it, or deleting a team publishes to every screen; a refused call publishes nothing |
+   * | Assign a task's team                                                       | written | assigning a task's team publishes to every screen |
+   * | Attach workflow                                                            | written | Attach workflow publishes to every screen |
+   * | Cancel workflow                                                            | written | Cancel workflow publishes to every screen |
+   * | a merchant run or task verb                                                | written | completes a member's task over a merchant socket and publishes; a refused call publishes nothing |
+   * | a member run or task verb                                                  | written | every connection receives every publish; a refused call publishes nothing |
+   * | seed (dev)                                                                 | written | the seed publishes once to every screen |
    *
-   * `"all"` is the honest default for a writer that cannot name a half:
-   * over-broad costs a refetch, under-broad a list that silently stops
-   * updating. Workflow configuration is loader data and does not publish,
-   * except Edit tag, Apply and the switch, which change what the order page's
-   * Workflow select shows (`matchedWorkflows`, `otherWorkflows`).
+   * Workflow configuration is loader data and does not publish, except Edit
+   * tag, Apply and the switch, which change what the order page's Workflow
+   * select shows (`matchedWorkflows`, `otherWorkflows`).
    *
    * An invalidation is best-effort and never the new value: SQLite stays
-   * authoritative and a subscribing tab refetches, so a dropped invalidation
-   * costs a stale render until the next subscribe rather than a lost write.
-   * That is why a send failure is swallowed here instead of failing the
-   * mutation that triggered it.
+   * authoritative and a live screen re-reads, so a dropped invalidation
+   * costs a stale render until the next publish or reconnect rather than a
+   * lost write. That is why a send failure is swallowed here instead of
+   * failing the mutation that triggered it.
    *
    * Logs one line per publish with how many merchant and member connections
    * received the invalidation, under `instrumentationIsOn`. The counts, with
-   * `readOrders`'s and `readRuns`'s `ms=`, are how the fan-out is measured.
+   * `listOrders`'s and `readRuns`'s `ms=`, are how the fan-out is measured.
    */
-  private publish(touched: PublishScope, teams: PublishTeams = "all") {
+  private publish() {
     const shop = this.name;
     const instrumented = instrumentationIsOn(this.env.ENVIRONMENT);
     /* Through the runtime, as a nested run: the memo is shop work's, and the
@@ -812,53 +750,20 @@ export class ShopAgent extends Agent {
     return clearListMemo.pipe(
       Effect.andThen(this.connections()),
       Effect.flatMap((connections) =>
-        Effect.all(
-          connections.map((connection) =>
-            this.publishTo(connection, touched, teams),
-          ),
-        ),
+        Effect.all(connections.map((connection) => this.publishTo(connection))),
       ),
       Effect.flatMap((sent) => {
         if (!instrumented) return Effect.void;
         const merchants = sent.filter((role) => role === "merchant").length;
         const members = sent.filter((role) => role === "member").length;
-        const touchedLog = touched === "all" ? "all" : touched.length;
-        const teamsLog = teams === "all" ? "all" : teams.length;
         return Effect.logInfo(
-          `ShopAgent.publish: shop=${shop} merchants=${String(merchants)} members=${String(members)} touched=${String(touchedLog)} teams=${String(teamsLog)}`,
-        ).pipe(
-          Effect.annotateLogs({
-            shop,
-            merchants,
-            members,
-            touched: touchedLog,
-            teams: teamsLog,
-          }),
-        );
+          `ShopAgent.publish: shop=${shop} merchants=${String(merchants)} members=${String(members)}`,
+        ).pipe(Effect.annotateLogs({ shop, merchants, members }));
       }),
       Effect.ignore({
         log: "Debug",
         message: `ShopAgent.publish: shop=${this.name}`,
       }),
-    );
-  }
-
-  @callable()
-  unsubscribe(input: Domain.SubscriberIdInput): Promise<void> {
-    return this.runEffect(
-      callableEffect("ShopAgent.unsubscribe", Domain.SubscriberIdInput, {
-        role: "any",
-        parse: { onExcessProperty: "error" },
-      })(({ subscriberId }) =>
-        Effect.sync(() => {
-          const { connection } = getCurrentAgent<ShopAgent>();
-          if (
-            connection &&
-            this.subscription(connection)?.subscriberId === subscriberId
-          )
-            setSubscription(connection, null);
-        }),
-      )(input),
     );
   }
 
@@ -919,7 +824,7 @@ export class ShopAgent extends Agent {
       this.syncStarting = false;
     };
     const starting = () => this.syncStarting;
-    const publish = () => this.publish("all");
+    const publish = () => this.publish();
     return this.runEffect(
       Effect.gen(function* () {
         // The one `@callable()` that takes no input, so it has no
@@ -1000,7 +905,7 @@ export class ShopAgent extends Agent {
    */
   onOrdersStream(input: { readonly url: string }): Promise<OrdersStreamCounts> {
     const shop = this.name;
-    const publish = () => this.publish("all");
+    const publish = () => this.publish();
     const databaseSize = () => this.ctx.storage.sql.databaseSize;
     return this.runEffect(
       callableEffect("ShopAgent.onOrdersStream", OrdersStreamInput, {
@@ -1080,7 +985,7 @@ export class ShopAgent extends Agent {
    */
   onOrdersSyncError(input: { readonly message: string }): Promise<void> {
     const shop = this.name;
-    const publish = () => this.publish("all");
+    const publish = () => this.publish();
     return this.runEffect(
       callableEffect("ShopAgent.onOrdersSyncError", OrdersSyncErrorInput, {
         role: "rpc",
@@ -1109,7 +1014,7 @@ export class ShopAgent extends Agent {
     if (workflowName !== ORDERS_SYNC_WORKFLOW_NAME) return;
     const shop = this.name;
     const deleteWorkflow = () => this.deleteWorkflow(workflowId);
-    const publish = () => this.publish("all");
+    const publish = () => this.publish();
     await this.runEffect(
       Effect.gen(function* () {
         yield* Effect.logInfo(
@@ -1137,7 +1042,7 @@ export class ShopAgent extends Agent {
     if (workflowName !== ORDERS_SYNC_WORKFLOW_NAME) return;
     const shop = this.name;
     const deleteWorkflow = () => this.deleteWorkflow(workflowId);
-    const publish = () => this.publish("all");
+    const publish = () => this.publish();
     await this.runEffect(
       Effect.gen(function* () {
         yield* Effect.logError(
@@ -1171,18 +1076,7 @@ export class ShopAgent extends Agent {
    */
   syncOrderWebhook(input: OrderWebhookInput): Promise<void> {
     const shop = this.name;
-    /**
-     * Scoped by team as well as by order: the union of the teams with an open
-     * task on the order before and after the reconcile, because a reconcile
-     * can take a team's last task away (a cancelled line, a dropped quantity)
-     * as readily as give one, and the team losing it is only nameable before.
-     * An order no team owns a task on either side publishes to *no* member —
-     * the empty list is the intended answer, not a missing one — while the
-     * merchant's pages still see their order's id.
-     */
-    const publish = (orderId: string, teams: PublishTeams) =>
-      this.publish([orderId], teams);
-    const publishAll = () => this.publish("all");
+    const publish = () => this.publish();
     return this.runEffect(
       callableEffect("ShopAgent.syncOrderWebhook", OrderWebhookInput, {
         role: "rpc",
@@ -1210,10 +1104,10 @@ export class ShopAgent extends Agent {
            * 2xx: a retry cannot change the answer, and making Shopify replay
            * a delivery for four hours to reach the same refusal helps nobody.
            *
-           * The publish is not the banner: the merchant's open orders
-           * index refetches its list, and the critical banner itself
-           * arrives with that page's next loader read, since usage is
-           * deliberately loader-only (the orders index's loader data).
+           * No publish: the refusal stored no order, so no live screen
+           * would read anything new. The critical banner arrives with the
+           * orders index's next loader read, since usage is deliberately
+           * loader-only (the orders index's loader data).
            */
           // One read serves both the ceiling and the sweep below: the row
           // is the same one, and this is the webhook path, where every
@@ -1237,11 +1131,8 @@ export class ShopAgent extends Agent {
                 limit: Domain.ShopLimits.maxOrdersPerCycle,
               }),
             );
-            yield* publish(orderId, []);
             return;
           }
-          const shopWork = yield* ShopWorkAgent;
-          const before = yield* shopWork.orderTeamIds({ orderId });
           yield* Effect.logInfo(
             `ShopAgent.syncOrderWebhook: shop=${shop} topic=${topic} orderId=${orderId} status=fetch`,
           ).pipe(
@@ -1284,26 +1175,20 @@ export class ShopAgent extends Agent {
            * order gone, a run gone with it), so it publishes even when the
            * webhook's own order did not change; without it the list memo
            * ({@link ShopAgent.publish}) would answer the swept rows until the
-           * next publish. Scope "all": the deleted orders are not this one,
-           * and a deleted run may have been on any team's list.
+           * next publish.
            */
-          if (changed)
-            yield* publish(
-              orderId,
-              unionTeams(before, yield* shopWork.orderTeamIds({ orderId })),
-            );
-          else if (sweptAny) yield* publishAll();
-          else
-            yield* Effect.logInfo(
-              `ShopAgent.syncOrderWebhook: shop=${shop} topic=${topic} orderId=${orderId} status=unchanged`,
-            ).pipe(
-              Effect.annotateLogs({
-                shop,
-                topic,
-                orderId,
-                status: "unchanged",
-              }),
-            );
+          yield* changed || sweptAny
+            ? publish()
+            : Effect.logInfo(
+                `ShopAgent.syncOrderWebhook: shop=${shop} topic=${topic} orderId=${orderId} status=unchanged`,
+              ).pipe(
+                Effect.annotateLogs({
+                  shop,
+                  topic,
+                  orderId,
+                  status: "unchanged",
+                }),
+              );
           // Outside the upsert's transaction, because it does network I/O
           // and Durable Object SQLite transactions must not await anything
           // but storage. The webhook path is the outbox's ordinary carrier:
@@ -1385,7 +1270,7 @@ export class ShopAgent extends Agent {
    */
   @callable()
   syncOrder(input: Domain.SyncOrderInput): Promise<Domain.SyncOrderResult> {
-    const publish = (touched: PublishScope) => this.publish(touched);
+    const publish = () => this.publish();
     return this.runEffect(
       callableEffect("ShopAgent.syncOrder", Domain.SyncOrderInput, {
         role: "merchant",
@@ -1393,7 +1278,7 @@ export class ShopAgent extends Agent {
       })(({ orderId }) =>
         Effect.gen(function* () {
           const { gone, changed } = yield* fetchAndUpsertOrder(orderId);
-          if (changed) yield* publish([orderId]);
+          if (changed) yield* publish();
           return (
             gone ? { _tag: "Gone" } : { _tag: "Stored" }
           ) satisfies Domain.SyncOrderResult;
@@ -1403,35 +1288,21 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * The orders index's loader read; the rule is on {@link ShopWorkAgent}'s
-   * `listOrders`. Plain RPC, not `@callable()`: the loader half of the orders
-   * index, read through `ShopAgentClient` so the first page paints during
-   * SSR. The socket half is {@link ShopAgent.subscribeOrders}.
+   * The orders index's read; the rule is on {@link ShopWorkAgent}'s
+   * `listOrders`. One method for both reads of a live screen (the rule on
+   * `ShopAgentClient`): the loader reads it through `ShopAgentClient` with no
+   * connection, which the `"merchant"` role admits, and `useLiveQuery` reads
+   * it over the merchant socket.
    */
+  @callable()
   listOrders(input: Domain.ListOrdersInput): Promise<Domain.OrdersIndexData> {
     return this.runEffect(
       callableEffect("ShopAgent.listOrders", Domain.ListOrdersInput, {
-        role: "rpc",
-      })((decoded) =>
-        ShopWorkAgent.pipe(
-          Effect.flatMap((shopWork) => shopWork.listOrders(decoded)),
-        ),
-      )(input),
-    );
-  }
-
-  /** The orders index's read and subscribe; the rule is on {@link ShopWorkAgent}'s `subscribeOrders`. */
-  @callable()
-  subscribeOrders(
-    input: Domain.SubscribeOrdersInput,
-  ): Promise<Domain.OrdersIndexData> {
-    return this.runEffect(
-      callableEffect("ShopAgent.subscribeOrders", Domain.SubscribeOrdersInput, {
         role: "merchant",
         parse: { onExcessProperty: "error" },
       })((decoded) =>
         ShopWorkAgent.pipe(
-          Effect.flatMap((shopWork) => shopWork.subscribeOrders(decoded)),
+          Effect.flatMap((shopWork) => shopWork.listOrders(decoded)),
         ),
       )(input),
     );
@@ -1649,35 +1520,21 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * The order page's loader read; the rule is on {@link ShopWorkAgent}'s
-   * `getOrderDetail`. Plain RPC, not `@callable()`: the loader half of the
-   * order detail page, as {@link ShopAgent.listOrders} is for the index.
+   * The order page's read; the rule is on {@link ShopWorkAgent}'s
+   * `getOrderDetail`. One method for the loader and the socket, as
+   * {@link ShopAgent.listOrders} is for the index.
    */
+  @callable()
   getOrderDetail(
     input: Domain.GetOrderDetailInput,
   ): Promise<Domain.OrderPageData | null> {
     return this.runEffect(
       callableEffect("ShopAgent.getOrderDetail", Domain.GetOrderDetailInput, {
-        role: "rpc",
-      })((decoded) =>
-        ShopWorkAgent.pipe(
-          Effect.flatMap((shopWork) => shopWork.getOrderDetail(decoded)),
-        ),
-      )(input),
-    );
-  }
-
-  @callable()
-  subscribeOrder(
-    input: typeof Domain.SubscribeOrderInput.Encoded,
-  ): Promise<Domain.OrderPageData | null> {
-    return this.runEffect(
-      callableEffect("ShopAgent.subscribeOrder", Domain.SubscribeOrderInput, {
         role: "merchant",
         parse: { onExcessProperty: "error" },
       })((decoded) =>
         ShopWorkAgent.pipe(
-          Effect.flatMap((shopWork) => shopWork.subscribeOrder(decoded)),
+          Effect.flatMap((shopWork) => shopWork.getOrderDetail(decoded)),
         ),
       )(input),
     );
@@ -1688,8 +1545,8 @@ export class ShopAgent extends Agent {
    * `Domain.ConnectionRole` allowed to call it.** The merchant acts through
    * the embedded admin session; a member through a member connection with
    * its team ids. The two paths load different context, so they are separate
-   * callables rather than one with a role switch. Reads the connection tag
-   * already scopes (`subscribeRuns`, `subscribeRun`) keep bare names.
+   * callables rather than one with a role switch. Reads are not run writes
+   * and keep bare names (`liveRuns`, `liveRun`).
    */
   @callable()
   merchantListRunsForOrder(
@@ -1891,19 +1748,17 @@ export class ShopAgent extends Agent {
     );
   }
 
-  /** The member's workflows list read and subscribe; the rule is on {@link ShopWorkAgent}'s `subscribeRuns`. */
+  /** The member's workflows list over the socket; the rule is on {@link ShopWorkAgent}'s `liveRuns`. */
   @callable()
-  subscribeRuns(
-    input: typeof Domain.SubscribeRunsInput.Encoded,
+  liveRuns(
+    input: typeof Domain.LiveRunsInput.Encoded,
   ): Promise<Domain.WorkflowsListData> {
     return this.runEffect(
-      memberCallableEffect(
-        "ShopAgent.subscribeRuns",
-        Domain.SubscribeRunsInput,
-        { onExcessProperty: "error" },
-      )((decoded, member) =>
+      memberCallableEffect("ShopAgent.liveRuns", Domain.LiveRunsInput, {
+        onExcessProperty: "error",
+      })((decoded, member) =>
         ShopWorkAgent.pipe(
-          Effect.flatMap((shopWork) => shopWork.subscribeRuns(decoded, member)),
+          Effect.flatMap((shopWork) => shopWork.liveRuns(decoded, member)),
         ),
       )(input),
     );
@@ -2043,17 +1898,17 @@ export class ShopAgent extends Agent {
     );
   }
 
-  /** The member's workflow page read and subscribe; the rule is on {@link ShopWorkAgent}'s `subscribeRun`. */
+  /** The member's workflow page over the socket; the rule is on {@link ShopWorkAgent}'s `liveRun`. */
   @callable()
-  subscribeRun(
-    input: typeof Domain.SubscribeRunInput.Encoded,
+  liveRun(
+    input: typeof Domain.RunIdInput.Encoded,
   ): Promise<Domain.RunPageData | null> {
     return this.runEffect(
-      memberCallableEffect("ShopAgent.subscribeRun", Domain.SubscribeRunInput, {
+      memberCallableEffect("ShopAgent.liveRun", Domain.RunIdInput, {
         onExcessProperty: "error",
       })((decoded, member) =>
         ShopWorkAgent.pipe(
-          Effect.flatMap((shopWork) => shopWork.subscribeRun(decoded, member)),
+          Effect.flatMap((shopWork) => shopWork.liveRun(decoded, member)),
         ),
       )(input),
     );
@@ -2270,7 +2125,7 @@ export class ShopAgent extends Agent {
    * browser-side calls it. Task ownership is configuration that only changes
    * on the workflow pages, and a loader read refreshes with
    * `router.invalidate` and paints during SSR, which a socket query outside
-   * the subscription cycle cannot do.
+   * `useLiveQuery` cannot do.
    */
   listTeamWorkflows(
     input: typeof Domain.TeamIdInput.Encoded,

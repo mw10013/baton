@@ -1049,8 +1049,7 @@ describe("ShopAgent workflow run callables", () => {
             ).pipe(Layer.provide(layer));
             const host = Layer.succeed(ShopAgentHost, {
               shop: () => shop,
-              publish: () => Effect.void,
-              setSubscription: () => Effect.void,
+              publish: Effect.void,
               closeMemberConnections: () => Effect.void,
               databaseSize: Effect.succeed(0),
               syncInFlight: () => Effect.succeed(false),
@@ -1542,8 +1541,7 @@ const seedOrderId = (n: number) => `${Domain.SEED_ORDER_ID_PREFIX}${String(n)}`;
 const ordersPage = async (
   agent: Awaited<ReturnType<typeof getAgentByName<Cloudflare.Env, ShopAgent>>>,
 ) => {
-  const data = await agent.subscribeOrders({
-    subscriberId: "seed-test",
+  const data = await agent.listOrders({
     limit: 50,
     cursor: null,
     q: null,
@@ -1565,7 +1563,7 @@ const twoTask = (name: string, tag: string, teamId: string) => ({
 describe("ShopAgent seed callables", () => {
   /**
    * `seedWorkflows` publishes nothing of its own: `seedOrders` always
-   * follows it, and its one publish to all orders and all teams covers both.
+   * follows it, and its one publish to every connection covers both.
    */
   it("the seed publishes once to every screen", async () => {
     const shop = "seed-publishes.myshopify.com";

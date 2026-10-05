@@ -529,7 +529,7 @@ describe("bulkOrdersQueryText", () => {
 
 /**
  * The open-orders sync's rows of the sites table on `ShopAgent.publish`:
- * every one publishes to all orders and all teams, with no changed-or-nothing
+ * every one publishes to every connection, with no changed-or-nothing
  * gate, because the sync's state (the button, the banner) is on the orders
  * index whatever the stream did. Counted, because each case publishes more
  * than once on the same sockets.

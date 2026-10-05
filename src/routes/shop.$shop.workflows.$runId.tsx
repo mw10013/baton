@@ -18,12 +18,12 @@ import { memberServerFnMiddleware } from "@/lib/MemberServerFnMiddleware";
 import { showModal } from "@/lib/polarisModal";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { SocketBanner } from "@/lib/SocketBanner";
+import { useLiveQuery } from "@/lib/useLiveQuery";
 import {
   errorMessage,
   runResultMessage,
   useMemberRunActions,
 } from "@/lib/useMemberRunActions";
-import { useSubscribedQuery } from "@/lib/useSubscribedQuery";
 
 const NOTE_MODAL = "run-note";
 const BLOCK_MODAL = "run-block";
@@ -101,10 +101,9 @@ function RouteComponent() {
     invalidate,
     agent,
     identified,
-  } = useSubscribedQuery({
+  } = useLiveQuery({
     queryKey: ["shop-run", shop, runId],
-    subscribe: (stub, subscriberId) =>
-      stub.subscribeRun({ subscriberId, runId }),
+    read: (stub) => stub.liveRun({ runId }),
     initialData: initialPage,
   });
   const actions = useMemberRunActions({

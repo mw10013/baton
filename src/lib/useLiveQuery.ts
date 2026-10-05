@@ -31,7 +31,7 @@ import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
  * object's list memo, so the tabs on one key join a single lookup instead of
  * each reading the rows (the rule on `ShopAgent.publish`). What the hook does
  * inside and at the end of the window is the events table on
- * {@link useSubscribedQuery}.
+ * {@link useLiveQuery}.
  */
 export const INVALIDATION_THROTTLE_MS = 2000;
 
@@ -40,7 +40,7 @@ const decodeAgentMessage = Schema.decodeUnknownOption(
 );
 
 /**
- * Whether the tab is hidden, for the deferral on {@link useSubscribedQuery}:
+ * Whether the tab is hidden, for the deferral on {@link useLiveQuery}:
  * the Page Visibility API's `document.visibilityState`, which names the
  * browser tab. `false` without a document (SSR), where no invalidation
  * arrives anyway.
@@ -52,37 +52,35 @@ const connecting = () =>
   Promise.reject(new Error("Still connecting. Try again in a moment."));
 
 /**
- * The tab's half of the cycle on `Domain.Subscription`: one query on the
- * publish, invalidate, refetch model, for a screen whose data other actors
- * change underneath it. Every subscribed screen goes through this hook so the
- * read that subscribes, the refetch on an invalidation and the unsubscribe
- * cannot drift apart. `subscribe` is a `subscribe<Feature>` RPC that reads
- * and registers the subscription on this connection in one round trip, keyed
- * by a per-mount `subscriberId`: the subtree's one socket outlives the
- * route, so a stale `unsubscribe` from a replaced mount must not clear the
- * newer mount's subscription.
+ * The tab's half of the cycle on `Domain.InvalidatedMessage`: one query for a
+ * live screen, whose data other actors change underneath it. Every live
+ * screen goes through this hook so the read and the re-read on an
+ * invalidation cannot drift apart. `read` is the same object method the
+ * route's loader reads through `ShopAgentClient`, called over the socket.
  *
  * The events the hook handles. `visible` is the tab's visibility when the
  * event arrives (`either` when it does not matter); the window is
  * `INVALIDATION_THROTTLE_MS`, opened by a refetch.
  *
- * | event                              | visible | the hook                                               | pinned by                                                         |
- * | ---------------------------------- | ------- | ------------------------------------------------------ | ----------------------------------------------------------------- |
- * | identify                           | either  | invalidates, joining a fetch in flight; never deferred | identify invalidates once and joins a fetch in flight             |
- * | invalidation, no window open       | yes     | refetches now and opens the window                     | a visible tab refetches on an invalidation                        |
- * | invalidation, window open          | yes     | marks pending; the window's end refetches once         | a burst inside the window costs two refetches                     |
- * | invalidation                       | no      | marks the query stale and defers                       | a hidden tab defers its refetch to the next visibilitychange      |
- * | window ends with a refetch pending | no      | defers                                                 | a throttled invalidation whose window elapses while hidden defers |
- * | tab becomes visible, deferred      | yes     | refetches through the throttle                         | a hidden tab defers its refetch to the next visibilitychange      |
- * | unmount                            | either  | unsubscribes one task later, if still identified       | unmount unsubscribes with the mount's subscriber id               |
- * | setup again before that task       | either  | cancels the unsubscribe                                | a setup before the unsubscribe task cancels it                    |
+ * | event                              | visible | the hook                                       | pinned by                                                         |
+ * | ---------------------------------- | ------- | ---------------------------------------------- | ----------------------------------------------------------------- |
+ * | identify                           | either  | runs the read; never deferred                  | identify invalidates once and joins a fetch in flight             |
+ * | invalidation, no window open       | yes     | refetches now and opens the window             | a visible tab refetches on an invalidation                        |
+ * | invalidation, window open          | yes     | marks pending; the window's end refetches once | a burst inside the window costs two refetches                     |
+ * | invalidation                       | no      | marks the query stale and defers               | a hidden tab defers its refetch to the next visibilitychange      |
+ * | window ends with a refetch pending | no      | defers                                         | a throttled invalidation whose window elapses while hidden defers |
+ * | tab becomes visible, deferred      | yes     | refetches through the throttle                 | a hidden tab defers its refetch to the next visibilitychange      |
  *
- * Identify is every connect, first and each reconnect: a reconnect is a
- * fresh connection with no subscription, so invalidations stop until
- * `subscribe` runs again. It invalidates with `cancelRefetch: false`,
- * joining the subscribe a mount or re-enable already started instead of
- * running a second RPC that cannot be aborted. It is never deferred: a fresh
- * subscription must read once, and a reconnect is rare.
+ * The throttle is the object's rate limit: every connection receives every
+ * publish, so 30 refetches a minute per tab is the ceiling the shop pays at
+ * any load.
+ *
+ * Identify is every connect, first and each reconnect, and an invalidation
+ * sent while the socket was down is lost, so identify re-reads. It
+ * invalidates with `cancelRefetch: false`, joining the read a mount or
+ * re-enable already started instead of running a second RPC that cannot be
+ * aborted. It is never deferred: a reconnect is rare, and the data may be
+ * stale by however long the socket was down.
  *
  * Deferral marks the query stale without a fetch (`refetchType: "none"`)
  * and sets a flag the next `visibilitychange` to visible clears. A
@@ -99,16 +97,9 @@ const connecting = () =>
  * 30-minute route cache so a retained loader match never outlives its Query
  * data.
  *
- * The unsubscribe waits one task so React Strict Mode's setup, cleanup,
- * setup probe cannot drop the subscription the first read just created. It
- * is best-effort and outside `withSocketRecovery`: the subscription is
- * connection-scoped, so any failure means the connection is already gone,
- * and reconnecting the shared socket from a route the user just left would
- * be pure churn.
- *
- * `initialData` is the loader's SSR read of the same contract (through
+ * `initialData` is the loader's SSR read of the same method (through
  * `ShopAgentClient`), so the screen paints before the socket identifies; the
- * identify invalidation then performs the first subscribing read. Without it
+ * identify invalidation then performs the first socket read. Without it
  * the screen shows its own connecting state until `identified`.
  *
  * It may be `undefined`, because a key can outrun the loader: the member's workflows list
@@ -128,30 +119,19 @@ const connecting = () =>
  * query is disabled and the effects no-op until the identify flip re-renders
  * with the published socket.
  */
-export const useSubscribedQuery = <A, Initial extends A | undefined>({
+export const useLiveQuery = <A, Initial extends A | undefined>({
   queryKey,
-  subscribe,
+  read,
   initialData,
 }: {
   readonly queryKey: QueryKey;
-  readonly subscribe: (
-    stub: ShopAgentSocket["stub"],
-    subscriberId: string,
-  ) => Promise<A>;
+  readonly read: (stub: ShopAgentSocket["stub"]) => Promise<A>;
   readonly initialData: Initial;
 }) => {
   const queryClient = useQueryClient();
   const { agent, identified } = useShopAgent();
-  const agentRef = React.useRef(agent);
-  agentRef.current = agent;
-  const subscriberIdRef = React.useRef<string | null>(null);
-  subscriberIdRef.current ??= crypto.randomUUID();
-  const subscriberId = subscriberIdRef.current;
-  const unsubscribeTimerRef = React.useRef<ReturnType<
-    typeof setTimeout
-  > | null>(null);
 
-  // oxlint-disable-next-line @tanstack/query/exhaustive-deps -- agent.stub is the stable per-shop socket and subscriberId is mount-scoped connection metadata; the caller's key is the cache identity
+  // oxlint-disable-next-line @tanstack/query/exhaustive-deps -- agent.stub is the stable per-shop socket; the caller's key is the cache identity
   const query = useQuery({
     queryKey,
     staleTime: Infinity,
@@ -159,9 +139,7 @@ export const useSubscribedQuery = <A, Initial extends A | undefined>({
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     queryFn: () =>
-      agent
-        ? withSocketRecovery(agent)(() => subscribe(agent.stub, subscriberId))
-        : connecting(),
+      agent ? withSocketRecovery(agent)(() => read(agent.stub)) : connecting(),
     enabled: identified,
     initialData,
     placeholderData: keepPreviousData,
@@ -233,21 +211,6 @@ export const useSubscribedQuery = <A, Initial extends A | undefined>({
       if (timer) clearTimeout(timer);
     };
   }, [agent, invalidate, markStale]);
-
-  React.useEffect(() => {
-    if (unsubscribeTimerRef.current) {
-      clearTimeout(unsubscribeTimerRef.current);
-      unsubscribeTimerRef.current = null;
-    }
-    return () => {
-      unsubscribeTimerRef.current = setTimeout(() => {
-        unsubscribeTimerRef.current = null;
-        const closing = agentRef.current;
-        if (closing?.identified)
-          void closing.stub.unsubscribe({ subscriberId }).catch(() => null);
-      }, 0);
-    };
-  }, [subscriberId]);
 
   /**
    * With `initialData` there is data from the first render, but the generic

@@ -22,7 +22,7 @@ import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { withSocketRecovery } from "@/lib/ShopAgentContext";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { SocketBanner } from "@/lib/SocketBanner";
-import { useSubscribedQuery } from "@/lib/useSubscribedQuery";
+import { useLiveQuery } from "@/lib/useLiveQuery";
 
 const ORDERS_PAGE_SIZE = 25;
 
@@ -183,9 +183,9 @@ const emptyText = (
     : "No orders match these filters.";
 
 /**
- * The loader half of the subscribed page: the current filters, search and page, read
- * Worker-side so it paints during SSR. The socket's `subscribeOrders` takes
- * over on identify (see `useSubscribedQuery`). The page is in the URL like the
+ * The loader read of the live screen: the current filters, search and page, read
+ * Worker-side so it paints during SSR. The same `listOrders` over the socket
+ * takes over on identify (see `useLiveQuery`). The page is in the URL like the
  * filters, so the SSR paint is the page the merchant left.
  */
 const OrdersLoaderInput = Schema.Struct({
@@ -248,9 +248,9 @@ export const Route = createFileRoute("/app/orders/")({
  * Everything per order — items, their properties, workflows — lives on
  * `/app/orders/$orderId`.
  *
- * A subscribed page (the socket half of the loader-versus-socket rule on
- * `ShopAgentClient`): the loader paints the first page, then `useSubscribedQuery`
- * reads through `subscribeOrders` and refetches on every order-state invalidation,
+ * A live screen (the loader-versus-socket rule on `ShopAgentClient`): the
+ * loader paints the first page, then `useLiveQuery` reads `listOrders` over
+ * the socket and refetches on every invalidation,
  * so the table stays current while a bulk stream and webhooks write
  * underneath it.
  */
@@ -334,17 +334,16 @@ function RouteComponent() {
     invalidate,
     agent,
     identified,
-  } = useSubscribedQuery({
+  } = useLiveQuery({
     queryKey: ordersQueryKey(shop, q, show, team, after),
-    subscribe: (stub, subscriberId) =>
+    read: (stub) =>
       stub
-        .subscribeOrders({
+        .listOrders({
           limit: ORDERS_PAGE_SIZE,
           cursor: after,
           q,
           show,
           team,
-          subscriberId,
         })
         .then(decodeOrdersIndexData),
     initialData: initialOrders,
@@ -465,7 +464,7 @@ function RouteComponent() {
    * order waits on no team; that reads as an
    * empty list with its text, which is better than a control that disappears.
    * Options are names only: a count per option would be a new per-team
-   * aggregate on every refresh of a subscribed page, which is the cost
+   * aggregate on every refresh of a live screen, which is the cost
    * `Domain.OrderCounts` is bounded to avoid.
    *
    * In the table's slot the box adds `small-200` above and at the sides:

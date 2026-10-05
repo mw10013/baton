@@ -65,9 +65,10 @@ export class ShopAgentClientError extends Schema.TaggedError<ShopAgentClientErro
  *   fetch name.
  * - **Operational state other actors change underneath the page** (orders,
  *   which webhooks, the bulk sync stream, and members' task actions all
- *   write) goes through the `/app` socket via `useSubscribedQuery` — the
- *   subscribe pattern, described end to end on `Domain.Subscription`. All of
- *   it, or none — a socket `useQuery` outside that cycle never refetches,
+ *   write) is a live screen: it reads one method twice, through this service
+ *   in its loader for the SSR paint and through `useLiveQuery` over the
+ *   socket after (the cycle on `Domain.InvalidatedMessage`). A socket
+ *   `useQuery` outside the hook never re-reads and belongs on a loader,
  *   which is the bug that moved `listTeamWorkflows` from the socket to this
  *   service.
  *
@@ -158,7 +159,7 @@ export class ShopAgentClient extends Context.Service<
       input: Domain.RevokeMemberConnectionsInput,
     ) => Effect.Effect<void, ShopAgentClientError>;
     /**
-     * The subscription counterpart: `SubscriptionPlan` calls this when a
+     * The app subscription counterpart: `SubscriptionPlan` calls this when a
      * revalidation flips a shop to `Unsubscribed`, so every open socket —
      * merchant and member — reconnects through the gate and is refused.
      */

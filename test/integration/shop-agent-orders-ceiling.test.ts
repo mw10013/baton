@@ -63,11 +63,13 @@ const webhook = (orderId: string) => ({
 
 describe("ShopAgent order ceiling", () => {
   /**
-   * The refused order is on no team, so the publish names it and no team:
-   * the orders index refetches for the banner's flag and no member list
-   * moves.
+   * The refusal stored no order, so no live screen would read anything new;
+   * the banner's flag reaches the orders index with its next loader read.
+   * The socket's invalidation would arrive before the RPC returns, so the
+   * quiet window after it is the assertion; the seed after it is the positive
+   * control, proving both sockets were listening.
    */
-  it("a new order refused at the ceiling publishes to the merchant and no member", async () => {
+  it("a new order refused at the ceiling publishes nothing", async () => {
     const shop = "ceiling-publishes.myshopify.com";
     await withMaxOrdersPerCycle(2, async () => {
       const agent = await agentFor(shop);
@@ -81,8 +83,15 @@ describe("ShopAgent order ceiling", () => {
       const screens = await openTwoScreens(shop);
       await agent.syncOrderWebhook(webhook("gid://shopify/Order/1"));
       strictEqual(await orderCount(shop), 0);
-      await receivedInvalidations(screens.merchant, 1);
+      await receivesNoMore(screens.merchant);
       await receivesNoMore(screens.member);
+      await agent.seedOrders({
+        memberId: "member-seed",
+        memberEmail: "seed@example.com",
+        orders: [{ n: 1, lineItems: [] }],
+      });
+      await receivedInvalidations(screens.merchant, 1);
+      await receivedInvalidations(screens.member, 1);
       screens.close();
     });
   });

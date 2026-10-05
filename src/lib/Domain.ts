@@ -70,7 +70,6 @@
  * | closed | orders, shop work | "closed order" (the matrices' `order` column: cancelled or fulfilled), "closed run" (`runIsClosed`)                        |
  * | cancel | orders, shop work | "cancelled order" (`orderIsCancelled`, Shopify's), "Cancel workflow" (the run verb, `merchant_cancelled`)                  |
  * | start  | shop work         | two senses: a member starts a task (the verb, `StartTaskInput`); a workflow starts for an item, in merchant copy, and in identifiers a workflow creates a run (`workflowIsEligible`) |
- * | subscription | platform, billing | bare in platform: a connection's registered interest (`Subscription`); "app subscription" in billing, always (`AppSubscription`) |
  *
  * Shape families. These are the developer dialect's suffixes for what
  * crosses a boundary, not vocabulary words: a word here gets no nouns row,

@@ -22,9 +22,8 @@
  * `scripts/rules-lint.ts` refuses its retired synonym in screen copy.
  * "Provisional cycle", "high-water mark" and "boundary" are JSDoc terms on
  * their own symbols ({@link provisionalCycleStart}, {@link seatEventValue},
- * {@link AppSubscription}), not vocabulary words. "Subscription" alone is the
- * live query a socket registers (`Subscription` in Platform); the billing word is
- * always "app subscription".
+ * {@link AppSubscription}), not vocabulary words. The billing word is always
+ * "app subscription".
  */
 import { Match, Option, Schema } from "effect";
 

@@ -31,8 +31,8 @@ import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { withSocketRecovery } from "@/lib/ShopAgentContext";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { SocketBanner } from "@/lib/SocketBanner";
+import { useLiveQuery } from "@/lib/useLiveQuery";
 import { errorMessage, textOrNull } from "@/lib/useMemberRunActions";
-import { useSubscribedQuery } from "@/lib/useSubscribedQuery";
 
 const orderQueryKey = (shop: string, legacyId: string) =>
   ["order", shop, legacyId] as const;
@@ -309,7 +309,7 @@ const teamIssueRows = (
 
 const OrderParams = Schema.Struct({ legacyId: Schema.String });
 
-/** The loader half of the subscribed page; see the index's `getLoaderData`. */
+/** The loader read of the live screen; see the index's `getLoaderData`. */
 const getLoaderData = createServerFn({ method: "GET" })
   .validator(Schema.toStandardSchemaV1(OrderParams))
   .middleware([shopifyServerFnMiddleware])
@@ -328,10 +328,10 @@ export const Route = createFileRoute("/app/orders/$orderId")({
 
 /**
  * One order: its note, every item with its properties and workflow
- * runs, and the order's facts. Subscribed like the index: the loader paints,
- * `useSubscribedQuery` reads through `ShopAgent.subscribeOrder` — which subscribes the
- * shared `/app` connection to this order's invalidations — so a webhook, sync, or
- * member task action on this order repaints the page. Every write returns a
+ * runs, and the order's facts. Live like the index: the loader paints, then
+ * `useLiveQuery` reads `ShopAgent.getOrderDetail` over the socket on every
+ * invalidation, so a webhook, sync, or member task action on this order
+ * repaints the page. Every write returns a
  * tagged result that is copy-mapped into the banner rather than thrown.
  *
  * The `$orderId` param is the Shopify legacy id, so the URL matches the one
@@ -397,7 +397,7 @@ function RouteComponent() {
    * Which runs have their "Manage" disclosure open; closed is the default.
    *
    * It survives re-renders on purpose, and the next reader's instinct will be to
-   * reset it when new data arrives — do not. The subscription updates the query
+   * reset it when new data arrives — do not. A re-read updates the query
    * data without remounting, so a webhook or a worker's task action landing
    * while the merchant has a disclosure open must leave it open. What it must
    * not do is answer for a run that is no longer on this order, so reads go
@@ -419,10 +419,9 @@ function RouteComponent() {
     invalidate: invalidateDetail,
     agent,
     identified,
-  } = useSubscribedQuery({
+  } = useLiveQuery({
     queryKey: orderQueryKey(shop, legacyId),
-    subscribe: (stub, subscriberId) =>
-      stub.subscribeOrder({ legacyId, subscriberId }).then(decodeDetail),
+    read: (stub) => stub.getOrderDetail({ legacyId }).then(decodeDetail),
     initialData: loaderData,
   });
 
@@ -474,7 +473,7 @@ function RouteComponent() {
    * callable: the field that rendered the button, the mutation behind it and
    * the callable that checks the field again share one name. A refused write
    * raises no banner — the page should not have offered it, so the honest
-   * answer is the toast plus the re-render the subscription brings, exactly
+   * answer is the toast plus the re-render the re-read brings, exactly
    * as the worker's page behaves. `toast` is the acknowledgement, written at
    * the button so the task's own name reaches it ("Cut done").
    */

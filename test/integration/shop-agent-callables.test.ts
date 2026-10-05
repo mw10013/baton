@@ -24,10 +24,16 @@ import {
  * of a schema error. The positive control at the bottom is the other half of
  * that claim — the *right* role on the same garbage input gets a decode failure,
  * not a refusal.
+ *
+ * `listOrders` and `getOrderDetail` are both callable and plain RPC: the
+ * `"merchant"` role admits a merchant connection or a connectionless caller,
+ * so one method serves the route loader through `ShopAgentClient` and the
+ * live screen over the socket. The member reads cannot, since `teamIds`
+ * comes off the connection, so `liveRuns` and `liveRun` are the socket
+ * entry points and `listRuns` and `memberGetRun` stay plain RPC.
  */
 const CALLABLE_ROLES = {
-  unsubscribe: "any",
-  subscribeRuns: "member",
+  liveRuns: "member",
   memberStartTask: "member",
   memberMarkTaskDone: "member",
   memberSetRunNote: "member",
@@ -35,11 +41,11 @@ const CALLABLE_ROLES = {
   memberUnblockRun: "member",
   memberReopenTask: "member",
   memberPutBackTask: "member",
-  subscribeRun: "member",
+  liveRun: "member",
   syncOpenOrders: "merchant",
   getUsage: "merchant",
   syncOrder: "merchant",
-  subscribeOrders: "merchant",
+  listOrders: "merchant",
   createWorkflow: "merchant",
   duplicateWorkflow: "merchant",
   updateWorkflow: "merchant",
@@ -50,7 +56,7 @@ const CALLABLE_ROLES = {
   setWorkflowOn: "merchant",
   applyAndTurnOn: "merchant",
   removeWorkflow: "merchant",
-  subscribeOrder: "merchant",
+  getOrderDetail: "merchant",
   merchantListRunsForOrder: "merchant",
   merchantAttachWorkflow: "merchant",
   merchantCancelRun: "merchant",
@@ -71,16 +77,15 @@ const CALLABLE_ROLES = {
   merchantAssignRunTaskTeam: "merchant",
   seedWorkflows: "merchant",
   seedOrders: "merchant",
-} as const satisfies Record<string, "merchant" | "member" | "any">;
+} as const satisfies Record<string, "merchant" | "member">;
 
 const roleOf = (name: string) =>
   CALLABLE_ROLES[name as keyof typeof CALLABLE_ROLES] as
     | "merchant"
     | "member"
-    | "any"
     | undefined;
 
-const namesWithRole = (role: "merchant" | "member" | "any") =>
+const namesWithRole = (role: "merchant" | "member") =>
   Object.keys(CALLABLE_ROLES).filter((name) => roleOf(name) === role);
 
 /**
@@ -198,27 +203,6 @@ describe("ShopAgent callable role gate", () => {
       ).rejects.toThrow(/forbidden/iu);
     }
     socket.close();
-  });
-
-  it("admits the shared callables on either role", async () => {
-    for (const [shop, headers] of [
-      ["callables-any-merchant.myshopify.com", merchantHeaders()],
-      [
-        "callables-any-member.myshopify.com",
-        memberHeaders({
-          memberId: "member-any",
-          memberEmail: "maker@example.com",
-          teamIds: [],
-        }),
-      ],
-    ] as const) {
-      const socket = await openAgentSocket(shop, headers);
-      for (const name of namesWithRole("any"))
-        await expect(
-          socket.call(name, { subscriberId: "sub-1" }),
-        ).resolves.toBeUndefined();
-      socket.close();
-    }
   });
 
   /**

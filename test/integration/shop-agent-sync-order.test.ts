@@ -15,9 +15,6 @@ import { makeEnvLayer } from "@/lib/LayerEx";
 import { Repository } from "@/lib/Repository";
 
 import {
-  isInvalidated,
-  openMemberSocket,
-  openMerchantSocket,
   openTwoScreens,
   receivedInvalidations,
   receivesNoMore,
@@ -167,30 +164,6 @@ const storedOrder = (shop: string) =>
 const runsAsShown = (runs: readonly Domain.RunDetail[]) =>
   runs.map(({ run, tasks }) => [run.id, run.state, run.quantity, tasks.length]);
 
-/** A merchant socket subscribed to the orders index, which every order publish reaches. */
-const subscribeOrdersIndex = async (shop: string) => {
-  const merchant = await openMerchantSocket(shop);
-  await merchant.socket.call("subscribeOrders", {
-    subscriberId: "orders-index",
-    limit: 50,
-    cursor: null,
-    q: null,
-    show: null,
-    team: null,
-  });
-  return merchant;
-};
-
-/** How many `invalidated` frames the socket has received after waiting out a quiet window. */
-const invalidatedCount = async (
-  socket: Awaited<ReturnType<typeof openMerchantSocket>>["socket"],
-) => {
-  await new Promise<void>((resolve) => {
-    setTimeout(resolve, 200);
-  });
-  return socket.received.filter(isInvalidated).length;
-};
-
 const runCount = async (
   agent: Awaited<ReturnType<typeof getAgentByName<Cloudflare.Env, ShopAgent>>>,
 ) => {
@@ -324,19 +297,21 @@ describe("ShopAgent one-order sync", () => {
         topic: "orders/edited",
         updatedAt: null,
       });
-    const merchant = await subscribeOrdersIndex(shop);
+    const screens = await openTwoScreens(shop);
     await deliver();
     const firstRuns = await agent.merchantListRunsForOrder({
       orderId: ORDER_ID,
     });
     const [first] = await storedOrder(shop);
-    await merchant.socket.waitForMessage(isInvalidated);
+    await receivedInvalidations(screens.merchant, 1);
+    await receivedInvalidations(screens.member, 1);
     await deliver();
     strictEqual(adminRequests.length, 2);
     // The first delivery stored the order and created its run; the second
     // moved neither, so it published nothing.
-    strictEqual(await invalidatedCount(merchant.socket), 1);
-    merchant.close();
+    await receivesNoMore(screens.merchant, 1);
+    await receivesNoMore(screens.member, 1);
+    screens.close();
     const [second] = await storedOrder(shop);
     strictEqual(second?.updatedAt, first?.updatedAt);
     strictEqual(second?.cancelledAt, first?.cancelledAt);
@@ -359,13 +334,14 @@ describe("ShopAgent one-order sync", () => {
       });
     orderUpdatedAt = "2026-09-02T12:00:00.000Z";
     await deliver();
-    const merchant = await subscribeOrdersIndex(shop);
+    const screens = await openTwoScreens(shop);
     // A note edit: a newer version, and no workflow, so no run moves.
     orderUpdatedAt = "2026-09-02T12:05:00.000Z";
     await deliver();
-    await merchant.socket.waitForMessage(isInvalidated);
+    await receivedInvalidations(screens.merchant, 1);
+    await receivedInvalidations(screens.member, 1);
     strictEqual(await runCount(agent), 0);
-    merchant.close();
+    screens.close();
   });
 
   it("a webhook on the same version whose reconcile creates a run publishes", async () => {
@@ -383,7 +359,7 @@ describe("ShopAgent one-order sync", () => {
     productTags = ["plain"];
     await deliver();
     strictEqual(await runCount(agent), 0);
-    const merchant = await subscribeOrdersIndex(shop);
+    const screens = await openTwoScreens(shop);
     // The same version, but the item now carries the workflow's tag: the
     // row does not move and the reconcile creates the run. Gating on
     // `written` alone would publish here too; gating on the row alone
@@ -391,8 +367,9 @@ describe("ShopAgent one-order sync", () => {
     productTags = ["engraved"];
     await deliver();
     strictEqual(await runCount(agent), 1);
-    await merchant.socket.waitForMessage(isInvalidated);
-    merchant.close();
+    await receivedInvalidations(screens.merchant, 1);
+    await receivedInvalidations(screens.member, 1);
+    screens.close();
   });
 
   it("a webhook whose sweep deletes an order publishes and the orders index stops showing it", async () => {
@@ -434,8 +411,7 @@ describe("ShopAgent one-order sync", () => {
     deepStrictEqual(await list(), [ORDER_ID, "gid://shopify/Order/9"]);
     const screens = await openTwoScreens(shop);
     // The same version: the webhook's own order does not change, and the
-    // sweep deletes the expired one. A deleted run may have been on any
-    // team's list, so every member receives it too.
+    // sweep deletes the expired one.
     await deliver();
     await receivedInvalidations(screens.merchant, 1);
     await receivedInvalidations(screens.member, 1);
@@ -443,43 +419,7 @@ describe("ShopAgent one-order sync", () => {
     deepStrictEqual(await list(), [ORDER_ID]);
   });
 
-  it("a webhook publishes to the teams on the order before and after, and to no other team", async () => {
-    const shop = "sync-order-teams.myshopify.com";
-    const team = await seedShop(shop);
-    const agent = await getAgentByName(env.SHOP_AGENT, shop);
-    await turnOnEngraving(agent, team.id);
-    const deliver = () =>
-      agent.syncOrderWebhook({
-        orderId: ORDER_ID,
-        topic: "orders/edited",
-        updatedAt: null,
-      });
-    orderUpdatedAt = "2026-09-02T12:00:00.000Z";
-    await deliver();
-    strictEqual(await runCount(agent), 1);
-    const screens = await openTwoScreens(shop);
-    const onTeam = await openMemberSocket(shop, {
-      memberId: "member-on-team",
-      memberEmail: "on-team@example.com",
-      teamIds: [team.id],
-    });
-    await onTeam.socket.call("subscribeRuns", {
-      subscriberId: "sub-on-team",
-      query: { team: null, state: "ready", limit: Domain.RUN_PAGE, q: null },
-    });
-    // The cancel closes the run, so the team has no task on the order after
-    // the write: only the read before it names the team.
-    orderUpdatedAt = "2026-09-02T12:05:00.000Z";
-    orderCancelledAt = "2026-09-02T12:05:00.000Z";
-    await deliver();
-    await receivedInvalidations(onTeam.socket, 1);
-    await receivedInvalidations(screens.merchant, 1);
-    await receivesNoMore(screens.member);
-    onTeam.close();
-    screens.close();
-  });
-
-  it("Sync this order publishes the order to every team when it changed something, and nothing when it did not", async () => {
+  it("Sync this order publishes when it changed something, and nothing when it did not", async () => {
     const shop = "sync-order-button-publishes.myshopify.com";
     await seedShop(shop);
     const agent = await getAgentByName(env.SHOP_AGENT, shop);

@@ -44,12 +44,7 @@ import {
 } from "@/lib/WorkflowRepository";
 
 import { BillingAgent } from "./Billing.ts";
-import {
-  type PublishScope,
-  type PublishTeams,
-  ShopAgentHost,
-  unionTeams,
-} from "./Host.ts";
+import { ShopAgentHost } from "./Host.ts";
 
 /**
  * Maps the repository's expected failures onto the tagged result union the
@@ -306,7 +301,7 @@ const runResult = <R>(
 /**
  * A verb publishes only after a write that succeeded (`when` is `written`
  * in the sites table on `ShopAgent.publish`): a refused call wrote nothing
- * a screen shows, so an invalidation would cost every subscribed screen a
+ * a screen shows, so an invalidation would cost every live screen a
  * refetch for no change. The refused tab is not left stale by this: it
  * refetches itself on every result (`useMemberRunActions`'s `settle`, the
  * order page's `invalidate`).
@@ -315,53 +310,6 @@ const publishIfOk =
   <R>(publish: () => Effect.Effect<void, never, R>) =>
   (result: { readonly _tag: string }) =>
     result._tag === "Ok" ? publish() : Effect.void;
-
-/**
- * The teams whose workflows lists a write to this order could have changed, as a value
- * a caller can read on both sides of the write. A failed read answers `"all"`,
- * never `[]`: an over-broad publish costs each member one refetch, while an
- * under-broad one leaves a list that silently stops updating until the tab's
- * next subscribe, and the read failing is no reason to guess narrow. The write
- * that triggered it is never failed by it.
- */
-const orderTeamIds = (
-  target:
-    | { readonly runTaskId: string }
-    | { readonly runId: string }
-    | { readonly orderId: string },
-) => orderAndTeamIds(target).pipe(Effect.map(({ teamIds }) => teamIds));
-
-/**
- * The order a target belongs to, with {@link orderTeamIds}'s teams, from one
- * read. A failed read answers `"all"` on both halves, for the reason on
- * {@link orderTeamIds}.
- */
-const orderAndTeamIds = (
-  target:
-    | { readonly runTaskId: string }
-    | { readonly runId: string }
-    | { readonly orderId: string },
-) =>
-  RunRepository.pipe(
-    Effect.flatMap(
-      (
-        repository,
-      ): Effect.Effect<
-        { readonly touched: PublishScope; readonly teamIds: PublishTeams },
-        SqlError.SqlError
-      > =>
-        repository.listOrderTeamIds(target).pipe(
-          Effect.map(({ orderId, teamIds }) => ({
-            touched: orderId === null ? "all" : [orderId],
-            teamIds,
-          })),
-        ),
-    ),
-    Effect.orElseSucceed(() => ({
-      touched: "all" as const,
-      teamIds: "all" as const,
-    })),
-  );
 
 /** The merchant as a gating actor: no team ids, because the merchant has none and every "M" cell is theirs. */
 const MERCHANT: Domain.Actor = { role: "merchant" };
@@ -537,14 +485,14 @@ const make = Effect.gen(function* () {
   ]).pipe(Effect.asVoid);
 
   /**
-   * The orders index read. The page is memoized ({@link ShopWorkAgent}'s
+   * The orders index read, for the loader and the socket alike. The page is memoized ({@link ShopWorkAgent}'s
    * `clearListMemo`, the rule on the class's `publish`), keyed by the input
    * and the D1 teams, which are read live on every call as before: they are
    * the one input outside the object, so a team change is a new key rather
    * than a stale entry. `syncState` is read live, outside the memo: the
    * in-flight half is the SDK's workflow row, which no publish tracks.
    */
-  const readOrders = ({
+  const listOrders = ({
     limit,
     cursor,
     q,
@@ -573,7 +521,7 @@ const make = Effect.gen(function* () {
         const qLog = q === null ? "null" : "set";
         const cursorLog = cursor === null ? "null" : "set";
         yield* Effect.logInfo(
-          `ShopAgent.readOrders: shop=${shop} show=${showLog} team=${teamLog} q=${qLog} cursor=${cursorLog} rows=${String(rows)} ms=${String(ms)}`,
+          `ShopAgent.listOrders: shop=${shop} show=${showLog} team=${teamLog} q=${qLog} cursor=${cursorLog} rows=${String(rows)} ms=${String(ms)}`,
         ).pipe(
           Effect.annotateLogs({
             shop,
@@ -594,26 +542,6 @@ const make = Effect.gen(function* () {
         },
         teams,
       } satisfies Domain.OrdersIndexData;
-    });
-  };
-
-  /** The loader half of the orders index; the socket half is {@link subscribeOrders}, the same read plus the subscription. */
-  const listOrders = (input: typeof Domain.ListOrdersInput.Type) =>
-    readOrders(input);
-
-  /**
-   * The orders index's `subscribe<Feature>` method — reads the page and
-   * subscribes the calling connection in one round trip. Combining the read and
-   * subscription prevents a write between separate calls from being missed.
-   * `orderId: null` subscribes to every order-state publish.
-   */
-  const subscribeOrders = ({
-    subscriberId,
-    ...input
-  }: typeof Domain.SubscribeOrdersInput.Type) => {
-    return Effect.gen(function* () {
-      yield* host.setSubscription({ subscriberId, orderId: null });
-      return yield* readOrders(input);
     });
   };
 
@@ -731,7 +659,7 @@ const make = Effect.gen(function* () {
     tag,
   }: typeof Domain.UpdateWorkflowTagInput.Type) => {
     const shop = host.shop();
-    const publish = () => host.publish("all");
+    const publish = () => host.publish;
     const reconcileAll = (workflow: Domain.Workflow) =>
       reconcileAllIfOn("updateWorkflowTag", workflow);
     return workflowResult(
@@ -776,7 +704,7 @@ const make = Effect.gen(function* () {
    */
   const applyDraft = ({ workflowId }: typeof Domain.ApplyDraftInput.Type) => {
     const shop = host.shop();
-    const publish = () => host.publish("all");
+    const publish = () => host.publish;
     const reconcileAll = (workflow: Domain.Workflow) =>
       reconcileAllIfOn("applyDraft", workflow);
     return applyResult(
@@ -824,7 +752,7 @@ const make = Effect.gen(function* () {
     on,
   }: typeof Domain.SetWorkflowOnInput.Type) => {
     const shop = host.shop();
-    const publish = () => host.publish("all");
+    const publish = () => host.publish;
     const reconcileAll = (workflow: Domain.Workflow) =>
       reconcileAllNow("setWorkflowOn", workflow.id);
     return switchResult(
@@ -854,7 +782,7 @@ const make = Effect.gen(function* () {
     workflowId,
   }: typeof Domain.ApplyAndTurnOnInput.Type) => {
     const shop = host.shop();
-    const publish = () => host.publish("all");
+    const publish = () => host.publish;
     const reconcileAll = (workflow: Domain.Workflow) =>
       reconcileAllNow("applyAndTurnOn", workflow.id);
     return switchResult(
@@ -890,7 +818,7 @@ const make = Effect.gen(function* () {
     workflowId,
   }: typeof Domain.DeleteWorkflowInput.Type) => {
     const shop = host.shop();
-    const publish = () => host.publish("all");
+    const publish = () => host.publish;
     const reconcileAll = (workflowId: string) =>
       reconcileAllNow("removeWorkflow", workflowId);
     return Effect.gen(function* () {
@@ -1034,16 +962,13 @@ const make = Effect.gen(function* () {
   };
 
   /**
-   * The detail page's `subscribe<Feature>` read: the order, its items, and
-   * every run on them, and the calling connection subscribed to its
-   * invalidations in the same round trip (the convention documented on
-   * `subscribeOrders`). Without the subscription, a webhook landing on the
-   * open order would update SQLite and publish to nobody. Addressed by
-   * `legacyId` because that is what the route
-   * carries (see `Domain.SubscribeOrderInput`). `null` when the order is not
-   * stored, which the page renders as not-found rather than as a failure.
+   * The order page's read, for the loader and the socket alike: the order,
+   * its items, and every run on them. Addressed by `legacyId` because that
+   * is what the route carries (see `Domain.GetOrderDetailInput`). `null`
+   * when the order is not stored, which the page renders as not-found
+   * rather than as a failure.
    */
-  const readOrderDetail = ({ legacyId }: Domain.GetOrderDetailInput) => {
+  const getOrderDetail = ({ legacyId }: Domain.GetOrderDetailInput) => {
     return Effect.gen(function* () {
       const orders = yield* OrderRepository;
       const runs = yield* RunRepository;
@@ -1066,30 +991,6 @@ const make = Effect.gen(function* () {
             !matched.some((detail) => detail.workflow.id === workflow.id),
         ),
       } satisfies Domain.OrderPageData;
-    });
-  };
-
-  /** The loader half of the order detail page, as {@link listOrders} is for the index. */
-  const getOrderDetail = (input: typeof Domain.GetOrderDetailInput.Type) =>
-    readOrderDetail(input);
-
-  const subscribeOrder = ({
-    subscriberId,
-    ...input
-  }: typeof Domain.SubscribeOrderInput.Type) => {
-    return Effect.gen(function* () {
-      const page = yield* readOrderDetail(input);
-      /**
-       * Subscribed after the read because the scope is the GID and the
-       * route only carries the legacy id. An unstored order subscribes
-       * index-wide (`null`): a later sync that stores it must reach this
-       * page, and there is no GID to narrow to.
-       */
-      yield* host.setSubscription({
-        subscriberId,
-        orderId: page?.order.id ?? null,
-      });
-      return page;
     });
   };
 
@@ -1120,7 +1021,7 @@ const make = Effect.gen(function* () {
     lineItemId,
     workflowId,
   }: typeof Domain.AttachWorkflowInput.Type) => {
-    const publish = (touched: PublishScope) => host.publish(touched);
+    const publish = () => host.publish;
     return Effect.gen(function* () {
       const target = yield* (yield* OrderRepository).getLineItem(lineItemId);
       if (Option.isNone(target))
@@ -1154,7 +1055,7 @@ const make = Effect.gen(function* () {
       });
       if (Option.isNone(set))
         return { _tag: "AlreadyExists" } satisfies Domain.AttachResult;
-      yield* publish([target.value.order.id]);
+      yield* publish();
       return {
         _tag: "Ok",
         run: set.value.run,
@@ -1167,29 +1068,20 @@ const make = Effect.gen(function* () {
    * Closes the run, reason `merchant_cancelled`
    * (`RunRepository.cancelRun`, rule on `Domain.RunState`). Gated by
    * `Domain.runActions` `cancel`, which is false on a closed order: reconcile
-   * has already closed every open run there. The run leaves every team's
-   * lists, so the publish reaches every team on the order.
+   * has already closed every open run there.
    */
   const merchantCancelRun = ({ runId }: typeof Domain.RunIdInput.Type) => {
     const shop = host.shop();
-    const publish = (touched: PublishScope, teams: PublishTeams) =>
-      host.publish(touched, teams);
-    return Effect.gen(function* () {
-      // Read before the write: the cancel takes every team's tasks off the
-      // run, so the read after would name nobody.
-      const { touched, teamIds } = yield* orderAndTeamIds({ runId });
-      const result = yield* runResult(
-        Effect.gen(function* () {
-          yield* requireRunAction(runId, MERCHANT, "cancel");
-          yield* (yield* RunRepository).cancelRun({ runId });
-          yield* Effect.logInfo(
-            `ShopAgent.merchantCancelRun: shop=${shop} runId=${runId}`,
-          ).pipe(Effect.annotateLogs({ shop, runId }));
-        }),
-      );
-      if (result._tag === "Ok") yield* publish(touched, teamIds);
-      return result;
-    });
+    const publish = () => host.publish;
+    return runResult(
+      Effect.gen(function* () {
+        yield* requireRunAction(runId, MERCHANT, "cancel");
+        yield* (yield* RunRepository).cancelRun({ runId });
+        yield* Effect.logInfo(
+          `ShopAgent.merchantCancelRun: shop=${shop} runId=${runId}`,
+        ).pipe(Effect.annotateLogs({ shop, runId }));
+      }),
+    ).pipe(Effect.tap(publishIfOk(publish)));
   };
 
   /**
@@ -1205,10 +1097,7 @@ const make = Effect.gen(function* () {
    * none, and an unassigned task is exactly the case they are here to fix.
    * Step order, the run's state, and the later-step reopen guard still apply.
    *
-   * They publish with {@link publishToTeams}, not `publish("all")`: the
-   * merchant's own order page is subscribed by order and the workers by team,
-   * and the team fan-out for the touched order already reaches both. There is
-   * no merchant Start: "started" records that a worker picked the task up,
+   * There is no merchant Start: "started" records that a worker picked the task up,
    * and a merchant marking it started on their behalf would put a name on
    * work nobody has begun. The merchant either marks it done outright or leaves
    * it for the team.
@@ -1219,7 +1108,7 @@ const make = Effect.gen(function* () {
     runTaskId,
   }: typeof Domain.MarkTaskDoneInput.Type) => {
     const shop = host.shop();
-    const publish = (runTaskId: string) => publishToTeams({ runTaskId });
+    const publish = () => host.publish;
     return runResult(
       Effect.gen(function* () {
         yield* requireTaskAction(runTaskId, MERCHANT, ({ done }) => done);
@@ -1231,14 +1120,14 @@ const make = Effect.gen(function* () {
           `ShopAgent.merchantMarkTaskDone: shop=${shop} task=${runTaskId}`,
         ).pipe(Effect.annotateLogs({ shop, task: runTaskId }));
       }),
-    ).pipe(Effect.tap(publishIfOk(() => publish(runTaskId))));
+    ).pipe(Effect.tap(publishIfOk(publish)));
   };
 
   const merchantReopenTask = ({
     runTaskId,
   }: typeof Domain.ReopenTaskInput.Type) => {
     const shop = host.shop();
-    const publish = (runTaskId: string) => publishToTeams({ runTaskId });
+    const publish = () => host.publish;
     return runResult(
       Effect.gen(function* () {
         yield* requireTaskAction(runTaskId, MERCHANT, ({ reopen }) => reopen);
@@ -1250,7 +1139,7 @@ const make = Effect.gen(function* () {
           `ShopAgent.merchantReopenTask: shop=${shop} task=${runTaskId}`,
         ).pipe(Effect.annotateLogs({ shop, task: runTaskId }));
       }),
-    ).pipe(Effect.tap(publishIfOk(() => publish(runTaskId))));
+    ).pipe(Effect.tap(publishIfOk(publish)));
   };
 
   /** Put back from the order page; the rule is on `RunRepository.putBackTask`. */
@@ -1258,7 +1147,7 @@ const make = Effect.gen(function* () {
     runTaskId,
   }: typeof Domain.PutBackTaskInput.Type) => {
     const shop = host.shop();
-    const publish = (runTaskId: string) => publishToTeams({ runTaskId });
+    const publish = () => host.publish;
     return runResult(
       Effect.gen(function* () {
         yield* requireTaskAction(runTaskId, MERCHANT, ({ putBack }) => putBack);
@@ -1270,7 +1159,7 @@ const make = Effect.gen(function* () {
           `ShopAgent.merchantPutBackTask: shop=${shop} task=${runTaskId}`,
         ).pipe(Effect.annotateLogs({ shop, task: runTaskId }));
       }),
-    ).pipe(Effect.tap(publishIfOk(() => publish(runTaskId))));
+    ).pipe(Effect.tap(publishIfOk(publish)));
   };
 
   /** The note itself never reaches the log line, as on the member's {@link memberSetRunNote}. */
@@ -1279,7 +1168,7 @@ const make = Effect.gen(function* () {
     note,
   }: typeof Domain.SetRunNoteInput.Type) => {
     const shop = host.shop();
-    const publish = (runId: string) => publishToTeams({ runId });
+    const publish = () => host.publish;
     return runResult(
       Effect.gen(function* () {
         yield* requireRunAction(runId, MERCHANT, "note");
@@ -1291,7 +1180,7 @@ const make = Effect.gen(function* () {
           `ShopAgent.merchantSetRunNote: shop=${shop} runId=${runId}`,
         ).pipe(Effect.annotateLogs({ shop, runId }));
       }),
-    ).pipe(Effect.tap(publishIfOk(() => publish(runId))));
+    ).pipe(Effect.tap(publishIfOk(publish)));
   };
 
   const merchantBlockRun = ({
@@ -1299,7 +1188,7 @@ const make = Effect.gen(function* () {
     reason,
   }: typeof Domain.BlockRunInput.Type) => {
     const shop = host.shop();
-    const publish = (runId: string) => publishToTeams({ runId });
+    const publish = () => host.publish;
     return runResult(
       Effect.gen(function* () {
         yield* requireRunAction(runId, MERCHANT, "block");
@@ -1312,12 +1201,12 @@ const make = Effect.gen(function* () {
           `ShopAgent.merchantBlockRun: shop=${shop} runId=${runId}`,
         ).pipe(Effect.annotateLogs({ shop, runId }));
       }),
-    ).pipe(Effect.tap(publishIfOk(() => publish(runId))));
+    ).pipe(Effect.tap(publishIfOk(publish)));
   };
 
   const merchantUnblockRun = ({ runId }: typeof Domain.RunIdInput.Type) => {
     const shop = host.shop();
-    const publish = (runId: string) => publishToTeams({ runId });
+    const publish = () => host.publish;
     return runResult(
       Effect.gen(function* () {
         yield* requireRunAction(runId, MERCHANT, "unblock");
@@ -1328,29 +1217,7 @@ const make = Effect.gen(function* () {
           `ShopAgent.merchantUnblockRun: shop=${shop} runId=${runId}`,
         ).pipe(Effect.annotateLogs({ shop, runId }));
       }),
-    ).pipe(Effect.tap(publishIfOk(() => publish(runId))));
-  };
-
-  /**
-   * A publish scoped to the teams a member's write could have changed the
-   * workflows list of — see `publish`. The read is one indexed query against the
-   * object's own SQLite, and it runs after the write so a task that just
-   * became current for another team is included.
-   *
-   * Publishes to the teams on the target's order and names the order as
-   * `touched`, so the orders index and that order's page refetch and every
-   * other order page is left alone. The one read resolves both: the order id
-   * is the join key the team list needs.
-   */
-  const publishToTeams = (
-    target:
-      | { readonly runTaskId: string }
-      | { readonly runId: string }
-      | { readonly orderId: string },
-  ) => {
-    return orderAndTeamIds(target).pipe(
-      Effect.flatMap(({ touched, teamIds }) => host.publish(touched, teamIds)),
-    );
+    ).pipe(Effect.tap(publishIfOk(publish)));
   };
 
   /**
@@ -1474,34 +1341,22 @@ const make = Effect.gen(function* () {
   };
 
   /**
-   * The socket twin of {@link listRuns}: the same read, plus the calling
-   * connection's subscription, in one round trip so a write landing between
-   * two separate calls cannot be missed. The subscribe pattern end to end is
-   * on `Domain.Subscription`.
-   *
+   * The workflows list over the socket: the same read as {@link listRuns}.
    * `teamIds` comes from the connection, not the message, so a member's list
-   * is scoped by the membership the Worker's gate resolved — the same value
+   * is narrowed by the membership the Worker's gate resolved — the same value
    * the loader's `requireMember` produced, arriving by the other route.
-   *
-   * `orderId: null`: a member's subscription is team-scoped, not order-scoped,
-   * and `publish` reads the role to decide which of the two scopes applies.
    */
-  const subscribeRuns = (
-    { subscriberId, query }: typeof Domain.SubscribeRunsInput.Type,
+  const liveRuns = (
+    { query }: typeof Domain.LiveRunsInput.Type,
     { teamIds, memberEmail }: Domain.MemberConnectionState,
-  ) => {
-    return Effect.gen(function* () {
-      yield* host.setSubscription({ subscriberId, orderId: null });
-      return yield* readRuns(teamIds, memberEmail, query);
-    });
-  };
+  ) => readRuns(teamIds, memberEmail, query);
 
   const memberStartTask = (
     { runTaskId }: typeof Domain.StartTaskInput.Type,
     { memberId, memberEmail, teamIds }: Domain.MemberConnectionState,
   ) => {
     const shop = host.shop();
-    const publish = (runTaskId: string) => publishToTeams({ runTaskId });
+    const publish = () => host.publish;
     return runResult(
       Effect.gen(function* () {
         const actor = memberActor({ memberId, memberEmail, teamIds });
@@ -1515,7 +1370,7 @@ const make = Effect.gen(function* () {
           `ShopAgent.memberStartTask: shop=${shop} task=${runTaskId} memberId=${memberId}`,
         ).pipe(Effect.annotateLogs({ shop, task: runTaskId, memberId }));
       }),
-    ).pipe(Effect.tap(publishIfOk(() => publish(runTaskId))));
+    ).pipe(Effect.tap(publishIfOk(publish)));
   };
 
   /** Put back; the rule is on `RunRepository.putBackTask`. */
@@ -1524,7 +1379,7 @@ const make = Effect.gen(function* () {
     { memberId, memberEmail, teamIds }: Domain.MemberConnectionState,
   ) => {
     const shop = host.shop();
-    const publish = (runTaskId: string) => publishToTeams({ runTaskId });
+    const publish = () => host.publish;
     return runResult(
       Effect.gen(function* () {
         const actor = memberActor({ memberId, memberEmail, teamIds });
@@ -1538,7 +1393,7 @@ const make = Effect.gen(function* () {
           `ShopAgent.memberPutBackTask: shop=${shop} task=${runTaskId} memberId=${memberId}`,
         ).pipe(Effect.annotateLogs({ shop, task: runTaskId, memberId }));
       }),
-    ).pipe(Effect.tap(publishIfOk(() => publish(runTaskId))));
+    ).pipe(Effect.tap(publishIfOk(publish)));
   };
 
   /** The note itself never reaches the log line: worker text is unbounded and not ours to index. */
@@ -1547,7 +1402,7 @@ const make = Effect.gen(function* () {
     { memberId, memberEmail, teamIds }: Domain.MemberConnectionState,
   ) => {
     const shop = host.shop();
-    const publish = (runId: string) => publishToTeams({ runId });
+    const publish = () => host.publish;
     return runResult(
       Effect.gen(function* () {
         const actor = memberActor({ memberId, memberEmail, teamIds });
@@ -1561,7 +1416,7 @@ const make = Effect.gen(function* () {
           `ShopAgent.memberSetRunNote: shop=${shop} runId=${runId} memberId=${memberId}`,
         ).pipe(Effect.annotateLogs({ shop, runId, memberId }));
       }),
-    ).pipe(Effect.tap(publishIfOk(() => publish(runId))));
+    ).pipe(Effect.tap(publishIfOk(publish)));
   };
 
   const memberBlockRun = (
@@ -1569,7 +1424,7 @@ const make = Effect.gen(function* () {
     { memberId, memberEmail, teamIds }: Domain.MemberConnectionState,
   ) => {
     const shop = host.shop();
-    const publish = (runId: string) => publishToTeams({ runId });
+    const publish = () => host.publish;
     return runResult(
       Effect.gen(function* () {
         const actor = memberActor({ memberId, memberEmail, teamIds });
@@ -1584,7 +1439,7 @@ const make = Effect.gen(function* () {
           `ShopAgent.memberBlockRun: shop=${shop} runId=${runId} memberId=${memberId}`,
         ).pipe(Effect.annotateLogs({ shop, runId, memberId }));
       }),
-    ).pipe(Effect.tap(publishIfOk(() => publish(runId))));
+    ).pipe(Effect.tap(publishIfOk(publish)));
   };
 
   const memberMarkTaskDone = (
@@ -1592,7 +1447,7 @@ const make = Effect.gen(function* () {
     { memberId, memberEmail, teamIds }: Domain.MemberConnectionState,
   ) => {
     const shop = host.shop();
-    const publish = (runTaskId: string) => publishToTeams({ runTaskId });
+    const publish = () => host.publish;
     return runResult(
       Effect.gen(function* () {
         const actor = memberActor({ memberId, memberEmail, teamIds });
@@ -1606,19 +1461,18 @@ const make = Effect.gen(function* () {
           `ShopAgent.memberMarkTaskDone: shop=${shop} task=${runTaskId} memberId=${memberId}`,
         ).pipe(Effect.annotateLogs({ shop, task: runTaskId, memberId }));
       }),
-    ).pipe(Effect.tap(publishIfOk(() => publish(runTaskId))));
+    ).pipe(Effect.tap(publishIfOk(publish)));
   };
 
   /**
-   * Reopen, the member's Undo. Publishes to the order's teams like the others: the merchant's
-   * order page shows every run of the order.
+   * Reopen, the member's Undo. Publishes like the others.
    */
   const memberReopenTask = (
     { runTaskId }: typeof Domain.ReopenTaskInput.Type,
     { memberId, memberEmail, teamIds }: Domain.MemberConnectionState,
   ) => {
     const shop = host.shop();
-    const publish = (runTaskId: string) => publishToTeams({ runTaskId });
+    const publish = () => host.publish;
     return runResult(
       Effect.gen(function* () {
         const actor = memberActor({ memberId, memberEmail, teamIds });
@@ -1632,7 +1486,7 @@ const make = Effect.gen(function* () {
           `ShopAgent.memberReopenTask: shop=${shop} task=${runTaskId} memberId=${memberId}`,
         ).pipe(Effect.annotateLogs({ shop, task: runTaskId, memberId }));
       }),
-    ).pipe(Effect.tap(publishIfOk(() => publish(runTaskId))));
+    ).pipe(Effect.tap(publishIfOk(publish)));
   };
 
   /** The workflow page's loader read; plain RPC for the same reason as {@link listRuns}. */
@@ -1641,27 +1495,20 @@ const make = Effect.gen(function* () {
   };
 
   /**
-   * The socket twin of {@link memberGetRun}, as `subscribeRuns` is of
-   * `listRuns`. The subscription is the same team-scoped one the workflows list
-   * registers (`orderId: null`): who receives a member's invalidation is decided by team, so
-   * any write touching one of their teams' orders refetches this run too.
-   * Over-broad by an order or two; the read is one run.
+   * The workflow page over the socket, as {@link liveRuns} is to
+   * {@link listRuns}: the same read as {@link memberGetRun}, with `teamIds`
+   * from the connection.
    */
-  const subscribeRun = (
-    { subscriberId, runId }: typeof Domain.SubscribeRunInput.Type,
+  const liveRun = (
+    { runId }: typeof Domain.RunIdInput.Type,
     { teamIds }: Domain.MemberConnectionState,
-  ) => {
-    return Effect.gen(function* () {
-      yield* host.setSubscription({ subscriberId, orderId: null });
-      return yield* readRunPage({ runId, teamIds });
-    });
-  };
+  ) => readRunPage({ runId, teamIds });
 
   const memberUnblockRun = (
     { runId }: typeof Domain.RunIdInput.Type,
     { memberId, memberEmail, teamIds }: Domain.MemberConnectionState,
   ) => {
-    const publish = (runId: string) => publishToTeams({ runId });
+    const publish = () => host.publish;
     return runResult(
       Effect.gen(function* () {
         const actor = memberActor({ memberId, memberEmail, teamIds });
@@ -1671,7 +1518,7 @@ const make = Effect.gen(function* () {
           teamIds,
         } satisfies Domain.UnblockRunCommand);
       }),
-    ).pipe(Effect.tap(publishIfOk(() => publish(runId))));
+    ).pipe(Effect.tap(publishIfOk(publish)));
   };
 
   /**
@@ -1833,8 +1680,7 @@ const make = Effect.gen(function* () {
    * failing after the D1 row is gone; every read already treats an id no
    * team carries as unassigned, so that state is self-healing, and a retry
    * of this call (which reports `NotFound` for the row but still runs the
-   * nulling, and publishes, since the nulling is a write the lists show)
-   * repairs it. So does the next delete of any team in the shop:
+   * nulling) repairs it. So does the next delete of any team in the shop:
    * it also nulls every pointer to a team gone from D1. The object's ids in
    * use are read before the shop's teams, so a team created between the
    * two reads, and a task pointed at it, is not among the candidates and
@@ -1848,7 +1694,7 @@ const make = Effect.gen(function* () {
    */
   const deleteTeam = ({ teamId }: typeof Domain.DeleteTeamInput.Type) => {
     const name = host.shop();
-    const publish = () => host.publish("all");
+    const publish = () => host.publish;
     const closeMemberConnections = (memberIds: readonly string[]) =>
       host.closeMemberConnections(memberIds);
     return Effect.gen(function* () {
@@ -1890,6 +1736,9 @@ const make = Effect.gen(function* () {
       ).pipe(
         Effect.annotateLogs({ shop, teamId, status: deleted.result._tag }),
       );
+      /* Both results publish, unlike a refused verb (`publishIfOk`): a
+         `NotFound` still nulled the run tasks that pointed at a team gone
+         from D1 and reconciled, and the lists show both. */
       yield* publish();
       return deleted.result;
     });
@@ -1908,7 +1757,7 @@ const make = Effect.gen(function* () {
     teamId,
   }: typeof Domain.AssignRunTaskTeamInput.Type) => {
     const shop = host.shop();
-    const publish = (teams: PublishTeams) => host.publish("all", teams);
+    const publish = () => host.publish;
     return Effect.gen(function* () {
       yield* requireTaskAction(runTaskId, MERCHANT, ({ assign }) => assign);
       const team = yield* teamExists(teamId);
@@ -1916,12 +1765,6 @@ const make = Effect.gen(function* () {
         return {
           _tag: "TeamNotFound",
         } satisfies Domain.AssignRunTaskTeamResult;
-      /**
-       * Both sides of the move: the team losing the task is only nameable
-       * before the write, and the team gaining it only after, so the
-       * lists that change are the union of the two reads.
-       */
-      const before = yield* orderTeamIds({ runTaskId });
       yield* (yield* RunRepository).assignRunTaskTeam({
         runTaskId,
         team: { id: team.id, name: team.name },
@@ -1929,7 +1772,7 @@ const make = Effect.gen(function* () {
       yield* Effect.logInfo(
         `ShopAgent.merchantAssignRunTaskTeam: shop=${shop} task=${runTaskId} teamId=${teamId}`,
       ).pipe(Effect.annotateLogs({ shop, task: runTaskId, teamId }));
-      yield* publish(unionTeams(before, yield* orderTeamIds({ runTaskId })));
+      yield* publish();
       return { _tag: "Assigned" } satisfies Domain.AssignRunTaskTeamResult;
     }).pipe(
       Effect.catchTags({
@@ -2017,7 +1860,7 @@ const make = Effect.gen(function* () {
   }: typeof Domain.SeedOrdersInput.Type) => {
     const environment = env.ENVIRONMENT;
     const shop = host.shop();
-    const publish = () => host.publish("all");
+    const publish = () => host.publish;
     const reconcileAll = () => reconcileAllNow("seedOrders", "seed");
     return Effect.gen(function* () {
       if (environment !== "local")
@@ -2286,7 +2129,6 @@ const make = Effect.gen(function* () {
 
   return {
     listOrders,
-    subscribeOrders,
     getWorkflowDetail,
     createWorkflow,
     duplicateWorkflow,
@@ -2299,7 +2141,6 @@ const make = Effect.gen(function* () {
     applyAndTurnOn,
     removeWorkflow,
     getOrderDetail,
-    subscribeOrder,
     merchantListRunsForOrder,
     merchantAttachWorkflow,
     merchantCancelRun,
@@ -2310,7 +2151,7 @@ const make = Effect.gen(function* () {
     merchantBlockRun,
     merchantUnblockRun,
     listRuns,
-    subscribeRuns,
+    liveRuns,
     memberStartTask,
     memberPutBackTask,
     memberSetRunNote,
@@ -2318,7 +2159,7 @@ const make = Effect.gen(function* () {
     memberMarkTaskDone,
     memberReopenTask,
     memberGetRun,
-    subscribeRun,
+    liveRun,
     memberUnblockRun,
     addStep,
     addTask,
@@ -2340,8 +2181,6 @@ const make = Effect.gen(function* () {
      * store's `afterWrite`.
      */
     reconciler,
-    /** The teams with an open task on the target, for the class's webhook publish. */
-    orderTeamIds,
     clearListMemo,
   };
 });

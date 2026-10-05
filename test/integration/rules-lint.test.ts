@@ -241,6 +241,16 @@ describe("an exported identifier carries no reserved stem", () => {
       RulesLint.reservedStemHits("export const setWorkflowActivatedAt = 1;"),
     ).toEqual([{ name: "setWorkflowActivatedAt", line: 1, kind: "const" }]);
   });
+  it("an export named useSubscribedQuery is refused", () => {
+    expect(
+      RulesLint.reservedStemHits("export const useSubscribedQuery = 1;"),
+    ).toEqual([{ name: "useSubscribedQuery", line: 1, kind: "const" }]);
+  });
+  it("an export named PublishScope is refused", () => {
+    expect(RulesLint.reservedStemHits("export type PublishScope = 1;")).toEqual(
+      [{ name: "PublishScope", line: 1, kind: "type" }],
+    );
+  });
 });
 
 describe("a state predicate names its noun before the state", () => {
@@ -513,7 +523,7 @@ describe("the object holds nothing that keeps it from hibernating", () => {
       RulesLint.hibernationBlockerHits("lib/agent/ShopWork.ts", source),
     ).toHaveLength(3);
     expect(
-      RulesLint.hibernationBlockerHits("lib/useSubscribedQuery.ts", source),
+      RulesLint.hibernationBlockerHits("lib/useLiveQuery.ts", source),
     ).toHaveLength(0);
   });
 });

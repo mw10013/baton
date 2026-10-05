@@ -259,7 +259,7 @@ export const openMemberSocket = async (
 /** The invalidation: `Domain.InvalidatedMessage` on the wire. */
 export const isInvalidated = (data: string) => data.includes(`"invalidated"`);
 
-/** The workflows list's first page of Ready, every team: what a member's subscription reads. */
+/** The workflows list's first page of Ready, every team: what a member's live screen reads. */
 const READY_QUERY = {
   team: null,
   state: "ready",
@@ -268,19 +268,18 @@ const READY_QUERY = {
 } satisfies Domain.RunQuery;
 
 /**
- * Two subscribed screens, for a test of what a publish names: a merchant on
- * the orders index, which receives any publish (the delivery table on
- * `Domain.Subscription`), and a member on the workflows list, whose
- * connection is on `teamIds` only. With the default, a team no order has, the
- * member receives only a publish to all teams.
+ * Two live screens, for a test of what a publish reaches: a merchant on the
+ * orders index and a member on the workflows list, whose connection carries
+ * `teamIds`. With the default, a team no order has, the member still receives
+ * every publish (the cycle on `Domain.InvalidatedMessage`): the teams narrow
+ * what the member's read returns, never what reaches the connection.
  */
 export const openTwoScreens = async (
   shop: string,
   teamIds: readonly string[] = ["team-with-no-work"],
 ) => {
   const merchant = await openMerchantSocket(shop);
-  await merchant.socket.call("subscribeOrders", {
-    subscriberId: "sub-orders-index",
+  await merchant.socket.call("listOrders", {
     limit: 50,
     cursor: null,
     q: null,
@@ -292,8 +291,7 @@ export const openTwoScreens = async (
     memberEmail: "watching@example.com",
     teamIds,
   });
-  await member.socket.call("subscribeRuns", {
-    subscriberId: "sub-workflows-list",
+  await member.socket.call("liveRuns", {
     query: READY_QUERY,
   });
   return {
@@ -336,9 +334,9 @@ export const receivedInvalidations = (
 
 /**
  * Resolves when 200 ms pass and `socket` has still received exactly `count`
- * invalidations; rejects when it has more. The negative half of a delivery
- * assertion, always after a positive one, so a publish that never ran cannot
- * pass for a scope that left this socket out.
+ * invalidations; rejects when it has more. The negative half of a publish
+ * assertion, always after a positive one on another socket, so a publish
+ * that never ran cannot pass for one that published nothing.
  */
 export const receivesNoMore = async (socket: AgentSocket, count = 0) => {
   await new Promise<void>((resolve) => {

@@ -19,8 +19,8 @@ import { memberServerFnMiddleware } from "@/lib/MemberServerFnMiddleware";
 import { ANY_OPTION_VALUE } from "@/lib/Screen";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { SocketBanner } from "@/lib/SocketBanner";
+import { useLiveQuery } from "@/lib/useLiveQuery";
 import { useMemberRunActions } from "@/lib/useMemberRunActions";
-import { useSubscribedQuery } from "@/lib/useSubscribedQuery";
 import {
   SEARCH_EMPTY,
   STATE_EMPTY,
@@ -275,22 +275,21 @@ function RouteComponent() {
   const navigate = useNavigate({ from: Route.fullPath });
   const router = useRouter();
   /**
-   * The subscribe pattern (`Domain.Subscription`): the loader's rows paint
-   * first, then `subscribeRuns` re-reads them over the socket and registers
-   * this connection's subscription, so another member's Done lands here
-   * without a reload. The subscription's scope is the teams on the connection,
-   * so nothing about it is named by the browser — `query` only chooses among
-   * them, and the object bounds what it can ask for.
+   * A live screen (the cycle on `Domain.InvalidatedMessage`): the loader's
+   * rows paint first, then `liveRuns` re-reads them over the socket on every
+   * invalidation, so another member's Done lands here without a reload. The
+   * list is narrowed by the teams on the connection, so the browser names
+   * none of them — `query` only chooses among them, and the object bounds
+   * what it can ask for.
    *
    * `initialData` only while the query is the loader's: any other key is a
    * read the SSR paint never made, and `keepPreviousData` in the hook holds
    * the previous rows on screen until it returns.
    */
   const query: Domain.RunQuery = { team, state, limit, q };
-  const { data, invalidate, agent, identified } = useSubscribedQuery({
+  const { data, invalidate, agent, identified } = useLiveQuery({
     queryKey: ["shop-runs", shop, query],
-    subscribe: (stub, subscriberId) =>
-      stub.subscribeRuns({ subscriberId, query }),
+    read: (stub) => stub.liveRuns({ query }),
     initialData: Domain.sameRunQuery(query, loaderQuery)
       ? loaderList
       : undefined,

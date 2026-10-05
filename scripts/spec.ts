@@ -11,14 +11,15 @@
 // does to one order, its sources, the open-orders sync's endings, and its
 // rules), the sync pipeline table on `ShopAgentHost` in src/lib/agent/Host.ts, the data-model
 // tables on `initializeSchema` in src/lib/ShopAgentSchema.ts (the object) and
-// on `D1_TABLES` in src/lib/D1Schema.ts (D1), and the publish and subscribe
-// tables: the cycle, delivery and connection tables on `Subscription` and
-// `ConnectionRole` in src/lib/domain/Platform.ts, the sites table on
-// `ShopAgent.publish` in src/lib/ShopAgent.ts, and the events table on
-// `useSubscribedQuery` in src/lib/useSubscribedQuery.ts.
+// on `D1_TABLES` in src/lib/D1Schema.ts (D1), the three publish tables (the
+// cycle table on `InvalidatedMessage` in src/lib/domain/Platform.ts, the
+// sites table on `ShopAgent.publish` in src/lib/ShopAgent.ts, and the events
+// table on `useLiveQuery` in src/lib/useLiveQuery.ts), and the connection
+// table on `ConnectionRole` in src/lib/domain/Platform.ts, the socket's
+// authorization rule.
 //
-//   node scripts/spec.ts check   parse both action tables, refuse overlapping rows, check the vocabulary, its contexts, its screen columns, its stored cells against the DDL and its Screens table, parse the triggers table, the four reconcile tables, the four sync tables on syncOrder (refusing overlapping actions rows), the sync pipeline table, both data-model tables and the five publish and subscribe tables and refuse a pinned title no test carries (in either test project) and a data-model row pinned by (none yet), parse the copy and controls tables in src/lib/Screen.ts and refuse an example no screen shows (exit 1 on any failure)
-//   node scripts/spec.ts print   render the parsed rows and how many fixtures each expands to, then the triggers rows, then the reconcile rows and how many are pinned by (none yet), then the four sync tables, the actions' fixture counts and the count of rows pinned by (none yet), then the sync pipeline rows, then the publish and subscribe rows, then the data-model rows and how many are pinned by (none yet)
+//   node scripts/spec.ts check   parse both action tables, refuse overlapping rows, check the vocabulary, its contexts, its screen columns, its stored cells against the DDL and its Screens table, parse the triggers table, the four reconcile tables, the four sync tables on syncOrder (refusing overlapping actions rows), the sync pipeline table, both data-model tables, the three publish tables and the connection table and refuse a pinned title no test carries (in either test project) and a data-model row pinned by (none yet), parse the copy and controls tables in src/lib/Screen.ts and refuse an example no screen shows (exit 1 on any failure)
+//   node scripts/spec.ts print   render the parsed rows and how many fixtures each expands to, then the triggers rows, then the reconcile rows and how many are pinned by (none yet), then the four sync tables, the actions' fixture counts and the count of rows pinned by (none yet), then the sync pipeline rows, then the publish and connection rows, then the data-model rows and how many are pinned by (none yet)
 
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
 import { Console, Effect, Result } from "effect";
@@ -90,13 +91,12 @@ const readDataModels = Effect.sync(() => {
 
 const AGENT_CLASS = new URL("../src/lib/ShopAgent.ts", import.meta.url)
   .pathname;
-const HOOK = new URL("../src/lib/useSubscribedQuery.ts", import.meta.url)
-  .pathname;
+const HOOK = new URL("../src/lib/useLiveQuery.ts", import.meta.url).pathname;
 
 /**
- * The publish and subscribe tables, parsed: the cycle and delivery tables on
- * `Subscription` in Platform, the sites table on `ShopAgent.publish`, the
- * events table on `useSubscribedQuery` and the connection table on
+ * The publish tables and the connection table, parsed: the cycle table on
+ * `InvalidatedMessage` in Platform, the sites table on `ShopAgent.publish`,
+ * the events table on `useLiveQuery`, and the connection table on
  * `ConnectionRole` in Platform. Each is pinned, and `check` and `print`
  * treat them alike.
  */
@@ -106,19 +106,15 @@ const readPinnedTables = Effect.sync(() => {
   const hook = readFileSync(HOOK, "utf8");
   return [
     {
-      title: "Subscription cycle",
-      parsed: ActionTable.parseSubscriptionCycle(platform),
-    },
-    {
-      title: "Subscription delivery",
-      parsed: ActionTable.parseSubscriptionDelivery(platform),
+      title: "InvalidatedMessage cycle",
+      parsed: ActionTable.parseInvalidationCycle(platform),
     },
     {
       title: "publish sites",
       parsed: ActionTable.parsePublishSites(agentClass),
     },
     {
-      title: "useSubscribedQuery events",
+      title: "useLiveQuery events",
       parsed: ActionTable.parseClientEvents(hook),
     },
     {
@@ -325,7 +321,7 @@ const checkCommand = Command.make(
   }),
 ).pipe(
   Command.withDescription(
-    "Parse the action tables and the four reconcile tables (triggers, actions, effects, pass rules) in domain/ShopWork.ts, the four sync tables on syncOrder in domain/Orders.ts, the sync pipeline table in agent/Host.ts and the five publish and subscribe tables (Subscription and ConnectionRole in domain/Platform.ts, publish in ShopAgent.ts, useSubscribedQuery), check the vocabulary in Domain.ts and domain/ and its stored cells against the DDL in ShopAgentSchema.ts, check the triggers table on ShopUsage in domain/Billing.ts and the data-model tables in ShopAgentSchema.ts and D1Schema.ts (none pinned by (none yet)), and check the copy and controls tables in Screen.ts; exit 1 on any failure",
+    "Parse the action tables and the four reconcile tables (triggers, actions, effects, pass rules) in domain/ShopWork.ts, the four sync tables on syncOrder in domain/Orders.ts, the sync pipeline table in agent/Host.ts and the three publish tables (InvalidatedMessage in domain/Platform.ts, publish in ShopAgent.ts, useLiveQuery) and the connection table (ConnectionRole in domain/Platform.ts), check the vocabulary in Domain.ts and domain/ and its stored cells against the DDL in ShopAgentSchema.ts, check the triggers table on ShopUsage in domain/Billing.ts and the data-model tables in ShopAgentSchema.ts and D1Schema.ts (none pinned by (none yet)), and check the copy and controls tables in Screen.ts; exit 1 on any failure",
   ),
 );
 
@@ -512,7 +508,7 @@ const printCommand = Command.make(
         onSuccess: (rows) =>
           rows.map(
             (row) =>
-              `${row.source}: store ${row.store}; reconcile ${row.reconcile}; flush ${row.flush}; publish ${row.publish}`,
+              `${row.source}: store ${row.store}; reconcile ${row.reconcile}; flush ${row.flush}`,
           ),
       },
     );
@@ -560,13 +556,13 @@ const printCommand = Command.make(
   }),
 ).pipe(
   Command.withDescription(
-    "Render the parsed action tables and their fixture counts, then the triggers rows, then the reconcile rows, the actions' fixture counts and the count of rows pinned by (none yet), then the four sync tables, the actions' fixture counts and the count of rows pinned by (none yet), then the sync pipeline rows, then the publish and subscribe rows, then the data-model rows and how many are pinned by (none yet)",
+    "Render the parsed action tables and their fixture counts, then the triggers rows, then the reconcile rows, the actions' fixture counts and the count of rows pinned by (none yet), then the four sync tables, the actions' fixture counts and the count of rows pinned by (none yet), then the sync pipeline rows, then the publish and connection rows, then the data-model rows and how many are pinned by (none yet)",
   ),
 );
 
 const specCommand = Command.make("spec").pipe(
   Command.withDescription(
-    "The action matrices in src/lib/domain/ShopWork.ts, the vocabulary in src/lib/Domain.ts and src/lib/domain/, the triggers table in src/lib/domain/Billing.ts, the data-model tables in src/lib/ShopAgentSchema.ts and src/lib/D1Schema.ts, and the publish and subscribe tables",
+    "The action matrices in src/lib/domain/ShopWork.ts, the vocabulary in src/lib/Domain.ts and src/lib/domain/, the triggers table in src/lib/domain/Billing.ts, the data-model tables in src/lib/ShopAgentSchema.ts and src/lib/D1Schema.ts, and the publish tables and the connection table",
   ),
   Command.withSubcommands([checkCommand, printCommand]),
 );

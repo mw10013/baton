@@ -190,8 +190,6 @@ import {
   formatNumber,
   Shop,
   SqliteBoolean,
-  SubscriberIdInput,
-  Subscription,
   WorkflowLimits,
 } from "./Platform.ts";
 
@@ -1620,15 +1618,6 @@ export const prefixPatterns = (text: string): readonly [string, string] => {
   return [`${escaped}%`, `% ${escaped}%`];
 };
 
-/**
- * `subscriberId` is what subscribes the calling connection to invalidations —
- * the `subscribe<Feature>` convention documented on `ShopAgent.subscribeOrders`.
- * A page that only reads is a page that never receives a write's
- * invalidation: the Durable
- * Object publishes to subscribed connections only, and the `/app` socket is
- * shared, so a route that read without subscribing would go silent the moment
- * another route's unmount unsubscribed the connection.
- */
 export const ListOrdersInput = Schema.Struct({
   limit: Schema.Number.check(
     Schema.isInt(),
@@ -1670,19 +1659,13 @@ export const ListOrdersInput = Schema.Struct({
    * still matches, so the team page's drill-in shows the orders that team
    * needs a member for.
    *
-   * Always send the key. `subscribeOrders` parses with
+   * Always send the key. `ShopAgent.listOrders` parses with
    * `onExcessProperty: "error"`, and an omitted key is a different failure
    * than a null one.
    */
   team: Schema.NullOr(TeamId),
 });
 export type ListOrdersInput = typeof ListOrdersInput.Type;
-
-export const SubscribeOrdersInput = Schema.Struct({
-  ...ListOrdersInput.fields,
-  subscriberId: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
-});
-export type SubscribeOrdersInput = typeof SubscribeOrdersInput.Type;
 
 /**
  * Per-order position for the index table, aggregated from
@@ -1854,10 +1837,10 @@ export const runCounts = (runs: readonly Run[]): RunCounts =>
  * index over unfulfilled, uncancelled orders, so a count costs one row per
  * open order, not one per order ever stored. So Fulfilled, Cancelled and All carry no
  * count: on a shop with years of history that would be a full-table read on
- * every refresh of a subscribed page.
+ * every refresh of a live screen.
  *
- * Refreshes are bounded by the subscribed page's invalidation throttle,
- * `INVALIDATION_THROTTLE_MS` in `useSubscribedQuery` (2 s), not by anything
+ * Refreshes are bounded by the live screen's invalidation throttle,
+ * `INVALIDATION_THROTTLE_MS` in `useLiveQuery` (2 s), not by anything
  * here.
  */
 export const OrderCounts = Schema.Struct({
@@ -1891,13 +1874,6 @@ export const GetOrderDetailInput = Schema.Struct({
   legacyId: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
 });
 export type GetOrderDetailInput = typeof GetOrderDetailInput.Type;
-
-export const SubscribeOrderInput = Schema.Struct({
-  ...GetOrderDetailInput.fields,
-  /** Subscribes the connection to this order's invalidations; see `SubscribeOrdersInput`. */
-  subscriberId: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
-});
-export type SubscribeOrderInput = typeof SubscribeOrderInput.Type;
 
 /**
  * The workflows index's read: one page of workflows in name order.
@@ -2021,7 +1997,6 @@ export const actorIsMember = (actor: ActorDisplay, email: Email) =>
 
 export const MerchantConnectionState = Schema.Struct({
   role: Schema.Literal("merchant"),
-  subscription: Schema.NullOr(Subscription),
 });
 export type MerchantConnectionState = typeof MerchantConnectionState.Type;
 
@@ -2030,7 +2005,6 @@ export const MemberConnectionState = Schema.Struct({
   memberId: MemberId,
   memberEmail: Email,
   teamIds: Schema.Array(TeamId),
-  subscription: Schema.NullOr(Subscription),
 });
 export type MemberConnectionState = typeof MemberConnectionState.Type;
 
@@ -3790,18 +3764,16 @@ export const ListRunsInput = Schema.Struct({
 export type ListRunsInput = typeof ListRunsInput.Type;
 
 /**
- * The socket half of the member workflows list's read: the same rows `listRuns`
- * returns, plus a subscription registered on the connection in the same round
- * trip. `teamIds` and `memberEmail` are absent on purpose — the list is
- * scoped by the membership on the connection, which the member cannot name
+ * The member workflows list's read over the socket: the same rows `listRuns`
+ * returns. `teamIds` and `memberEmail` are absent on purpose — the list is
+ * narrowed by the membership on the connection, which the member cannot name
  * for themselves. `query` is theirs to name: it chooses among their own teams,
  * which state, how far that state is expanded, and a search, and the object bounds them.
  */
-export const SubscribeRunsInput = Schema.Struct({
-  ...SubscriberIdInput.fields,
+export const LiveRunsInput = Schema.Struct({
   query: RunQuery,
 });
-export type SubscribeRunsInput = typeof SubscribeRunsInput.Type;
+export type LiveRunsInput = typeof LiveRunsInput.Type;
 
 /**
  * The workflow page's loader read, Worker-resolved for the same reason as
@@ -3813,13 +3785,6 @@ export const GetRunForMemberInput = Schema.Struct({
   teamIds: Schema.Array(BoundedId),
 });
 export type GetRunForMemberInput = typeof GetRunForMemberInput.Type;
-
-/** The socket twin of {@link GetRunForMemberInput}; `teamIds` comes off the connection. */
-export const SubscribeRunInput = Schema.Struct({
-  ...SubscriberIdInput.fields,
-  runId: BoundedId,
-});
-export type SubscribeRunInput = typeof SubscribeRunInput.Type;
 
 /**
  * Member-area mutation inputs: **what the browser sends, and nothing more.**

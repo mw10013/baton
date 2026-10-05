@@ -31,17 +31,9 @@ import {
 } from "./member-fixtures";
 
 /**
- * The member socket end to end: the workflows list read that registers a subscription,
- * the publish fan-out that decides who receives a write's invalidation, and one full hop
- * through the Worker's gate with a real sign-in cookie.
- *
- * The fan-out is the interesting part. A member's subscription is scoped by
- * their teams, not by an order, so `publish` cannot use the order GIDs that
- * scope a merchant's. The five member mutations name the teams instead — every
- * team owning a task on any run of the touched order, because marking the
- * last item task done makes the *order* run current for a different team
- * (`RunRepository.listOrderTeamIds`). A team with no work on that order
- * receives nothing.
+ * The member socket end to end: the workflows list read over the socket, the
+ * publish that tells every connection to re-read after a write, and one full
+ * hop through the Worker's gate with a real sign-in cookie.
  */
 const ORDER_ID = "gid://shopify/Order/1";
 const LINE_ITEM_ID = "gid://shopify/LineItem/1";
@@ -184,32 +176,22 @@ const READY: Domain.RunQuery = {
   q: null,
 };
 
-const subscribeList = (
-  socket: AgentSocket,
-  subscriberId: string,
-  query: Domain.RunQuery = READY,
-) =>
-  socket.call<Domain.WorkflowsListData>("subscribeRuns", {
-    subscriberId,
-    query,
-  });
+const readList = (socket: AgentSocket, query: Domain.RunQuery = READY) =>
+  socket.call<Domain.WorkflowsListData>("liveRuns", { query });
 
 /**
  * The current rows of one state. Every test here seeds a single untouched task on
  * one team, which is Ready for whoever reads it.
  */
-const subscribe = (
-  socket: AgentSocket,
-  subscriberId: string,
-  query?: Domain.RunQuery,
-) => subscribeList(socket, subscriberId, query).then((list) => list.items);
+const readItems = (socket: AgentSocket, query?: Domain.RunQuery) =>
+  readList(socket, query).then((list) => list.items);
 
 afterEach(async () => {
   await resetMemberTables();
 });
 
 describe("member workflows list socket", () => {
-  it("reads the workflows list for the connection's teams and subscribes", async () => {
+  it("reads the workflows list for the connection's teams", async () => {
     const { shop, working, alice, idle, carol } = await seedShopWithWork(
       "runs-read.myshopify.com",
     );
@@ -218,7 +200,7 @@ describe("member workflows list socket", () => {
       memberEmail: "alice@example.com",
       teamIds: [working.id],
     });
-    const items = await subscribe(worker.socket, "sub-alice");
+    const items = await readItems(worker.socket);
     expect(items).toHaveLength(1);
     expect(items[0]?.tasks[0]?.teamId).toBe(working.id);
     worker.close();
@@ -230,18 +212,18 @@ describe("member workflows list socket", () => {
       memberEmail: "carol@example.com",
       teamIds: [idle.id],
     });
-    expect(await subscribe(idler.socket, "sub-carol")).toHaveLength(0);
+    expect(await readItems(idler.socket)).toHaveLength(0);
     idler.close();
   });
 
   /**
    * The query is the browser's to choose and the object's to honour: the same
-   * connection, re-subscribing with a different state, gets that state's rows
+   * connection, reading again with a different state, gets that state's rows
    * while every read agrees on the counts. What this proves is that `query`
    * reaches the object and selects the state — sorting by state itself is the
    * repository's test.
    */
-  it("re-subscribing with a different query changes what the read returns", async () => {
+  it("a second read with a different query returns that query's rows", async () => {
     const { shop, working, alice } = await seedShopWithWork(
       "runs-limits.myshopify.com",
     );
@@ -250,14 +232,14 @@ describe("member workflows list socket", () => {
       memberEmail: "alice@example.com",
       teamIds: [working.id],
     });
-    const ready = await subscribeList(worker.socket, "sub-alice", {
+    const ready = await readList(worker.socket, {
       ...READY,
       limit: 1,
     });
     expect(ready.items).toHaveLength(1);
     expect(ready.counts.ready).toBe(1);
 
-    const done = await subscribeList(worker.socket, "sub-alice", {
+    const done = await readList(worker.socket, {
       ...READY,
       state: "done",
     });
@@ -267,9 +249,26 @@ describe("member workflows list socket", () => {
     worker.close();
   });
 
-  it("publishes a completed task to the team, and not to a team with no work on that order", async () => {
+  /**
+   * One Mark done, and every screen re-reads: the orders index, another
+   * order's page, a member on the task's team and a member on a team with
+   * no work on the order. A publish names nothing, so the cost of a
+   * connection that did not need it is one throttled re-read.
+   */
+  it("every connection receives every publish", async () => {
     const { shop, working, idle, runTaskId, alice, bob, carol } =
       await seedShopWithWork("runs-publish.myshopify.com");
+    await seedOrder(shop, 2);
+    const index = await openMerchantSocket(shop);
+    await index.socket.call("listOrders", {
+      limit: 50,
+      cursor: null,
+      q: null,
+      show: null,
+      team: null,
+    });
+    const otherOrder = await openMerchantSocket(shop);
+    await otherOrder.socket.call("getOrderDetail", { legacyId: "2" });
     const acting = await openMemberSocket(shop, {
       memberId: alice,
       memberEmail: "alice@example.com",
@@ -285,29 +284,36 @@ describe("member workflows list socket", () => {
       memberEmail: "carol@example.com",
       teamIds: [idle.id],
     });
-    await subscribe(acting.socket, "sub-alice");
-    await subscribe(teammate.socket, "sub-bob");
-    await subscribe(elsewhere.socket, "sub-carol");
+    await readItems(teammate.socket);
+    await readItems(elsewhere.socket);
 
     expect(await acting.markTaskDone({ runTaskId })).toEqual({ _tag: "Ok" });
 
-    await teammate.socket.waitForMessage(isInvalidated);
-    await expect(
-      elsewhere.socket.waitForMessage(isInvalidated, 200),
-    ).rejects.toThrow("no matching frame");
+    for (const socket of [
+      index.socket,
+      otherOrder.socket,
+      acting.socket,
+      teammate.socket,
+      elsewhere.socket,
+    ]) {
+      await receivedInvalidations(socket, 1);
+      await receivesNoMore(socket, 1);
+    }
+    index.close();
+    otherOrder.close();
     acting.close();
     teammate.close();
     elsewhere.close();
   });
 
   /**
-   * The merchant's half of the same fan-out. `merchantMarkTaskDone` carries no
-   * identity and no `teamIds` — the order page has neither — yet lands on a
-   * task owned by a team it is not on, and the worker watching that team
-   * receives the invalidation over their own socket. The rules the merchant is still held to are
+   * The merchant's half. `merchantMarkTaskDone` carries no identity and no
+   * `teamIds` — the order page has neither — yet lands on a task owned by a
+   * team it is not on, and the worker watching that team receives the
+   * invalidation over their own socket. The rules the merchant is still held to are
    * the repository's and are tested there; this is the wire.
    */
-  it("completes a member's task over a merchant socket and publishes it to the team", async () => {
+  it("completes a member's task over a merchant socket and publishes", async () => {
     const { shop, working, runTaskId, alice } = await seedShopWithWork(
       "runs-merchant.myshopify.com",
     );
@@ -316,57 +322,14 @@ describe("member workflows list socket", () => {
       memberEmail: "alice@example.com",
       teamIds: [working.id],
     });
-    await subscribe(worker.socket, "sub-alice");
+    await readItems(worker.socket);
 
     const merchant = await openMerchantSocket(shop);
     expect(await merchant.markTaskDone({ runTaskId })).toEqual({ _tag: "Ok" });
 
     await worker.socket.waitForMessage(isInvalidated);
-    expect(await subscribe(worker.socket, "sub-alice")).toHaveLength(0);
+    expect(await readItems(worker.socket)).toHaveLength(0);
     merchant.close();
-    worker.close();
-  });
-
-  it("a task verb reaches the orders index and the order's page, and not another order's page", async () => {
-    const { shop, working, runTaskId, alice } = await seedShopWithWork(
-      "runs-order-scope.myshopify.com",
-    );
-    await seedOrder(shop, 2);
-    const index = await openMerchantSocket(shop);
-    await index.socket.call("subscribeOrders", {
-      subscriberId: "sub-index",
-      limit: 50,
-      cursor: null,
-      q: null,
-      show: null,
-      team: null,
-    });
-    const thisOrder = await openMerchantSocket(shop);
-    await thisOrder.socket.call("subscribeOrder", {
-      subscriberId: "sub-order-1",
-      legacyId: "1",
-    });
-    const otherOrder = await openMerchantSocket(shop);
-    await otherOrder.socket.call("subscribeOrder", {
-      subscriberId: "sub-order-2",
-      legacyId: "2",
-    });
-    const worker = await openMemberSocket(shop, {
-      memberId: alice,
-      memberEmail: "alice@example.com",
-      teamIds: [working.id],
-    });
-
-    expect(await worker.markTaskDone({ runTaskId })).toEqual({ _tag: "Ok" });
-
-    await thisOrder.socket.waitForMessage(isInvalidated);
-    await index.socket.waitForMessage(isInvalidated);
-    await expect(
-      otherOrder.socket.waitForMessage(isInvalidated, 200),
-    ).rejects.toThrow("no matching frame");
-    index.close();
-    thisOrder.close();
-    otherOrder.close();
     worker.close();
   });
 
@@ -400,143 +363,10 @@ describe("member workflows list socket", () => {
 });
 
 /**
- * The cycle on `Domain.Subscription`, the rows the suite above does not
- * already prove: what a connection receives before it subscribes, after a
- * stale unsubscribe, after a reconnect, and on the member's workflow page.
- * Each negative waits 200 ms, as the team-scope test does; each has a
- * positive beside it, so a publish that never ran cannot pass for a
- * delivery rule.
- */
-const identified = (socket: AgentSocket) =>
-  socket.waitForMessage((data) => data.includes("cf_agent_identity"));
-
-describe("the subscription cycle", () => {
-  it("a connection with no subscription receives nothing", async () => {
-    const { shop, working, runTaskId, alice, bob } = await seedShopWithWork(
-      "cycle-unsubscribed.myshopify.com",
-    );
-    const idle = await openMemberSocket(shop, {
-      memberId: alice,
-      memberEmail: "alice@example.com",
-      teamIds: [working.id],
-    });
-    await identified(idle.socket);
-    const acting = await openMemberSocket(shop, {
-      memberId: bob,
-      memberEmail: "bob@example.com",
-      teamIds: [working.id],
-    });
-    await subscribe(acting.socket, "sub-bob");
-
-    expect(await acting.markTaskDone({ runTaskId })).toEqual({ _tag: "Ok" });
-
-    await acting.socket.waitForMessage(isInvalidated);
-    await expect(
-      idle.socket.waitForMessage(isInvalidated, 200),
-    ).rejects.toThrow("no matching frame");
-    idle.close();
-    acting.close();
-  });
-
-  it("a stale unsubscribe cannot clear a newer mount's subscription", async () => {
-    const { shop, working, runTaskId, alice, bob } = await seedShopWithWork(
-      "cycle-stale-unsubscribe.myshopify.com",
-    );
-    const watching = await openMemberSocket(shop, {
-      memberId: alice,
-      memberEmail: "alice@example.com",
-      teamIds: [working.id],
-    });
-    await subscribe(watching.socket, "sub-a");
-    await subscribe(watching.socket, "sub-b");
-    // The replaced mount's unsubscribe, landing after the newer mount's read.
-    await watching.socket.call("unsubscribe", { subscriberId: "sub-a" });
-    const acting = await openMemberSocket(shop, {
-      memberId: bob,
-      memberEmail: "bob@example.com",
-      teamIds: [working.id],
-    });
-
-    expect(await acting.markTaskDone({ runTaskId })).toEqual({ _tag: "Ok" });
-
-    await watching.socket.waitForMessage(isInvalidated);
-    watching.close();
-    acting.close();
-  });
-
-  it("a reconnect is a fresh connection with no subscription", async () => {
-    const { shop, working, workflowId, alice } = await seedShopWithWork(
-      "cycle-reconnect.myshopify.com",
-    );
-    const member = {
-      memberId: alice,
-      memberEmail: "alice@example.com",
-      teamIds: [working.id],
-    };
-    const before = await openMemberSocket(shop, member);
-    await subscribe(before.socket, "sub-alice");
-    before.close();
-    const after = await openMemberSocket(shop, member);
-    await identified(after.socket);
-    const agent = env.SHOP_AGENT.getByName(shop);
-
-    // Edit tag publishes to every screen ("all", "all"), so only a missing
-    // subscription can keep it from this connection.
-    await agent.updateWorkflowTag({ workflowId, tag: "engrave-2" });
-    await expect(
-      after.socket.waitForMessage(isInvalidated, 200),
-    ).rejects.toThrow("no matching frame");
-
-    await subscribe(after.socket, "sub-alice");
-    await agent.updateWorkflowTag({ workflowId, tag: "engrave-3" });
-    await after.socket.waitForMessage(isInvalidated);
-    after.close();
-  });
-
-  it("the member's workflow page receives what the list receives", async () => {
-    const { shop, working, idle, runId, runTaskId, alice, bob, carol } =
-      await seedShopWithWork("cycle-run-page.myshopify.com");
-    const onTeam = await openMemberSocket(shop, {
-      memberId: alice,
-      memberEmail: "alice@example.com",
-      teamIds: [working.id],
-    });
-    await onTeam.socket.call("subscribeRun", {
-      subscriberId: "sub-alice-run",
-      runId,
-    });
-    const offTeam = await openMemberSocket(shop, {
-      memberId: carol,
-      memberEmail: "carol@example.com",
-      teamIds: [idle.id],
-    });
-    await offTeam.socket.call("subscribeRun", {
-      subscriberId: "sub-carol-run",
-      runId,
-    });
-    const acting = await openMemberSocket(shop, {
-      memberId: bob,
-      memberEmail: "bob@example.com",
-      teamIds: [working.id],
-    });
-
-    expect(await acting.markTaskDone({ runTaskId })).toEqual({ _tag: "Ok" });
-
-    await onTeam.socket.waitForMessage(isInvalidated);
-    await expect(
-      offTeam.socket.waitForMessage(isInvalidated, 200),
-    ).rejects.toThrow("no matching frame");
-    onTeam.close();
-    offTeam.close();
-    acting.close();
-  });
-});
-
-/**
  * The rows of the sites table on `ShopAgent.publish` that the run verbs and
  * the configuration verbs own, each over the two screens of
- * `openTwoScreens`: the orders index, which receives any publish, and a
- * member on a team with no work, who receives only a publish to all teams.
+ * `openTwoScreens`: the orders index, and a member on a team with no work,
+ * who receives every publish all the same.
  */
 describe("what each write publishes", () => {
   it("Edit tag and Apply publish to every screen whether or not a run moved", async () => {
@@ -590,52 +420,37 @@ describe("what each write publishes", () => {
     await everyScreen(4);
     await agent.deleteTeam({ teamId: idle.id });
     await everyScreen(5);
+    // A second delete answers NotFound and still publishes: it nulls any
+    // pointer to a team gone from D1 and reconciles, which the lists show.
+    const again = await agent.deleteTeam({ teamId: idle.id });
+    expect(again._tag).toBe("NotFound");
+    await everyScreen(6);
     screens.close();
   });
 
-  it("assigning a task's team publishes to the teams before and after", async () => {
-    const { shop, runTaskId, working, idle, alice, carol } =
-      await seedShopWithWork("sites-assign.myshopify.com");
+  it("assigning a task's team publishes to every screen", async () => {
+    const { shop, runTaskId, idle } = await seedShopWithWork(
+      "sites-assign.myshopify.com",
+    );
     const agent = env.SHOP_AGENT.getByName(shop);
     const screens = await openTwoScreens(shop);
-    const losing = await openMemberSocket(shop, {
-      memberId: alice,
-      memberEmail: "alice@example.com",
-      teamIds: [working.id],
-    });
-    await subscribe(losing.socket, "sub-alice");
-    const gaining = await openMemberSocket(shop, {
-      memberId: carol,
-      memberEmail: "carol@example.com",
-      teamIds: [idle.id],
-    });
-    await subscribe(gaining.socket, "sub-carol");
 
     expect(
       await agent.merchantAssignRunTaskTeam({ runTaskId, teamId: idle.id }),
     ).toEqual({ _tag: "Assigned" });
 
-    await receivedInvalidations(losing.socket, 1);
-    await receivedInvalidations(gaining.socket, 1);
     await receivedInvalidations(screens.merchant, 1);
-    await receivesNoMore(screens.member);
-    losing.close();
-    gaining.close();
+    await receivedInvalidations(screens.member, 1);
     screens.close();
   });
 
-  it("Attach workflow publishes the order to every team", async () => {
+  it("Attach workflow publishes to every screen", async () => {
     const { shop, workflowId } = await seedShopWithWork(
       "sites-attach.myshopify.com",
     );
     await seedOrder(shop, 2);
     const agent = env.SHOP_AGENT.getByName(shop);
     const screens = await openTwoScreens(shop);
-    const otherOrder = await openMerchantSocket(shop);
-    await otherOrder.socket.call("subscribeOrder", {
-      subscriberId: "sub-order-1",
-      legacyId: "1",
-    });
 
     const attached = await agent.merchantAttachWorkflow({
       lineItemId: "gid://shopify/LineItem/2",
@@ -645,40 +460,20 @@ describe("what each write publishes", () => {
 
     await receivedInvalidations(screens.merchant, 1);
     await receivedInvalidations(screens.member, 1);
-    await receivesNoMore(otherOrder.socket);
-    otherOrder.close();
     screens.close();
   });
 
-  it("Cancel workflow publishes the order to the teams it had", async () => {
-    const { shop, runId, working, alice } = await seedShopWithWork(
+  it("Cancel workflow publishes to every screen", async () => {
+    const { shop, runId } = await seedShopWithWork(
       "sites-cancel.myshopify.com",
     );
-    await seedOrder(shop, 2);
     const agent = env.SHOP_AGENT.getByName(shop);
     const screens = await openTwoScreens(shop);
-    const otherOrder = await openMerchantSocket(shop);
-    await otherOrder.socket.call("subscribeOrder", {
-      subscriberId: "sub-order-2",
-      legacyId: "2",
-    });
-    const onTeam = await openMemberSocket(shop, {
-      memberId: alice,
-      memberEmail: "alice@example.com",
-      teamIds: [working.id],
-    });
-    await subscribe(onTeam.socket, "sub-alice");
 
     expect(await agent.merchantCancelRun({ runId })).toEqual({ _tag: "Ok" });
 
-    // The run's task is gone from the team's list after the write, so only
-    // the read before it names the team.
-    await receivedInvalidations(onTeam.socket, 1);
     await receivedInvalidations(screens.merchant, 1);
-    await receivesNoMore(otherOrder.socket);
-    await receivesNoMore(screens.member);
-    onTeam.close();
-    otherOrder.close();
+    await receivedInvalidations(screens.member, 1);
     screens.close();
   });
 

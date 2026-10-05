@@ -106,8 +106,7 @@ const runInShopWork = <A, E>(
       );
       const host = Layer.succeed(ShopAgentHost, {
         shop: () => `memo-${crypto.randomUUID()}.myshopify.com`,
-        publish: () => Effect.void,
-        setSubscription: () => Effect.void,
+        publish: Effect.void,
         closeMemberConnections: () => Effect.void,
         databaseSize: Effect.succeed(0),
         syncInFlight: () => Effect.succeed(false),
@@ -299,9 +298,9 @@ describe("the list memo", () => {
       Effect.runPromise(
         (
           instance as unknown as {
-            readonly publish: (touched: "all") => Effect.Effect<void>;
+            readonly publish: () => Effect.Effect<void>;
           }
-        ).publish("all"),
+        ).publish(),
       ),
     );
     strictEqual(await count(), 1);

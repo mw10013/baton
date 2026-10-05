@@ -28,17 +28,6 @@ export type SocketQuery =
   | undefined;
 
 /**
- * Whether {@link ShopAgentSocketHost} re-arms the socket after a close with
- * `code`: on `Domain.CONNECTION_CLOSE_REVOKED` only, since a revocation is
- * answered by asking the gate again, and on
- * `Domain.CONNECTION_CLOSE_FORBIDDEN` a reconnect would forward the same
- * malformed request. The host's JSDoc says why it has to do this by hand;
- * the table on `Domain.ConnectionRole` is the rule.
- */
-export const reconnectAfterClose = (code: number) =>
-  code === Domain.CONNECTION_CLOSE_REVOKED;
-
-/**
  * Shares the per-shop `ShopAgent` socket with a subtree via
  * `ShopAgentProvider`, with the socket itself in {@link ShopAgentSocketHost}
  * behind its own Suspense boundary.
@@ -144,20 +133,12 @@ export function ShopAgentSocketProvider({
  * `agents/react`). Before the first commit there is no such socket and
  * consumers observe `null` (see `ShopAgentContext.tsx`).
  *
- * Revocation re-arms the socket by hand. `agents` classifies every close in
- * the 4000-4999 range as terminal and clears its reconnect flag
- * (`isTerminalCloseEvent` in `refs/agents/packages/agents/src/client.ts`; the
- * option it exposes can only veto a reconnect, never restore one), so
- * partysocket's usual auto-reconnect does not run for
- * `Domain.CONNECTION_CLOSE_REVOKED` — the socket would stay closed for the
- * life of the document, the page's writes would stay disabled, and the
- * invalidations its lists depend on would never resume. `reconnect()` sets the flag back and
- * opens a new connection, which is the entire point of that close code: the
- * gate re-runs and answers with the current membership, or refuses (`404` /
- * `402`) and partysocket backs off. Deferred a task so the SDK's own close
- * bookkeeping — rejecting pending calls, recording `connectionError` — lands
- * before a new socket exists. `4403` is deliberately excluded: it means the
- * forwarded request was malformed, which a reconnect cannot fix.
+ * Revocation needs nothing here. `agents` treats 1008 and every 4000-4999
+ * close as terminal and stops reconnecting (`isTerminalCloseEvent` in
+ * `refs/agents/packages/agents/src/client.ts`), so
+ * `Domain.CONNECTION_CLOSE_FORBIDDEN` stays closed; `Domain.CONNECTION_CLOSE_REVOKED`
+ * is a 3xxx code, not terminal to it, so partysocket reconnects through the
+ * gate on its own backoff.
  *
  * `identified` is lifted up, not read down: the parent can't observe the
  * hook's internal identity state, and reading `agent.identified` off the ref
@@ -207,14 +188,14 @@ export function ShopAgentSocketProvider({
  *
  * The three socket-lifecycle effects below are this host's side of the
  * evidence/watchdog/keepalive design in `ShopAgentContext.tsx`, placed here
- * so every `/app` route heals, not just the subscribed ones:
+ * so every `/app` route heals, not just the live ones:
  *
  * - Frame evidence: `open`/`message` listeners call `markSocketFrame` —
  *   received frames only (see `reconnectIfSocketStale` for why sends don't
  *   count).
  * - Watchdog: 30s interval + `visibilitychange`→visible run
  *   `reconnectIfSocketStale`, making stale-socket recovery passive. Nothing else
- *   heals a stale socket: a subscribed screen has no reason to refetch
+ *   heals a stale socket: a live screen has no reason to refetch
  *   on tab return, and browser dead-TCP detection is unspecified,
  *   platform-variant behavior. Suspended timers resume within seconds of machine wake, so the
  *   first tick heals a stale socket after a wake from sleep even when the tab was visible
@@ -260,8 +241,6 @@ function ShopAgentSocketHost({
     onClose: (event: CloseEvent) => {
       onIdentifiedChange(false);
       onSocketClose?.(event);
-      if (reconnectAfterClose(event.code))
-        setTimeout(() => agentRef.current?.reconnect(), 0);
     },
   });
   agentRef.current = agent;

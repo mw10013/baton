@@ -112,9 +112,7 @@ describe("ShopAgent connect gate", () => {
           {},
         );
         strictEqual(response.status, 101);
-        expect(yield* connectionStatesOf(shop)).toEqual([
-          { role: "merchant", subscription: null },
-        ]);
+        expect(yield* connectionStatesOf(shop)).toEqual([{ role: "merchant" }]);
       }),
     ),
   );
@@ -157,7 +155,6 @@ describe("ShopAgent connect gate", () => {
             memberId,
             memberEmail: MEMBER,
             teamIds: [team.id],
-            subscription: null,
           },
         ]);
       }),

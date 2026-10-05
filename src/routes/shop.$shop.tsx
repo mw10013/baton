@@ -31,7 +31,7 @@ import { ShopAgentSocketProvider } from "@/lib/ShopAgentSocketHost";
  * (`app.orders.tsx`) and `WorkflowsSearch` (`app.workflows.tsx`).
  *
  * Nothing here is a sharing risk: a bench tablet is one member's place, the
- * keys name a screen rather than a person, and the object scopes every
+ * keys name a screen rather than a person, and the object narrows every
  * read to the teams on the connection whatever the URL says.
  *
  * **No value of these keys fails.** They ride in a URL a member can edit and

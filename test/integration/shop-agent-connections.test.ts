@@ -65,10 +65,7 @@ describe("ShopAgent connection identity", () => {
     await socket.waitForMessage((data) => data.includes("cf_agent_identity"));
     const connections = await connectionsOf(shop);
     expect(connections).toHaveLength(1);
-    expect(connections[0]?.state).toEqual({
-      role: "merchant",
-      subscription: null,
-    });
+    expect(connections[0]?.state).toEqual({ role: "merchant" });
     expect(connections[0]?.tags).toContain("merchant");
     socket.close();
   });
@@ -93,7 +90,6 @@ describe("ShopAgent connection identity", () => {
       // produce an identity that compares unequal to the D1 row.
       memberEmail: "maker@example.com",
       teamIds: ["team-a", "team-b"],
-      subscription: null,
     });
     expect(connections[0]?.tags).toContain("member");
     expect(connections[0]?.tags).toContain("member:member-1");

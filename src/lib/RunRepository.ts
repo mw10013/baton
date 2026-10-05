@@ -500,33 +500,6 @@ export class RunRepository extends Context.Service<
       | RunTerminalError
     >;
     /**
-     * Every team that owns a task on any run of the order a given run (or run
-     * task) belongs to.
-     *
-     * The scope is the *order*, not the run, because the merchant's order
-     * page shows every run of the order: an action on one run restates the
-     * page for every team working that order. A per-run answer would leave
-     * those lists stale until they reloaded. `null` team ids are excluded —
-     * an unassigned task is on nobody's list.
-     *
-     * Used only to scope a `ShopAgent.publish` fan-out, so an over-broad
-     * answer costs a redundant refetch and an under-broad one costs a stale
-     * list; the order boundary is the smallest scope where neither happens.
-     *
-     * Answers the order with its teams, so the publish can name the order as
-     * `touched` from the same read. `orderId` is `null` when a run-shaped
-     * target resolves to no order: the run is gone.
-     */
-    readonly listOrderTeamIds: (
-      input:
-        | { readonly runTaskId: string }
-        | { readonly runId: string }
-        | { readonly orderId: string },
-    ) => Effect.Effect<
-      { readonly orderId: string | null; readonly teamIds: readonly string[] },
-      SqlError.SqlError
-    >;
-    /**
      * Lifts the block: nulls `blockedAt`, `blockReason` and `blockedBy`.
      * Allowed when any current task of the run belongs to one of
      * `teamIds`, or unconditionally for the merchant (`teamIds` undefined). Fails
@@ -1602,48 +1575,6 @@ export class RunRepository extends Context.Service<
             }),
           );
         }),
-
-        listOrderTeamIds: Effect.fn("RunRepository.listOrderTeamIds")(
-          function* (
-            input:
-              | { readonly runTaskId: string }
-              | { readonly runId: string }
-              | { readonly orderId: string },
-          ) {
-            // The caller that already holds the order — the webhook path —
-            // names it and skips the run lookup entirely; the two run-shaped
-            // callers resolve to the same order first.
-            const orderOf = () => {
-              if ("orderId" in input) return sql`select ${input.orderId}`;
-              if ("runTaskId" in input)
-                return sql`
-                  select r0.orderId from Run r0
-                  join RunTask s0 on s0.runId = r0.id
-                  where s0.id = ${input.runTaskId}
-                `;
-              return sql`select r0.orderId from Run r0 where r0.id = ${input.runId}`;
-            };
-            // One statement answers both: the order is the join key the
-            // team list needs, so it comes back on every row, and an order
-            // with no assigned task still answers one row with a null team.
-            const rows = yield* sql<{
-              readonly orderId: string | null;
-              readonly teamId: string | null;
-            }>`
-              with o(orderId) as (${orderOf()})
-              select distinct o.orderId as orderId, rs.teamId as teamId
-              from o
-              left join Run r on r.orderId = o.orderId
-              left join RunTask rs on rs.runId = r.id and rs.teamId is not null
-            `;
-            return {
-              orderId: rows[0]?.orderId ?? null,
-              teamIds: rows.flatMap((row) =>
-                typeof row.teamId === "string" ? [row.teamId] : [],
-              ),
-            };
-          },
-        ),
 
         unblockRun: Effect.fn("RunRepository.unblockRun")(function* ({
           runId,

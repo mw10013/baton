@@ -548,7 +548,7 @@ const identifier = (word: string) => /^[A-Za-z_][A-Za-z0-9_]*$/u.test(word);
  * right kind of thing (a literal, an export). A context file is checked
  * against itself plus the barrel (`Domain.ts`), whose map names words of
  * every context; the barrel is checked against itself plus the four context
- * files. A word written as another context's (`` `Subscription` in
+ * files. A word written as another context's (`` `ShopLimits` in
  * Platform ``, the form a `{@link}` across files takes) is checked against
  * that context's file in `contexts`, by name. Reports the missing words.
  */
@@ -2246,14 +2246,12 @@ export interface SyncPipelineRow {
   readonly store: string;
   readonly reconcile: string;
   readonly flush: string;
-  readonly publish: string;
 }
 
 /**
  * Read the sync pipeline table, the second table in the JSDoc on
  * `ShopAgentHost` in `source` (the services table is the first). The header
- * is `source | store | reconcile | flush | publish`; every cell is
- * non-empty, and `reconcile` is `—` or begins with `reconcile` or
+ * is `source | store | reconcile | flush`; every cell is non-empty, and `reconcile` is `—` or begins with `reconcile` or
  * `reconcile all` ({@link RECONCILE_SHAPE_WORDS}), so the shape is the
  * triggers table's word. No `pinned by`: the rows are wiring. Fails with a
  * message naming the line and the offending cell.
@@ -2265,7 +2263,7 @@ export const parseSyncPipeline = (
     nthTable(
       source,
       "ShopAgentHost",
-      ["source", "store", "reconcile", "flush", "publish"],
+      ["source", "store", "reconcile", "flush"],
       1,
     ),
     ({ body }) =>
@@ -2279,22 +2277,16 @@ export const parseSyncPipeline = (
                 }),
               );
             const values = cellsOf(text);
-            if (values.length !== 5)
+            if (values.length !== 4)
               return fail(
-                `${String(values.length)} cells, expected 5: ${text}`,
+                `${String(values.length)} cells, expected 4: ${text}`,
               );
-            const [
-              rowSource = "",
-              store = "",
-              reconcile = "",
-              flush = "",
-              publish = "",
-            ] = values;
+            const [rowSource = "", store = "", reconcile = "", flush = ""] =
+              values;
             const empty = Object.entries({
               source: rowSource,
               store,
               flush,
-              publish,
             }).find(([, cell]) => cell === "");
             if (empty !== undefined) return fail(`empty ${empty[0]}`);
             const shapes = RECONCILE_SHAPE_WORDS.filter(
@@ -2318,7 +2310,6 @@ export const parseSyncPipeline = (
               store,
               reconcile,
               flush,
-              publish,
             });
           },
         ),
@@ -2532,7 +2523,7 @@ interface PinnedTable {
 }
 
 /**
- * The shape the publish and subscribe tables share: free-text columns that
+ * The shape the publish tables and the connection table share: free-text columns that
  * must be non-empty, some columns held to a closed word list, and a last
  * `pinned by` column of one or more titles separated by `; `
  * ({@link pinnedTitles}), with a row yielded per title. Fails with a message
@@ -2590,95 +2581,52 @@ const parsePinnedTable =
         ),
     );
 
-/** The `side` cells of the cycle table on `Subscription` in Platform: where a step runs. */
-export const CYCLE_SIDE_WORDS = ["object", "tab", "both", "Worker"] as const;
+/** The `side` cells of the cycle table on `InvalidatedMessage` in Platform: where a step runs. */
+export const CYCLE_SIDE_WORDS = ["object", "tab"] as const;
 
 /**
- * Read the cycle table, the first table in the JSDoc on `Subscription` in
- * `source` (`src/lib/domain/Platform.ts`). The header is `step | side |
+ * Read the cycle table, the first table in the JSDoc on `InvalidatedMessage`
+ * in `source` (`src/lib/domain/Platform.ts`). The header is `step | side |
  * symbol | rule | pinned by`; `side` is one of {@link CYCLE_SIDE_WORDS}.
  */
-export const parseSubscriptionCycle = parsePinnedTable({
-  name: "Subscription",
+export const parseInvalidationCycle = parsePinnedTable({
+  name: "InvalidatedMessage",
   label: "cycle",
   columns: ["step", "side", "symbol", "rule"],
   words: { side: CYCLE_SIDE_WORDS },
   nth: 0,
 });
 
-/** The `role` cells of the delivery table on `Subscription`. */
-export const DELIVERY_ROLE_WORDS = ["either", "merchant", "member"] as const;
-
-/** The `receives` cells of the delivery table on `Subscription`. */
-export const RECEIVES_WORDS = ["yes", "no"] as const;
-
-/**
- * Read the delivery table, the second table in the JSDoc on `Subscription`
- * in `source`. The header is `role | subscription | scope | receives |
- * pinned by`; `role` is one of {@link DELIVERY_ROLE_WORDS} and `receives`
- * one of {@link RECEIVES_WORDS}.
- */
-export const parseSubscriptionDelivery = parsePinnedTable({
-  name: "Subscription",
-  label: "delivery",
-  columns: ["role", "subscription", "scope", "receives"],
-  words: { role: DELIVERY_ROLE_WORDS, receives: RECEIVES_WORDS },
-  nth: 1,
-});
-
-/** The `orders` cells of the sites table on `ShopAgent.publish`: the orders half of the scope. */
-export const SITE_ORDERS_WORDS = ["all", "the order"] as const;
-
-/** The `teams` cells of the sites table on `ShopAgent.publish`: the teams half of the scope. */
-export const SITE_TEAMS_WORDS = [
-  "all",
-  "the order's teams",
-  "before ∪ after",
-  "the order's teams, read before the write",
-  "(none)",
-] as const;
-
 /** The `when` cells of the sites table on `ShopAgent.publish`. */
-export const SITE_WHEN_WORDS = [
-  "changed",
-  "written",
-  "always",
-  "swept",
-] as const;
+export const SITE_WHEN_WORDS = ["changed", "written"] as const;
 
 /**
  * Read the sites table out of the JSDoc on `ShopAgent.publish` in `source`
  * (`src/lib/ShopAgent.ts`), a private method, so the JSDoc is found by its
  * declaration (`private publish(`, {@link jsdocBefore}). The header is
- * `trigger | orders | teams | when | pinned by`; `orders`, `teams` and
- * `when` are held to {@link SITE_ORDERS_WORDS}, {@link SITE_TEAMS_WORDS}
- * and {@link SITE_WHEN_WORDS}.
+ * `trigger | when | pinned by`; `when` is one of {@link SITE_WHEN_WORDS}.
  */
 export const parsePublishSites = parsePinnedTable({
   name: "publish",
   label: "sites",
-  columns: ["trigger", "orders", "teams", "when"],
-  words: {
-    orders: SITE_ORDERS_WORDS,
-    teams: SITE_TEAMS_WORDS,
-    when: SITE_WHEN_WORDS,
-  },
+  columns: ["trigger", "when"],
+  words: { when: SITE_WHEN_WORDS },
   nth: 0,
   anchor: "\n  private publish(",
 });
 
-/** The `visible` cells of the events table on `useSubscribedQuery`: the tab's visibility when the event arrives. */
+/** The `visible` cells of the events table on `useLiveQuery`: the tab's visibility when the event arrives. */
 export const VISIBLE_WORDS = ["yes", "no", "either"] as const;
 
 /**
- * Read the events table out of the JSDoc on `useSubscribedQuery` in `source`
- * (`src/lib/useSubscribedQuery.ts`). The header is `event | visible | the
+ * Read the events table out of the JSDoc on `useLiveQuery` in `source`
+ * (`src/lib/useLiveQuery.ts`). The header is `event | visible | the
  * hook | pinned by`; `visible` is one of {@link VISIBLE_WORDS}. Its titles
  * are the browser project's, which is why the test sources include
  * `test/browser/`.
  */
 export const parseClientEvents = parsePinnedTable({
-  name: "useSubscribedQuery",
+  name: "useLiveQuery",
   label: "events",
   columns: ["event", "visible", "the hook"],
   words: { visible: VISIBLE_WORDS },

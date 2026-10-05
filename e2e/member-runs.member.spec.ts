@@ -573,8 +573,8 @@ test("a run's row opens the workflow page and its menu does not", async ({
  * acts, and the mate's page is never touched after it loads — so every change
  * it shows arrived as a `publish` over its own socket.
  *
- * The observer's page is opened first: its `subscribeRuns` has to be
- * registered before the write whose invalidation it is meant to receive, and the maker's own
+ * The observer's page is opened first: its socket has to be identified
+ * before the write whose invalidation it is meant to receive, and the maker's own
  * page load and socket handshake are the margin.
  *
  * The cross-team half rides along: the box order is routed to a team the maker
@@ -613,8 +613,8 @@ test("a task one member marks done lands on another member's workflows list with
   await selectState(maker, "started_by_you", STARTED_BY_YOU);
   await rowAction(maker, RING_ORDER, "Done");
   await expect(rowLink(mate, RING_ORDER)).toBeHidden();
-  /* The mate's other team is untouched by the ring order's fan-out, so the
-     refetch must not have emptied the page wholesale. */
+  /* The refetch must not have emptied the page wholesale: the mate's other
+     team's work is still there. */
   await expect(stateCount(mate, READY, 1)).toBeVisible();
   await expect(stateCount(mate, DONE_OR_CLOSED, 1)).toBeVisible();
   await expectSameDocument(mate);
@@ -624,7 +624,7 @@ test("a task one member marks done lands on another member's workflows list with
  * Taking a member off a team while they are standing on the workflows list. The seed
  * ends by revoking the connections of the members it replaced, which is what
  * `app.members` and `app.teams.$teamId` do after their own membership writes, so
- * this is the same close a merchant edit produces: code 4401, `/shop/$shop`
+ * this is the same close a merchant edit produces: code 3401, `/shop/$shop`
  * invalidates the router, and the loader re-runs against the new membership.
  *
  * The socket must be up before the re-seed or there is nothing to revoke and

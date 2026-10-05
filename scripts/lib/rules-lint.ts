@@ -212,6 +212,8 @@ export const exportedNames = (source: string): readonly ExportedName[] =>
  * | resync     | retired; the word is sync                                                            |
  * | ambigu     | retired; the word is multi-match                                                     |
  * | picker     | retired; the control is a select, named by its label                                 |
+ * | subscribe  | retired; every connection receives every publish, and a live screen re-reads         |
+ * | scope      | retired; a publish names nothing and reaches every connection                        |
  *
  * {@link RESERVED_STEM_ALLOWED} names the exports that keep a stem on
  * purpose.
@@ -229,6 +231,8 @@ export const RESERVED_STEMS: readonly string[] = [
   "ambigu",
   "view",
   "picker",
+  "subscribe",
+  "scope",
 ];
 
 /**

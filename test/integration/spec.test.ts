@@ -14,7 +14,7 @@ import screenSource from "@/lib/Screen.ts?raw";
 import agentClassSource from "@/lib/ShopAgent.ts?raw";
 import clientSource from "@/lib/ShopAgentClient.ts?raw";
 import schemaSource from "@/lib/ShopAgentSchema.ts?raw";
-import hookSource from "@/lib/useSubscribedQuery.ts?raw";
+import hookSource from "@/lib/useLiveQuery.ts?raw";
 
 import * as ActionTable from "../../scripts/lib/spec.ts";
 
@@ -244,13 +244,13 @@ describe("action table parser", () => {
       " * Vocabulary, billing.",
       " *",
       " * | word | symbol |",
-      " * | plan | `Plan`, `Subscription` in Platform, `Shop` in Platform |",
+      " * | plan | `Plan`, `ShopLimits` in Platform, `Shop` in Platform |",
       " */",
       "export const Plan = 1;",
     ].join("\n");
     expect(
       ActionTable.checkVocabulary(source, [], {
-        Platform: "export const Subscription = 1;",
+        Platform: "export const ShopLimits = 1;",
       }),
     ).toEqual(["Shop in Platform"]);
   });
@@ -1207,26 +1207,21 @@ describe("reconcile pass rules table parser", () => {
   });
 });
 
-describe("subscription tables parser", () => {
-  it("the real tables parse and every pinned title is carried by a test", () => {
+describe("cycle table parser", () => {
+  it("the real table parses and every pinned title is carried by a test", () => {
     const cycle = Result.getOrThrow(
-      ActionTable.parseSubscriptionCycle(platformSource),
+      ActionTable.parseInvalidationCycle(platformSource),
     );
-    const delivery = Result.getOrThrow(
-      ActionTable.parseSubscriptionDelivery(platformSource),
-    );
-    expect(cycle.map((row) => row.cells.step)).toContain("reconnect");
-    expect(delivery.map((row) => row.cells.receives)).toContain("no");
-    expect([
-      ...ActionTable.checkPinned(cycle, pinnedTestSources(), "Subscription"),
-      ...ActionTable.checkPinned(delivery, pinnedTestSources(), "Subscription"),
-    ]).toEqual([]);
+    expect(cycle.map((row) => row.cells.step)).toContain("publish");
+    expect(
+      ActionTable.checkPinned(cycle, pinnedTestSources(), "InvalidatedMessage"),
+    ).toEqual([]);
   });
 
   it("a side outside the list is refused", () => {
     expect(
       reconcileError(
-        ActionTable.parseSubscriptionCycle,
+        ActionTable.parseInvalidationCycle,
         platformSource.replace(/^ \* \| identify +\| object .*$/mu, (line) =>
           line.replace("| object |", "| server |"),
         ),
@@ -1234,21 +1229,10 @@ describe("subscription tables parser", () => {
     ).toMatch(/unknown side "server"/u);
   });
 
-  it("a receives outside the list is refused", () => {
-    expect(
-      reconcileError(
-        ActionTable.parseSubscriptionDelivery,
-        platformSource.replace(/^ \* \| either +\| none .*$/mu, (line) =>
-          line.replace("| no       |", "| never    |"),
-        ),
-      ),
-    ).toMatch(/unknown receives "never"/u);
-  });
-
   it("a table without its separator row is refused", () => {
     expect(
       reconcileError(
-        ActionTable.parseSubscriptionCycle,
+        ActionTable.parseInvalidationCycle,
         platformSource.replace(/^ \* \| -+ \| -+ \| -+ \| -+ \| -+ \|\n/mu, ""),
       ),
     ).toMatch(/expected the separator row after the header/u);
@@ -1264,17 +1248,6 @@ describe("publish sites table parser", () => {
     expect(
       ActionTable.checkPinned(rows, pinnedTestSources(), "publish"),
     ).toEqual([]);
-  });
-
-  it("an orders cell outside the list is refused", () => {
-    expect(
-      reconcileError(
-        ActionTable.parsePublishSites,
-        agentClassSource.replace(/^ +\* \| Attach workflow .*$/mu, (line) =>
-          line.replace("| the order |", "| one order |"),
-        ),
-      ),
-    ).toMatch(/unknown orders "one order"/u);
   });
 
   it("a when outside the list is refused", () => {
@@ -1315,7 +1288,7 @@ describe("connection table parser", () => {
     expect(
       reconcileError(
         ActionTable.parseConnectionEvents,
-        platformSource.replace(/^ \* \| close 4401 +\| tab .*$/mu, (line) =>
+        platformSource.replace(/^ \* \| close 3401 .*$/mu, (line) =>
           line.replace("| tab    |", "| client |"),
         ),
       ),
@@ -1326,13 +1299,13 @@ describe("connection table parser", () => {
 describe("client events table parser", () => {
   it("the real table parses and every title is carried by a browser test", () => {
     const rows = Result.getOrThrow(ActionTable.parseClientEvents(hookSource));
-    expect(rows.map((row) => row.cells.event)).toContain("unmount");
+    expect(rows.map((row) => row.cells.event)).toContain("identify");
     const browserSources = import.meta.glob<string>(
       "/test/browser/*.test.tsx",
       { query: "?raw", import: "default", eager: true },
     );
     expect(
-      ActionTable.checkPinned(rows, browserSources, "useSubscribedQuery"),
+      ActionTable.checkPinned(rows, browserSources, "useLiveQuery"),
     ).toEqual([]);
   });
 
@@ -1340,7 +1313,7 @@ describe("client events table parser", () => {
     expect(
       reconcileError(
         ActionTable.parseClientEvents,
-        hookSource.replace(/^ \* \| unmount +\| either .*$/mu, (line) =>
+        hookSource.replace(/^ \* \| identify +\| either .*$/mu, (line) =>
           line.replace("| either  |", "| always  |"),
         ),
       ),

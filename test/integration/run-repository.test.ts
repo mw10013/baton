@@ -3546,16 +3546,7 @@ describe("RunRepository metering", () => {
     ));
 });
 
-/** `listOrderTeamIds`'s answer with its teams in a fixed order. */
-const sortedTeams = ({
-  orderId,
-  teamIds,
-}: {
-  readonly orderId: string | null;
-  readonly teamIds: readonly string[];
-}) => ({ orderId, teamIds: teamIds.toSorted() });
-
-describe("RunRepository publish scope", () => {
+describe("RunRepository publish signal", () => {
   it("reconcileCountsChanged is true for a create, a resize or a close and false for a multi-match alone", () => {
     const none = { created: 0, resized: 0, closed: 0, multiMatch: 0 };
     strictEqual(reconcileCountsChanged({ ...none, created: 1 }), true);
@@ -3564,39 +3555,4 @@ describe("RunRepository publish scope", () => {
     strictEqual(reconcileCountsChanged({ ...none, multiMatch: 1 }), false);
     strictEqual(reconcileCountsChanged(none), false);
   });
-
-  it("listOrderTeamIds names the order for a task, a run and an order target, and null for a deleted run", () =>
-    runInRepository(
-      Effect.gen(function* () {
-        yield* seed;
-        yield* upsertAndReconcile(order(), [lineItem(1, ["a"])]);
-        const [detail] = yield* runsForOrder();
-        if (detail === undefined) throw new Error("no run");
-        const runs = yield* RunRepository;
-        const expected = {
-          orderId: ORDER_ID,
-          teamIds: [TEAM_A.id, TEAM_B.id],
-        };
-        deepStrictEqual(
-          sortedTeams(
-            yield* runs.listOrderTeamIds({
-              runTaskId: detail.tasks[0]?.id ?? "",
-            }),
-          ),
-          expected,
-        );
-        deepStrictEqual(
-          sortedTeams(yield* runs.listOrderTeamIds({ runId: detail.run.id })),
-          expected,
-        );
-        deepStrictEqual(
-          sortedTeams(yield* runs.listOrderTeamIds({ orderId: ORDER_ID })),
-          expected,
-        );
-        deepStrictEqual(
-          yield* runs.listOrderTeamIds({ runId: "run-deleted" }),
-          { orderId: null, teamIds: [] },
-        );
-      }),
-    ));
 });

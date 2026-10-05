@@ -56,7 +56,7 @@ export const runResultMessage = (
  * `Domain.ConnectionState`.
  *
  * `onSuccess` is the page's own refetch. The write's publish would refetch
- * eventually, but the throttle in `useSubscribedQuery` means "eventually" is
+ * eventually, but the throttle in `useLiveQuery` means "eventually" is
  * up to two seconds — too long for the person who just pressed the button.
  * Invalidating here paints their own action immediately; the publish still
  * reaches everyone else.

@@ -1,20 +1,4 @@
-import type * as Domain from "@/lib/Domain";
-
 import { Context, type Effect } from "effect";
-
-/** See `publish`. */
-export type PublishScope = "all" | readonly string[];
-
-/**
- * The team half of a publish's scope, for member connections only — see
- * `publish`. `"all"` is "every team", the honest answer whenever the writer
- * cannot name the teams a change touched.
- */
-export type PublishTeams = "all" | readonly string[];
-
-/** The union of two team scopes; `"all"` on either side is `"all"`. */
-export const unionTeams = (a: PublishTeams, b: PublishTeams): PublishTeams =>
-  a === "all" || b === "all" ? "all" : [...new Set([...a, ...b])];
 
 /**
  * What every module under `src/lib/agent/` needs from the `ShopAgent` object
@@ -45,18 +29,18 @@ export const unionTeams = (a: PublishTeams, b: PublishTeams): PublishTeams =>
  * One row per source of orders. `store` is the orders write, whose rules are
  * the sync tables on `Domain.syncOrder`; `reconcile` is
  * the shape from the triggers table on `Domain.reconcileItem`, `reconcile` or
- * `reconcile all`; `flush` is when the usage queue is sent; `publish` is
- * who is told, and the sites table on `ShopAgent.publish` is the full list
- * of writes that publish. No `pinned by`: the rows are wiring, covered by the webhook,
- * stream and ceiling suites by scenario.
+ * `reconcile all`; `flush` is when the usage queue is sent. Every row
+ * publishes to every connection; the sites table on `ShopAgent.publish` is
+ * the full list of writes that publish and when. No `pinned by`: the rows
+ * are wiring, covered by the webhook, stream and ceiling suites by scenario.
  *
- * | source                        | store                                             | reconcile                          | flush                 | publish                                                                    |
- * | ----------------------------- | ------------------------------------------------- | ---------------------------------- | --------------------- | -------------------------------------------------------------------------- |
- * | order webhook                 | `Domain.syncOrder`: fetch one; version skip first | reconcile, inside the upsert       | after the order       | the order, to the teams before and after, when the write changed something |
- * | open-orders sync (the stream) | `Domain.syncOrder`: each streamed order           | reconcile each, inside its upsert  | once after the stream | all                                                                        |
- * | one-order sync (the button)   | `Domain.syncOrder`: fetch one; no skip            | reconcile, inside the upsert       | after the order       | the order, when the write changed something                                |
- * | workflow and team verbs       | —                                                 | reconcile all                      | after the pass        | all                                                                        |
- * | seed (dev)                    | upsert each                                       | reconcile each, then reconcile all | after                 | all                                                                        |
+ * | source                        | store                                             | reconcile                          | flush                 |
+ * | ----------------------------- | ------------------------------------------------- | ---------------------------------- | --------------------- |
+ * | order webhook                 | `Domain.syncOrder`: fetch one; version skip first | reconcile, inside the upsert       | after the order       |
+ * | open-orders sync (the stream) | `Domain.syncOrder`: each streamed order           | reconcile each, inside its upsert  | once after the stream |
+ * | one-order sync (the button)   | `Domain.syncOrder`: fetch one; no skip            | reconcile, inside the upsert       | after the order       |
+ * | workflow and team verbs       | —                                                 | reconcile all                      | after the pass        |
+ * | seed (dev)                    | upsert each                                       | reconcile each, then reconcile all | after                 |
  */
 export class ShopAgentHost extends Context.Service<
   ShopAgentHost,
@@ -67,15 +51,8 @@ export class ShopAgentHost extends Context.Service<
      * the runtime is first built inside the constructor.
      */
     readonly shop: () => string;
-    /** The object's publish; the scopes are the class's `publish`. */
-    readonly publish: (
-      touched: PublishScope,
-      teams?: PublishTeams,
-    ) => Effect.Effect<void>;
-    /** Sets the calling connection's subscription, if the call came over a socket. */
-    readonly setSubscription: (
-      subscription: Domain.Subscription | null,
-    ) => Effect.Effect<void>;
+    /** The object's publish to every connection; the rule is the class's `publish`. */
+    readonly publish: Effect.Effect<void>;
     /** Closes these members' connections; the class's `closeMemberConnections`. */
     readonly closeMemberConnections: (
       memberIds: readonly string[],
