@@ -26,14 +26,71 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = fileURLToPath(new URL("../", import.meta.url));
-const MODEL = "@cf/deepgram/aura-1";
-const SPEAKER = "luna";
-const TEST_TEXT =
-  "Hello from Baton. This is a short test of text to speech using Cloudflare Workers AI.";
+/**
+ * CLI names select only these supported models; aura-2 means English.
+ * Voices are limited to feminine English voices supported by Cloudflare for
+ * each model. Reject incompatible pairs before credentials or requests.
+ * Help and validation read the same lists. Luna is the default for both.
+ * Cloudflare support and Deepgram's expressed-gender classifications:
+ * https://developers.cloudflare.com/workers-ai/models/aura-1/
+ * https://developers.cloudflare.com/workers-ai/models/aura-2-en/
+ * https://developers.deepgram.com/docs/tts-models
+ * Estimates use published character rates, not the account's free allocation:
+ * https://developers.cloudflare.com/workers-ai/platform/pricing/
+ */
+const MODELS = {
+  "aura-1": {
+    id: "@cf/deepgram/aura-1",
+    voices: ["asteria", "athena", "hera", "luna", "stella"],
+    neuronsPerCharacter: 1.36364,
+    usdPerCharacter: 0.000015,
+  },
+  "aura-2": {
+    id: "@cf/deepgram/aura-2-en",
+    voices: [
+      "amalthea",
+      "andromeda",
+      "asteria",
+      "athena",
+      "aurora",
+      "callista",
+      "cora",
+      "cordelia",
+      "delia",
+      "electra",
+      "harmonia",
+      "helena",
+      "hera",
+      "iris",
+      "janus",
+      "juno",
+      "luna",
+      "minerva",
+      "ophelia",
+      "pandora",
+      "phoebe",
+      "thalia",
+      "theia",
+      "vesta",
+    ],
+    neuronsPerCharacter: 2.72727,
+    usdPerCharacter: 0.00003,
+  },
+};
+const VOICES = [
+  ...new Set(Object.values(MODELS).flatMap((model) => model.voices)),
+];
+const VOICE_HELP = Object.entries(MODELS)
+  .map(([name, model]) => `${name}: ${model.voices.join(", ")}`)
+  .join("; ");
 const MAX_AUDIO_BYTES = 10 * 1024 * 1024;
 const DEADLINE_MS = 60_000;
-// eslint-disable-next-line typescript/no-misused-spread -- Count code points, not graphemes; the fixed test text is ASCII, with unambiguous billing units.
-const CHARACTER_COUNT = [...TEST_TEXT].length;
+
+/** Count Unicode code points, not UTF-16 units, for validation and estimates. */
+function countCharacters(text: string): number {
+  // eslint-disable-next-line typescript/no-misused-spread -- String iteration counts Unicode code points, as this command requires.
+  return [...text].length;
+}
 
 class SpeechError extends Schema.TaggedError<SpeechError>()("SpeechError", {
   message: Schema.String,
@@ -135,7 +192,14 @@ async function readAudio(response: Response): Promise<Uint8Array> {
  * an existing destination. A timeout can still represent metered inference.
  * Transport failures are mapped to fixed messages: raw errors may carry secrets.
  */
-function synthesize(account: string, token: Redacted.Redacted, output: string) {
+function synthesize(
+  account: string,
+  token: Redacted.Redacted,
+  output: string,
+  text: string,
+  model: string,
+  speaker: string,
+) {
   return Effect.tryPromise({
     try: async (signal) => {
       const parent = dirname(output);
@@ -178,7 +242,7 @@ function synthesize(account: string, token: Redacted.Redacted, output: string) {
         let ray: string | null;
         try {
           const response = await fetch(
-            `https://api.cloudflare.com/client/v4/accounts/${account}/ai/run/${MODEL}`,
+            `https://api.cloudflare.com/client/v4/accounts/${account}/ai/run/${model}`,
             {
               method: "POST",
               redirect: "error",
@@ -189,8 +253,8 @@ function synthesize(account: string, token: Redacted.Redacted, output: string) {
                 Accept: "audio/mpeg",
               },
               body: JSON.stringify({
-                text: TEST_TEXT,
-                speaker: SPEAKER,
+                text,
+                speaker,
                 encoding: "mp3",
               }),
             },
@@ -240,10 +304,10 @@ function synthesize(account: string, token: Redacted.Redacted, output: string) {
         const metadata = {
           output,
           accountId: account,
-          model: MODEL,
-          speaker: SPEAKER,
-          text: TEST_TEXT,
-          characters: CHARACTER_COUNT,
+          model,
+          speaker,
+          text,
+          characters: countCharacters(text),
           bytes: bytes.byteLength,
           elapsedMs: Math.round(performance.now() - started),
           cfRay: ray,
@@ -276,9 +340,24 @@ function synthesize(account: string, token: Redacted.Redacted, output: string) {
 const command = Command.make(
   "tts",
   {
+    model: Flag.choice("model", ["aura-1", "aura-2"]).pipe(
+      Flag.withDescription(
+        "Speech model: aura-1 (default) or aura-2 (English)",
+      ),
+      Flag.withDefault("aura-1"),
+    ),
+    voice: Flag.choice("voice", VOICES).pipe(
+      Flag.withDescription(`Female voice (default: luna). ${VOICE_HELP}`),
+      Flag.withDefault("luna"),
+    ),
+    text: Flag.string("text").pipe(
+      Flag.withDescription(
+        "Required text to speak (1–500 Unicode code points); quote it as one argument",
+      ),
+    ),
     output: Flag.string("output").pipe(
       Flag.withDescription(
-        "MP3 destination, relative to the repo root; existing files are never replaced",
+        "MP3 file path, absolute or relative to the repo root; defaults to tmp/tts/<timestamp>-<id>/speech.mp3; creates parent directories; never overwrites",
       ),
       Flag.withDefault(""),
     ),
@@ -290,10 +369,20 @@ const command = Command.make(
     ),
   },
   Effect.fnUntraced(function* (options) {
-    if (TEST_TEXT.trim().length === 0 || CHARACTER_COUNT > 500) {
+    const model = MODELS[options.model];
+    if (!model.voices.includes(options.voice)) {
       yield* Effect.fail(
         new SpeechError({
-          message: "TEST_TEXT must contain between 1 and 500 characters.",
+          message: `--voice ${options.voice} is not supported with --model ${options.model}. Choose: ${model.voices.join(", ")}.`,
+        }),
+      );
+    }
+    const characters = countCharacters(options.text);
+    if (options.text.trim().length === 0 || characters > 500) {
+      yield* Effect.fail(
+        new SpeechError({
+          message:
+            "--text must contain non-whitespace text and at most 500 Unicode code points.",
         }),
       );
     }
@@ -313,13 +402,14 @@ const command = Command.make(
           {
             dryRun: true,
             accountId: account,
-            model: MODEL,
-            speaker: SPEAKER,
-            text: TEST_TEXT,
-            characters: CHARACTER_COUNT,
+            model: model.id,
+            speaker: options.voice,
+            text: options.text,
+            characters,
             output,
-            estimatedNeurons: Math.round(CHARACTER_COUNT * 1.36364 * 100) / 100,
-            estimatedOverageUsd: CHARACTER_COUNT * 0.000015,
+            estimatedNeurons:
+              Math.round(characters * model.neuronsPerCharacter * 100) / 100,
+            estimatedOverageUsd: characters * model.usdPerCharacter,
           },
           null,
           2,
@@ -346,7 +436,14 @@ const command = Command.make(
         new SpeechError({ message: "CLOUDFLARE_API_TOKEN is blank." }),
       );
     const account = yield* accountId;
-    const result = yield* synthesize(account, token, output);
+    const result = yield* synthesize(
+      account,
+      token,
+      output,
+      options.text,
+      model.id,
+      options.voice,
+    );
     yield* Console.log(JSON.stringify(result, null, 2));
     if (!result.metadataSaved)
       yield* Console.warn(
@@ -355,7 +452,7 @@ const command = Command.make(
   }),
 ).pipe(
   Command.withDescription(
-    "Generate one Aura-1/luna MP3 from the fixed TEST_TEXT. No retries.",
+    'Generate one MP3. Defaults to Aura-1 and the luna voice; use --model aura-2 for Aura-2 English. No retries. Example: pnpm tts --text "Hello from Baton." --model aura-2 --voice athena. Use --output to choose a file or --dry-run to preview. Text is stored in the metadata sidecar and may appear in shell history and process listings.',
   ),
   Command.run({ version: "0.1.0" }),
   Effect.provide(NodeServices.layer),
