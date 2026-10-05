@@ -57,13 +57,60 @@ export class TeamNotFoundError extends Schema.TaggedError<TeamNotFoundError>()(
 ) {}
 
 /**
- * No member in this shop is addressable by that email for the attempted write.
- * Membership removal never fails this way (see `setTeamMember`).
+ * No member in this shop is addressable by that email or id for the attempted
+ * write; `member` is whichever the caller addressed it by. Membership removal
+ * never fails this way (see `setTeamMember`).
  */
 export class MemberNotFoundError extends Schema.TaggedError<MemberNotFoundError>()(
   "MemberNotFoundError",
-  { shop: Domain.Shop, email: Domain.Email },
+  { shop: Domain.Shop, member: Schema.String },
 ) {}
+
+/**
+ * One page of a merchant table read from D1: the members index, the teams
+ * index. Keyset on the column the table is ordered by, which is unique per
+ * shop (a member's email, a team's name): `after` is the last value of the
+ * page before, `null` for page one, read as `coalesce(after, '')` so the
+ * cursor seeks (an `or` on it would scan, and an email or a name is never
+ * empty). `q` is a search, matched anywhere in that column, ignoring case;
+ * `null` is none.
+ */
+export interface PageInput<C> {
+  readonly shop: Domain.Shop;
+  readonly limit: number;
+  readonly after: C | null;
+  readonly q: string | null;
+}
+
+/**
+ * What a {@link PageInput} reads: the rows, the cursor of the next page
+ * (`null` on the last), and how many rows the search finds over every page
+ * (`null` without a search).
+ */
+export interface Page<A, C> {
+  readonly rows: readonly A[];
+  readonly nextCursor: C | null;
+  readonly matches: number | null;
+}
+
+/**
+ * Splits a read of `limit + 1` rows into the page and its next cursor: the
+ * extra row only says that another page exists, and the cursor is the last
+ * row the page shows.
+ */
+const toPage = <A, C>(
+  rows: readonly A[],
+  limit: number,
+  cursorOf: (row: A) => C,
+): { readonly rows: readonly A[]; readonly nextCursor: C | null } => {
+  const shown = rows.slice(0, limit);
+  const last = shown.at(-1);
+  return {
+    rows: shown,
+    nextCursor:
+      rows.length > limit && last !== undefined ? cursorOf(last) : null,
+  };
+};
 
 const decodeRepository =
   <A>(schema: Schema.ConstraintDecoder<A>, message: string) =>
@@ -193,16 +240,26 @@ export class Repository extends Context.Service<
       readonly Domain.Member[],
       SqlError.SqlError | RepositoryError
     >;
+    /** The members index's read; see {@link Page}. */
+    readonly listMembersPage: (
+      params: PageInput<Domain.Email>,
+    ) => Effect.Effect<
+      Page<Domain.MemberSummary, Domain.Email>,
+      SqlError.SqlError | RepositoryError
+    >;
     /**
      * Idempotent for the row, and the ceiling ({@link Domain.membersAtCeiling})
-     * is applied to *additions* only: an email already a member is
-     * re-added without consulting it, so a shop at or over the ceiling (a
-     * lowered constant) can still re-run the same add without being told it
-     * is full.
+     * is applied to *creations* only: an email already a member is
+     * created again without consulting it, so a shop at or over the ceiling (a
+     * lowered constant) can still re-run the same create without being told it
+     * is full. Returns the row, new or existing.
      */
-    readonly addMember: (
+    readonly createMember: (
       member: Pick<Domain.Member, "shop" | "email">,
-    ) => Effect.Effect<void, SqlError.SqlError | MemberCeilingError>;
+    ) => Effect.Effect<
+      Domain.Member,
+      SqlError.SqlError | RepositoryError | MemberCeilingError
+    >;
     readonly countMembers: (
       shop: Domain.Shop,
     ) => Effect.Effect<number, SqlError.SqlError>;
@@ -226,12 +283,22 @@ export class Repository extends Context.Service<
       readonly Domain.MemberTeam[],
       SqlError.SqlError | RepositoryError
     >;
-    /** Replace a member's whole team set at once; the add-member and edit-teams dialogs. */
-    readonly setMemberTeams: (params: {
+    /** The member page's read; the mirror of {@link findTeamDetail}. */
+    readonly findMemberDetail: (params: {
+      readonly shop: Domain.Shop;
+      readonly id: Domain.MemberId;
+      readonly teamsAfter: Domain.TeamName | null;
+      readonly limit: number;
+    }) => Effect.Effect<
+      Option.Option<Domain.MemberDetail>,
+      SqlError.SqlError | RepositoryError
+    >;
+    /** The Add to teams dialog's write: one member onto several teams at once; the mirror of {@link addTeamMembers}. */
+    readonly addMemberTeams: (params: {
       readonly shop: Domain.Shop;
       readonly memberId: Domain.MemberId;
       readonly teamIds: readonly Domain.TeamId[];
-    }) => Effect.Effect<void, SqlError.SqlError>;
+    }) => Effect.Effect<void, SqlError.SqlError | MemberNotFoundError>;
     readonly findMember: (
       member: Pick<Domain.Member, "shop" | "email">,
     ) => Effect.Effect<
@@ -248,6 +315,13 @@ export class Repository extends Context.Service<
       readonly shop: Domain.Shop;
     }) => Effect.Effect<
       readonly Domain.TeamSummary[],
+      SqlError.SqlError | RepositoryError
+    >;
+    /** The teams index's read; see {@link Page}. */
+    readonly listTeamsPage: (
+      params: PageInput<Domain.TeamName>,
+    ) => Effect.Effect<
+      Page<Domain.TeamSummary, Domain.TeamName>,
       SqlError.SqlError | RepositoryError
     >;
     readonly countTeams: (
@@ -281,9 +355,12 @@ export class Repository extends Context.Service<
       readonly Domain.MemberId[],
       SqlError.SqlError | RepositoryError | TeamNotFoundError
     >;
-    readonly findTeamDetail: (
-      team: Pick<Domain.Team, "shop" | "id">,
-    ) => Effect.Effect<
+    readonly findTeamDetail: (params: {
+      readonly shop: Domain.Shop;
+      readonly id: Domain.TeamId;
+      readonly membersAfter: Domain.Email | null;
+      readonly limit: number;
+    }) => Effect.Effect<
       Option.Option<Domain.TeamDetail>,
       SqlError.SqlError | RepositoryError
     >;
@@ -570,20 +647,57 @@ export class Repository extends Context.Service<
 
       /**
        * Reads through `D1Primary`: the embedded members screen re-lists
-       * immediately after `addMember`/`deleteMember`, which write through the
+       * immediately after `createMember`/`deleteMember`, which write through the
        * primary and so never advance the session bookmark — a session read
-       * could miss the row just written.
+       * could miss the row just written. Email order, the one order every
+       * member read uses, so the unique (shop, email) index answers it.
        */
       const listMembers = Effect.fn("Repository.listMembers")(function* (
         shop: Domain.Member["shop"],
       ) {
         const rows =
-          yield* sqlPrimary`select * from Member where shop = ${shop} order by createdAt, email`;
+          yield* sqlPrimary`select * from Member where shop = ${shop} order by email`;
         return yield* decodeRepository(
           Schema.Array(Domain.Member),
           "Invalid Member rows",
         )(rows);
       });
+
+      /**
+       * Reads through `D1Primary` for the reason on {@link listMembers}.
+       * `teamCount` is a correlated subquery, as `memberCount` is on
+       * {@link listTeams}, so a member on no team still returns a row.
+       */
+      const listMembersPage = Effect.fn("Repository.listMembersPage")(
+        function* (params: PageInput<Domain.Email>) {
+          const rows = yield* sqlPrimary`
+            select m.*, (select count(*) from TeamMember tm where tm.memberId = m.id) as teamCount
+            from Member m
+            where m.shop = ${params.shop}
+              and m.email > coalesce(${params.after}, '')
+              and (${params.q} is null or instr(m.email, lower(${params.q})) > 0)
+            order by m.email
+            limit ${params.limit + 1}
+          `;
+          const decoded = yield* decodeRepository(
+            Schema.Array(Domain.MemberSummary),
+            "Invalid Member rows",
+          )(rows);
+          const matches =
+            params.q === null
+              ? null
+              : Number(
+                  (yield* sqlPrimary`
+                    select count(*) from Member
+                    where shop = ${params.shop} and instr(email, lower(${params.q})) > 0
+                  `.values)[0]?.[0] ?? 0,
+                );
+          return {
+            ...toPage(decoded, params.limit, (row) => row.email),
+            matches,
+          };
+        },
+      );
 
       const countMembers = Effect.fn("Repository.countMembers")(function* (
         shop: Domain.Shop,
@@ -604,19 +718,20 @@ export class Repository extends Context.Service<
       });
 
       /**
-       * Idempotent: re-adding an existing email is a no-op, and the id
-       * survives.
+       * Idempotent: creating an existing email again is a no-op, and the id
+       * survives. The row is re-read after the insert, on the same primary
+       * connection, so a miss is the repository's own invariant failure.
        *
        * Count-then-insert as two statements rather than one transaction: D1
        * has no interactive transactions (the driver rejects `withTransaction`),
        * and a batch cannot branch on the count. The race that leaves is two
-       * merchants adding at the ceiling in the same instant and both winning —
+       * merchants creating at the ceiling in the same instant and both winning —
        * one member over it, on a screen only the shop owner reaches, and billed
        * like any other seat. Buying that back would mean a `count` inside the
        * insert, which neither expresses "already a member is exempt" nor
        * reports which of the two conditions refused.
        */
-      const addMember = Effect.fn("Repository.addMember")(function* (
+      const createMember = Effect.fn("Repository.createMember")(function* (
         member: Pick<Domain.Member, "shop" | "email">,
       ) {
         const existing = yield* sqlPrimary`
@@ -636,6 +751,12 @@ export class Repository extends Context.Service<
           values (${crypto.randomUUID()}, ${member.shop}, ${member.email}, ${createdAt})
           on conflict (shop, email) do nothing
         `;
+        const rows =
+          yield* sqlPrimary`select * from Member where shop = ${member.shop} and email = ${member.email}`;
+        return yield* decodeRepository(
+          Domain.Member,
+          "Member missing right after createMember",
+        )(rows[0]);
       });
 
       /**
@@ -656,7 +777,7 @@ export class Repository extends Context.Service<
         if (row === undefined)
           return yield* new MemberNotFoundError({
             shop: member.shop,
-            email: member.email,
+            member: member.email,
           });
         return yield* decodeRepository(
           Domain.MemberId,
@@ -666,7 +787,7 @@ export class Repository extends Context.Service<
 
       /**
        * Reads through `D1Primary` for the same reason {@link listMembers}
-       * does: the members page re-lists right after a primary write. The
+       * does: the team page re-reads right after a primary write. The
        * count is a correlated subquery so it is the team's total, not the
        * count of rows this join happens to return.
        */
@@ -689,34 +810,93 @@ export class Repository extends Context.Service<
       );
 
       /**
-       * One D1 batch, not a `withTransaction`: D1 has no interactive
-       * transactions (the driver rejects `withTransaction` outright), but
-       * `db.batch()` runs its statements in order inside one implicit
-       * transaction and rolls all of them back if any fails — so the delete
-       * and the inserts land together or not at all, and a member is never
-       * observed with no teams between the two. A batch cannot nest inside a
-       * `SqlClient` transaction; this repo's transactions are all on the
-       * Durable Object's SQLite, never on D1. Tagged-template statements are
-       * lazy, so the array is built without `yield*` and handed over whole.
-       *
-       * Both statements scope through `Member.shop`/`Team.shop`, so a forged
-       * cross-shop id matches no row and is silently dropped — the same
-       * posture as {@link setTeamMember}, which is what holds the cross-shop
-       * half of the team row on {@link D1_TABLES}.
+       * The mirror of {@link findTeamDetail}: one page of the member's teams
+       * in name order, each with its member count and the edge's date, the
+       * count of every team they are on, and the shop's teams they are not
+       * on. Reads through `D1Primary` because the member page re-reads right
+       * after its own primary writes.
        */
-      const setMemberTeams = Effect.fn("Repository.setMemberTeams")(
+      const findMemberDetail = Effect.fn("Repository.findMemberDetail")(
+        function* (params: {
+          readonly shop: Domain.Shop;
+          readonly id: Domain.MemberId;
+          readonly teamsAfter: Domain.TeamName | null;
+          readonly limit: number;
+        }) {
+          const memberRows =
+            yield* sqlPrimary`select * from Member where id = ${params.id} and shop = ${params.shop}`;
+          if (memberRows[0] === undefined) return Option.none();
+          const teamRows = yield* sqlPrimary`
+            select t.id, t.name, tm.createdAt as inTeamSince,
+              (select count(*) from TeamMember x where x.teamId = t.id) as memberCount
+            from TeamMember tm
+            join Team t on t.id = tm.teamId
+            where tm.memberId = ${params.id} and t.shop = ${params.shop}
+              and t.name > coalesce(${params.teamsAfter}, '')
+            order by t.name
+            limit ${params.limit + 1}
+          `;
+          const countRows = yield* sqlPrimary`
+            select count(*) as teamCount
+            from TeamMember tm join Team t on t.id = tm.teamId
+            where tm.memberId = ${params.id} and t.shop = ${params.shop}
+          `;
+          const candidateRows = yield* sqlPrimary`
+            select t.id, t.name,
+              (select count(*) from TeamMember x where x.teamId = t.id) as memberCount
+            from Team t
+            where t.shop = ${params.shop}
+              and not exists (select 1 from TeamMember tm where tm.teamId = t.id and tm.memberId = ${params.id})
+            order by t.name
+          `;
+          const decoded = yield* decodeRepository(
+            Schema.Struct({
+              member: Domain.Member,
+              teams: Domain.MemberDetail.fields.teams,
+              teamCount: Schema.Number,
+              candidates: Domain.MemberDetail.fields.candidates,
+            }),
+            "Invalid MemberDetail rows",
+          )({
+            member: memberRows[0],
+            teams: teamRows,
+            teamCount: countRows[0]?.teamCount,
+            candidates: candidateRows,
+          });
+          const page = toPage(decoded.teams, params.limit, (row) => row.name);
+          return Option.some({
+            ...decoded,
+            teams: page.rows,
+            nextCursor: page.nextCursor,
+          } satisfies Domain.MemberDetail);
+        },
+      );
+
+      /**
+       * The mirror of {@link addTeamMembers}, one D1 batch for the same
+       * atomicity reasons. The member is checked up front because
+       * `insert or ignore` cannot tell a missing member from an
+       * already-present edge; a team id from another shop matches no source
+       * row and is dropped by the join, which holds the cross-shop half of
+       * the team row on {@link D1_TABLES} from this side.
+       */
+      const addMemberTeams = Effect.fn("Repository.addMemberTeams")(
         function* (params: {
           readonly shop: Domain.Shop;
           readonly memberId: Domain.MemberId;
           readonly teamIds: readonly Domain.TeamId[];
         }) {
+          const member =
+            yield* sqlPrimary`select 1 as present from Member where id = ${params.memberId} and shop = ${params.shop}`;
+          if (member[0] === undefined)
+            yield* new MemberNotFoundError({
+              shop: params.shop,
+              member: params.memberId,
+            });
+          if (params.teamIds.length === 0) return;
           const createdAt = yield* Clock.currentTimeMillis;
-          yield* sqlPrimary.batch([
-            sqlPrimary`
-              delete from TeamMember where memberId in (
-                select m.id from Member m where m.id = ${params.memberId} and m.shop = ${params.shop})
-            `,
-            ...params.teamIds.map(
+          yield* sqlPrimary.batch(
+            params.teamIds.map(
               (teamId) => sqlPrimary`
                 insert or ignore into TeamMember (teamId, memberId, createdAt)
                 select t.id, m.id, ${createdAt}
@@ -724,7 +904,7 @@ export class Repository extends Context.Service<
                 where t.id = ${teamId} and m.id = ${params.memberId} and t.shop = ${params.shop}
               `,
             ),
-          ]);
+          );
         },
       );
 
@@ -785,6 +965,38 @@ export class Repository extends Context.Service<
         )(rows);
       });
 
+      /** Reads through `D1Primary` for the reason on {@link listTeams}. */
+      const listTeamsPage = Effect.fn("Repository.listTeamsPage")(function* (
+        params: PageInput<Domain.TeamName>,
+      ) {
+        const rows = yield* sqlPrimary`
+          select t.*, (select count(*) from TeamMember tm where tm.teamId = t.id) as memberCount
+          from Team t
+          where t.shop = ${params.shop}
+            and t.name > coalesce(${params.after}, '')
+            and (${params.q} is null or instr(lower(t.name), lower(${params.q})) > 0)
+          order by t.name
+          limit ${params.limit + 1}
+        `;
+        const decoded = yield* decodeRepository(
+          Schema.Array(Domain.TeamSummary),
+          "Invalid Team rows",
+        )(rows);
+        const matches =
+          params.q === null
+            ? null
+            : Number(
+                (yield* sqlPrimary`
+                  select count(*) from Team
+                  where shop = ${params.shop} and instr(lower(name), lower(${params.q})) > 0
+                `.values)[0]?.[0] ?? 0,
+              );
+        return {
+          ...toPage(decoded, params.limit, (row) => row.name),
+          matches,
+        };
+      });
+
       /**
        * `insert or ignore ... returning` is the whole conflict check: a fresh
        * uuid makes the name index the only reachable unique constraint, so zero
@@ -798,7 +1010,7 @@ export class Repository extends Context.Service<
         team: Pick<Domain.Team, "shop" | "name">,
       ) {
         // Same count-then-insert shape, and the same accepted race, as
-        // `addMember`; a team name is unique per shop, so there is no
+        // `createMember`; a team name is unique per shop, so there is no
         // "already exists" case to exempt.
         if ((yield* countTeams(team.shop)) >= Domain.ShopLimits.maxTeams)
           return yield* new TeamLimitError({
@@ -884,30 +1096,67 @@ export class Repository extends Context.Service<
       });
 
       /**
-       * The team's member list is a left join from `Member`, not from `TeamMember`: the
-       * screen toggles membership, so a member who is *not* on the team is as
-       * much part of the view as one who is.
+       * One page of the team's members in email order, the count of every
+       * member on it, and the shop's members who are not on it (the Add
+       * members dialog's candidates). The member side is scoped through
+       * `Member.shop`, so an edge to another shop's member never shows.
        */
-      const findTeamDetail = Effect.fn("Repository.findTeamDetail")(function* (
-        team: Pick<Domain.Team, "shop" | "id">,
-      ) {
-        const teamRows =
-          yield* sqlPrimary`select * from Team where id = ${team.id} and shop = ${team.shop}`;
-        if (teamRows[0] === undefined) return Option.none();
-        const memberRows = yield* sqlPrimary`
-          select m.*, (tm.teamId is not null) as inTeam, tm.createdAt as inTeamSince
-          from Member m
-          left join TeamMember tm on tm.memberId = m.id and tm.teamId = ${team.id}
-          where m.shop = ${team.shop}
-          order by m.createdAt, m.email
+      const findTeamDetail = Effect.fn("Repository.findTeamDetail")(
+        function* (params: {
+          readonly shop: Domain.Shop;
+          readonly id: Domain.TeamId;
+          readonly membersAfter: Domain.Email | null;
+          readonly limit: number;
+        }) {
+          const teamRows =
+            yield* sqlPrimary`select * from Team where id = ${params.id} and shop = ${params.shop}`;
+          if (teamRows[0] === undefined) return Option.none();
+          const memberRows = yield* sqlPrimary`
+          select m.*, tm.createdAt as inTeamSince
+          from TeamMember tm
+          join Member m on m.id = tm.memberId
+          where tm.teamId = ${params.id} and m.shop = ${params.shop}
+            and m.email > coalesce(${params.membersAfter}, '')
+          order by m.email
+          limit ${params.limit + 1}
         `;
-        return Option.some(
-          yield* decodeRepository(
-            Domain.TeamDetail,
+          const countRows = yield* sqlPrimary`
+          select count(*) as memberCount
+          from TeamMember tm join Member m on m.id = tm.memberId
+          where tm.teamId = ${params.id} and m.shop = ${params.shop}
+        `;
+          const candidateRows = yield* sqlPrimary`
+          select m.* from Member m
+          where m.shop = ${params.shop}
+            and not exists (select 1 from TeamMember tm where tm.memberId = m.id and tm.teamId = ${params.id})
+          order by m.email
+        `;
+          const decoded = yield* decodeRepository(
+            Schema.Struct({
+              team: Domain.Team,
+              members: Domain.TeamDetail.fields.members,
+              memberCount: Schema.Number,
+              candidates: Domain.TeamDetail.fields.candidates,
+            }),
             "Invalid TeamDetail rows",
-          )({ team: teamRows[0], members: memberRows }),
-        );
-      });
+          )({
+            team: teamRows[0],
+            members: memberRows,
+            memberCount: countRows[0]?.memberCount,
+            candidates: candidateRows,
+          });
+          const page = toPage(
+            decoded.members,
+            params.limit,
+            (row) => row.email,
+          );
+          return Option.some({
+            ...decoded,
+            members: page.rows,
+            nextCursor: page.nextCursor,
+          } satisfies Domain.TeamDetail);
+        },
+      );
 
       /**
        * The add is an insert-select, so the same-shop invariant is asserted by
@@ -961,7 +1210,11 @@ export class Repository extends Context.Service<
 
       /**
        * The batch form of {@link setTeamMember} with `inTeam: true`, one D1
-       * batch for the same atomicity reasons as {@link setMemberTeams}. The
+       * batch, not a `withTransaction`: D1 has no interactive transactions
+       * (the driver rejects `withTransaction` outright), but `db.batch()` runs
+       * its statements in order inside one implicit transaction and rolls all
+       * of them back if any fails. Tagged-template statements are lazy, so the
+       * array is built without `yield*` and handed over whole. The
        * team is checked up front (as {@link renameTeam} disambiguates) because
        * `insert or ignore` cannot tell a missing team from an already-present
        * edge; a member id from another shop matches no source row and is
@@ -1071,11 +1324,13 @@ export class Repository extends Context.Service<
         getShopSessionRedactedPage,
         findOrphanShopAgentIds,
         listMembers,
-        addMember,
+        listMembersPage,
+        createMember,
         countMembers,
         deleteMember,
         listMemberTeams,
-        setMemberTeams,
+        findMemberDetail,
+        addMemberTeams,
         findMember,
         listMemberShops,
         listTeams,
@@ -1084,6 +1339,7 @@ export class Repository extends Context.Service<
         renameTeam,
         deleteTeam,
         findTeamDetail,
+        listTeamsPage,
         setTeamMember,
         addTeamMembers,
         findMemberAccess,

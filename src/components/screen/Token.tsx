@@ -11,10 +11,24 @@ import type * as React from "react";
 export function Token({
   children,
   color,
+  href,
 }: {
   readonly children: React.ReactNode;
   readonly color?: "subdued";
+  /**
+   * The token is a link (an email on the members index, the link to its
+   * member page). The link sits inside the span, not inside an `s-text`, so
+   * it keeps the link's colour and still breaks anywhere: `overflow-wrap`
+   * is inherited into its shadow root.
+   */
+  readonly href?: string;
 }) {
+  if (href !== undefined)
+    return (
+      <span className="token">
+        <s-link href={href}>{children}</s-link>
+      </span>
+    );
   return (
     <span className="token">
       {color === undefined ? (

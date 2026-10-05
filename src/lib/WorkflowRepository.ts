@@ -26,6 +26,28 @@ export const ON_WORKFLOWS_BY_TAGS = `select * from Workflow
     and tag in (select value from json_each(?))
   order by name`;
 
+/**
+ * The team page's Used by read (`listTeamWorkflows` on
+ * {@link WorkflowRepository}): workflows in name order from the cursor whose tasks
+ * or draft tasks name the team. Parameters: the cursor, the team id (read twice),
+ * and `limit + 1`. Exported for the test that reads its query plan:
+ * the walk is the unique index on `Workflow.name`, so the order needs no
+ * sort, and the cursor seeks rather than skips. `coalesce` rather than
+ * `?1 is null or`: an `or` on the cursor turns the seek into a scan, and a
+ * name is never empty, so `''` is before every name.
+ */
+export const TEAM_WORKFLOWS = `select w.id as workflowId, w.name as workflowName
+  from Workflow w
+  where w.name > coalesce(?1, '')
+    and (exists (
+      select 1 from json_each(w.tasks) t
+      where json_extract(t.value, '$.teamId') = ?2)
+    or exists (
+      select 1 from json_each(w.draftTasks) t
+      where json_extract(t.value, '$.teamId') = ?2))
+  order by w.name
+  limit ?3`;
+
 export class WorkflowRepositoryError extends Schema.TaggedError<WorkflowRepositoryError>()(
   "WorkflowRepositoryError",
   {
@@ -521,15 +543,16 @@ export class WorkflowRepository extends Context.Service<
       | WorkflowNotFoundError
       | TaskNotFoundError
     >;
-    readonly listTeamWorkflows: (input: {
-      readonly teamId: string;
-    }) => Effect.Effect<
-      readonly Domain.TeamWorkflow[],
+    /** One page of the workflows that use a team; see `Domain.TeamWorkflowsInput`. */
+    readonly listTeamWorkflows: (
+      input: Domain.TeamWorkflowsInput,
+    ) => Effect.Effect<
+      Domain.TeamWorkflowsPage,
       SqlError.SqlError | WorkflowRepositoryError
     >;
-    /** {@link listTeamWorkflows} for every team at once; the teams index's "Used by" column. */
-    readonly listAllTeamWorkflows: () => Effect.Effect<
-      readonly Domain.TeamWorkflowByTeam[],
+    /** How many workflows use each team; the teams index's Workflows column. */
+    readonly countTeamWorkflows: () => Effect.Effect<
+      readonly Domain.TeamWorkflowCount[],
       SqlError.SqlError | WorkflowRepositoryError
     >;
     /**
@@ -1470,49 +1493,46 @@ export class WorkflowRepository extends Context.Service<
           );
         }),
 
+        /** {@link TEAM_WORKFLOWS}, stopping at `limit + 1`: the extra row only says another page exists. */
         listTeamWorkflows: Effect.fn("WorkflowRepository.listTeamWorkflows")(
-          function* ({ teamId }: { readonly teamId: string }) {
-            return yield* decode(
+          function* ({ teamId, after, limit }: Domain.TeamWorkflowsInput) {
+            const rows = yield* decode(
               Schema.Array(Domain.TeamWorkflow),
               "Invalid TeamWorkflow row",
+            )(yield* sql.unsafe(TEAM_WORKFLOWS, [after, teamId, limit + 1]));
+            const workflows = rows.slice(0, limit);
+            return {
+              workflows,
+              nextCursor:
+                rows.length > limit
+                  ? (workflows.at(-1)?.workflowName ?? null)
+                  : null,
+            } satisfies Domain.TeamWorkflowsPage;
+          },
+        ),
+
+        countTeamWorkflows: Effect.fn("WorkflowRepository.countTeamWorkflows")(
+          function* () {
+            return yield* decode(
+              Schema.Array(Domain.TeamWorkflowCount),
+              "Invalid TeamWorkflowCount row",
             )(
               yield* sql`
-                select w.id as workflowId, w.name as workflowName
-                from Workflow w
-                where exists (
-                    select 1 from json_each(w.tasks) t
-                    where json_extract(t.value, '$.teamId') = ${teamId})
-                  or exists (
-                    select 1 from json_each(w.draftTasks) t
-                    where json_extract(t.value, '$.teamId') = ${teamId})
-                order by w.name
+                select u.teamId, count(*) as workflowCount
+                from (
+                  select json_extract(t.value, '$.teamId') as teamId, w.id as workflowId
+                  from Workflow w, json_each(w.tasks) t
+                  union
+                  select json_extract(t.value, '$.teamId') as teamId, w.id as workflowId
+                  from Workflow w, json_each(w.draftTasks) t
+                ) u
+                where u.teamId is not null
+                group by u.teamId
+                order by u.teamId
               `,
             );
           },
         ),
-
-        listAllTeamWorkflows: Effect.fn(
-          "WorkflowRepository.listAllTeamWorkflows",
-        )(function* () {
-          return yield* decode(
-            Schema.Array(Domain.TeamWorkflowByTeam),
-            "Invalid TeamWorkflowByTeam row",
-          )(
-            yield* sql`
-              select u.teamId, w.id as workflowId, w.name as workflowName
-              from (
-                select json_extract(t.value, '$.teamId') as teamId, w.id as workflowId
-                from Workflow w, json_each(w.tasks) t
-                union
-                select json_extract(t.value, '$.teamId') as teamId, w.id as workflowId
-                from Workflow w, json_each(w.draftTasks) t
-              ) u
-              join Workflow w on w.id = u.workflowId
-              where u.teamId is not null
-              order by w.name, u.teamId
-            `,
-          );
-        }),
 
         unassignTeam: Effect.fn("WorkflowRepository.unassignTeam")(function* ({
           teamId,

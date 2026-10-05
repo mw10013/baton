@@ -56,7 +56,7 @@ const seedMember = (email: Domain.Email) =>
       refreshToken: null,
       refreshTokenExpiresAt: null,
     });
-    yield* repository.addMember({
+    yield* repository.createMember({
       shop,
       email,
     });

@@ -20,14 +20,14 @@ create table if not exists ShopSession (
 create table if not exists Member (
   id text primary key,
   shop text not null references ShopSession (shop) on delete cascade,
-  email text not null check (email = lower(trim(email))),
+  email text not null check (email = lower(trim(email)) and length(email) <= 254),
   createdAt integer not null,
   unique (shop, email)
 );
 
--- Serves the members page, which lists a shop's members in (createdAt, email)
--- order; the unique (shop, email) index cannot answer that order.
-create index if not exists Member_shop_createdAt_idx on Member (shop, createdAt, email);
+-- Every read of a shop's members is in email order (the members index pages
+-- by email, the team page's members and candidates too), which the unique
+-- (shop, email) index answers; no second index.
 
 -- Teams are shop-scoped groupings of Member rows: identity, not workflow data,
 -- so they live in D1 beside Member rather than in the ShopAgent's SQLite. That

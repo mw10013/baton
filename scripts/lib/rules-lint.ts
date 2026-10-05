@@ -24,6 +24,8 @@
  * | resync                     | the word is sync at one-order scope; the button is Sync from Shopify                                      |
  * | needs a workflow           | the fault is that more than one workflow matches; the label is Multiple workflows match                   |
  * | picker, pickers            | retired; the control is a select, named by its label (the Workflow select, the Assign team select)        |
+ * | Edit teams, Edit members, Edit workflows | retired; a set is edited with Add and a Remove per row, and Edit is a workflow's tasks only (the Record verbs table) |
+ * | Remove …? (a heading that asks) | Remove takes a thing out of a set and has no modal; a verb that asks is Delete (the controls table on `Control`) |
  *
  * And the copy words that are wrong in every slot, whatever the noun: copy
  * states facts and names the act, so it never pleads, apologises, exclaims
@@ -85,6 +87,8 @@ export const RETIRED: readonly RegExp[] = [
   /\bre-?sync(?:s|ed|ing)?\b/iu,
   /\bneeds a workflow\b/iu,
   /\bpickers?\b/iu,
+  /\bedit (?:teams|members|workflows)\b/iu,
+  /^\s*remove\b.*\?\s*$/iu,
   /\bplease\b/iu,
   /\bsuccessfully\b/iu,
   /\boops\b/iu,

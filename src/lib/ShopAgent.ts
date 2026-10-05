@@ -604,7 +604,7 @@ export class ShopAgent extends Agent {
 
   /**
    * Plain RPC, not `@callable()`: the caller is the Worker, right after the D1
-   * write that changed a membership (`app.teams.$teamId`, `app.members`). A
+   * write that changed a membership (the team page, the member page). A
    * browser has no business revoking anyone.
    */
   revokeMemberConnections(
@@ -2134,10 +2134,10 @@ export class ShopAgent extends Agent {
    * `useLiveQuery` cannot do.
    */
   listTeamWorkflows(
-    input: typeof Domain.TeamIdInput.Encoded,
-  ): Promise<readonly Domain.TeamWorkflow[]> {
+    input: typeof Domain.TeamWorkflowsInput.Encoded,
+  ): Promise<Domain.TeamWorkflowsPage> {
     return this.runEffect(
-      callableEffect("ShopAgent.listTeamWorkflows", Domain.TeamIdInput, {
+      callableEffect("ShopAgent.listTeamWorkflows", Domain.TeamWorkflowsInput, {
         role: "rpc",
       })((decoded) =>
         ShopWorkAgent.pipe(
@@ -2149,14 +2149,14 @@ export class ShopAgent extends Agent {
 
   /**
    * The teams index's loader read; the rule is on {@link ShopWorkAgent}'s
-   * `listAllTeamWorkflows`. Plain RPC for the same reason as
+   * `countTeamWorkflows`. Plain RPC for the same reason as
    * {@link ShopAgent.listTeamWorkflows}.
    */
-  listAllTeamWorkflows(): Promise<readonly Domain.TeamWorkflowByTeam[]> {
+  countTeamWorkflows(): Promise<readonly Domain.TeamWorkflowCount[]> {
     return this.runEffect(
       ShopWorkAgent.pipe(
-        Effect.flatMap((shopWork) => shopWork.listAllTeamWorkflows()),
-        Effect.withLogSpan("ShopAgent.listAllTeamWorkflows"),
+        Effect.flatMap((shopWork) => shopWork.countTeamWorkflows()),
+        Effect.withLogSpan("ShopAgent.countTeamWorkflows"),
       ),
     );
   }

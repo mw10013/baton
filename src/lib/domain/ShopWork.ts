@@ -5,7 +5,8 @@
  * the table ({@link TASK_STATE_LABEL},
  * {@link RUN_STATE_LABEL}, {@link WORKFLOW_STATE_LABEL},
  * {@link ORDER_POSITION_LABEL}, {@link ORDER_ISSUE_LABEL},
- * {@link WORKFLOW_FAULT_LABEL}, {@link VERB_LABEL}), and `pnpm spec check`
+ * {@link WORKFLOW_FAULT_LABEL}, {@link VERB_LABEL},
+ * {@link RECORD_VERB_LABEL}), and `pnpm spec check`
  * refuses a cell that differs, so
  * a label change starts here.
  *
@@ -157,6 +158,26 @@
  * | discard         | workflow | deletes the draft                        | (none)      | Discard changes |
  * | turn on         | workflow | off → on                                 | (none)      | Turn on         |
  * | turn off        | workflow | on → off                                 | (none)      | Turn off        |
+ *
+ * Record verbs, shop work: what the merchant does to a thing they create
+ * (a team, a workflow, a member) or to a set one holds, beside the work
+ * verbs above. Create and Delete are for a thing that begins or stops
+ * existing in Baton; Add and Remove are for a set, where both sides already
+ * exist, so a member is created, not added (re-creating a deleted email
+ * mints a new id). Edit is a workflow's tasks only; "Edit <noun>s" for a set
+ * is retired, and Remove never names a delete. Which control each one is,
+ * is the controls table on `Control` in `Screen.ts`. The screen column is
+ * {@link RECORD_VERB_LABEL}, and a button reads its verb from it:
+ *
+ * | word      | on a     | for                                                        | merchant  |
+ * | --------- | -------- | ---------------------------------------------------------- | --------- |
+ * | create    | thing    | a team, a workflow or a member begins to exist             | Create    |
+ * | delete    | thing    | it stops existing, with nothing of it kept                 | Delete    |
+ * | add       | set      | puts a member on a team, or a team in a member's teams     | Add       |
+ * | remove    | set      | takes a member off a team; both still exist                | Remove    |
+ * | rename    | thing    | changes its name                                           | Rename    |
+ * | edit      | workflow | changes its tasks, through the draft                       | Edit      |
+ * | duplicate | workflow | copies it under a new name and tag                         | Duplicate |
  */
 
 /**
@@ -189,7 +210,6 @@ import {
   Email,
   formatNumber,
   Shop,
-  SqliteBoolean,
   WorkflowLimits,
 } from "./Platform.ts";
 
@@ -363,6 +383,29 @@ export const VERB_LABEL = {
   { readonly member: string | null; readonly merchant: string | null }
 >;
 
+/** The vocabulary's record verbs, keyed by word. */
+export const RecordVerb = Schema.Literals([
+  "create",
+  "delete",
+  "add",
+  "remove",
+  "rename",
+  "edit",
+  "duplicate",
+]);
+export type RecordVerb = typeof RecordVerb.Type;
+
+/** The Record verbs table's screen column: the merchant's button word for each. */
+export const RECORD_VERB_LABEL = {
+  create: "Create",
+  delete: "Delete",
+  add: "Add",
+  remove: "Remove",
+  rename: "Rename",
+  edit: "Edit",
+  duplicate: "Duplicate",
+} as const satisfies Record<RecordVerb, string>;
+
 /**
  * Deliberately email-keyed with no userId: the owner grants access by adding an
  * email before any better-auth `User` row exists (there is no invite-accept
@@ -464,22 +507,58 @@ export const TeamWithMemberCount = Schema.Struct({
 export type TeamWithMemberCount = typeof TeamWithMemberCount.Type;
 
 /**
- * The team plus every member of its shop, each marked with whether they are on
- * it — the detail screen toggles membership against every member of the shop, so the
- * non-members are as much a part of the screen as the members.
+ * A member with how many teams they are on: the members index's row, where
+ * a related set is a count ({@link TeamSummary} carries `memberCount` for the
+ * same reason).
+ */
+export const MemberSummary = Schema.Struct({
+  ...Member.fields,
+  teamCount: Schema.Number,
+});
+export type MemberSummary = typeof MemberSummary.Type;
+
+/**
+ * What the team page reads: the team, one page of its members in email
+ * order, and the shop's members who are not on it, the Add members dialog's
+ * candidates. `memberCount` is every member on the team, not the page's.
+ * `nextCursor` is the last email on the page, `null` on the last page.
  */
 export const TeamDetail = Schema.Struct({
   team: Team,
   members: Schema.Array(
     Schema.Struct({
       ...Member.fields,
-      inTeam: SqliteBoolean,
-      /** The `TeamMember.createdAt` of the edge; `null` when `inTeam` is false. */
-      inTeamSince: Schema.NullOr(Schema.Number),
+      /** The `TeamMember.createdAt` of the edge. */
+      inTeamSince: Schema.Number,
     }),
   ),
+  memberCount: Schema.Number,
+  nextCursor: Schema.NullOr(Email),
+  candidates: Schema.Array(Member),
 });
 export type TeamDetail = typeof TeamDetail.Type;
+
+/**
+ * What the member page reads, the mirror of {@link TeamDetail}: the member,
+ * one page of their teams in name order with each team's member count, and
+ * the shop's teams they are not on, the Add to teams dialog's candidates.
+ * `teamCount` is every team the member is on; `nextCursor` is the last team
+ * name on the page, `null` on the last page.
+ */
+export const MemberDetail = Schema.Struct({
+  member: Member,
+  teams: Schema.Array(
+    Schema.Struct({
+      ...TeamWithMemberCount.fields,
+      /** The `TeamMember.createdAt` of the edge. */
+      inTeamSince: Schema.Number,
+    }),
+  ),
+  teamCount: Schema.Number,
+  nextCursor: Schema.NullOr(TeamName),
+  candidates: Schema.Array(TeamWithMemberCount),
+});
+export type MemberDetail = typeof MemberDetail.Type;
 
 /**
  * What the member-area guard resolves in one query: proof of membership plus
@@ -497,10 +576,8 @@ export type MemberAccess = typeof MemberAccess.Type;
 
 /**
  * One row per `(member, team)` edge in a shop, with the team's total member
- * count riding along: the members page paints its Teams column from it, the
- * edit-teams modal seeds its checklist from it, and a sole membership — the
- * team a delete would empty — is simply `teamMemberCount === 1`, so no second
- * read over the same join exists to drift from this one.
+ * count riding along: the team page's Add members dialog reads it to say
+ * where each candidate already works.
  */
 export const MemberTeam = Schema.Struct({
   memberId: MemberId,
@@ -1192,19 +1269,46 @@ export type DeleteTeamResult = typeof DeleteTeamResult.Type;
 export const DeleteTeamInput = TeamIdInput;
 export type DeleteTeamInput = typeof DeleteTeamInput.Type;
 
-/** A workflow that uses a team: a task of the workflow or of its draft points at it. The team pages' "Used by" lists. */
+/** A workflow that uses a team: a task of the workflow or of its draft points at it. The team page's Used by table. */
 export const TeamWorkflow = Schema.Struct({
   workflowId: WorkflowId,
   workflowName: WorkflowName,
 });
 export type TeamWorkflow = typeof TeamWorkflow.Type;
 
-/** {@link TeamWorkflow} for every team at once, keyed by team: the teams index's "Used by" column in one object read. */
-export const TeamWorkflowByTeam = Schema.Struct({
-  teamId: TeamId,
-  ...TeamWorkflow.fields,
+/**
+ * The team page's Used by read: one page of the workflows that use the team,
+ * in name order. `after` is the last name of the page before, `null` for
+ * page one, a keyset on the name alone since names are unique
+ * ({@link Workflow}), as on {@link ListWorkflowsInput}.
+ */
+export const TeamWorkflowsInput = Schema.Struct({
+  teamId: BoundedId,
+  after: Schema.NullOr(WorkflowName),
+  limit: Schema.Number.check(
+    Schema.isInt(),
+    Schema.isBetween({ minimum: 1, maximum: 100 }),
+  ),
 });
-export type TeamWorkflowByTeam = typeof TeamWorkflowByTeam.Type;
+export type TeamWorkflowsInput = typeof TeamWorkflowsInput.Type;
+
+/** What {@link TeamWorkflowsInput} reads: the page and the cursor of the next, `null` on the last. */
+export const TeamWorkflowsPage = Schema.Struct({
+  workflows: Schema.Array(TeamWorkflow),
+  nextCursor: Schema.NullOr(WorkflowName),
+});
+export type TeamWorkflowsPage = typeof TeamWorkflowsPage.Type;
+
+/**
+ * How many workflows use each team ({@link TeamWorkflow}): the teams index's
+ * Workflows column, a count because a related set on an index row is a count.
+ * A team no workflow uses has no row.
+ */
+export const TeamWorkflowCount = Schema.Struct({
+  teamId: TeamId,
+  workflowCount: Schema.Number,
+});
+export type TeamWorkflowCount = typeof TeamWorkflowCount.Type;
 
 /** Assign a team to any open run task: the remedy that makes team delete safe, and the merchant's way to move work between teams. */
 export const AssignRunTaskTeamInput = Schema.Struct({

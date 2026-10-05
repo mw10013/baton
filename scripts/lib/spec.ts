@@ -610,6 +610,7 @@ export interface ScreenLabels {
       { readonly member: string | null; readonly merchant: string | null }
     >
   >;
+  readonly recordVerbs: Readonly<Record<string, string>>;
 }
 
 /** A vocabulary table: the first line of the paragraph that introduces it, and its body rows as cells by header. */
@@ -675,7 +676,7 @@ const keyOf = (word: string, constants: Readonly<Record<string, unknown>>) =>
 /**
  * **The vocabulary's screen column is the label constant.** Each screen cell in
  * the Task states, Run states, Workflow states, Order positions, Order issues,
- * Workflow faults and Verbs tables equals the
+ * Workflow faults, Verbs and Record verbs tables equals the
  * constant's value for its word ("(none)" for `null`), every constant key
  * has a row, and every row has a key. A run-state cell is compared up to its
  * first " (" or " ·", because the open row carries the merchant's second
@@ -750,7 +751,17 @@ export const checkScreenColumns = (
       "Workflow faults",
       screen(labels.workflowFaults),
     ),
-    ...compare("Verbs", "Verbs", labels.verbs),
+    ...compare("Verbs", "Verbs,", labels.verbs),
+    ...compare(
+      "Record verbs",
+      "Record verbs",
+      Object.fromEntries(
+        Object.entries(labels.recordVerbs).map(([word, value]) => [
+          word,
+          { merchant: value },
+        ]),
+      ),
+    ),
   ];
 };
 

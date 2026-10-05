@@ -21,7 +21,6 @@ import { Route as AdminOrphanShopAgentObjectsRouteImport } from './routes/admin.
 import { Route as AdminShopAgentObjectsRouteImport } from './routes/admin.shop-agent-objects'
 import { Route as AdminShopsRouteImport } from './routes/admin.shops'
 import { Route as AppIndexRouteImport } from './routes/app.index'
-import { Route as AppMembersRouteImport } from './routes/app.members'
 import { Route as AppOrdersRouteImport } from './routes/app.orders'
 import { Route as AppWorkflowsRouteImport } from './routes/app.workflows'
 import { Route as AuthSplatRouteImport } from './routes/auth.$'
@@ -33,6 +32,8 @@ import { Route as WebhooksOrdersRouteImport } from './routes/webhooks.orders'
 import { Route as AdminShopShopRouteImport } from './routes/admin.shop.$shop'
 import { Route as ApiAuthSplatRouteImport } from './routes/api.auth.$'
 import { Route as ApiDevSeedRouteImport } from './routes/api.dev.seed'
+import { Route as AppMembersIndexRouteImport } from './routes/app.members.index'
+import { Route as AppMembersMemberIdRouteImport } from './routes/app.members.$memberId'
 import { Route as AppOrdersIndexRouteImport } from './routes/app.orders.index'
 import { Route as AppOrdersOrderIdRouteImport } from './routes/app.orders.$orderId'
 import { Route as AppOrdersFromShopifyRouteImport } from './routes/app.orders.from-shopify'
@@ -109,11 +110,6 @@ const AppIndexRoute = AppIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AppRoute,
 } as any)
-const AppMembersRoute = AppMembersRouteImport.update({
-  id: '/members',
-  path: '/members',
-  getParentRoute: () => AppRoute,
-} as any)
 const AppOrdersRoute = AppOrdersRouteImport.update({
   id: '/orders',
   path: '/orders',
@@ -168,6 +164,16 @@ const ApiDevSeedRoute = ApiDevSeedRouteImport.update({
   id: '/api/dev/seed',
   path: '/api/dev/seed',
   getParentRoute: () => rootRouteImport,
+} as any)
+const AppMembersIndexRoute = AppMembersIndexRouteImport.update({
+  id: '/members/',
+  path: '/members/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppMembersMemberIdRoute = AppMembersMemberIdRouteImport.update({
+  id: '/members/$memberId',
+  path: '/members/$memberId',
+  getParentRoute: () => AppRoute,
 } as any)
 const AppOrdersIndexRoute = AppOrdersIndexRouteImport.update({
   id: '/',
@@ -253,7 +259,6 @@ export interface FileRoutesByFullPath {
   '/admin/orphan-shop-agent-objects': typeof AdminOrphanShopAgentObjectsRoute
   '/admin/shop-agent-objects': typeof AdminShopAgentObjectsRoute
   '/admin/shops': typeof AdminShopsRoute
-  '/app/members': typeof AppMembersRoute
   '/app/orders': typeof AppOrdersRouteWithChildren
   '/app/workflows': typeof AppWorkflowsRouteWithChildren
   '/auth/$': typeof AuthSplatRoute
@@ -267,6 +272,7 @@ export interface FileRoutesByFullPath {
   '/admin/shop/$shop': typeof AdminShopShopRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/dev/seed': typeof ApiDevSeedRoute
+  '/app/members/$memberId': typeof AppMembersMemberIdRoute
   '/app/orders/$orderId': typeof AppOrdersOrderIdRoute
   '/app/orders/from-shopify': typeof AppOrdersFromShopifyRoute
   '/app/teams/$teamId': typeof AppTeamsTeamIdRoute
@@ -274,6 +280,7 @@ export interface FileRoutesByFullPath {
   '/shop/$shop/lapsed': typeof ShopShopLapsedRoute
   '/webhooks/app/scopes_update': typeof WebhooksAppScopes_updateRoute
   '/webhooks/app/uninstalled': typeof WebhooksAppUninstalledRoute
+  '/app/members/': typeof AppMembersIndexRoute
   '/app/orders/': typeof AppOrdersIndexRoute
   '/app/teams/': typeof AppTeamsIndexRoute
   '/app/workflows/': typeof AppWorkflowsIndexRoute
@@ -290,7 +297,6 @@ export interface FileRoutesByTo {
   '/admin/orphan-shop-agent-objects': typeof AdminOrphanShopAgentObjectsRoute
   '/admin/shop-agent-objects': typeof AdminShopAgentObjectsRoute
   '/admin/shops': typeof AdminShopsRoute
-  '/app/members': typeof AppMembersRoute
   '/auth/$': typeof AuthSplatRoute
   '/dev/kit': typeof DevKitRoute
   '/webhooks/compliance': typeof WebhooksComplianceRoute
@@ -301,6 +307,7 @@ export interface FileRoutesByTo {
   '/admin/shop/$shop': typeof AdminShopShopRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/dev/seed': typeof ApiDevSeedRoute
+  '/app/members/$memberId': typeof AppMembersMemberIdRoute
   '/app/orders/$orderId': typeof AppOrdersOrderIdRoute
   '/app/orders/from-shopify': typeof AppOrdersFromShopifyRoute
   '/app/teams/$teamId': typeof AppTeamsTeamIdRoute
@@ -308,6 +315,7 @@ export interface FileRoutesByTo {
   '/shop/$shop/lapsed': typeof ShopShopLapsedRoute
   '/webhooks/app/scopes_update': typeof WebhooksAppScopes_updateRoute
   '/webhooks/app/uninstalled': typeof WebhooksAppUninstalledRoute
+  '/app/members': typeof AppMembersIndexRoute
   '/app/orders': typeof AppOrdersIndexRoute
   '/app/teams': typeof AppTeamsIndexRoute
   '/app/workflows': typeof AppWorkflowsIndexRoute
@@ -328,7 +336,6 @@ export interface FileRoutesById {
   '/admin/orphan-shop-agent-objects': typeof AdminOrphanShopAgentObjectsRoute
   '/admin/shop-agent-objects': typeof AdminShopAgentObjectsRoute
   '/admin/shops': typeof AdminShopsRoute
-  '/app/members': typeof AppMembersRoute
   '/app/orders': typeof AppOrdersRouteWithChildren
   '/app/workflows': typeof AppWorkflowsRouteWithChildren
   '/auth/$': typeof AuthSplatRoute
@@ -342,6 +349,7 @@ export interface FileRoutesById {
   '/admin/shop/$shop': typeof AdminShopShopRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/dev/seed': typeof ApiDevSeedRoute
+  '/app/members/$memberId': typeof AppMembersMemberIdRoute
   '/app/orders/$orderId': typeof AppOrdersOrderIdRoute
   '/app/orders/from-shopify': typeof AppOrdersFromShopifyRoute
   '/app/teams/$teamId': typeof AppTeamsTeamIdRoute
@@ -349,6 +357,7 @@ export interface FileRoutesById {
   '/shop/$shop_/lapsed': typeof ShopShopLapsedRoute
   '/webhooks/app/scopes_update': typeof WebhooksAppScopes_updateRoute
   '/webhooks/app/uninstalled': typeof WebhooksAppUninstalledRoute
+  '/app/members/': typeof AppMembersIndexRoute
   '/app/orders/': typeof AppOrdersIndexRoute
   '/app/teams/': typeof AppTeamsIndexRoute
   '/app/workflows/': typeof AppWorkflowsIndexRoute
@@ -370,7 +379,6 @@ export interface FileRouteTypes {
     | '/admin/orphan-shop-agent-objects'
     | '/admin/shop-agent-objects'
     | '/admin/shops'
-    | '/app/members'
     | '/app/orders'
     | '/app/workflows'
     | '/auth/$'
@@ -384,6 +392,7 @@ export interface FileRouteTypes {
     | '/admin/shop/$shop'
     | '/api/auth/$'
     | '/api/dev/seed'
+    | '/app/members/$memberId'
     | '/app/orders/$orderId'
     | '/app/orders/from-shopify'
     | '/app/teams/$teamId'
@@ -391,6 +400,7 @@ export interface FileRouteTypes {
     | '/shop/$shop/lapsed'
     | '/webhooks/app/scopes_update'
     | '/webhooks/app/uninstalled'
+    | '/app/members/'
     | '/app/orders/'
     | '/app/teams/'
     | '/app/workflows/'
@@ -407,7 +417,6 @@ export interface FileRouteTypes {
     | '/admin/orphan-shop-agent-objects'
     | '/admin/shop-agent-objects'
     | '/admin/shops'
-    | '/app/members'
     | '/auth/$'
     | '/dev/kit'
     | '/webhooks/compliance'
@@ -418,6 +427,7 @@ export interface FileRouteTypes {
     | '/admin/shop/$shop'
     | '/api/auth/$'
     | '/api/dev/seed'
+    | '/app/members/$memberId'
     | '/app/orders/$orderId'
     | '/app/orders/from-shopify'
     | '/app/teams/$teamId'
@@ -425,6 +435,7 @@ export interface FileRouteTypes {
     | '/shop/$shop/lapsed'
     | '/webhooks/app/scopes_update'
     | '/webhooks/app/uninstalled'
+    | '/app/members'
     | '/app/orders'
     | '/app/teams'
     | '/app/workflows'
@@ -444,7 +455,6 @@ export interface FileRouteTypes {
     | '/admin/orphan-shop-agent-objects'
     | '/admin/shop-agent-objects'
     | '/admin/shops'
-    | '/app/members'
     | '/app/orders'
     | '/app/workflows'
     | '/auth/$'
@@ -458,6 +468,7 @@ export interface FileRouteTypes {
     | '/admin/shop/$shop'
     | '/api/auth/$'
     | '/api/dev/seed'
+    | '/app/members/$memberId'
     | '/app/orders/$orderId'
     | '/app/orders/from-shopify'
     | '/app/teams/$teamId'
@@ -465,6 +476,7 @@ export interface FileRouteTypes {
     | '/shop/$shop_/lapsed'
     | '/webhooks/app/scopes_update'
     | '/webhooks/app/uninstalled'
+    | '/app/members/'
     | '/app/orders/'
     | '/app/teams/'
     | '/app/workflows/'
@@ -578,13 +590,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppIndexRouteImport
       parentRoute: typeof AppRoute
     }
-    '/app/members': {
-      id: '/app/members'
-      path: '/members'
-      fullPath: '/app/members'
-      preLoaderRoute: typeof AppMembersRouteImport
-      parentRoute: typeof AppRoute
-    }
     '/app/orders': {
       id: '/app/orders'
       path: '/orders'
@@ -661,6 +666,20 @@ declare module '@tanstack/react-router' {
       fullPath: '/api/dev/seed'
       preLoaderRoute: typeof ApiDevSeedRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/app/members/': {
+      id: '/app/members/'
+      path: '/members'
+      fullPath: '/app/members/'
+      preLoaderRoute: typeof AppMembersIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/members/$memberId': {
+      id: '/app/members/$memberId'
+      path: '/members/$memberId'
+      fullPath: '/app/members/$memberId'
+      preLoaderRoute: typeof AppMembersMemberIdRouteImport
+      parentRoute: typeof AppRoute
     }
     '/app/orders/': {
       id: '/app/orders/'
@@ -814,20 +833,22 @@ const AppWorkflowsRouteWithChildren = AppWorkflowsRoute._addFileChildren(
 )
 
 interface AppRouteChildren {
-  AppMembersRoute: typeof AppMembersRoute
   AppOrdersRoute: typeof AppOrdersRouteWithChildren
   AppWorkflowsRoute: typeof AppWorkflowsRouteWithChildren
   AppIndexRoute: typeof AppIndexRoute
+  AppMembersMemberIdRoute: typeof AppMembersMemberIdRoute
   AppTeamsTeamIdRoute: typeof AppTeamsTeamIdRoute
+  AppMembersIndexRoute: typeof AppMembersIndexRoute
   AppTeamsIndexRoute: typeof AppTeamsIndexRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
-  AppMembersRoute: AppMembersRoute,
   AppOrdersRoute: AppOrdersRouteWithChildren,
   AppWorkflowsRoute: AppWorkflowsRouteWithChildren,
   AppIndexRoute: AppIndexRoute,
+  AppMembersMemberIdRoute: AppMembersMemberIdRoute,
   AppTeamsTeamIdRoute: AppTeamsTeamIdRoute,
+  AppMembersIndexRoute: AppMembersIndexRoute,
   AppTeamsIndexRoute: AppTeamsIndexRoute,
 }
 

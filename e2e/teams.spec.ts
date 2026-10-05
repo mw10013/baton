@@ -85,17 +85,15 @@ test("teams screen creates, adds members to, renames, and deletes a team", async
     frame.getByText("A team with that name already exists."),
   ).toBeHidden();
 
-  /* Search filters client-side; a miss shows the clear-filters state. Typed
-     key by key: Polaris forwards native `input` events into its `onInput`,
-     and `fill` can land as one value swap the element does not report. The
-     value is asserted first so a dropped keystroke fails here, by name,
-     rather than as a timeout on the paragraph. */
-  const search = frame.getByRole("searchbox", {
-    name: "Search teams by name",
-  });
+  /* The search reads every team, submitted on Enter; a miss shows the
+     clear-search state. Typed key by key: Polaris forwards native `input`
+     events into its `onInput`, and `fill` can land as one value swap the
+     element does not report. */
+  const search = frame.getByRole("searchbox", { name: "Search" });
   await search.click();
   await search.pressSequentially("zzz");
   await expect(search).toHaveValue("zzz");
+  await search.press("Enter");
   await expect(frame.getByText("No teams match.")).toBeVisible();
   await frame.getByRole("button", { name: "Clear search" }).click();
   await frame.getByRole("link", { name: TEAM }).click();
@@ -121,29 +119,96 @@ test("teams screen creates, adds members to, renames, and deletes a team", async
   await frame.getByRole("button", { name: "Save" }).click();
   await expect(frame.locator(`s-page[heading="${RENAMED}"]`)).toBeVisible();
 
-  /* Remove confirms in a modal; the last member gets the empty-team sentence. */
+  /* Remove takes the member off at once, with no modal: Add members puts
+     them back on this screen. */
   await frame.getByRole("button", { name: "Remove", exact: true }).click();
-  await expect(
-    frame.getByText(`${RENAMED} will have no members.`),
-  ).toBeVisible();
-  await frame
-    .getByRole("button", { name: "Remove", exact: true })
-    .last()
-    .click();
   await expect(frame.getByText("Nobody is on this team")).toBeVisible();
 
   await clickMenuItem(frame, "Delete");
   await expect(
-    frame.getByText(
-      "Tasks on this team become unassigned until you assign another team.",
-    ),
+    frame.locator("s-modal#delete-team").getByText("This can't be undone."),
   ).toBeVisible();
   await frame
     .getByRole("button", { name: "Delete", exact: true })
     .last()
     .click();
   await expect(frame.locator('s-page[heading="Teams"]')).toBeVisible();
+  await expect(
+    page.locator("#admin-next-toast-viewport").getByText("Team deleted"),
+  ).toBeVisible();
   await expect(frame.getByText(EMPTY_STATE)).toBeVisible();
+});
+
+/**
+ * The team page pages two tables on one URL (`membersAfter`, `workflowsAfter`),
+ * the controls table's "a merchant table with more rows than its page" row
+ * (`Control` in `Screen.ts`): Next on one table keeps the other's page, and
+ * Previous is the browser's Back only when that table's Next pushed the
+ * entry, so Previous on the members table never moves the Used by table.
+ * Eleven members and eleven workflows: one past a details page of ten.
+ */
+test("the team page pages its members and its workflows independently", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+
+  const PAGES_TEAM = "E2E Pages";
+  const members = Array.from(
+    { length: 11 },
+    (_, i) => `e2e.page${String(i).padStart(2, "0")}@example.com`,
+  );
+  await seedMembers(
+    seedConfig(),
+    members,
+    [{ name: PAGES_TEAM, members }],
+    Array.from({ length: 11 }, (_, i) => ({
+      name: `E2E Pages Workflow ${String(i).padStart(2, "0")}`,
+      tag: `e2e-pages-${String(i)}`,
+      tasks: [{ name: "Cut", team: PAGES_TEAM }],
+    })),
+  );
+
+  const frame = await gotoApp(page);
+  await clickHoisted(appNavLink(page, "Teams"));
+  const row = frame.locator("s-table-row", { hasText: PAGES_TEAM });
+  await expect(row.locator("s-table-cell").nth(2)).toHaveText("11");
+  await frame.getByRole("link", { name: PAGES_TEAM }).click();
+  await expect(frame.locator(`s-page[heading="${PAGES_TEAM}"]`)).toBeVisible();
+
+  const membersTable = frame.locator('s-section[heading="Members"]');
+  const usedBy = frame.locator('s-section[heading="Used by"]');
+  const memberRows = membersTable.locator("s-table-row");
+  const workflowRows = usedBy.locator("s-table-row");
+  const search = () => new URL(page.url()).searchParams;
+  await expect(memberRows).toHaveCount(10);
+  await expect(workflowRows).toHaveCount(10);
+
+  await membersTable.getByRole("button", { name: "Go to next page" }).click();
+  await expect(memberRows).toHaveCount(1);
+  await expect(workflowRows).toHaveCount(10);
+  await usedBy.getByRole("button", { name: "Go to next page" }).click();
+  await expect(workflowRows).toHaveCount(1);
+  await expect(memberRows).toHaveCount(1);
+  await expect.poll(() => search().get("membersAfter")).not.toBeNull();
+  await expect.poll(() => search().get("workflowsAfter")).not.toBeNull();
+
+  /* This entry was pushed by the Used by table's Next, so the members
+     table's Previous is a navigation to its page one, not a Back, and the
+     Used by table stays on its page two. */
+  await membersTable
+    .getByRole("button", { name: "Go to previous page" })
+    .click();
+  await expect(memberRows).toHaveCount(10);
+  await expect(workflowRows).toHaveCount(1);
+  await expect.poll(() => search().get("membersAfter")).toBeNull();
+  await expect.poll(() => search().get("workflowsAfter")).not.toBeNull();
+
+  /* The Used by table's Next did push this entry (Previous above replaced
+     it), so its Previous is the browser's Back: page one of both. */
+  await usedBy.getByRole("button", { name: "Go to previous page" }).click();
+  await expect(workflowRows).toHaveCount(10);
+  await expect(memberRows).toHaveCount(10);
+  await expect.poll(() => search().get("workflowsAfter")).toBeNull();
 });
 
 /**
@@ -184,6 +249,9 @@ test("the team page drills in to the orders waiting on that team", async ({
 
   const frame = await gotoApp(page);
   await clickHoisted(appNavLink(page, "Teams"));
+  /* The index's Workflows column is a count, not the names. */
+  const row = frame.locator("s-table-row", { hasText: DRILL_TEAM });
+  await expect(row.locator("s-table-cell").nth(2)).toHaveText("1");
   await frame.getByRole("link", { name: DRILL_TEAM }).click();
   await expect(frame.locator(`s-page[heading="${DRILL_TEAM}"]`)).toBeVisible();
 

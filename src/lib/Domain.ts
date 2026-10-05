@@ -143,7 +143,8 @@
  * | merchant | `app.workflows.$workflowId_.edit` | the workflow's name | the workflow editor | editor   |
  * | merchant | `app.teams.index`                 | Teams               | the teams index     | index    |
  * | merchant | `app.teams.$teamId`               | the team's name     | the team page       | details  |
- * | merchant | `app.members`                     | Members             | the members page    | index    |
+ * | merchant | `app.members.index`               | Members             | the members index   | index    |
+ * | merchant | `app.members.$memberId`           | the member's email  | the member page     | details  |
  * | member   | `shop.index`                      | Your stores         | the shop list       | index    |
  * | member   | `shop.$shop.workflows.index`      | Workflows           | the workflows list  | index    |
  * | member   | `shop.$shop.workflows.$runId`     | the order's name    | the workflow page   | details  |

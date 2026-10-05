@@ -413,15 +413,16 @@ const merchantListRunsForOrder = ({
     Effect.flatMap((repository) => repository.listRunsForOrder({ orderId })),
   );
 
-const listTeamWorkflows = ({ teamId }: typeof Domain.TeamIdInput.Type) =>
+/** The team page's Used by table, read by its loader. */
+const listTeamWorkflows = (input: Domain.TeamWorkflowsInput) =>
   WorkflowRepository.pipe(
-    Effect.flatMap((repository) => repository.listTeamWorkflows({ teamId })),
+    Effect.flatMap((repository) => repository.listTeamWorkflows(input)),
   );
 
-/** The teams index's "Used by" column, read by its loader. */
-const listAllTeamWorkflows = () =>
+/** The teams index's Workflows column, read by its loader. */
+const countTeamWorkflows = () =>
   WorkflowRepository.pipe(
-    Effect.flatMap((repository) => repository.listAllTeamWorkflows()),
+    Effect.flatMap((repository) => repository.countTeamWorkflows()),
   );
 
 /**
@@ -2174,7 +2175,7 @@ const make = Effect.gen(function* () {
     seedOrders,
     listTeamWorkflows,
     listWorkflows,
-    listAllTeamWorkflows,
+    countTeamWorkflows,
     /**
      * For the class's sync wiring, which passes it to `OrdersAgent`'s
      * `fetchAndUpsertOrder` as its `reconciler`; the function it yields is the

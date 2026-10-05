@@ -554,7 +554,7 @@ function RouteComponent() {
     if (orders.length === 0) return emptyState();
     return (
       <s-table
-        paginate
+        paginate={after !== null || data.page.nextCursor !== null}
         loading={ordersQuery.isFetching}
         hasPreviousPage={after !== null}
         hasNextPage={data.page.nextCursor !== null}

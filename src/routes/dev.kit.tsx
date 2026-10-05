@@ -292,7 +292,7 @@ function RouteComponent() {
                   <Token color="subdued">{TAG_255}</Token>
                 </s-table-cell>
                 <s-table-cell>
-                  <Token>{EMAIL_60}</Token>
+                  <Token href="/dev/kit">{EMAIL_60}</Token>
                 </s-table-cell>
               </s-table-row>
             </s-table-body>

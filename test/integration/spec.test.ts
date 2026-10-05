@@ -301,6 +301,7 @@ describe("action table parser", () => {
       orderIssues: Domain.ORDER_ISSUE_LABEL,
       workflowFaults: Domain.WORKFLOW_FAULT_LABEL,
       verbs: Domain.VERB_LABEL,
+      recordVerbs: Domain.RECORD_VERB_LABEL,
     };
 
     it("ShopWork.ts passes", () => {
@@ -317,6 +318,17 @@ describe("action table parser", () => {
       expect(doctored).not.toBe(shopWorkSource);
       expect(ActionTable.checkScreenColumns(doctored, labels)).toEqual([
         'Vocabulary: Verbs put back: merchant says "Take back", constant says "Put back"',
+      ]);
+    });
+
+    it("a record verb's screen cell is the label constant", () => {
+      const doctored = shopWorkSource.replace(
+        /(?<cells>\| create +\| thing +\| [^|]+\| )Create +\|/u,
+        "$<cells>Add       |",
+      );
+      expect(doctored).not.toBe(shopWorkSource);
+      expect(ActionTable.checkScreenColumns(doctored, labels)).toEqual([
+        'Vocabulary: Record verbs create: merchant says "Add", constant says "Create"',
       ]);
     });
 
@@ -515,7 +527,7 @@ describe("action table parser", () => {
 
     it("a row with no route file, and a screen with no row, are reported", () => {
       const doctored = source.replace(
-        "| merchant | `app.members`                     |",
+        "| merchant | `app.members.index`               |",
         "| merchant | `app.people`                      |",
       );
       expect(doctored).not.toBe(source);
@@ -527,13 +539,13 @@ describe("action table parser", () => {
         ),
       ).toEqual([
         "Vocabulary: Screens: no route file app.people.tsx",
-        "Vocabulary: Screens: app.members.tsx has no row",
+        "Vocabulary: Screens: app.members.index.tsx has no row",
       ]);
     });
 
     it("every screen's template is a ScreenTemplate word", () => {
       const doctored = source.replace(
-        /(?<cells>\| the members page +\| )index /u,
+        /(?<cells>\| the members index +\| )index /u,
         "$<cells>list  ",
       );
       expect(doctored).not.toBe(source);
@@ -544,7 +556,7 @@ describe("action table parser", () => {
           Screen.ScreenTemplate.literals,
         ),
       ).toEqual([
-        'Vocabulary: Screens: the members page has template "list"; expected one of: index, details, homepage, editor',
+        'Vocabulary: Screens: the members index has template "list"; expected one of: index, details, homepage, editor',
       ]);
     });
   });

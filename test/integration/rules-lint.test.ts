@@ -45,6 +45,28 @@ describe("a retired word stays off every merchant and member screen", () => {
     expect(hits(source, false)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
   });
 
+  it("Edit <noun>s is refused in screen copy", () => {
+    const source = [
+      "<s-button>Edit teams</s-button>",
+      'const a = "Edit members";',
+      'const b = "Edit workflows";',
+      'const c = "Edit note";',
+      "<s-button>Edit</s-button>",
+    ].join("\n");
+    expect(hits(source)).toEqual([1, 2, 3]);
+  });
+
+  it("a Remove heading that asks is refused", () => {
+    const source = [
+      'const a = "Remove member?";',
+      // oxlint-disable-next-line no-template-curly-in-string -- source under test, not a template
+      "const b = `Remove ${email}?`;",
+      'const c = "Remove";',
+      'const d = "Couldn\'t remove from the team.";',
+    ].join("\n");
+    expect(hits(source, false)).toEqual([1, 2]);
+  });
+
   it("reads JSX text on one line, beside an expression, and across lines", () => {
     const source = [
       "<s-text>Cancel run</s-text>",

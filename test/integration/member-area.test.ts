@@ -89,7 +89,7 @@ describe("member area", () => {
       Effect.gen(function* () {
         const repository = yield* Repository;
         yield* seedShop(SHOP);
-        yield* repository.addMember({
+        yield* repository.createMember({
           shop: SHOP,
           email: MEMBER,
         });
@@ -111,7 +111,7 @@ describe("member area", () => {
         const repository = yield* Repository;
         yield* seedShop(SHOP);
         yield* seedShop(OTHER_SHOP);
-        yield* repository.addMember({
+        yield* repository.createMember({
           shop: SHOP,
           email: MEMBER,
         });
@@ -137,7 +137,7 @@ describe("member area", () => {
       Effect.gen(function* () {
         const repository = yield* Repository;
         yield* seedShop(SHOP);
-        yield* repository.addMember({
+        yield* repository.createMember({
           shop: SHOP,
           email: MEMBER,
         });
@@ -159,7 +159,7 @@ describe("member area", () => {
           (yield* Effect.promise(() => listing.text())).includes(SHOP),
         );
         // Re-adding restores; the same session cookie works again.
-        yield* repository.addMember({
+        yield* repository.createMember({
           shop: SHOP,
           email: MEMBER,
         });
@@ -189,7 +189,7 @@ describe("member workflows list", () => {
         const repository = yield* Repository;
         yield* seedShop(SHOP);
         yield* seedShop(OTHER_SHOP);
-        yield* repository.addMember({
+        yield* repository.createMember({
           shop: SHOP,
           email: MEMBER,
         });
@@ -237,7 +237,7 @@ describe("member workflows list", () => {
           (_, index) => emailOf(`m${String(index)}@example.com`),
         );
         for (const email of emails)
-          yield* repository.addMember({ shop: SHOP, email });
+          yield* repository.createMember({ shop: SHOP, email });
         for (const email of emails) {
           const cookie = yield* signInThroughWorker(email);
           strictEqual(
@@ -269,14 +269,14 @@ describe("member workflows list", () => {
           planHandleExpiresAt: Date.now() + 60 * 60 * 1000,
           planBoundaryAt: null,
         });
-        yield* repository.addMember({
+        yield* repository.createMember({
           shop: SHOP,
           email: MEMBER,
         });
         // A magic link is only minted for someone who is a member somewhere.
         yield* seedShop(OTHER_SHOP);
         const STRANGER = emailOf("stranger@example.com");
-        yield* repository.addMember({
+        yield* repository.createMember({
           shop: OTHER_SHOP,
           email: STRANGER,
         });
@@ -325,7 +325,7 @@ describe("admin console", () => {
       Effect.gen(function* () {
         const repository = yield* Repository;
         yield* seedShop(SHOP);
-        yield* repository.addMember({
+        yield* repository.createMember({
           shop: SHOP,
           email: MEMBER,
         });
@@ -375,7 +375,7 @@ describe("login-callback", () => {
         Effect.gen(function* () {
           const repository = yield* Repository;
           yield* seedShop(SHOP);
-          yield* repository.addMember({
+          yield* repository.createMember({
             shop: SHOP,
             email: MEMBER,
           });
@@ -387,7 +387,7 @@ describe("login-callback", () => {
           strictEqual(one.headers.get("location"), `/shop/${SHOP}/workflows`);
 
           yield* seedShop(OTHER_SHOP);
-          yield* repository.addMember({
+          yield* repository.createMember({
             shop: OTHER_SHOP,
             email: MEMBER,
           });

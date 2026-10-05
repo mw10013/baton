@@ -60,6 +60,10 @@ const seed = (repo: Repository["Service"], shops: readonly string[]) =>
 
 const emailOf = (e: string) => Schema.decodeUnknownSync(Domain.Email)(e);
 
+/** An address of exactly `length` characters. */
+const emailOfLength = (length: number) =>
+  `${"a".repeat(length - "@example.com".length)}@example.com`;
+
 afterEach(async () => {
   await env.D1.exec("delete from TeamMember");
   await env.D1.exec("delete from Team");
@@ -383,33 +387,35 @@ describe("Repository SQL (D1 ShopSession)", () => {
   });
 
   describe("Member", () => {
-    it.effect("addMember inserts idempotently; listMembers round-trips", () =>
-      run(
-        Effect.gen(function* () {
-          const repo = yield* Repository;
-          const shop = shopOf("m.myshopify.com");
-          yield* seed(repo, [shop]);
-          const email = emailOf("worker@example.com");
-          yield* repo.addMember({
-            shop,
-            email,
-          });
-          const first = yield* repo.listMembers(shop);
-          strictEqual(first.length, 1);
-          strictEqual(first[0].email, email);
-          yield* repo.addMember({
-            shop,
-            email,
-          });
-          const second = yield* repo.listMembers(shop);
-          strictEqual(second.length, 1);
-          strictEqual(second[0].id, first[0].id);
-        }),
-      ),
+    it.effect(
+      "createMember inserts idempotently; listMembers round-trips",
+      () =>
+        run(
+          Effect.gen(function* () {
+            const repo = yield* Repository;
+            const shop = shopOf("m.myshopify.com");
+            yield* seed(repo, [shop]);
+            const email = emailOf("worker@example.com");
+            yield* repo.createMember({
+              shop,
+              email,
+            });
+            const first = yield* repo.listMembers(shop);
+            strictEqual(first.length, 1);
+            strictEqual(first[0].email, email);
+            yield* repo.createMember({
+              shop,
+              email,
+            });
+            const second = yield* repo.listMembers(shop);
+            strictEqual(second.length, 1);
+            strictEqual(second[0].id, first[0].id);
+          }),
+        ),
     );
 
     it.effect(
-      "addMember refuses at the ceiling and says so, and is a no-op for an existing email",
+      "createMember refuses at the ceiling and says so, and is a no-op for an existing email",
       () =>
         run(
           Effect.gen(function* () {
@@ -418,13 +424,13 @@ describe("Repository SQL (D1 ShopSession)", () => {
             yield* seed(repo, [shop]);
             const { maxMembers } = Domain.ShopLimits;
             for (let index = 0; index < maxMembers; index += 1)
-              yield* repo.addMember({
+              yield* repo.createMember({
                 shop,
                 email: emailOf(`m${String(index)}@example.com`),
               });
             strictEqual(yield* repo.countMembers(shop), maxMembers);
             const refused = yield* Effect.flip(
-              repo.addMember({ shop, email: emailOf("over@example.com") }),
+              repo.createMember({ shop, email: emailOf("over@example.com") }),
             );
             assertTrue(refused instanceof MemberCeilingError);
             strictEqual(
@@ -433,7 +439,10 @@ describe("Repository SQL (D1 ShopSession)", () => {
             );
             // At the ceiling, re-adding somebody who is already a member is
             // still a no-op rather than a refusal.
-            yield* repo.addMember({ shop, email: emailOf("m0@example.com") });
+            yield* repo.createMember({
+              shop,
+              email: emailOf("m0@example.com"),
+            });
             strictEqual(yield* repo.countMembers(shop), maxMembers);
           }),
         ),
@@ -457,7 +466,7 @@ describe("Repository SQL (D1 ShopSession)", () => {
             const shop = shopOf("m.myshopify.com");
             yield* seed(repo, [shop]);
             const email = emailOf("worker@example.com");
-            yield* repo.addMember({
+            yield* repo.createMember({
               shop,
               email,
             });
@@ -483,14 +492,14 @@ describe("Repository SQL (D1 ShopSession)", () => {
         ),
     );
 
-    it.effect("addMember after deleteMember mints a new id", () =>
+    it.effect("createMember after deleteMember mints a new id", () =>
       run(
         Effect.gen(function* () {
           const repo = yield* Repository;
           const shop = shopOf("m.myshopify.com");
           yield* seed(repo, [shop]);
           const email = emailOf("worker@example.com");
-          yield* repo.addMember({
+          yield* repo.createMember({
             shop,
             email,
           });
@@ -498,7 +507,7 @@ describe("Repository SQL (D1 ShopSession)", () => {
             yield* repo.findMember({ shop, email }),
           );
           yield* repo.deleteMember({ shop, email });
-          yield* repo.addMember({
+          yield* repo.createMember({
             shop,
             email,
           });
@@ -516,11 +525,11 @@ describe("Repository SQL (D1 ShopSession)", () => {
           const repo = yield* Repository;
           yield* seed(repo, ["a.myshopify.com", "b.myshopify.com"]);
           const email = emailOf("multi@example.com");
-          yield* repo.addMember({
+          yield* repo.createMember({
             shop: shopOf("a.myshopify.com"),
             email,
           });
-          yield* repo.addMember({
+          yield* repo.createMember({
             shop: shopOf("b.myshopify.com"),
             email,
           });
@@ -541,11 +550,11 @@ describe("Repository SQL (D1 ShopSession)", () => {
             yield* seed(repo, [shop]);
             const alone = emailOf("alone@example.com");
             const other = emailOf("other@example.com");
-            yield* repo.addMember({
+            yield* repo.createMember({
               shop,
               email: alone,
             });
-            yield* repo.addMember({
+            yield* repo.createMember({
               shop,
               email: other,
             });
@@ -582,8 +591,7 @@ describe("Repository SQL (D1 ShopSession)", () => {
                 .join(","),
               "alone:Solo:1,alone:a shared:2,other:a shared:2",
             );
-            /* A sole membership is `teamMemberCount === 1`, which is what
-               the members page's remove dialog warns about. */
+            /* A sole membership is `teamMemberCount === 1`. */
             strictEqual(
               rows
                 .filter((row) => row.teamMemberCount === 1)
@@ -600,7 +608,7 @@ describe("Repository SQL (D1 ShopSession)", () => {
     );
 
     it.effect(
-      "setMemberTeams replaces the whole set, drops cross-shop ids, and empties on []",
+      "a member's teams are added as a batch and removed one at a time from either side",
       () =>
         run(
           Effect.gen(function* () {
@@ -608,15 +616,14 @@ describe("Repository SQL (D1 ShopSession)", () => {
             const shop = shopOf("m.myshopify.com");
             const other = shopOf("o.myshopify.com");
             yield* seed(repo, [shop, other]);
-            const email = emailOf("worker@example.com");
-            yield* repo.addMember({
+            const member = yield* repo.createMember({
               shop,
-              email,
+              email: emailOf("worker@example.com"),
             });
-            const [member] = yield* repo.listMembers(shop);
             const teamNameOf = Schema.decodeUnknownSync(Domain.TeamName);
             const a = yield* repo.createTeam({ shop, name: teamNameOf("A") });
             const b = yield* repo.createTeam({ shop, name: teamNameOf("B") });
+            const c = yield* repo.createTeam({ shop, name: teamNameOf("C") });
             const foreign = yield* repo.createTeam({
               shop: other,
               name: teamNameOf("F"),
@@ -625,7 +632,9 @@ describe("Repository SQL (D1 ShopSession)", () => {
               Effect.map(repo.listMemberTeams(shop), (rows) =>
                 rows.map((row) => row.teamName).join(","),
               );
-            yield* repo.setMemberTeams({
+            /* From the member's side: a batch, and a team from another
+               shop is dropped by the join. */
+            yield* repo.addMemberTeams({
               shop,
               memberId: member.id,
               teamIds: [a.id, b.id, foreign.id],
@@ -635,70 +644,218 @@ describe("Repository SQL (D1 ShopSession)", () => {
               (yield* repo.listTeams({ shop: other }))[0].memberCount,
               0,
             );
-            yield* repo.setMemberTeams({
+            /* From the team's side: the same edge table, so the member's
+               teams show it. */
+            yield* repo.addTeamMembers({
+              shop,
+              teamId: c.id,
+              memberIds: [member.id],
+            });
+            strictEqual(yield* names(), "A,B,C");
+            /* Removed one at a time, through the one write both pages use. */
+            yield* repo.setTeamMember({
+              shop,
+              teamId: b.id,
+              memberId: member.id,
+              inTeam: false,
+            });
+            strictEqual(yield* names(), "A,C");
+            /* A repeat add is a no-op, and a member of another shop is
+               refused. */
+            yield* repo.addMemberTeams({
               shop,
               memberId: member.id,
-              teamIds: [b.id],
+              teamIds: [a.id],
             });
-            strictEqual(yield* names(), "B");
-            yield* repo.setMemberTeams({
-              shop,
-              memberId: member.id,
-              teamIds: [],
-            });
-            strictEqual(yield* names(), "");
-            /* A member id from another shop matches no row: nothing is
-               deleted or inserted for this shop. */
-            yield* repo.setMemberTeams({
-              shop: other,
-              memberId: member.id,
-              teamIds: [foreign.id],
-            });
+            strictEqual(yield* names(), "A,C");
+            const refused = yield* repo
+              .addMemberTeams({
+                shop: other,
+                memberId: member.id,
+                teamIds: [foreign.id],
+              })
+              .pipe(Effect.flip);
+            strictEqual(refused._tag, "MemberNotFoundError");
             strictEqual((yield* repo.listMemberTeams(other)).length, 0);
           }),
         ),
     );
 
+    it.effect("findMemberDetail pages a member's teams by name", () =>
+      run(
+        Effect.gen(function* () {
+          const repo = yield* Repository;
+          const shop = shopOf("m.myshopify.com");
+          yield* seed(repo, [shop]);
+          const member = yield* repo.createMember({
+            shop,
+            email: emailOf("worker@example.com"),
+          });
+          const other = yield* repo.createMember({
+            shop,
+            email: emailOf("other@example.com"),
+          });
+          const teamNameOf = Schema.decodeUnknownSync(Domain.TeamName);
+          const teams: Domain.Team[] = [];
+          for (const name of ["E", "B", "D", "A", "C"])
+            teams.push(
+              yield* repo.createTeam({ shop, name: teamNameOf(name) }),
+            );
+          const byName = (name: string) =>
+            teams.find((team) => team.name === name)?.id ??
+            Schema.decodeUnknownSync(Domain.TeamId)("nope");
+          yield* repo.addMemberTeams({
+            shop,
+            memberId: member.id,
+            teamIds: ["A", "B", "C", "D"].map(byName),
+          });
+          yield* repo.setTeamMember({
+            shop,
+            teamId: byName("A"),
+            memberId: other.id,
+            inTeam: true,
+          });
+          const first = Option.getOrThrow(
+            yield* repo.findMemberDetail({
+              shop,
+              id: member.id,
+              teamsAfter: null,
+              limit: 3,
+            }),
+          );
+          strictEqual(first.member.email, "worker@example.com");
+          strictEqual(first.teams.map((team) => team.name).join(","), "A,B,C");
+          strictEqual(
+            first.teams.map((team) => team.memberCount).join(","),
+            "2,1,1",
+          );
+          strictEqual(first.teamCount, 4);
+          strictEqual(first.nextCursor, "C");
+          strictEqual(first.candidates.map((team) => team.name).join(","), "E");
+          const second = Option.getOrThrow(
+            yield* repo.findMemberDetail({
+              shop,
+              id: member.id,
+              teamsAfter: first.nextCursor,
+              limit: 3,
+            }),
+          );
+          strictEqual(second.teams.map((team) => team.name).join(","), "D");
+          strictEqual(second.nextCursor, null);
+          assertTrue(
+            Option.isNone(
+              yield* repo.findMemberDetail({
+                shop: shopOf("o.myshopify.com"),
+                id: member.id,
+                teamsAfter: null,
+                limit: 3,
+              }),
+            ),
+          );
+        }),
+      ),
+    );
+
     it.effect(
-      "setMemberTeams is one atomic batch: a failing statement rolls the delete back",
+      "listMembersPage pages by email, counts each member's teams, and searches every page",
       () =>
         run(
           Effect.gen(function* () {
             const repo = yield* Repository;
             const shop = shopOf("m.myshopify.com");
             yield* seed(repo, [shop]);
-            const email = emailOf("worker@example.com");
-            yield* repo.addMember({
+            for (const email of ["c@x.com", "a@x.com", "b@y.com"])
+              yield* repo.createMember({ shop, email: emailOf(email) });
+            const team = yield* repo.createTeam({
               shop,
-              email,
+              name: Schema.decodeUnknownSync(Domain.TeamName)("Cut"),
             });
-            const [member] = yield* repo.listMembers(shop);
-            const a = yield* repo.createTeam({
-              shop,
-              name: Schema.decodeUnknownSync(Domain.TeamName)("A"),
-            });
-            yield* repo.setMemberTeams({
-              shop,
-              memberId: member.id,
-              teamIds: [a.id],
-            });
-            /* The same shape `setMemberTeams` sends, with a deliberately
-               broken second statement, on the raw binding the driver's
-               `batch` wraps: D1 documents batches as one implicit
-               transaction, so the delete must not survive on its own. */
-            yield* Effect.tryPromise(() =>
-              env.D1.batch([
-                env.D1.prepare(
-                  "delete from TeamMember where memberId = ?",
-                ).bind(member.id),
-                env.D1.prepare("insert into NoSuchTable (x) values (?)").bind(
-                  1,
+            const [a] = yield* repo
+              .listMembers(shop)
+              .pipe(
+                Effect.map((members) =>
+                  members.filter((member) => member.email === "a@x.com"),
                 ),
-              ]),
-            ).pipe(Effect.flip);
-            strictEqual((yield* repo.listMemberTeams(shop)).length, 1);
+              );
+            yield* repo.addMemberTeams({
+              shop,
+              memberId: a.id,
+              teamIds: [team.id],
+            });
+            const first = yield* repo.listMembersPage({
+              shop,
+              limit: 2,
+              after: null,
+              q: null,
+            });
+            strictEqual(
+              first.rows
+                .map((row) => `${row.email}:${String(row.teamCount)}`)
+                .join(","),
+              "a@x.com:1,b@y.com:0",
+            );
+            strictEqual(first.nextCursor, "b@y.com");
+            strictEqual(first.matches, null);
+            const second = yield* repo.listMembersPage({
+              shop,
+              limit: 2,
+              after: first.nextCursor,
+              q: null,
+            });
+            strictEqual(
+              second.rows.map((row) => row.email).join(","),
+              "c@x.com",
+            );
+            strictEqual(second.nextCursor, null);
+            const searched = yield* repo.listMembersPage({
+              shop,
+              limit: 1,
+              after: null,
+              q: "X.COM",
+            });
+            strictEqual(
+              searched.rows.map((row) => row.email).join(","),
+              "a@x.com",
+            );
+            strictEqual(searched.matches, 2);
           }),
         ),
+    );
+
+    it.effect("an email over 254 characters is refused and never stored", () =>
+      run(
+        Effect.gen(function* () {
+          const repo = yield* Repository;
+          const shop = shopOf("m.myshopify.com");
+          yield* seed(repo, [shop]);
+          const longest = yield* Schema.decodeUnknownEffect(Domain.Email)(
+            emailOfLength(Domain.EMAIL_MAX_LENGTH),
+          );
+          yield* repo.createMember({ shop, email: longest });
+          const refused = yield* Schema.decodeUnknownEffect(Domain.Email)(
+            emailOfLength(Domain.EMAIL_MAX_LENGTH + 1),
+          ).pipe(Effect.flip);
+          assertTrue(String(refused).includes(Domain.EMAIL_TOO_LONG));
+          /* The trim runs first: padding does not count. */
+          yield* Schema.decodeUnknownEffect(Domain.Email)(
+            `  ${emailOfLength(Domain.EMAIL_MAX_LENGTH)}  `,
+          );
+          /* The D1 check refuses the same length past the app. */
+          yield* Effect.tryPromise(() =>
+            env.D1.prepare(
+              "insert into Member (id, shop, email, createdAt) values (?, ?, ?, 0)",
+            )
+              .bind("long", shop, emailOfLength(Domain.EMAIL_MAX_LENGTH + 1))
+              .run(),
+          ).pipe(Effect.flip);
+          strictEqual(
+            (yield* repo.listMembers(shop))
+              .map((member) => member.email.length)
+              .join(","),
+            String(Domain.EMAIL_MAX_LENGTH),
+          );
+        }),
+      ),
     );
 
     it.effect("listMemberShops spans shops for one email", () =>
@@ -707,11 +864,11 @@ describe("Repository SQL (D1 ShopSession)", () => {
           const repo = yield* Repository;
           yield* seed(repo, ["a.myshopify.com", "b.myshopify.com"]);
           const email = emailOf("multi@example.com");
-          yield* repo.addMember({
+          yield* repo.createMember({
             shop: shopOf("b.myshopify.com"),
             email,
           });
-          yield* repo.addMember({
+          yield* repo.createMember({
             shop: shopOf("a.myshopify.com"),
             email,
           });
@@ -729,11 +886,11 @@ describe("Repository SQL (D1 ShopSession)", () => {
           const repo = yield* Repository;
           yield* seed(repo, ["a.myshopify.com", "b.myshopify.com"]);
           const email = emailOf("multi@example.com");
-          yield* repo.addMember({
+          yield* repo.createMember({
             shop: shopOf("a.myshopify.com"),
             email,
           });
-          yield* repo.addMember({
+          yield* repo.createMember({
             shop: shopOf("b.myshopify.com"),
             email,
           });
@@ -764,7 +921,7 @@ describe("Repository SQL (D1 ShopSession)", () => {
           const team = yield* seedTeam(shop, "  Cut & Sew  ");
           strictEqual(team.name, "Cut & Sew");
           const email = emailOf("worker@example.com");
-          yield* repo.addMember({
+          yield* repo.createMember({
             shop,
             email,
           });
@@ -863,7 +1020,7 @@ describe("Repository SQL (D1 ShopSession)", () => {
             yield* seed(repo, [shop]);
             const team = yield* seedTeam(shop, "Cut");
             const email = emailOf("worker@example.com");
-            yield* repo.addMember({
+            yield* repo.createMember({
               shop,
               email,
             });
@@ -901,7 +1058,7 @@ describe("Repository SQL (D1 ShopSession)", () => {
           yield* seed(repo, [shop, other]);
           const team = yield* seedTeam(shop, "Cut");
           const email = emailOf("worker@example.com");
-          yield* repo.addMember({
+          yield* repo.createMember({
             shop: other,
             email,
           });
@@ -937,11 +1094,11 @@ describe("Repository SQL (D1 ShopSession)", () => {
             yield* seed(repo, [shop, other]);
             const team = yield* seedTeam(shop, "Cut");
             for (const email of ["a@example.com", "b@example.com"])
-              yield* repo.addMember({
+              yield* repo.createMember({
                 shop,
                 email: emailOf(email),
               });
-            yield* repo.addMember({
+            yield* repo.createMember({
               shop: other,
               email: emailOf("f@example.com"),
             });
@@ -977,63 +1134,108 @@ describe("Repository SQL (D1 ShopSession)", () => {
         ),
     );
 
-    it.effect("findTeamDetail flags every shop member, in or out", () =>
+    it.effect(
+      "findTeamDetail pages a team's members by email and lists the rest as candidates",
+      () =>
+        run(
+          Effect.gen(function* () {
+            const repo = yield* Repository;
+            const shop = shopOf("t.myshopify.com");
+            yield* seed(repo, [shop]);
+            const team = yield* seedTeam(shop, "Cut");
+            for (const email of ["c@x.com", "a@x.com", "b@x.com", "out@x.com"])
+              yield* repo.createMember({ shop, email: emailOf(email) });
+            const members = yield* repo.listMembers(shop);
+            yield* repo.addTeamMembers({
+              shop,
+              teamId: team.id,
+              memberIds: members
+                .filter((m) => m.email !== "out@x.com")
+                .map((m) => m.id),
+            });
+            const first = Option.getOrThrow(
+              yield* repo.findTeamDetail({
+                shop,
+                id: team.id,
+                membersAfter: null,
+                limit: 2,
+              }),
+            );
+            strictEqual(
+              first.members.map((m) => m.email).join(","),
+              "a@x.com,b@x.com",
+            );
+            strictEqual(first.memberCount, 3);
+            strictEqual(first.nextCursor, "b@x.com");
+            strictEqual(
+              first.candidates.map((m) => m.email).join(","),
+              "out@x.com",
+            );
+            const second = Option.getOrThrow(
+              yield* repo.findTeamDetail({
+                shop,
+                id: team.id,
+                membersAfter: first.nextCursor,
+                limit: 2,
+              }),
+            );
+            strictEqual(
+              second.members.map((m) => m.email).join(","),
+              "c@x.com",
+            );
+            strictEqual(second.nextCursor, null);
+            assertTrue(
+              Option.isNone(
+                yield* repo.findTeamDetail({
+                  shop: shopOf("o.myshopify.com"),
+                  id: team.id,
+                  membersAfter: null,
+                  limit: 2,
+                }),
+              ),
+            );
+          }),
+        ),
+    );
+
+    it.effect("listTeamsPage pages by name and searches every page", () =>
       run(
         Effect.gen(function* () {
           const repo = yield* Repository;
           const shop = shopOf("t.myshopify.com");
           yield* seed(repo, [shop]);
-          const team = yield* seedTeam(shop, "Cut");
-          yield* repo.addMember({
+          for (const name of ["Sewing", "Cutting", "Engraving"])
+            yield* seedTeam(shop, name);
+          const first = yield* repo.listTeamsPage({
             shop,
-            email: emailOf("in@example.com"),
+            limit: 2,
+            after: null,
+            q: null,
           });
-          yield* repo.addMember({
-            shop,
-            email: emailOf("out@example.com"),
-          });
-          const members = yield* repo.listMembers(shop);
-          const [inMember] = members.filter(
-            (m) => m.email === "in@example.com",
-          );
-          yield* repo.setTeamMember({
-            shop,
-            teamId: team.id,
-            memberId: inMember.id,
-            inTeam: true,
-          });
-          yield* repo.setTeamMember({
-            shop,
-            teamId: team.id,
-            memberId: inMember.id,
-            inTeam: true,
-          });
-          const detail = Option.getOrThrow(
-            yield* repo.findTeamDetail({ shop, id: team.id }),
-          );
-          strictEqual(detail.members.length, 2);
           strictEqual(
-            detail.members
-              .map((m) => `${m.email}:${m.inTeam ? "in" : "out"}`)
-              .toSorted()
-              .join(","),
-            "in@example.com:in,out@example.com:out",
+            first.rows.map((row) => row.name).join(","),
+            "Cutting,Engraving",
           );
+          strictEqual(first.nextCursor, "Engraving");
+          const second = yield* repo.listTeamsPage({
+            shop,
+            limit: 2,
+            after: first.nextCursor,
+            q: null,
+          });
+          strictEqual(second.rows.map((row) => row.name).join(","), "Sewing");
+          strictEqual(second.nextCursor, null);
+          const searched = yield* repo.listTeamsPage({
+            shop,
+            limit: 1,
+            after: null,
+            q: "ING",
+          });
           strictEqual(
-            detail.members
-              .map((m) => (m.inTeamSince === null ? "null" : "set"))
-              .toSorted()
-              .join(","),
-            "null,set",
+            searched.rows.map((row) => row.name).join(","),
+            "Cutting",
           );
-          assertTrue(
-            Option.isNone(
-              yield* repo.findTeamDetail({
-                shop: shopOf("o.myshopify.com"),
-                id: team.id,
-              }),
-            ),
-          );
+          strictEqual(searched.matches, 3);
         }),
       ),
     );
@@ -1046,7 +1248,7 @@ describe("Repository SQL (D1 ShopSession)", () => {
           yield* seed(repo, [shop]);
           const team = yield* seedTeam(shop, "Cut");
           const email = emailOf("worker@example.com");
-          yield* repo.addMember({
+          yield* repo.createMember({
             shop,
             email,
           });
@@ -1076,7 +1278,7 @@ describe("Repository SQL (D1 ShopSession)", () => {
           const shop = shopOf("t.myshopify.com");
           yield* seed(repo, [shop]);
           const email = emailOf("worker@example.com");
-          yield* repo.addMember({
+          yield* repo.createMember({
             shop,
             email,
           });
@@ -1113,7 +1315,7 @@ describe("Repository SQL (D1 ShopSession)", () => {
             const shop = shopOf("t.myshopify.com");
             yield* seed(repo, [shop]);
             const email = emailOf("worker@example.com");
-            yield* repo.addMember({
+            yield* repo.createMember({
               shop,
               email,
             });

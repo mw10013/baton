@@ -114,6 +114,16 @@ export const ShopSessionRedacted = Schema.Struct({
 export type ShopSessionRedacted = typeof ShopSessionRedacted.Type;
 
 /**
+ * The longest email a member can have: 254 characters, the mail standard's
+ * own ceiling (RFC 5321: a path is 256 octets with its angle brackets). The
+ * Create member field's `maxLength` reads this. See {@link Email}.
+ */
+export const EMAIL_MAX_LENGTH = 254;
+
+/** The field error for an address over {@link EMAIL_MAX_LENGTH}. */
+export const EMAIL_TOO_LONG = "Enter an email of 254 characters or fewer";
+
+/**
  * Normalization is structural: decoding trims and lowercases, so an
  * un-normalized `Email` value cannot be constructed. Membership, the magic-link
  * sign-in gate, and the member-area guard all compare emails across systems
@@ -121,12 +131,22 @@ export type ShopSessionRedacted = typeof ShopSessionRedacted.Type;
  * trusted to lowercase — every boundary decodes through this schema instead.
  * Deliberately not handled: provider aliasing (Gmail dots/plus) and
  * unicode/IDN domains — distinct strings are distinct members.
+ *
+ * An address over {@link EMAIL_MAX_LENGTH} is refused with
+ * {@link EMAIL_TOO_LONG}, after the trim, and never truncated: a cut address
+ * is a different address, and sign-in would match nobody. The D1 check on
+ * `Member.email` refuses the same length, so no row holds one.
  */
 export const Email = Schema.String.pipe(
-  Schema.decodeTo(Schema.NonEmptyString.pipe(Schema.brand("Email")), {
-    decode: SchemaGetter.transform((s) => s.trim().toLowerCase()),
-    encode: SchemaGetter.transform((s) => s),
-  }),
+  Schema.decodeTo(
+    Schema.NonEmptyString.check(
+      Schema.isMaxLength(EMAIL_MAX_LENGTH, { message: EMAIL_TOO_LONG }),
+    ).pipe(Schema.brand("Email")),
+    {
+      decode: SchemaGetter.transform((s) => s.trim().toLowerCase()),
+      encode: SchemaGetter.transform((s) => s),
+    },
+  ),
 );
 export type Email = typeof Email.Type;
 
@@ -225,8 +245,8 @@ export const WorkflowLimits = {
  * bound the object's storage and per-request row counts, not to price a tier.
  */
 export const ShopLimits = {
-  /** `Team` rows per shop. */
-  maxTeams: 25,
+  /** `Team` rows per shop. Provisional, like every ceiling here. */
+  maxTeams: 50,
   /**
    * Open orders (`orderIsOpen` in Orders) stored at one moment, past which no
    * *new* order is stored until one closes. The quantity that loads the

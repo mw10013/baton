@@ -107,15 +107,15 @@ const seedShopWithWork = async (shopName: string) => {
         });
         const memberIdOf = (email: Domain.Email, teamId: Domain.TeamId) =>
           Effect.gen(function* () {
-            yield* repository.addMember({
+            yield* repository.createMember({
               shop,
               email,
             });
             const access = yield* repository.findMemberAccess({ shop, email });
             const memberId = Option.isNone(access)
-              ? yield* Effect.die("member missing right after addMember")
+              ? yield* Effect.die("member missing right after createMember")
               : access.value.memberId;
-            yield* repository.setMemberTeams({
+            yield* repository.addMemberTeams({
               shop,
               memberId,
               teamIds: [teamId],

@@ -10,6 +10,7 @@ import * as Domain from "@/lib/Domain";
 import { runShopAgentMigrations } from "@/lib/ShopAgentSchema";
 import {
   ON_WORKFLOWS_BY_TAGS,
+  TEAM_WORKFLOWS,
   WorkflowRepository,
   type WorkflowWithDraftTasks,
 } from "@/lib/WorkflowRepository";
@@ -710,7 +711,7 @@ describe("WorkflowRepository", () => {
       }),
     ));
 
-  it("listTeamWorkflows spans workflows and both sides", () =>
+  it("listTeamWorkflows pages by name across workflows and both sides; countTeamWorkflows counts per team", () =>
     runInRepository(
       Effect.gen(function* () {
         const repo = yield* WorkflowRepository;
@@ -738,20 +739,44 @@ describe("WorkflowRepository", () => {
           teamId: teamId("t1"),
         });
         yield* repo.applyDraft({ workflowId: b.id, teams: ALL_TEAMS });
-        const owned = yield* repo.listTeamWorkflows({ teamId: "t1" });
+        const all = yield* repo.listTeamWorkflows({
+          teamId: "t1",
+          after: null,
+          limit: 10,
+        });
         deepStrictEqual(
-          owned.map((o) => o.workflowName),
+          all.workflows.map((o) => o.workflowName),
           ["A", "B"],
         );
+        strictEqual(all.nextCursor, null);
+        const first = yield* repo.listTeamWorkflows({
+          teamId: "t1",
+          after: null,
+          limit: 1,
+        });
         deepStrictEqual(
-          (yield* repo.listAllTeamWorkflows()).map((o) => [
+          first.workflows.map((o) => o.workflowName),
+          ["A"],
+        );
+        strictEqual(first.nextCursor, "A");
+        const second = yield* repo.listTeamWorkflows({
+          teamId: "t1",
+          after: first.nextCursor,
+          limit: 1,
+        });
+        deepStrictEqual(
+          second.workflows.map((o) => o.workflowName),
+          ["B"],
+        );
+        strictEqual(second.nextCursor, null);
+        deepStrictEqual(
+          (yield* repo.countTeamWorkflows()).map((o) => [
             o.teamId,
-            o.workflowName,
+            o.workflowCount,
           ]),
           [
-            ["t1", "A"],
-            ["t2", "A"],
-            ["t1", "B"],
+            ["t1", 2],
+            ["t2", 1],
           ],
         );
       }),
@@ -894,6 +919,53 @@ describe("WorkflowRepository workflows index", () => {
         );
         strictEqual(
           details.some((detail) => /^SCAN Workflow\b/u.test(detail)),
+          false,
+          details.join("\n"),
+        );
+      }),
+    ));
+
+  it("the Used by read walks the name index from the cursor, with no sort", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const repo = yield* WorkflowRepository;
+        const sql = yield* SqlClient.SqlClient;
+        yield* repo.replaceWorkflows({
+          workflows: Array.from({ length: 200 }, (_, index) => ({
+            name: name(`W ${String(index).padStart(3, "0")}`),
+            tag: tag(`w${String(index)}`),
+            tasks: [
+              {
+                name: taskName("Task"),
+                teamId: teamId(index % 2 === 0 ? "t1" : "t2"),
+              },
+            ],
+          })),
+        });
+        const page = yield* repo.listTeamWorkflows({
+          teamId: "t2",
+          after: name("W 010"),
+          limit: 2,
+        });
+        deepStrictEqual(
+          page.workflows.map((workflow) => workflow.workflowName),
+          ["W 011", "W 013"],
+        );
+        strictEqual(page.nextCursor, "W 013");
+        const plan = yield* sql.unsafe<{ readonly detail: string }>(
+          `explain query plan ${TEAM_WORKFLOWS}`,
+          ["W 010", "t2", 3],
+        );
+        const details = plan.map((row) => row.detail);
+        strictEqual(
+          details.some((detail) =>
+            /^SEARCH w USING (?:COVERING )?INDEX .*\(name>\?\)/u.test(detail),
+          ),
+          true,
+          details.join("\n"),
+        );
+        strictEqual(
+          details.some((detail) => detail.includes("TEMP B-TREE")),
           false,
           details.join("\n"),
         );
@@ -1781,9 +1853,11 @@ describe("WorkflowRepository workflow and draft", () => {
         yield* repo.createDraft({ workflowId: w.id });
         // One workflow, not one per side: the team is on both.
         deepStrictEqual(
-          (yield* repo.listTeamWorkflows({ teamId: T1.id })).map(
-            (o) => o.workflowId,
-          ),
+          (yield* repo.listTeamWorkflows({
+            teamId: T1.id,
+            after: null,
+            limit: 10,
+          })).workflows.map((o) => o.workflowId),
           [w.id],
         );
         yield* repo.unassignTeam({ teamId: T1.id });
@@ -1796,7 +1870,14 @@ describe("WorkflowRepository workflow and draft", () => {
           after.draftTasks?.map((s) => s.teamId),
           [null, T2.id],
         );
-        deepStrictEqual(yield* repo.listTeamWorkflows({ teamId: T1.id }), []);
+        deepStrictEqual(
+          yield* repo.listTeamWorkflows({
+            teamId: T1.id,
+            after: null,
+            limit: 10,
+          }),
+          { workflows: [], nextCursor: null },
+        );
         // Idempotent: nothing left to null.
         yield* repo.unassignTeam({ teamId: T1.id });
         const [row] = yield* listAll(repo, {

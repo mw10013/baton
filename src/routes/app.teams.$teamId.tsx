@@ -3,7 +3,12 @@ import * as React from "react";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { useForm } from "@tanstack/react-form";
 import { useMutation } from "@tanstack/react-query";
-import { createFileRoute, notFound, useRouter } from "@tanstack/react-router";
+import {
+  createFileRoute,
+  notFound,
+  useNavigate,
+  useRouter,
+} from "@tanstack/react-router";
 import { createServerFn, useServerFn } from "@tanstack/react-start";
 import { Effect, Option, Schema } from "effect";
 
@@ -14,37 +19,50 @@ import { Pairs } from "@/components/screen/Pairs";
 import { TableFrame } from "@/components/screen/TableFrame";
 import { Things } from "@/components/screen/Things";
 import { Token } from "@/components/screen/Token";
-import { UsedByCard } from "@/components/UsedByCard";
 import * as Domain from "@/lib/Domain";
 import { fieldError, mutationErrorMessage } from "@/lib/form";
 import { Repository } from "@/lib/Repository";
+import { lenientSearchKey } from "@/lib/searchParams";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { SocketBanner } from "@/lib/SocketBanner";
+import { useNextPageEntry } from "@/lib/tablePages";
 import {
   decodeDeleteTeamResult,
   decodeName,
-  DELETE_TEAM_CONFIRM,
+  DELETE_CONFIRM,
+  DELETED_TOAST,
   deleteTeamResultMessage,
+  DETAILS_PAGE_SIZE,
   failWith,
   NAME_TAKEN,
+  SEARCH_FROM,
   sessionShop,
   TEAM_GONE,
 } from "@/lib/teams";
 
 const RENAME_MODAL = "rename-team";
 const DELETE_MODAL = "delete-team";
-const REMOVE_MODAL = "remove-team-member";
 const ADD_MODAL = "add-team-members";
 
 /**
- * Below this many candidates the Add members dialog leaves its search field
- * out: a search box over three rows is chrome the merchant has to read past.
+ * The team page's URL: the page of each of its two tables, as the last
+ * value of the page before (`Repository.findTeamDetail`,
+ * `Domain.TeamWorkflowsInput`). Each Next keeps the other key, so paging one
+ * table leaves the other where it was. Lenient for the reason on
+ * `OrdersSearch` (`app.orders.tsx`).
  */
-const SEARCH_FROM = 6;
+const TeamSearch = Schema.Struct({
+  membersAfter: lenientSearchKey(Domain.Email),
+  workflowsAfter: lenientSearchKey(Domain.WorkflowName),
+});
 
-const TeamIdInput = Schema.Struct({ teamId: Schema.String });
+const TeamLoaderInput = Schema.Struct({
+  teamId: Schema.String,
+  membersAfter: Schema.NullOr(Domain.Email),
+  workflowsAfter: Schema.NullOr(Domain.WorkflowName),
+});
 
 const NameInput = Schema.Struct({
   name: Schema.String.check(Schema.isNonEmpty({ message: "Enter a name" })),
@@ -81,11 +99,11 @@ const decodeMemberIds = Schema.decodeUnknownEffect(
  */
 interface TeamLoaderData extends Domain.TeamDetail {
   readonly memberTeams: readonly Domain.MemberTeam[];
-  readonly teamWorkflows: readonly Domain.TeamWorkflow[];
+  readonly teamWorkflows: Domain.TeamWorkflowsPage;
 }
 
 const getLoaderData = createServerFn({ method: "GET" })
-  .validator(Schema.toStandardSchemaV1(TeamIdInput))
+  .validator(Schema.toStandardSchemaV1(TeamLoaderInput))
   .middleware([shopifyServerFnMiddleware])
   .handler(({ data, context: { runEffect, session } }) =>
     runEffect(
@@ -95,12 +113,16 @@ const getLoaderData = createServerFn({ method: "GET" })
         const detail = yield* repository.findTeamDetail({
           shop,
           id: yield* decodeTeamId(data.teamId),
+          membersAfter: data.membersAfter,
+          limit: DETAILS_PAGE_SIZE,
         });
         if (Option.isNone(detail)) return yield* Effect.fail(notFound());
         const memberTeams = yield* repository.listMemberTeams(shop);
         const client = yield* ShopAgentClient;
         const teamWorkflows = yield* client.listTeamWorkflows(shop, {
           teamId: detail.value.team.id,
+          after: data.workflowsAfter,
+          limit: DETAILS_PAGE_SIZE,
         });
         return {
           ...detail.value,
@@ -180,27 +202,46 @@ const addTeamMembersFn = createServerFn({ method: "POST" })
   );
 
 export const Route = createFileRoute("/app/teams/$teamId")({
-  loader: ({ params }) => getLoaderData({ data: { teamId: params.teamId } }),
+  validateSearch: Schema.toStandardSchemaV1(TeamSearch),
+  loaderDeps: ({ search }) => ({
+    membersAfter: search.membersAfter ?? null,
+    workflowsAfter: search.workflowsAfter ?? null,
+  }),
+  loader: ({ params, deps }) =>
+    getLoaderData({ data: { teamId: params.teamId, ...deps } }),
   component: RouteComponent,
 });
 
 /**
- * The team page is about people: its members are the one table, adding is the
- * primary action, and the workflows that use the team are a link list rather
- * than a task table above the members (tasks are edited on the workflow pages).
- * Rename and delete live behind More actions, as on the workflow page.
+ * The team page is about people: its members are the first table, adding is
+ * the primary action, and the workflows that use the team are a table of
+ * links under it (tasks are edited on the workflow pages). Rename and delete
+ * live behind More actions, as on the workflow page. Remove on a member's row
+ * has no modal: Add members puts them back on this screen.
  *
  * Laid out as Polaris' details template, like the order and workflow detail
- * pages: the members own the main column under its own heading, and the
- * reference material a merchant checks before renaming or deleting — where the
- * team is used, when it was made — sits in aside cards. That keeps `s-page`'s
- * children sections, which is the only thing it lays out, so nothing floats on
- * the page background. `inlineSize` must stay "base": `s-page` drops the aside
+ * pages: the two tables own the main column, each under its own heading and
+ * paged from the server, and the facts a merchant checks before renaming or
+ * deleting sit in the Details aside. That keeps `s-page`'s children
+ * sections, which is the only thing it lays out, so nothing floats on the
+ * page background. `inlineSize` must stay "base": `s-page` drops the aside
  * slot entirely at "large".
  */
 function RouteComponent() {
-  const { team, members, memberTeams, teamWorkflows } = Route.useLoaderData();
+  const {
+    team,
+    members,
+    memberCount,
+    nextCursor,
+    candidates,
+    memberTeams,
+    teamWorkflows,
+  } = Route.useLoaderData();
+  const { membersAfter, workflowsAfter } = Route.useSearch();
   const router = useRouter();
+  const navigate = useNavigate({ from: Route.fullPath });
+  const membersNextEntry = useNextPageEntry("membersAfter");
+  const workflowsNextEntry = useNextPageEntry("workflowsAfter");
   const shopify = useAppBridge();
   const renameTeam = useServerFn(renameTeamFn);
   const setTeamMember = useServerFn(setTeamMemberFn);
@@ -208,14 +249,38 @@ function RouteComponent() {
   const { agent, identified } = useShopAgent();
   const [deleteBanner, setDeleteBanner] = React.useState<string | null>(null);
   const [nameError, setNameError] = React.useState<string | null>(null);
-  /** Which member the Remove dialog is about; one modal serves every row. */
-  const [removing, setRemoving] = React.useState<Domain.MemberId | null>(null);
   const [addQuery, setAddQuery] = React.useState("");
   const [selected, setSelected] = React.useState<readonly string[]>([]);
 
-  const current = members.filter((member) => member.inTeam);
-  const candidates = members.filter((member) => !member.inTeam);
-  const removingMember = current.find((member) => member.id === removing);
+  /**
+   * Next keeps the other table's key (`search: prev`), so paging one table
+   * leaves the other where it was; Previous is Back when this table's Next
+   * pushed the entry ({@link useNextPageEntry}), page one otherwise.
+   */
+  const pageMembers = (cursor: Domain.Email | null) => {
+    if (cursor === null && membersNextEntry) {
+      router.history.back();
+      return;
+    }
+    void navigate({
+      search: (prev) => ({ ...prev, membersAfter: cursor ?? undefined }),
+      ...(cursor === null
+        ? { replace: true }
+        : { state: { nextPageOf: "membersAfter" } }),
+    });
+  };
+  const pageWorkflows = (cursor: Domain.WorkflowName | null) => {
+    if (cursor === null && workflowsNextEntry) {
+      router.history.back();
+      return;
+    }
+    void navigate({
+      search: (prev) => ({ ...prev, workflowsAfter: cursor ?? undefined }),
+      ...(cursor === null
+        ? { replace: true }
+        : { state: { nextPageOf: "workflowsAfter" } }),
+    });
+  };
 
   const renameMutation = useMutation({
     mutationFn: (name: string) =>
@@ -233,11 +298,7 @@ function RouteComponent() {
   const removeMutation = useMutation({
     mutationFn: (memberId: string) =>
       setTeamMember({ data: { teamId: team.id, memberId, inTeam: false } }),
-    onSuccess: async () => {
-      await shopify.modal.hide(REMOVE_MODAL);
-      setRemoving(null);
-      await router.invalidate({ sync: true });
-    },
+    onSuccess: () => router.invalidate({ sync: true }),
   });
 
   const addMutation = useMutation({
@@ -269,6 +330,9 @@ function RouteComponent() {
     onSuccess: async (result) => {
       if (result._tag === "Deleted") {
         await shopify.modal.hide(DELETE_MODAL);
+        /* Toast, then navigate, as the workflow page does: the admin's toast
+           outlives the page. */
+        shopify.toast.show(DELETED_TOAST.team);
         await router.navigate({ to: "/app/teams" });
         return;
       }
@@ -336,22 +400,22 @@ function RouteComponent() {
       commandFor={ADD_MODAL}
       command="--show"
     >
-      Add members
+      {`${Domain.RECORD_VERB_LABEL.add} members`}
     </s-button>
   );
 
   const renderMembers = () => {
-    if (members.length === 0)
+    if (memberCount === 0 && candidates.length === 0)
       return (
         <EmptyLine
           heading="No members yet"
-          action={<s-button href="/app/members">Add members</s-button>}
+          action={<s-button href="/app/members">Go to Members</s-button>}
         >
-          This store has no members yet. Add them on Members, then put them on
-          teams.
+          This store has no members yet. Create them on Members, then put them
+          on teams.
         </EmptyLine>
       );
-    if (current.length === 0)
+    if (memberCount === 0)
       return (
         <EmptyLine heading="Nobody on this team yet" action={addButton(false)}>
           Nobody is on this team, so its tasks wait until a member joins.
@@ -360,7 +424,17 @@ function RouteComponent() {
     return (
       /* Framed inside the card ({@link TableFrame}). */
       <TableFrame>
-        <s-table>
+        <s-table
+          paginate={membersAfter !== undefined || nextCursor !== null}
+          hasPreviousPage={membersAfter !== undefined}
+          hasNextPage={nextCursor !== null}
+          onPreviousPage={() => {
+            pageMembers(null);
+          }}
+          onNextPage={() => {
+            if (nextCursor !== null) pageMembers(nextCursor);
+          }}
+        >
           <s-table-header-row>
             <s-table-header listSlot="primary">Member</s-table-header>
             <s-table-header>On team since</s-table-header>
@@ -369,15 +443,15 @@ function RouteComponent() {
             </s-table-header>
           </s-table-header-row>
           <s-table-body>
-            {current.map((member) => (
+            {members.map((member) => (
               <s-table-row key={member.id} id={member.id}>
                 <s-table-cell>
-                  <Token>{member.email}</Token>
+                  <Token href={`/app/members/${member.id}`}>
+                    {member.email}
+                  </Token>
                 </s-table-cell>
                 <s-table-cell>
-                  {member.inTeamSince !== null && (
-                    <LocalDateTime value={member.inTeamSince} />
-                  )}
+                  <LocalDateTime value={member.inTeamSince} />
                 </s-table-cell>
                 <s-table-cell>
                   <End>
@@ -386,13 +460,52 @@ function RouteComponent() {
                       tone="critical"
                       disabled={removeMutation.isPending}
                       onClick={() => {
-                        setRemoving(member.id);
-                        void shopify.modal.show(REMOVE_MODAL);
+                        removeMutation.mutate(member.id);
                       }}
                     >
-                      Remove
+                      {Domain.RECORD_VERB_LABEL.remove}
                     </s-button>
                   </End>
+                </s-table-cell>
+              </s-table-row>
+            ))}
+          </s-table-body>
+        </s-table>
+      </TableFrame>
+    );
+  };
+
+  const renderWorkflows = () => {
+    if (teamWorkflows.workflows.length === 0 && workflowsAfter === undefined)
+      return (
+        <s-paragraph color="subdued">Not used by any workflow yet.</s-paragraph>
+      );
+    return (
+      <TableFrame>
+        <s-table
+          paginate={
+            workflowsAfter !== undefined || teamWorkflows.nextCursor !== null
+          }
+          hasPreviousPage={workflowsAfter !== undefined}
+          hasNextPage={teamWorkflows.nextCursor !== null}
+          onPreviousPage={() => {
+            pageWorkflows(null);
+          }}
+          onNextPage={() => {
+            if (teamWorkflows.nextCursor !== null)
+              pageWorkflows(teamWorkflows.nextCursor);
+          }}
+        >
+          <s-table-header-row>
+            <s-table-header listSlot="primary">Workflow</s-table-header>
+          </s-table-header-row>
+          <s-table-body>
+            {teamWorkflows.workflows.map((workflow) => (
+              <s-table-row key={workflow.workflowId} id={workflow.workflowId}>
+                <s-table-cell>
+                  <s-link href={`/app/workflows/${workflow.workflowId}`}>
+                    {workflow.workflowName}
+                  </s-link>
                 </s-table-cell>
               </s-table-row>
             ))}
@@ -417,7 +530,7 @@ function RouteComponent() {
           from browsing a select. `?team=` means waiting on: the orders whose
           current task is this team's right now (open orders only, see
           `Domain.ListOrdersInput.team`), not every order it ever touched. Order positions stay on Orders; this page is the team's members
-          (`UsedByCard` below is configuration, not run state). */}
+          and the workflows that use it, which is configuration, not run state. */}
       <s-button
         slot="secondary-actions"
         href={`/app/orders?team=${encodeURIComponent(team.id)}`}
@@ -429,7 +542,7 @@ function RouteComponent() {
       </s-button>
       <s-menu id="team-actions" accessibilityLabel="More actions">
         <s-button icon="edit" commandFor={RENAME_MODAL} command="--show">
-          Rename
+          {Domain.RECORD_VERB_LABEL.rename}
         </s-button>
         <s-button
           icon="delete"
@@ -437,7 +550,7 @@ function RouteComponent() {
           commandFor={DELETE_MODAL}
           command="--show"
         >
-          Delete
+          {Domain.RECORD_VERB_LABEL.delete}
         </s-button>
       </s-menu>
 
@@ -455,12 +568,15 @@ function RouteComponent() {
         </Things>
       </s-section>
 
-      <UsedByCard workflows={teamWorkflows} />
+      {/* A table in the main column, not a list in the aside: a team may
+          be used by up to every workflow in the shop, and Shopify pages a
+          details page's tables, not its asides. */}
+      <s-section heading="Used by">{renderWorkflows()}</s-section>
 
       <s-section slot="aside" heading="Details" accessibilityLabel="Details">
         <Pairs
           pairs={[
-            { key: "members", label: "Members", value: String(current.length) },
+            { key: "members", label: "Members", value: String(memberCount) },
             {
               key: "created",
               label: "Created",
@@ -476,7 +592,7 @@ function RouteComponent() {
         /* The form's defaults are the current name, so a first open needs no
            seeding. Reset on the way out, not on the way in: `show` can fire
            after the field has already taken input, and a reset there wipes
-           what was typed (the Add member dialog in `app.members.tsx` did
+           what was typed (the members index's create dialog did
            exactly that). Rename invalidates before it hides so this reseed
            reads the new name. */
         onAfterHide={() => {
@@ -528,7 +644,7 @@ function RouteComponent() {
       </s-modal>
 
       <s-modal id={DELETE_MODAL} heading={`Delete ${team.name}?`}>
-        <s-paragraph>{DELETE_TEAM_CONFIRM}</s-paragraph>
+        <s-paragraph>{DELETE_CONFIRM}</s-paragraph>
         <s-button
           slot="secondary-actions"
           commandFor={DELETE_MODAL}
@@ -546,43 +662,7 @@ function RouteComponent() {
             deleteMutation.mutate();
           }}
         >
-          Delete
-        </s-button>
-      </s-modal>
-
-      <s-modal
-        id={REMOVE_MODAL}
-        heading={
-          removingMember === undefined
-            ? "Remove member?"
-            : `Remove ${removingMember.email}?`
-        }
-      >
-        {removingMember !== undefined && (
-          <s-paragraph>
-            {`Remove ${removingMember.email} from ${team.name}? They keep access to the shop and their other teams.`}
-            {current.length === 1 && ` ${team.name} will have no members.`}
-          </s-paragraph>
-        )}
-        <s-button
-          slot="secondary-actions"
-          commandFor={REMOVE_MODAL}
-          command="--hide"
-        >
-          Cancel
-        </s-button>
-        <s-button
-          slot="primary-action"
-          variant="primary"
-          tone="critical"
-          loading={removeMutation.isPending}
-          disabled={removingMember === undefined}
-          onClick={() => {
-            if (removingMember !== undefined)
-              removeMutation.mutate(removingMember.id);
-          }}
-        >
-          Remove
+          {Domain.RECORD_VERB_LABEL.delete}
         </s-button>
       </s-modal>
 
@@ -592,15 +672,15 @@ function RouteComponent() {
           table with a header row and a scrollbar for one row. A modal keeps
           the inset, drops the search field when there is nothing to search,
           shows where each candidate already works, and folds in the two
-          nobody-to-add cases App Bridge's had to hand to a second dialog. It
-          also matches the Members page, which edits the same membership from
-          the other side with a checklist in a modal. */}
+          nobody-to-add cases App Bridge's had to hand to a second dialog. The
+          member page's Add to teams dialog is its mirror, editing the same
+          membership from the other side. */}
       <s-modal
         id={ADD_MODAL}
         heading={`Add members to ${team.name}`}
         /* Cleared on the way out, not on the way in: `show` can fire after a
            search was typed or a box checked, and clearing there loses it
-           (the Add member dialog in `app.members.tsx` did exactly that). */
+           (the members index's create dialog did exactly that). */
         onAfterHide={() => {
           setAddQuery("");
           setSelected([]);
@@ -608,8 +688,8 @@ function RouteComponent() {
       >
         {candidates.length === 0 ? (
           <s-paragraph>
-            {members.length === 0
-              ? "This store has no members yet. Add them on Members, then put them on teams."
+            {memberCount === 0
+              ? "This store has no members yet. Create them on Members, then put them on teams."
               : "Everyone is already on this team."}
           </s-paragraph>
         ) : (

@@ -25,14 +25,13 @@ import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { SocketBanner } from "@/lib/SocketBanner";
+import { DELETE_CONFIRM, DELETED_TOAST } from "@/lib/teams";
 import { postEditorWindowMessage } from "@/lib/workflowEditorWindow";
 import {
   APPLY_BODY,
   APPLY_HEADING,
   applyBlocker,
-  DELETE_WORKFLOW_WARNING,
   deleteWorkflowResultMessage,
-  DELETED_TOAST,
   DISCARD_BODY,
   DISCARD_HEADING,
   neverApplied,
@@ -361,7 +360,7 @@ function RouteComponent() {
         return;
       }
       hideModal(DELETE_MODAL);
-      shopify.toast.show(DELETED_TOAST);
+      shopify.toast.show(DELETED_TOAST.workflow);
       if (inWindow) {
         postEditorWindowMessage({ type: "deleted", workflowId });
         return;
@@ -990,7 +989,7 @@ function RouteComponent() {
       </s-modal>
 
       <s-modal id={DELETE_MODAL} heading={`Delete ${workflow.name}?`}>
-        <s-paragraph>{DELETE_WORKFLOW_WARNING}</s-paragraph>
+        <s-paragraph>{DELETE_CONFIRM}</s-paragraph>
         <s-button
           slot="secondary-actions"
           commandFor={DELETE_MODAL}

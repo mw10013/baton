@@ -127,7 +127,7 @@ describe("ShopAgent connect gate", () => {
           shop,
           name: teamNameOf("Cut & Sew"),
         });
-        yield* repository.addMember({
+        yield* repository.createMember({
           shop,
           email: MEMBER,
         });
@@ -136,9 +136,9 @@ describe("ShopAgent connect gate", () => {
           email: MEMBER,
         });
         const { memberId } = Option.isNone(access)
-          ? yield* Effect.die("member missing right after addMember")
+          ? yield* Effect.die("member missing right after createMember")
           : access.value;
-        yield* repository.setMemberTeams({
+        yield* repository.addMemberTeams({
           shop,
           memberId,
           teamIds: [team.id],
@@ -171,7 +171,7 @@ describe("ShopAgent connect gate", () => {
       Effect.gen(function* () {
         const shop = shopOf("gate-spoof.myshopify.com");
         yield* seedSubscribedShop(shop);
-        yield* (yield* Repository).addMember({
+        yield* (yield* Repository).createMember({
           shop,
           email: MEMBER,
         });
@@ -195,7 +195,7 @@ describe("ShopAgent connect gate", () => {
         const otherShop = shopOf("gate-theirs.myshopify.com");
         yield* seedSubscribedShop(shop);
         yield* seedSubscribedShop(otherShop);
-        yield* (yield* Repository).addMember({
+        yield* (yield* Repository).createMember({
           shop: otherShop,
           email: STRANGER,
         });
@@ -242,7 +242,7 @@ describe("ShopAgent connect gate", () => {
           planHandleExpiresAt: Date.now() + 60 * 60 * 1000,
           planBoundaryAt: null,
         });
-        yield* repository.addMember({
+        yield* repository.createMember({
           shop,
           email: MEMBER,
         });
@@ -275,11 +275,11 @@ describe("ShopAgent connect gate", () => {
         });
         const included = Domain.entitlementsOfPlan("basic").membersIncluded;
         for (let index = 0; index < included; index += 1)
-          yield* repository.addMember({
+          yield* repository.createMember({
             shop,
             email: emailOf(`aaa-included-${String(index)}@example.com`),
           });
-        yield* repository.addMember({ shop, email: MEMBER });
+        yield* repository.createMember({ shop, email: MEMBER });
         const cookie = yield* signInThroughWorker(MEMBER);
         const response = yield* upgrade(
           `http://localhost/agents/shop-agent/${shop}`,

@@ -115,12 +115,12 @@ export class ShopAgentClient extends Context.Service<
     ) => Effect.Effect<Domain.RunPageData | null, ShopAgentClientError>;
     readonly listTeamWorkflows: (
       shop: string,
-      input: Domain.TeamIdInput,
-    ) => Effect.Effect<readonly Domain.TeamWorkflow[], ShopAgentClientError>;
-    readonly listAllTeamWorkflows: (
+      input: Domain.TeamWorkflowsInput,
+    ) => Effect.Effect<Domain.TeamWorkflowsPage, ShopAgentClientError>;
+    readonly countTeamWorkflows: (
       shop: string,
     ) => Effect.Effect<
-      readonly Domain.TeamWorkflowByTeam[],
+      readonly Domain.TeamWorkflowCount[],
       ShopAgentClientError
     >;
     readonly listOrders: (
@@ -237,9 +237,9 @@ export class ShopAgentClient extends Context.Service<
        */
       const workflowsListData = Schema.toType(Domain.WorkflowsListData);
       const runPageData = Schema.toType(Schema.NullOr(Domain.RunPageData));
-      const teamWorkflows = Schema.toType(Schema.Array(Domain.TeamWorkflow));
-      const teamWorkflowsByTeam = Schema.toType(
-        Schema.Array(Domain.TeamWorkflowByTeam),
+      const teamWorkflows = Schema.toType(Domain.TeamWorkflowsPage);
+      const teamWorkflowCounts = Schema.toType(
+        Schema.Array(Domain.TeamWorkflowCount),
       );
       const ordersIndexData = Schema.toType(Domain.OrdersIndexData);
       const orderDetail = Schema.toType(Schema.NullOr(Domain.OrderPageData));
@@ -262,15 +262,15 @@ export class ShopAgentClient extends Context.Service<
             ),
         ),
         listTeamWorkflows: Effect.fn("ShopAgentClient.listTeamWorkflows")(
-          (shop: string, input: Domain.TeamIdInput) =>
+          (shop: string, input: Domain.TeamWorkflowsInput) =>
             call("listTeamWorkflows", teamWorkflows, shop, (stub) =>
               stub.listTeamWorkflows(input),
             ),
         ),
-        listAllTeamWorkflows: Effect.fn("ShopAgentClient.listAllTeamWorkflows")(
+        countTeamWorkflows: Effect.fn("ShopAgentClient.countTeamWorkflows")(
           (shop: string) =>
-            call("listAllTeamWorkflows", teamWorkflowsByTeam, shop, (stub) =>
-              stub.listAllTeamWorkflows(),
+            call("countTeamWorkflows", teamWorkflowCounts, shop, (stub) =>
+              stub.countTeamWorkflows(),
             ),
         ),
         listOrders: Effect.fn("ShopAgentClient.listOrders")(

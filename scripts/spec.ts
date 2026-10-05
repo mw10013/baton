@@ -54,6 +54,7 @@ const SCREEN_LABELS: ActionTable.ScreenLabels = {
   orderIssues: Domain.ORDER_ISSUE_LABEL,
   workflowFaults: Domain.WORKFLOW_FAULT_LABEL,
   verbs: Domain.VERB_LABEL,
+  recordVerbs: Domain.RECORD_VERB_LABEL,
 };
 
 /** The barrel's source (the map and the Screens table) and each context file's, by name. */

@@ -540,7 +540,7 @@ describe("SubscriptionPlan", () => {
           yield* seedShopSession("baton-pro", 500);
           const repository = yield* Repository;
           for (const email of ["a@example.com", "b@example.com"])
-            yield* repository.addMember({
+            yield* repository.createMember({
               shop,
               email: Schema.decodeUnknownSync(Domain.Email)(email),
             });

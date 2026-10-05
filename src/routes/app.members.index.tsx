@@ -1,5 +1,3 @@
-import * as React from "react";
-
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { useForm } from "@tanstack/react-form";
 import { useMutation } from "@tanstack/react-query";
@@ -15,110 +13,107 @@ import { LocalDateTime } from "@/components/LocalDateTime";
 import { EmptyLine } from "@/components/screen/EmptyLine";
 import { FilterRow } from "@/components/screen/FilterRow";
 import { IndexSection } from "@/components/screen/IndexSection";
-import { Inline } from "@/components/screen/Inline";
 import { ListSearchField } from "@/components/screen/ListSearchField";
 import { SearchLine } from "@/components/screen/SearchLine";
+import { Token } from "@/components/screen/Token";
 import * as Domain from "@/lib/Domain";
 import { fieldError, mutationErrorMessage } from "@/lib/form";
 import { Repository } from "@/lib/Repository";
 import { lenientSearchKey, ListSearchParam } from "@/lib/searchParams";
-import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { SocketBanner } from "@/lib/SocketBanner";
 import { useNextPageEntry } from "@/lib/tablePages";
-import {
-  decodeName,
-  failWith,
-  INDEX_PAGE_SIZE,
-  NAME_TAKEN,
-  sessionShop,
-} from "@/lib/teams";
+import { INDEX_PAGE_SIZE, sessionShop } from "@/lib/teams";
 
-const CREATE_MODAL = "create-team";
+const CREATE_MODAL = "create-member";
 
-const teamLimitMessage = (limit: number) =>
-  `A shop can have ${String(limit)} teams. Delete one to add another.`;
-
-const TeamNameInput = Schema.Struct({
-  name: Schema.String.check(Schema.isNonEmpty({ message: "Enter a name" })),
+const CreateMemberInput = Schema.Struct({
+  email: Schema.String.check(
+    Schema.isNonEmpty({ message: "Enter an email" }),
+    Schema.isMaxLength(Domain.EMAIL_MAX_LENGTH, {
+      message: Domain.EMAIL_TOO_LONG,
+    }),
+  ),
 });
-type TeamNameInput = typeof TeamNameInput.Type;
+type CreateMemberInput = typeof CreateMemberInput.Type;
+
+const decodeEmail = Schema.decodeUnknownEffect(Domain.Email);
+
+const MEMBER_CEILING =
+  "This store has reached the maximum number of members. Contact support to raise it.";
 
 /**
- * The teams index's URL: the search and the page. `q` is matched anywhere
- * in the name, over every team; `after` is the last name of the page before
- * (`Repository.listTeamsPage`). Lenient for the reason on `OrdersSearch`
- * (`app.orders.tsx`).
+ * The members index's URL: the search and the page. `q` is matched anywhere
+ * in the email, over every member, not only the rows on screen; `after` is
+ * the last email of the page before (`Repository.listMembersPage`). Both are
+ * lenient for the reason on `OrdersSearch` (`app.orders.tsx`): a stale or
+ * hand-edited value reads as no search, or page one.
  */
-const TeamsSearch = Schema.Struct({
+const MembersSearch = Schema.Struct({
   q: lenientSearchKey(ListSearchParam),
-  after: lenientSearchKey(Domain.TeamName),
+  after: lenientSearchKey(Domain.Email),
 });
 
-const TeamsLoaderInput = Schema.Struct({
+const MembersLoaderInput = Schema.Struct({
   q: Schema.NullOr(Domain.ListSearch),
-  after: Schema.NullOr(Domain.TeamName),
+  after: Schema.NullOr(Domain.Email),
 });
 
-/**
- * One page of teams in name order. `workflowCounts` is Durable Object data
- * joined into a D1 page by the loader (the loader-versus-socket rule on
- * `ShopAgentClient`): the Workflows column, one count per team that has
- * one.
- */
-interface TeamsIndexLoaderData {
-  readonly teams: readonly Domain.TeamSummary[];
-  readonly nextCursor: Domain.TeamName | null;
+/** One page of members in email order, each with how many teams they are on. */
+interface MembersIndexLoaderData {
+  readonly members: readonly Domain.MemberSummary[];
+  readonly nextCursor: Domain.Email | null;
   readonly matches: number | null;
-  readonly workflowCounts: readonly Domain.TeamWorkflowCount[];
 }
 
 const getLoaderData = createServerFn({ method: "GET" })
-  .validator(Schema.toStandardSchemaV1(TeamsLoaderInput))
+  .validator(Schema.toStandardSchemaV1(MembersLoaderInput))
   .middleware([shopifyServerFnMiddleware])
   .handler(({ data: { q, after }, context: { runEffect, session } }) =>
     runEffect(
       Effect.gen(function* () {
-        const page = yield* (yield* Repository).listTeamsPage({
+        const page = yield* (yield* Repository).listMembersPage({
           shop: yield* sessionShop(session.shop),
           limit: INDEX_PAGE_SIZE,
           after,
           q,
         });
-        const workflowCounts =
-          yield* (yield* ShopAgentClient).countTeamWorkflows(session.shop);
         return {
-          teams: page.rows,
+          members: page.rows,
           nextCursor: page.nextCursor,
           matches: page.matches,
-          workflowCounts,
-        } satisfies TeamsIndexLoaderData;
+        } satisfies MembersIndexLoaderData;
       }),
     ),
   );
 
-/** Returns the row so the page can land on the new team, where the next thing is always adding people. */
-const createTeamFn = createServerFn({ method: "POST" })
-  .validator(Schema.toStandardSchemaV1(TeamNameInput))
+/**
+ * Creating stays idempotent for the row (`Repository.createMember`), and
+ * returns it so the page can land on the member page, where Add to teams is
+ * the next step. It queues no seat event: the next revalidation raises the
+ * seat mark to the member count (the "revalidation, same cycle start" row on
+ * `Domain.ShopUsage`).
+ */
+const createMemberFn = createServerFn({ method: "POST" })
+  .validator(Schema.toStandardSchemaV1(CreateMemberInput))
   .middleware([shopifyServerFnMiddleware])
   .handler(({ data, context: { runEffect, session } }) =>
     runEffect(
       Effect.gen(function* () {
-        return yield* (yield* Repository).createTeam({
+        return yield* (yield* Repository).createMember({
           shop: yield* sessionShop(session.shop),
-          name: yield* decodeName(data.name),
+          email: yield* decodeEmail(data.email),
         });
       }).pipe(
-        Effect.catchTag("TeamNameTakenError", failWith(NAME_TAKEN)),
-        Effect.catchTag("TeamLimitError", ({ limit }) =>
-          Effect.fail(new Error(teamLimitMessage(limit))),
+        Effect.catchTag("MemberCeilingError", () =>
+          Effect.fail(new Error(MEMBER_CEILING)),
         ),
       ),
     ),
   );
 
-export const Route = createFileRoute("/app/teams/")({
-  validateSearch: Schema.toStandardSchemaV1(TeamsSearch),
+export const Route = createFileRoute("/app/members/")({
+  validateSearch: Schema.toStandardSchemaV1(MembersSearch),
   loaderDeps: ({ search }) => ({
     q: search.q ?? null,
     after: search.after ?? null,
@@ -128,56 +123,43 @@ export const Route = createFileRoute("/app/teams/")({
 });
 
 /**
- * The teams page on the workflows pattern: a primary action that opens a
- * modal, a search once there is something to search, and no destructive
- * control on the index — deletion lives on the detail page, where the dialog
- * is. Workflows is how many workflows use each team, from one object read
- * of every team's count; the names are on the team page.
+ * The members index, on the resource-index pattern the teams and workflows
+ * indexes share: a row per member, the email a link to the member page,
+ * how many teams they are on, and no buttons on a row. Everything about one
+ * member, their teams and the delete, is on the member page.
  */
 function RouteComponent() {
-  const { teams, nextCursor, matches, workflowCounts } = Route.useLoaderData();
+  const { members, nextCursor, matches } = Route.useLoaderData();
   const { q, after } = Route.useSearch();
   const router = useRouter();
   const navigate = useNavigate({ from: Route.fullPath });
   const nextPageEntry = useNextPageEntry("after");
   const shopify = useAppBridge();
-  const createTeam = useServerFn(createTeamFn);
-  /**
-   * The name-taken failure is a field error, not a banner: the merchant fixes
-   * it by editing the field. Held outside the form because it arrives from
-   * the server after validation has already passed.
-   */
-  const [nameError, setNameError] = React.useState<string | null>(null);
+  const createMember = useServerFn(createMemberFn);
 
   const createMutation = useMutation({
-    mutationFn: (data: TeamNameInput) => createTeam({ data }),
+    mutationFn: (data: CreateMemberInput) => createMember({ data }),
     onSuccess: async (created) => {
       await shopify.modal.hide(CREATE_MODAL);
       await router.invalidate({ sync: true });
-      await router.navigate({
-        to: "/app/teams/$teamId",
-        params: { teamId: created.id },
+      await navigate({
+        to: "/app/members/$memberId",
+        params: { memberId: created.id },
       });
-    },
-    onError: (error: Error) => {
-      const message = mutationErrorMessage(error, "Couldn't create the team.");
-      if (message === NAME_TAKEN) setNameError(message);
     },
   });
 
   const form = useForm({
-    defaultValues: { name: "" } satisfies TeamNameInput,
-    validators: { onSubmit: Schema.toStandardSchemaV1(TeamNameInput) },
+    defaultValues: { email: "" } satisfies CreateMemberInput,
+    validators: { onSubmit: Schema.toStandardSchemaV1(CreateMemberInput) },
     onSubmit: ({ value }) => {
       createMutation.mutate(value);
     },
   });
 
-  const createError = createMutation.isError
-    ? mutationErrorMessage(createMutation.error, "Couldn't create the team.")
+  const banner = createMutation.isError
+    ? mutationErrorMessage(createMutation.error, "Couldn't create the member.")
     : null;
-  /** The name-taken case is shown on the field; everything else is a banner. */
-  const banner = createError === NAME_TAKEN ? null : createError;
 
   /** `replace: true`: a search is the screen's state, not a trail. */
   const setSearch = (next: Domain.ListSearch | null) => {
@@ -186,7 +168,7 @@ function RouteComponent() {
       replace: true,
     });
   };
-  const nextPage = (cursor: Domain.TeamName) => {
+  const nextPage = (cursor: Domain.Email) => {
     void navigate({
       search: (prev) => ({ ...prev, after: cursor }),
       state: { nextPageOf: "after" },
@@ -202,11 +184,8 @@ function RouteComponent() {
       replace: true,
     });
   };
-  /** No search and page one: an empty page here means the shop has no teams. */
+  /** No search and page one: an empty page here means the shop has no members. */
   const unfiltered = q === undefined && after === undefined;
-
-  const workflowCount = (team: Domain.TeamSummary) =>
-    workflowCounts.find((row) => row.teamId === team.id)?.workflowCount ?? 0;
 
   const createButton = (slotted: boolean) => (
     <s-button
@@ -215,18 +194,19 @@ function RouteComponent() {
       commandFor={CREATE_MODAL}
       command="--show"
     >
-      {`${Domain.RECORD_VERB_LABEL.create} team`}
+      {`${Domain.RECORD_VERB_LABEL.create} member`}
     </s-button>
   );
 
   const renderRows = () => {
-    if (unfiltered && teams.length === 0)
+    if (unfiltered && members.length === 0)
       return (
-        <EmptyLine heading="No teams yet" action={createButton(false)}>
-          A team is who can work a task; assign one to each task in a workflow.
+        <EmptyLine heading="No members yet" action={createButton(false)}>
+          Members sign in with their email. Put each one on a team, or they have
+          nothing to do.
         </EmptyLine>
       );
-    if (q !== undefined && teams.length === 0)
+    if (q !== undefined && members.length === 0)
       return (
         <EmptyLine
           action={
@@ -240,7 +220,7 @@ function RouteComponent() {
             </s-button>
           }
         >
-          No teams match.
+          No members match.
         </EmptyLine>
       );
     return (
@@ -253,42 +233,36 @@ function RouteComponent() {
           if (nextCursor !== null) nextPage(nextCursor);
         }}
       >
-        {/* No "orders waiting on this team" link per row, though the detail
-            page carries one: this index is the teams, and the row already
-            links to the page where that drill-in lives. */}
         <s-table-header-row>
-          <s-table-header listSlot="primary">Team</s-table-header>
-          <s-table-header>Members</s-table-header>
-          <s-table-header>Workflows</s-table-header>
+          <s-table-header listSlot="primary">Email</s-table-header>
+          <s-table-header>Teams</s-table-header>
           <s-table-header>Created</s-table-header>
         </s-table-header-row>
         <s-table-body>
-          {teams.map((team) => {
-            return (
-              <s-table-row key={team.id} id={team.id}>
-                <s-table-cell>
-                  <Inline>
-                    <s-link href={`/app/teams/${team.id}`}>{team.name}</s-link>
-                    {team.memberCount === 0 && (
-                      <s-badge tone="warning">No members</s-badge>
-                    )}
-                  </Inline>
-                </s-table-cell>
-                <s-table-cell>{team.memberCount}</s-table-cell>
-                <s-table-cell>{workflowCount(team)}</s-table-cell>
-                <s-table-cell>
-                  <LocalDateTime value={team.createdAt} />
-                </s-table-cell>
-              </s-table-row>
-            );
-          })}
+          {members.map((member) => (
+            <s-table-row key={member.id} id={member.id}>
+              <s-table-cell>
+                <Token href={`/app/members/${member.id}`}>{member.email}</Token>
+              </s-table-cell>
+              <s-table-cell>
+                {member.teamCount === 0 ? (
+                  <s-badge tone="warning">No teams</s-badge>
+                ) : (
+                  member.teamCount
+                )}
+              </s-table-cell>
+              <s-table-cell>
+                <LocalDateTime value={member.createdAt} />
+              </s-table-cell>
+            </s-table-row>
+          ))}
         </s-table-body>
       </s-table>
     );
   };
 
   return (
-    <s-page heading="Teams" inlineSize="large">
+    <s-page heading="Members" inlineSize="large">
       <SocketBanner />
       {/* Unconditional, empty list included: the resource-index template keeps
           the title-bar primary action and lets the empty state carry a second
@@ -302,24 +276,23 @@ function RouteComponent() {
       {banner !== null && <s-banner tone="critical">{banner}</s-banner>}
 
       {/* The description sits in the section's head, above the search,
-          only with rows: on empty the centred empty state already says what
-          a team is, and this paragraph said it a second time. The search is
-          submitted on Enter and reads every team, not only this page; while
-          it is on, how many match and Clear search sit above it
-          ({@link SearchLine}). */}
+          only with rows: on empty the centred empty state carries this same
+          sentence, so showing both said it twice. The search is submitted
+          on Enter and reads every member, not only this page; while it is
+          on, how many match and Clear search sit above it ({@link SearchLine}). */}
       <IndexSection
-        label="Teams"
+        label="Members"
         head={
-          !(unfiltered && teams.length === 0) && (
+          !(unfiltered && members.length === 0) && (
             <>
               <s-paragraph color="subdued">
-                A team is who can work a task. Assign one to each task in a
-                workflow.
+                Members sign in with their email. Put each one on a team, or
+                they have nothing to do.
               </s-paragraph>
               {q !== undefined && matches !== null && matches > 0 && (
                 <SearchLine
                   count={matches}
-                  noun={["team", "teams"]}
+                  noun={["member", "members"]}
                   term={q}
                   onClear={() => {
                     setSearch(null);
@@ -330,7 +303,7 @@ function RouteComponent() {
                 search={
                   <ListSearchField
                     value={q ?? null}
-                    placeholder="Search by name"
+                    placeholder="Search by email"
                     onSubmit={setSearch}
                   />
                 }
@@ -344,13 +317,12 @@ function RouteComponent() {
 
       <s-modal
         id={CREATE_MODAL}
-        heading="Create team"
-        /* Reset on the way out, not on the way in: `show` can fire after a field
-           has already taken input, and a reset there wipes what was typed
-           (the members index's Create member dialog did exactly that). */
+        heading="Create member"
+        /* Reset on the way out, not on the way in: `show` can fire after the
+           field has already taken input, and a reset there wipes what was
+           typed, so Create submits an empty email. */
         onAfterHide={() => {
           form.reset();
-          setNameError(null);
         }}
       >
         <form
@@ -359,16 +331,16 @@ function RouteComponent() {
             void form.handleSubmit();
           }}
         >
-          <form.Field name="name">
+          <form.Field name="email">
             {(field) => (
-              <s-text-field
-                label="Name"
+              <s-email-field
+                label="Email"
                 name={field.name}
+                details="They sign in with this email. No Shopify account needed."
                 value={field.state.value}
-                maxLength={Domain.TEAM_NAME_MAX_LENGTH}
-                error={nameError ?? fieldError(field.state.meta.errors)}
+                maxLength={Domain.EMAIL_MAX_LENGTH}
+                error={fieldError(field.state.meta.errors)}
                 onInput={(event) => {
-                  setNameError(null);
                   field.handleChange(event.currentTarget.value);
                 }}
                 onBlur={field.handleBlur}

@@ -250,7 +250,9 @@ describe("ShopAgent workflow callables", () => {
     ]);
     expect(detail?.draftTasks?.map((s) => s.teamId)).toEqual([null, b.id]);
     expect(detail?.teams.map((t) => t.name)).toEqual(["B"]);
-    expect(await agent.listTeamWorkflows({ teamId: a.id })).toEqual([]);
+    expect(
+      await agent.listTeamWorkflows({ teamId: a.id, after: null, limit: 10 }),
+    ).toEqual({ workflows: [], nextCursor: null });
     // Off stays off; turning back on names the unassigned task.
     await agent.setWorkflowOn({ workflowId, on: false });
     expect(await agent.setWorkflowOn({ workflowId, on: true })).toEqual({
@@ -1333,7 +1335,7 @@ describe("ShopAgent workflow run callables", () => {
       Effect.gen(function* () {
         const repo = yield* Repository;
         const email = Schema.decodeUnknownSync(Domain.Email)(memberEmail);
-        yield* repo.addMember({
+        yield* repo.createMember({
           shop: shopOf(shop),
           email,
         });

@@ -27,12 +27,11 @@ import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { SocketBanner } from "@/lib/SocketBanner";
+import { DELETE_CONFIRM, DELETED_TOAST } from "@/lib/teams";
 import { useWorkflowEditorWindow } from "@/lib/workflowEditorWindow";
 import {
   copyName,
-  DELETE_WORKFLOW_WARNING,
   deleteWorkflowResultMessage,
-  DELETED_TOAST,
   itemTriggerLine,
   neverApplied,
   RENAME_FIELD_LABEL,
@@ -220,7 +219,7 @@ function RouteComponent() {
     onSuccess: async (result) => {
       if (result._tag === "Deleted") {
         await shopify.modal.hide(DELETE_MODAL);
-        shopify.toast.show(DELETED_TOAST);
+        shopify.toast.show(DELETED_TOAST.workflow);
         await navigate({ to: "/app/workflows" });
         return;
       }
@@ -307,7 +306,7 @@ function RouteComponent() {
         commandFor={editor.windowProps.id}
         command="--show"
       >
-        Edit
+        {Domain.RECORD_VERB_LABEL.edit}
       </s-button>
       <s-app-window {...editor.windowProps} />
       <s-button slot="secondary-actions" commandFor="workflow-actions">
@@ -315,14 +314,14 @@ function RouteComponent() {
       </s-button>
       <s-menu id="workflow-actions" accessibilityLabel="More actions">
         <s-button icon="edit" commandFor={RENAME_MODAL} command="--show">
-          Rename
+          {Domain.RECORD_VERB_LABEL.rename}
         </s-button>
         <s-button
           icon="duplicate"
           commandFor={DUPLICATE_MODAL}
           command="--show"
         >
-          Duplicate
+          {Domain.RECORD_VERB_LABEL.duplicate}
         </s-button>
         <s-button
           icon="delete"
@@ -330,7 +329,7 @@ function RouteComponent() {
           commandFor={DELETE_MODAL}
           command="--show"
         >
-          Delete
+          {Domain.RECORD_VERB_LABEL.delete}
         </s-button>
       </s-menu>
       <WorkflowSwitch
@@ -444,8 +443,8 @@ function RouteComponent() {
         /* Seeded from the workflow on first render and again on rename
            (`loadedName`), so opening needs no seeding. Reseed on the way out,
            not on the way in: `show` can fire after a field has already taken
-           input, and a seed there wipes what was typed (the Add member dialog
-           in `app.members.tsx` did exactly that). */
+           input, and a seed there wipes what was typed (the members index's create
+           dialog did exactly that). */
         onAfterHide={seedDuplicateForm}
       >
         <Things>
@@ -498,12 +497,12 @@ function RouteComponent() {
             duplicateMutation.mutate();
           }}
         >
-          Duplicate
+          {Domain.RECORD_VERB_LABEL.duplicate}
         </s-button>
       </s-modal>
 
       <s-modal id={DELETE_MODAL} heading={`Delete ${workflow.name}?`}>
-        <s-paragraph>{DELETE_WORKFLOW_WARNING}</s-paragraph>
+        <s-paragraph>{DELETE_CONFIRM}</s-paragraph>
         <s-button
           slot="secondary-actions"
           commandFor={DELETE_MODAL}
@@ -521,7 +520,7 @@ function RouteComponent() {
             deleteMutation.mutate();
           }}
         >
-          Delete
+          {Domain.RECORD_VERB_LABEL.delete}
         </s-button>
       </s-modal>
     </s-page>

@@ -83,15 +83,6 @@ export const TURN_OFF_BODY =
 export const RENAME_HEADING = "Rename workflow";
 export const RENAME_FIELD_LABEL = "New name";
 export const RENAMED_TOAST = "Workflow renamed";
-export const DELETED_TOAST = "Workflow deleted";
-
-/**
- * The delete dialog's body, both surfaces. It names what survives rather than
- * only what goes: a delete removes the definition, its tasks and its draft,
- * and every run stays on its order (the merchant copy of `Domain.Workflow`).
- */
-export const DELETE_WORKFLOW_WARNING =
-  "This workflow will be permanently deleted. Items already on it keep their tasks.";
 
 /**
  * The trigger line: what has to be true of an order for this workflow to

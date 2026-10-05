@@ -282,7 +282,7 @@ function RouteComponent() {
       commandFor={CREATE_MODAL}
       command="--show"
     >
-      Create workflow
+      {`${Domain.RECORD_VERB_LABEL.create} workflow`}
     </s-button>
   );
 
@@ -320,7 +320,7 @@ function RouteComponent() {
       );
     return (
       <s-table
-        paginate
+        paginate={after !== undefined || nextCursor !== null}
         hasPreviousPage={after !== undefined}
         hasNextPage={nextCursor !== null}
         onPreviousPage={previousPage}
@@ -428,7 +428,7 @@ function RouteComponent() {
         heading="Create workflow"
         /* Reset on the way out, not on the way in: `show` can fire after a
            field has already taken input, and a reset there wipes what was
-           typed (the Add member dialog in `app.members.tsx` did exactly that). */
+           typed (the members index's create dialog did exactly that). */
         onAfterHide={resetCreateForm}
       >
         <Fields>
@@ -473,7 +473,7 @@ function RouteComponent() {
             createMutation.mutate();
           }}
         >
-          Create
+          {Domain.RECORD_VERB_LABEL.create}
         </s-button>
       </s-modal>
     </s-page>

@@ -112,7 +112,7 @@ const DevSeedInput = Schema.Struct({
  * test runner: Playwright is one of two peer callers, and an `e2e` name invites
  * someone editing tests to reshape the prototyping fixture unaware.
  *
- * Writes through `D1Primary` for the same reason `Repository.addMember` does:
+ * Writes through `D1Primary` for the same reason `Repository.createMember` does:
  * the sign-in gate reads membership off the primary, and a seed that landed on
  * a replica-lagged path could let the very next `/login` deny a member it just
  * granted.
@@ -186,7 +186,7 @@ export const Route = createFileRoute("/api/dev/seed")({
               for (const email of members) {
                 if (keepIdentities !== true)
                   yield* sql`delete from User where email = ${email}`;
-                yield* repository.addMember({ shop, email });
+                yield* repository.createMember({ shop, email });
               }
               const memberIds = new Map(
                 (yield* repository.listMembers(shop)).map((member) => [
@@ -325,9 +325,8 @@ export const Route = createFileRoute("/api/dev/seed")({
               // Last, once every write has landed, and with the PRE-seed ids:
               // a seed rewrites `Member` wholesale, so a member holding an
               // open socket is carrying a `memberId` and `teamIds` that no
-              // longer exist. This is the same close the members page and the team page issue
-              // after their own D1 writes (`app.members`,
-              // `app.teams.$teamId`) — the socket reconnects through the
+              // longer exist. This is the same close the member page and the team page issue
+              // after their own D1 writes — the socket reconnects through the
               // Worker's gate and comes back with the membership this seed
               // just wrote, and `/shop/$shop` invalidates its router on the
               // close so the page's loader data follows.
