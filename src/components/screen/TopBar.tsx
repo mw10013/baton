@@ -15,9 +15,10 @@ import { BETWEEN_LINES } from "./layout";
  * (`.print-hide`): a printed workflow page is a job ticket, and the ticket
  * needs no sign-out button.
  *
- * The link goes to the workflows list and lands on the list the member left,
- * because the layout's middleware puts their context on every link built
- * under `/shop/$shop` (`MemberSearch` in `src/routes/shop.$shop.tsx`).
+ * The link goes to the workflows list with the state, team and search the
+ * member chose, because the layout's middleware puts them on every link built
+ * under `/shop/$shop`; it opens the list at the first page, as every link
+ * does (`MemberSearch` in `src/routes/shop.$shop.tsx`).
  * `.member-bar-home` in `styles.css` rings the mark on hover and focus, so
  * the mark reads as the control. The shop domain is inside the same link
  * rather than beside it, because the mark alone is 24 px and Polaris's

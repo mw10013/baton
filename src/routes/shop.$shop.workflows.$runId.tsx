@@ -1,4 +1,8 @@
-import { createFileRoute } from "@tanstack/react-router";
+import {
+  createFileRoute,
+  useLocation,
+  useRouter,
+} from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { Effect, Schema } from "effect";
 
@@ -11,6 +15,7 @@ import {
 } from "@/components/MemberRun";
 import { RunSteps } from "@/components/RunSteps";
 import { BlockModal, RunNoteModal } from "@/components/RunTextModals";
+import { BackLink } from "@/components/screen/BackLink";
 import { Inline } from "@/components/screen/Inline";
 import { Lines } from "@/components/screen/Lines";
 import { PageBody } from "@/components/screen/PageBody";
@@ -75,6 +80,46 @@ const getLoaderData = createServerFn({ method: "GET" })
       }),
     ),
   );
+
+/**
+ * The way back to the workflows list ({@link BackLink}), above the page heading:
+ * the controls table's row for going back to the list a page was opened from
+ * (`Control` in `Screen.ts`). A `link` slot (`CopySlot`) named for the list,
+ * with a back arrow so it reads as the way back before it is read at all.
+ *
+ * Not `s-page`'s `breadcrumb-actions` slot: under about 500px the page folds
+ * that slot into a "…" button beside the heading, which on a phone hides the
+ * one control this exists to make plain. `MemberBar`'s mark goes to the list
+ * too, but it reads as the shop's name and a logo, and on a phone, where the
+ * browser's Back is seldom pressed, a member looking for the way back does not
+ * find it there.
+ *
+ * **It returns to the list as the member left it.** When a row of the list
+ * opened this page, the entry before is the list at its depth
+ * (`fromWorkflowsList`, `MemberSearch` in `shop.$shop.tsx`), so the link is a
+ * history step back and the router restores the scroll: the member lands on
+ * the row they opened. Anywhere else, such as a shared link or a new tab, it
+ * opens the list at the first page, with the state, team and search the
+ * layout carries. The `href` is that second target, so open-in-new-tab gets
+ * it too.
+ */
+function WorkflowsLink({ shop }: { readonly shop: Domain.Shop }) {
+  const router = useRouter();
+  const fromWorkflowsList = useLocation({
+    select: (location) => location.state.fromWorkflowsList === true,
+  });
+  const list = { to: "/shop/$shop/workflows", params: { shop } } as const;
+  return (
+    <BackLink
+      label="Workflows"
+      href={router.buildLocation(list).href}
+      onNavigate={() => {
+        if (fromWorkflowsList) router.history.back();
+        else void router.navigate(list);
+      }}
+    />
+  );
+}
 
 export const Route = createFileRoute("/shop/$shop/workflows/$runId")({
   loader: ({ params }) =>
@@ -192,6 +237,7 @@ function RouteComponent() {
     return (
       <>
         <MemberBar shop={shop} email={memberEmail} />
+        <WorkflowsLink shop={shop} />
         <s-page heading="Workflow not found" inlineSize="small">
           <s-section accessibilityLabel="Workflow not found">
             <s-paragraph color="subdued">
@@ -236,12 +282,7 @@ function RouteComponent() {
   return (
     <>
       <MemberBar shop={shop} email={memberEmail} />
-      {/* No breadcrumb: `MemberBar` sits directly above this heading and its
-          mark is the link to `/shop/$shop/workflows`, the workflows list. A second
-          link to the same place, a stride below the first, is one link too
-          many — and the mark's link lands on the list the member left, state,
-          team and depth included, because this page's URL carries their
-          context too (`MemberSearch` in `shop.$shop.tsx`). */}
+      <WorkflowsLink shop={shop} />
       {/* The order number heads the page and the item heads its body.
           `s-page` cuts its heading to one line, and an item title is Shopify
           text of up to 255 characters; this page is the title's home, where

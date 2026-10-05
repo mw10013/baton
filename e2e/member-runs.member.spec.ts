@@ -132,6 +132,8 @@ const seedRuns = (
      * the cut is about how many rows the read returns, not what is on them.
      */
     readonly withBulk?: boolean;
+    /** How many bulk orders `withBulk` seeds; {@link BULK_COUNT} when absent. */
+    readonly bulkCount?: number;
   },
 ) =>
   seedMembers(
@@ -216,16 +218,19 @@ const seedRuns = (
           ]
         : []),
       ...(options.withBulk === true
-        ? Array.from({ length: BULK_COUNT }, (_unused, index) => ({
-            n: BULK_FIRST + index,
-            lineItems: [
-              {
-                title: `E2E Bulk Ring ${String(index + 1)}`,
-                quantity: 1,
-                tags: [RING_TAG],
-              },
-            ],
-          }))
+        ? Array.from(
+            { length: options.bulkCount ?? BULK_COUNT },
+            (_unused, index) => ({
+              n: BULK_FIRST + index,
+              lineItems: [
+                {
+                  title: `E2E Bulk Ring ${String(index + 1)}`,
+                  quantity: 1,
+                  tags: [RING_TAG],
+                },
+              ],
+            }),
+          )
         : []),
     ],
     { keepIdentities: options.keepIdentities },
@@ -370,6 +375,10 @@ const selectState = async (
  * (`MemberBar.tsx`).
  */
 const homeLink = (page: Page) => page.locator("a.member-bar-home");
+
+/** The workflow page's way back, above its heading (`WorkflowsLink`). */
+const workflowsLink = (page: Page) =>
+  page.getByRole("link", { name: "Workflows", exact: true });
 
 /** The `team` the address bar is carrying, or `null`. */
 const teamParam = (page: Page) => new URL(page.url()).searchParams.get("team");
@@ -1066,17 +1075,15 @@ test("the team is in the URL and switching teams replaces it", async ({
 });
 
 /**
- * Depth is context too, and it is the one that costs the most to lose: a
- * member who pressed Show more and opened a row from the second page comes
- * back to page one and has to find their place by scrolling. So `limit` rides
- * in the URL and the loader reads it, and the deepened list is what a cold
+ * Depth is in the list's URL and the loader reads it, so the history entry the
+ * Workflows link steps back to holds it and the deepened list is what a cold
  * request paints.
  *
  * **A depth out of range clamps rather than fails** (`Domain.clampRunLimit`):
  * the address bar is text a member can edit, and the router's error boundary
  * over a shop's work is a worse answer than a list.
  */
-test("depth is in the URL and a return lands on the same depth", async ({
+test("depth is in the list's URL and clamps into range", async ({
   browser,
 }) => {
   const config = seedConfig();
@@ -1119,17 +1126,15 @@ test("depth is in the URL and a return lands on the same depth", async ({
 });
 
 /**
- * The two ways home are one screen. The bar's mark is the member area's only
- * standing link back, and the browser's Back is the other way; both have to
- * land on the list the member left, filters and depth included, or the filter
- * is a thing you set once per drill-down.
+ * The bar's mark and the browser's Back land on the state and team the member
+ * chose, or the filter is a thing you set once per drill-down.
  *
  * Nothing in `MemberBar` or in the row's link names a search key: the layout's
  * middleware puts the context on every link built under `/shop/$shop`
  * (`MemberSearch` in `src/routes/shop.$shop.tsx`), which is why the workflow page's
  * URL carries filters it does not itself read.
  */
-test("the bar's mark returns to the screen the member left", async ({
+test("the bar's mark and Back keep the state and team the member chose", async ({
   browser,
 }) => {
   const config = seedConfig();
@@ -1162,6 +1167,127 @@ test("the bar's mark returns to the screen the member left", async ({
   await expect(page.locator(`s-page[heading="${RING_ORDER}"]`)).toBeVisible();
   await page.goBack();
   await expectLeftScreen();
+});
+
+/**
+ * **The Workflows link returns to the list as the member left it.** A row of
+ * the list marks the entry it pushes (`fromWorkflowsList`), so the link is a
+ * history step back to the list's own entry: its URL holds the depth and the
+ * router restores the scroll, and the member lands on the row they opened
+ * (`WorkflowsLink` in `shop.$shop.workflows.$runId.tsx`).
+ */
+test("the Workflows link returns to the list as the member left it", async ({
+  browser,
+}) => {
+  const config = seedConfig();
+  await seedRuns(config, {
+    cutMembers: [MAKER, MATE],
+    keepIdentities: true,
+    withBulk: true,
+  });
+  const page = await openRuns(browser, config, mateState, "ready");
+  await page.getByRole("button", { name: "Show 2 more of 2" }).click();
+  await expect(page).toHaveURL(/[?&]limit=50(?:&|$)/u);
+  const rows = page.getByRole("link", { name: ORDER_LINK });
+  await expect(rows).toHaveCount(27);
+
+  const opened = rows.last();
+  /* The row's accessible name, `Open <item> on <order>`, read off its
+     snapshot so the row can be found again after the round trip. */
+  const name = /link "(?<name>[^"]+)"/u.exec(await opened.ariaSnapshot())
+    ?.groups?.name;
+  expect(name).toMatch(ORDER_LINK);
+  await opened.click();
+  await expect(workflowsLink(page)).toBeVisible();
+  /* The workflow page's URL carries no depth: it is the list's, not the member's. */
+  await expect(page).toHaveURL((url) => !url.searchParams.has("limit"));
+
+  await workflowsLink(page).click();
+  await expect(page).toHaveURL(/[?&]limit=50(?:&|$)/u);
+  await expect(rows).toHaveCount(27);
+  await expect(
+    page.getByRole("link", { name: String(name), exact: true }),
+  ).toBeInViewport();
+});
+
+/**
+ * **Depth stays with one visit to the list.** No link copies `limit`, so the
+ * bar's mark opens the list at the first page, with the state and team the
+ * member chose (`MemberSearch` in `shop.$shop.tsx`).
+ */
+test("the bar's mark opens the list at the first page", async ({ browser }) => {
+  const config = seedConfig();
+  await seedRuns(config, {
+    cutMembers: [MAKER, MATE],
+    keepIdentities: true,
+    withBulk: true,
+  });
+  const page = await openRuns(browser, config, mateState, "ready");
+  await page.getByRole("button", { name: "Show 2 more of 2" }).click();
+  await expect(page).toHaveURL(/[?&]limit=50(?:&|$)/u);
+  await page.getByRole("link", { name: ORDER_LINK }).last().click();
+  await expect(workflowsLink(page)).toBeVisible();
+
+  await homeLink(page).click();
+  await expect(page).toHaveURL(/[?&]state=ready(?:&|$)/u);
+  await expect(page).toHaveURL((url) => !url.searchParams.has("limit"));
+  await expect(page.getByRole("link", { name: ORDER_LINK })).toHaveCount(25);
+  await expect(
+    page.getByRole("button", { name: "Show 2 more of 2" }),
+  ).toBeVisible();
+});
+
+/**
+ * A workflow page the list did not open has no list entry before it to step
+ * back to, so its Workflows link opens the list at the first page.
+ */
+test("the Workflows link on a page the list did not open opens the list", async ({
+  browser,
+}) => {
+  const config = seedConfig();
+  await seedRuns(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
+  const page = await openRuns(browser, config, mateState, "ready");
+  const href = await rowLink(page, RING_ORDER).getAttribute("href");
+  await gotoMember(page, String(href));
+  await expect(page.locator(`s-page[heading="${RING_ORDER}"]`)).toBeVisible();
+
+  await workflowsLink(page).click();
+  await expect(
+    page.locator('s-section[accessibilityLabel="Workflows"]'),
+  ).toBeVisible();
+  await expect(page).toHaveURL(/[?&]state=ready(?:&|$)/u);
+  await expect(rowLink(page, RING_ORDER)).toBeVisible();
+});
+
+/**
+ * At `Domain.RUN_LIMIT_MAX` there is no deeper read, so the list offers no
+ * Show more: one sentence says how many show and what narrows the list to the
+ * rest (`renderMore` in `shop.$shop.workflows.index.tsx`, the controls table's
+ * row for a list cut at a depth).
+ */
+test("at the deepest read the list says how to narrow it in place of Show more", async ({
+  browser,
+}) => {
+  const config = seedConfig();
+  await seedRuns(config, {
+    cutMembers: [MAKER, MATE],
+    keepIdentities: true,
+    withBulk: true,
+    bulkCount: 101,
+  });
+  const page = await openRuns(browser, config, mateState, "ready");
+  await gotoMember(
+    page,
+    `/shop/${config.shop}/workflows?state=ready&limit=100`,
+  );
+  await expect(
+    page.getByText(
+      "Showing 100 of 103. Search or choose a team to find the rest.",
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /^Show \d+ more/u }),
+  ).toHaveCount(0);
 });
 
 /**
@@ -1421,12 +1547,9 @@ test("the run note opens in a modal and the task cards carry no note button", as
      task's line is the team name alone. */
   await expect(page.getByText(CUT_TEAM, { exact: true })).toBeVisible();
 
-  /* No breadcrumb: `MemberBar`'s mark above the heading is the link back, and
-     it is the only one — `s-page` holds none of its own. */
+  /* The way back is the page's own Workflows link, beside `MemberBar`'s mark. */
   await expect(homeLink(page)).toHaveCount(1);
-  await expect(
-    page.locator("s-page").getByRole("link", { name: config.shop }),
-  ).toHaveCount(0);
+  await expect(workflowsLink(page)).toBeVisible();
 
   const note = page.locator("s-stack#note");
   await expect(note.getByText("Note", { exact: true })).toHaveCount(0);

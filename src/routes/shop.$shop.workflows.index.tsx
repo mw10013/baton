@@ -24,6 +24,7 @@ import { SearchLine } from "@/components/screen/SearchLine";
 import { ShowMore } from "@/components/screen/ShowMore";
 import { Strip } from "@/components/screen/Strip";
 import * as Domain from "@/lib/Domain";
+import { formatNumber } from "@/lib/format";
 import { requireMember } from "@/lib/MemberAccess";
 import { memberServerFnMiddleware } from "@/lib/MemberServerFnMiddleware";
 import { ANY_OPTION_VALUE } from "@/lib/Screen";
@@ -312,16 +313,21 @@ function RouteComponent() {
    * router rather than written as a string — is what keeps middle-click and
    * open-in-new-tab working on a row; the click handler beside it turns an
    * ordinary tap into a client navigation so the socket and the query cache
-   * survive it. `MemberBar`'s mark is the same pattern pointing back the
-   * other way; the workflow page carries no breadcrumb of its own because that
-   * mark is already a link to this screen.
+   * survive it. The workflow page's Workflows link is the same pattern pointing
+   * back the other way.
    *
-   * No `search`: the layout's middleware puts the member's context on this
-   * link, and on the mark's link back, without either site naming the keys
-   * (`MemberSearch` in `shop.$shop.tsx`).
+   * No `search`: the layout's middleware puts the member's state, team and
+   * search on this link without the site naming the keys, and leaves the depth
+   * here (`MemberSearch` in `shop.$shop.tsx`). The history entry is marked
+   * `fromWorkflowsList`, which is what lets the Workflows link step back to
+   * this entry, depth and scroll included, rather than open the list afresh.
    */
   const workflowLocation = (runId: string) =>
-    ({ to: "/shop/$shop/workflows/$runId", params: { shop, runId } }) as const;
+    ({
+      to: "/shop/$shop/workflows/$runId",
+      params: { shop, runId },
+      state: { fromWorkflowsList: true },
+    }) as const;
 
   const showTeam = Domain.rowShowsTeam(teams.length, team, q);
 
@@ -602,15 +608,34 @@ function RouteComponent() {
   const renderRecent = (entry: Domain.RecentItem) =>
     entry.kind === "task" ? renderDone(entry) : renderClosed(entry);
 
-  /** The deeper read ({@link ShowMore}): it asks the object for more rather than revealing rows the page holds. */
-  const renderMore = (hidden: number) => (
-    <ShowMore
-      hidden={hidden}
-      page={Domain.RUN_PAGE}
-      disabled={limit >= Domain.RUN_LIMIT_MAX}
-      onShowMore={showMore}
-    />
-  );
+  /**
+   * The deeper read ({@link ShowMore}): it asks the object for more rather
+   * than revealing rows the page holds. At {@link Domain.RUN_LIMIT_MAX} there
+   * is no deeper read, so a sentence takes the button's place: how many show
+   * and what narrows the list to the rest, the search, and the Team select
+   * when there is one to choose. Under a search the team is ignored, so the
+   * search is the only thing to narrow.
+   */
+  const renderMore = (shown: number, total: number) => {
+    const narrow = (() => {
+      if (q !== null) return "Narrow the search to find the rest.";
+      if (teams.length > 1 && team === null)
+        return "Search or choose a team to find the rest.";
+      return "Search to find the rest.";
+    })();
+    return (
+      <ShowMore
+        hidden={total - shown}
+        page={Domain.RUN_PAGE}
+        end={
+          limit >= Domain.RUN_LIMIT_MAX
+            ? `Showing ${formatNumber(shown)} of ${formatNumber(total)}. ${narrow}`
+            : null
+        }
+        onShowMore={showMore}
+      />
+    );
+  };
 
   /**
    * The team filter, a select rather than buttons because the team list is
@@ -733,7 +758,7 @@ function RouteComponent() {
         {Domain.workflowsListStateIsDone(state)
           ? list.recent.map(renderRecent)
           : list.items.map(renderItem)}
-        {hidden > 0 && renderMore(hidden)}
+        {hidden > 0 && renderMore(rows.length, total)}
       </>
     );
   };
@@ -757,7 +782,7 @@ function RouteComponent() {
   const renderSearch = (text: string) => {
     const shown = list.items.length + list.recent.length;
     const matches = list.matches ?? shown;
-    const more = matches > shown ? renderMore(matches - shown) : null;
+    const more = matches > shown ? renderMore(shown, matches) : null;
     if (matches === 0)
       return (
         <IndexSection

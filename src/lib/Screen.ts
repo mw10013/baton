@@ -114,6 +114,8 @@ export type CopySlot = typeof CopySlot.Type;
  * | a verb that replaces a run with a record on it (started, done, blocked, or a note) | the verb's modal carries the consequence as its `confirm` slot: what is lost; nothing when the run is untouched   | a second modal; a warning on an untouched run                |
  * | a filter that can be off                                                          | a select whose first option is "Any <noun>" with {@link ANY_OPTION_VALUE} as its value                            | an option with an empty value                                |
  * | a filter beside a search                                                          | a select with its label hidden on screen and kept for screen readers; the main filter left of the search          | a visible label over the row                                 |
+ * | a list cut at a depth                                                             | a tertiary button "Show <n> more of <m>" under the rows; at the deepest read, one sentence saying how many show and what narrows the list | a disabled button; pages                                     |
+ * | going back from a page to the list that opened it                                 | a back-arrow link named for the list on its own line above the heading; a history step back when the list opened the page, so its depth and scroll return | the app's mark as the only way back; a breadcrumb slot a phone folds into a menu |
  */
 export const Control = Schema.Literals([
   "button",
@@ -215,6 +217,7 @@ export type ScreenTemplate = typeof ScreenTemplate.Type;
  * | table frame    | a table inside a details card, framed                                               | `TableFrame`                        | the border and its rounded corners                                                                         | details                           | a table floating in a padded card                   |
  * | end            | content set at the end of its cell: a table's action column                          | `End`                               | the end edge                                                                                               | details                           | a column of buttons at ragged positions             |
  * | empty aside    | an aside with nothing in it, holding the page's aside column open                    | `EmptyAside`                        | the aside column's width while nothing is selected                                                         | editor                            | a card with nothing in it                           |
+ * | back link      | the way back to the list a page was opened from, on its own line above the heading   | `BackLink`                          | lined up with the page's column, the arrow on its edge                                                     | details                           | a breadcrumb slot a phone folds into a menu         |
  * | top bar        | the member area's bar above the page: the mark and shop as the link home, the session at the end | `TopBar`  | the bar's border and padding; start and end, wrapping on a narrow phone                                    | index, details                    | anything that belongs to the screen below it        |
  * | mark           | the Baton mark                                                                       | `BatonMark`                         | a block that never shrinks in a row                                                                        | index, details                    | text beside it inside the svg                       |
  * | selectable card | a card that can be chosen: a task card in the workflow editor                       | `SelectableCard`                    | the card's padding; the chosen card filled with a strong border                                            | editor                            | a card that moves when it becomes choosable         |
@@ -262,6 +265,7 @@ export const ScreenPart = Schema.Literals([
   "table frame",
   "end",
   "empty aside",
+  "back link",
   "top bar",
   "mark",
   "selectable card",

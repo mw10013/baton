@@ -2,6 +2,7 @@ import { createFileRoute, notFound } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { Effect, Schema } from "effect";
 
+import { BackLink } from "@/components/screen/BackLink";
 import { Clamp } from "@/components/screen/Clamp";
 import { ClampedProse } from "@/components/screen/ClampedProse";
 import { EmptyLine } from "@/components/screen/EmptyLine";
@@ -114,224 +115,242 @@ function RouteComponent() {
   };
   const href = "/dev/kit";
   return (
-    <s-page heading="Kit" inlineSize={width}>
-      <IndexSection
-        label="Workflows list"
-        head={
-          <>
-            <Strip
-              cells={STATES.map((state, index) => ({
-                key: state,
-                label: STATE_LABEL[state],
-                count: index * 7,
-                chosen: index === 2,
-                onSelect: noop,
-              }))}
-            />
-            <FilterRow search={search} secondary={select("Team", "Any team")} />
-          </>
-        }
-      >
-        <ResourceRow
-          head={{ lead: "#1008", title: "Signet ring · Gold", trail: "×2" }}
-          menu={menu}
-          href={href}
-          onNavigate={noop}
-          accessibilityLabel="Open Signet ring · Gold ×2 on #1008"
+    <>
+      <BackLink label="Workflows" href={href} onNavigate={noop} />
+      <s-page heading="Kit" inlineSize={width}>
+        <IndexSection
+          label="Workflows list"
+          head={
+            <>
+              <Strip
+                cells={STATES.map((state, index) => ({
+                  key: state,
+                  label: STATE_LABEL[state],
+                  count: index * 7,
+                  chosen: index === 2,
+                  onSelect: noop,
+                }))}
+              />
+              <FilterRow
+                search={search}
+                secondary={select("Team", "Any team")}
+              />
+            </>
+          }
         >
-          <RowLine>
-            <Name>Engrave crest</Name>
-            <s-text color="subdued"> (Engraving)</s-text>
-          </RowLine>
-          <RowLine>
-            <Clamp color="subdued">
-              Crest file missing from the order — asked the customer.
-            </Clamp>
-          </RowLine>
-          <RowLine>
-            <s-text color="subdued">Step 2 of 3</s-text>
-          </RowLine>
-        </ResourceRow>
-        <ResourceRow
-          head={{ lead: "#1026", title: TITLE_255, trail: null }}
-          menu={menu}
-          href={href}
-          onNavigate={noop}
-          accessibilityLabel="Open the 255-character title on #1026"
-        >
-          <RowLine>
-            <Name>Engrave</Name>
-            <s-text color="subdued"> (Engraving)</s-text>
-          </RowLine>
-          <RowLine>
-            <Clamp color="subdued">{REASON_1000}</Clamp>
-          </RowLine>
-          <RowLine>
-            <s-text color="subdued">Cut, engrave and oil · Step 2 of 3</s-text>
-          </RowLine>
-        </ResourceRow>
-        <ResourceRow
-          head={{
-            lead: ORDER,
-            title: `${TITLE_255} · ${VARIANT}`,
-            trail: "×12",
-          }}
-          menu={menu}
-          href={href}
-          onNavigate={noop}
-          accessibilityLabel={`Open the longest piece on ${ORDER}`}
-        >
-          <RowLine>
-            <Name>{TASK_64_B}</Name>
-            <s-text color="subdued">{` (${TEAM_32}) · Started by `}</s-text>
-            <Token color="subdued">{EMAIL_60}</Token>
-          </RowLine>
-          <RowLine>
-            <Name color="subdued">{WORKFLOW_64}</Name>
-            <s-text color="subdued"> · Step 14 of 18</s-text>
-          </RowLine>
-        </ResourceRow>
-        <ResourceRow
-          head={{
-            lead: "#1030",
-            title: "Heirloom leather journal",
-            trail: null,
-          }}
-          menu={menu}
-          href={href}
-          onNavigate={noop}
-          accessibilityLabel="Open a 20-task step on #1030"
-        >
-          {TASKS_20.map((task, index) => (
-            <RowLine key={index}>
-              <Name>{task}</Name>
-              <s-text color="subdued">{` (${TEAM_32}) · Ready`}</s-text>
+          <ResourceRow
+            head={{ lead: "#1008", title: "Signet ring · Gold", trail: "×2" }}
+            menu={menu}
+            href={href}
+            onNavigate={noop}
+            accessibilityLabel="Open Signet ring · Gold ×2 on #1008"
+          >
+            <RowLine>
+              <Name>Engrave crest</Name>
+              <s-text color="subdued"> (Engraving)</s-text>
             </RowLine>
-          ))}
-          <RowLine>
-            <s-text color="subdued">Step 2 of 18</s-text>
-          </RowLine>
-        </ResourceRow>
-        <ResourceRow
-          head={{
-            lead: "#1030",
-            title: "Heirloom leather journal",
-            trail: null,
-          }}
-          menu={null}
-          href={href}
-          onNavigate={noop}
-          accessibilityLabel="Open a done row on #1030"
+            <RowLine>
+              <Clamp color="subdued">
+                Crest file missing from the order — asked the customer.
+              </Clamp>
+            </RowLine>
+            <RowLine>
+              <s-text color="subdued">Step 2 of 3</s-text>
+            </RowLine>
+          </ResourceRow>
+          <ResourceRow
+            head={{ lead: "#1026", title: TITLE_255, trail: null }}
+            menu={menu}
+            href={href}
+            onNavigate={noop}
+            accessibilityLabel="Open the 255-character title on #1026"
+          >
+            <RowLine>
+              <Name>Engrave</Name>
+              <s-text color="subdued"> (Engraving)</s-text>
+            </RowLine>
+            <RowLine>
+              <Clamp color="subdued">{REASON_1000}</Clamp>
+            </RowLine>
+            <RowLine>
+              <s-text color="subdued">
+                Cut, engrave and oil · Step 2 of 3
+              </s-text>
+            </RowLine>
+          </ResourceRow>
+          <ResourceRow
+            head={{
+              lead: ORDER,
+              title: `${TITLE_255} · ${VARIANT}`,
+              trail: "×12",
+            }}
+            menu={menu}
+            href={href}
+            onNavigate={noop}
+            accessibilityLabel={`Open the longest piece on ${ORDER}`}
+          >
+            <RowLine>
+              <Name>{TASK_64_B}</Name>
+              <s-text color="subdued">{` (${TEAM_32}) · Started by `}</s-text>
+              <Token color="subdued">{EMAIL_60}</Token>
+            </RowLine>
+            <RowLine>
+              <Name color="subdued">{WORKFLOW_64}</Name>
+              <s-text color="subdued"> · Step 14 of 18</s-text>
+            </RowLine>
+          </ResourceRow>
+          <ResourceRow
+            head={{
+              lead: "#1030",
+              title: "Heirloom leather journal",
+              trail: null,
+            }}
+            menu={menu}
+            href={href}
+            onNavigate={noop}
+            accessibilityLabel="Open a 20-task step on #1030"
+          >
+            {TASKS_20.map((task, index) => (
+              <RowLine key={index}>
+                <Name>{task}</Name>
+                <s-text color="subdued">{` (${TEAM_32}) · Ready`}</s-text>
+              </RowLine>
+            ))}
+            <RowLine>
+              <s-text color="subdued">Step 2 of 18</s-text>
+            </RowLine>
+          </ResourceRow>
+          <ResourceRow
+            head={{
+              lead: "#1030",
+              title: "Heirloom leather journal",
+              trail: null,
+            }}
+            menu={null}
+            href={href}
+            onNavigate={noop}
+            accessibilityLabel="Open a done row on #1030"
+          >
+            <RowLine>
+              <Name>{TASK_64}</Name>
+              <s-text color="subdued"> · Done by you · 12:51 PM</s-text>
+            </RowLine>
+          </ResourceRow>
+          <ShowMore hidden={40} page={25} end={null} onShowMore={noop} />
+        </IndexSection>
+        <IndexSection
+          label="Search"
+          head={
+            <>
+              <SearchLine
+                count={3}
+                noun={["workflow", "workflows"]}
+                term="#1030"
+                onClear={noop}
+              />
+              <FilterRow search={search} />
+            </>
+          }
         >
-          <RowLine>
+          <EmptyLine action={<s-button>Clear search</s-button>}>
+            No workflow matches #9999
+          </EmptyLine>
+        </IndexSection>
+        <IndexSection
+          label="Orders index"
+          head={
+            <>
+              <Strip
+                cells={ORDER_STRIP.map((key, index) => ({
+                  key,
+                  label: Domain.ORDERS_SHOW_LABEL[key],
+                  count: 1000 + index * 120,
+                  chosen: index === 0,
+                  onSelect: noop,
+                }))}
+              />
+              <FilterRow
+                main={select("Show", "Open")}
+                search={search}
+                secondary={select("Team", "Any team")}
+              />
+            </>
+          }
+        >
+          <s-table>
+            <s-table-header-row>
+              <s-table-header listSlot="primary">Order</s-table-header>
+              <s-table-header listSlot="secondary">Tag</s-table-header>
+              <s-table-header listSlot="inline">Member</s-table-header>
+            </s-table-header-row>
+            <s-table-body>
+              <s-table-row>
+                <s-table-cell>
+                  <Token>{ORDER}</Token>
+                </s-table-cell>
+                <s-table-cell>
+                  <Token color="subdued">{TAG_255}</Token>
+                </s-table-cell>
+                <s-table-cell>
+                  <Token>{EMAIL_60}</Token>
+                </s-table-cell>
+              </s-table-row>
+            </s-table-body>
+          </s-table>
+        </IndexSection>
+        <IndexSection label="Deepest read">
+          <ShowMore
+            hidden={140}
+            page={25}
+            end="Showing 100 of 240. Search or choose a team to find the rest."
+            onShowMore={noop}
+          />
+        </IndexSection>
+        <IndexSection label="Empty">
+          <EmptyLine
+            heading="No open orders"
+            action={<s-button variant="primary">Sync open orders</s-button>}
+          >
+            Sync open orders to pull in what is on the bench, or wait for the
+            next order.
+          </EmptyLine>
+        </IndexSection>
+        <s-section heading="Text fits">
+          <s-paragraph>
             <Name>{TASK_64}</Name>
-            <s-text color="subdued"> · Done by you · 12:51 PM</s-text>
-          </RowLine>
-        </ResourceRow>
-        <ShowMore hidden={40} page={25} disabled={false} onShowMore={noop} />
-      </IndexSection>
-      <IndexSection
-        label="Search"
-        head={
-          <>
-            <SearchLine
-              count={3}
-              noun={["workflow", "workflows"]}
-              term="#1030"
-              onClear={noop}
-            />
-            <FilterRow search={search} />
-          </>
-        }
-      >
-        <EmptyLine action={<s-button>Clear search</s-button>}>
-          No workflow matches #9999
-        </EmptyLine>
-      </IndexSection>
-      <IndexSection
-        label="Orders index"
-        head={
-          <>
-            <Strip
-              cells={ORDER_STRIP.map((key, index) => ({
-                key,
-                label: Domain.ORDERS_SHOW_LABEL[key],
-                count: 1000 + index * 120,
-                chosen: index === 0,
-                onSelect: noop,
-              }))}
-            />
-            <FilterRow
-              main={select("Show", "Open")}
-              search={search}
-              secondary={select("Team", "Any team")}
-            />
-          </>
-        }
-      >
-        <s-table>
-          <s-table-header-row>
-            <s-table-header listSlot="primary">Order</s-table-header>
-            <s-table-header listSlot="secondary">Tag</s-table-header>
-            <s-table-header listSlot="inline">Member</s-table-header>
-          </s-table-header-row>
-          <s-table-body>
-            <s-table-row>
-              <s-table-cell>
-                <Token>{ORDER}</Token>
-              </s-table-cell>
-              <s-table-cell>
-                <Token color="subdued">{TAG_255}</Token>
-              </s-table-cell>
-              <s-table-cell>
-                <Token>{EMAIL_60}</Token>
-              </s-table-cell>
-            </s-table-row>
-          </s-table-body>
-        </s-table>
-      </IndexSection>
-      <IndexSection label="Empty">
-        <EmptyLine
-          heading="No open orders"
-          action={<s-button variant="primary">Sync open orders</s-button>}
-        >
-          Sync open orders to pull in what is on the bench, or wait for the next
-          order.
-        </EmptyLine>
-      </IndexSection>
-      <s-section heading="Text fits">
-        <s-paragraph>
-          <Name>{TASK_64}</Name>
-        </s-paragraph>
-        <Clamp>{`${TITLE_255} · ${VARIANT}`}</Clamp>
-        <Clamp heading>{TITLE_255}</Clamp>
-        <s-paragraph>
-          <Token color="subdued">{TAG_255}</Token>
-        </s-paragraph>
-        <Prose>{REASON_1000}</Prose>
-        <ClampedProse>{REASON_1000}</ClampedProse>
-        <s-paragraph>
-          <s-text>Started by you · Step 2 of 3 · 12:51 PM</s-text>
-        </s-paragraph>
-      </s-section>
-      <s-section heading="Line one's weight">
-        <s-paragraph>
-          <s-text type="strong">s-text type=strong: Signet ring · Gold</s-text>
-        </s-paragraph>
-        <s-paragraph>
-          <s-text {...{ fontWeight: "semibold" }}>
-            s-text fontWeight=semibold: Signet ring · Gold
-          </s-text>
-        </s-paragraph>
-        <s-heading lineClamp={2}>
-          s-heading lineClamp: Signet ring · Gold
-        </s-heading>
-        <s-clickable href={href}>
+          </s-paragraph>
+          <Clamp>{`${TITLE_255} · ${VARIANT}`}</Clamp>
+          <Clamp heading>{TITLE_255}</Clamp>
+          <s-paragraph>
+            <Token color="subdued">{TAG_255}</Token>
+          </s-paragraph>
+          <Prose>{REASON_1000}</Prose>
+          <ClampedProse>{REASON_1000}</ClampedProse>
+          <s-paragraph>
+            <s-text>Started by you · Step 2 of 3 · 12:51 PM</s-text>
+          </s-paragraph>
+        </s-section>
+        <s-section heading="Line one's weight">
+          <s-paragraph>
+            <s-text type="strong">
+              s-text type=strong: Signet ring · Gold
+            </s-text>
+          </s-paragraph>
+          <s-paragraph>
+            <s-text {...{ fontWeight: "semibold" }}>
+              s-text fontWeight=semibold: Signet ring · Gold
+            </s-text>
+          </s-paragraph>
           <s-heading lineClamp={2}>
-            s-heading in s-clickable: Signet ring · Gold
+            s-heading lineClamp: Signet ring · Gold
           </s-heading>
-        </s-clickable>
-      </s-section>
-    </s-page>
+          <s-clickable href={href}>
+            <s-heading lineClamp={2}>
+              s-heading in s-clickable: Signet ring · Gold
+            </s-heading>
+          </s-clickable>
+        </s-section>
+      </s-page>
+    </>
   );
 }

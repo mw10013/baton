@@ -12,7 +12,10 @@ import { signOutFn } from "@/lib/memberSignOut";
  * phone page that scrolls its heading away at once.
  *
  * **The mark is home** ({@link TopBar} says how): the bar is the only
- * chrome the member area has, so the mark is the only standing way home.
+ * chrome the member area has, so the mark is the only standing way home. It
+ * opens the list at the first page, as every link does. It is not the way
+ * back from a workflow page: that is the page's own Workflows link, which
+ * returns to the list as the member left it.
  *
  * `email` is the "who am I" half, and it lives here rather than under a page
  * heading so it is answered on every screen at the cost of one line on none

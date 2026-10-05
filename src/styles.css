@@ -249,6 +249,21 @@ details[open] > .live-value-summary .live-value-preview {
 }
 
 /*
+ * A page's way back to its list (`BackLink`), on its own line between the bar and
+ * `s-page`. It lines up with the page's column, which `s-page
+ * inlineSize="small"` makes 630px wide and centered, with a 1rem gutter once
+ * the viewport is narrower than that. The start padding gives back the
+ * button's own inner padding (0.625rem), so its arrow, not its hit area,
+ * sits on the column's edge; `s-button`'s host is `display: contents`, so
+ * the offset has to be on this box rather than a margin on the button.
+ */
+.member-back {
+  padding-block-start: 0.75rem;
+  padding-inline: max(1rem, calc((100% - 630px) / 2));
+  padding-inline-start: calc(max(1rem, calc((100% - 630px) / 2)) - 0.625rem);
+}
+
+/*
  * The member's workflow page prints as a job ticket: chrome and every button go.
  * `s-button` covers the page's own action slots too, so a control added
  * there needs no rule of its own.

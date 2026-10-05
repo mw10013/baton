@@ -16,20 +16,42 @@ import * as Domain from "@/lib/Domain";
 import { lenientSearchKey, ListSearchParam } from "@/lib/searchParams";
 import { ShopAgentSocketProvider } from "@/lib/ShopAgentSocketHost";
 
+declare module "@tanstack/react-router" {
+  interface HistoryState {
+    /**
+     * Set on the entry a row of the workflows list pushes when it opens the
+     * workflow page: the entry before this one is the list as the member left
+     * it, so the page's Workflows link can be the browser's Back. See
+     * {@link MemberSearch}.
+     */
+    readonly fromWorkflowsList?: true;
+  }
+}
+
 /**
- * **The member's context, and it travels.** `state`, `team`, `limit` and `q` say
+ * **The member's context, and most of it travels.** `state`, `team`, `limit` and `q` say
  * which state of the workflows list the member is looking at ({@link Domain.WorkflowsListState}), narrowed to which of their teams,
  * how far down it, and what they searched for (`Domain.RunQuery`, whose
  * search ignores the state and the team). They live here rather than on the index route, and
- * `retainSearchParams` copies them onto every link and navigation built to
- * `/shop/$shop` or anything under it, so the two ways home — the browser's
- * Back and the bar's mark (`MemberBar`) — land on the screen the member
- * left rather than on the default one. A row's link to the workflow page carries
+ * `retainSearchParams` copies `state`, `team` and `q` onto every link and navigation built to
+ * `/shop/$shop` or anything under it, so the bar's mark (`MemberBar`) and the
+ * workflow page's Workflows link land on the state, team and search the member chose
+ * rather than on the default one. A row's link to the workflow page carries
  * them without the row knowing they exist, and so will any later child of this
- * layout. `limit` is one of them because a return that lands on page one is a
- * member scrolling back to the row they were standing on. The embedded app's
- * lists follow the same rule on their own layouts: `OrdersSearch`
+ * layout. The embedded app's lists follow the same rule on their own layouts: `OrdersSearch`
  * (`app.orders.tsx`) and `WorkflowsSearch` (`app.workflows.tsx`).
+ *
+ * **Depth stays with one visit to the list.** `limit` is how far the member
+ * pressed Show more, not a choice about what to see, so no link copies it: a
+ * list reached by a link starts at {@link Domain.RUN_PAGE} rows from the top.
+ * The one return that keeps it is the history step back to the list's own
+ * entry, which the Workflows link takes when the list opened the workflow page
+ * ({@link HistoryState}'s `fromWorkflowsList`): that entry's URL still holds
+ * the depth and the router restores its scroll, so the member lands on the
+ * row they opened. A depth that followed every link stayed on the list for
+ * the rest of the session, a hundred rows from the top with nothing on screen
+ * saying why, and the only way back to one page was a detour through another
+ * state.
  *
  * Nothing here is a sharing risk: a bench tablet is one member's place, the
  * keys name a screen rather than a person, and the object narrows every
@@ -104,7 +126,7 @@ export const Route = createFileRoute("/shop/$shop")({
   validateSearch: Schema.toStandardSchemaV1(MemberSearch),
   search: {
     middlewares: [
-      retainSearchParams(["state", "team", "limit", "q"]),
+      retainSearchParams(["state", "team", "q"]),
       stripSearchParams({
         state: Domain.DEFAULT_WORKFLOWS_LIST_STATE,
         limit: Domain.RUN_PAGE,
