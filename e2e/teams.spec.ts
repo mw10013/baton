@@ -115,7 +115,7 @@ test("teams screen creates, adds members to, renames, and deletes a team", async
   const addDialog = frame.locator("s-modal#add-team-members");
   await expect(addDialog.getByText(`Add members to ${TEAM}`)).toBeVisible();
   await addDialog.getByRole("checkbox", { name: MEMBER_EMAIL }).check();
-  await frame.getByRole("button", { name: /^Add \d+$/u }).click();
+  await frame.getByRole("button", { name: "Add", exact: true }).click();
   await expect(
     frame.locator("s-table-cell").getByText(MEMBER_EMAIL, { exact: true }),
   ).toBeVisible();

@@ -742,7 +742,7 @@ function RouteComponent() {
               selectState(goTo);
             }}
           >
-            {`Go to ${STATE_LABEL[goTo]} · ${String(list.counts[goTo])}`}
+            {`Go to ${STATE_LABEL[goTo]}`}
           </s-button>
         ) : undefined
       }

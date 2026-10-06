@@ -63,7 +63,7 @@ test("the members index adds a member and the member page adds it to teams, remo
   const addDialog = frame.locator("s-modal#add-member-teams");
   for (const team of TEAMS)
     await addDialog.getByRole("checkbox", { name: team }).check();
-  await frame.getByRole("button", { name: "Add 2" }).click();
+  await frame.getByRole("button", { name: "Add", exact: true }).click();
   for (const team of TEAMS)
     await expect(
       frame.locator("s-table-cell").getByRole("link", { name: team }),

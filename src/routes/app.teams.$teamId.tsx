@@ -763,7 +763,7 @@ function RouteComponent() {
               addMutation.mutate(selected);
             }}
           >
-            {selected.length === 0 ? "Add" : `Add ${String(selected.length)}`}
+            Add
           </s-button>
         )}
       </s-modal>
