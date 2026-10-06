@@ -191,16 +191,10 @@ test("a fresh workflow turns on from the editor, then edits go through the draft
   await expect(editor.getByText("✓ Saved", { exact: false })).toHaveCount(0);
   await expect.poll(() => hoistedEnabled(turnOn)).toBe(true);
 
-  /* One click applies the tasks and turns the switch on, and the dialog says
-     both halves. */
+  /* One click applies the tasks and turns the switch on. */
   await clickHoisted(page.getByRole("button", { name: "Turn on" }));
   await expect(
     editor.getByText("starts this workflow on that item", { exact: false }),
-  ).toBeVisible();
-  await expect(
-    editor.getByText("Your tasks are applied at the same time.", {
-      exact: true,
-    }),
   ).toBeVisible();
   await editor.getByRole("button", { name: "Turn on", exact: true }).click();
   /* Applied and on: the editor now offers the other direction and nothing to

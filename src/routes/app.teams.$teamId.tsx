@@ -403,16 +403,6 @@ function RouteComponent() {
   );
 
   const renderMembers = () => {
-    if (memberCount === 0 && candidates.length === 0)
-      return (
-        <EmptyLine
-          heading="No members yet"
-          action={<s-button href="/app/members">Go to Members</s-button>}
-        >
-          This store has no members yet. Create them on Members, then put them
-          on teams.
-        </EmptyLine>
-      );
     if (memberCount === 0)
       return (
         <EmptyLine heading="Nobody on this team yet" action={addButton(false)}>
@@ -662,8 +652,7 @@ function RouteComponent() {
           input beyond its columns, so a short list came out as a full-bleed
           table with a header row and a scrollbar for one row. A modal keeps
           the inset, drops the search field when there is nothing to search,
-          shows where each candidate already works, and folds in the two
-          nobody-to-add cases App Bridge's had to hand to a second dialog. The
+          and folds in the two nobody-to-add cases App Bridge's had to hand to a second dialog. The
           member page's Add to teams dialog is its mirror, editing the same
           membership from the other side. */}
       <s-modal
@@ -679,9 +668,14 @@ function RouteComponent() {
       >
         {candidates.length === 0 ? (
           <s-paragraph>
-            {memberCount === 0
-              ? "This store has no members yet. Create them on Members, then put them on teams."
-              : "Everyone is already on this team."}
+            {memberCount === 0 ? (
+              <>
+                No members yet. Add them on{" "}
+                <s-link href="/app/members">Members</s-link>.
+              </>
+            ) : (
+              "Everyone is already on this team."
+            )}
           </s-paragraph>
         ) : (
           <Things>
@@ -725,11 +719,7 @@ function RouteComponent() {
         >
           Cancel
         </s-button>
-        {candidates.length === 0 ? (
-          <s-button slot="primary-action" variant="primary" href="/app/members">
-            Go to Members
-          </s-button>
-        ) : (
+        {candidates.length > 0 && (
           <s-button
             slot="primary-action"
             variant="primary"

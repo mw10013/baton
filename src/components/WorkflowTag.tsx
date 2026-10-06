@@ -7,7 +7,7 @@ import { Inline } from "@/components/screen/Inline";
 import { textLimitError } from "@/components/screen/TextLimit";
 import * as Domain from "@/lib/Domain";
 import * as PolarisModal from "@/lib/polarisModal";
-import { workflowResultMessage } from "@/lib/workflowShared";
+import { TAG_HELP, workflowResultMessage } from "@/lib/workflowShared";
 
 const MODAL = "workflow-tag";
 
@@ -98,9 +98,8 @@ export function WorkflowTag({
       <s-modal id={MODAL} ref={modal} heading="Edit tag">
         <Fields>
           <s-paragraph>
-            In Shopify, put this tag on the products this workflow should build.
-            Products that still have the old tag stop matching until you retag
-            them.
+            {TAG_HELP} Products that still have the old tag stop matching until
+            you retag them.
           </s-paragraph>
           <s-text-field
             label="Tag"

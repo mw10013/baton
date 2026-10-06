@@ -147,7 +147,7 @@ function RouteComponent() {
           <Things>
             <s-paragraph color="subdued">
               {isDemoMode
-                ? "Demo mode: no emails are sent — the magic link appears here after you submit."
+                ? "Demo mode: no emails are sent. The magic link appears here after you submit."
                 : "Enter your email to receive a magic sign-in link."}
             </s-paragraph>
             {resultError && <s-banner tone="critical">{resultError}</s-banner>}

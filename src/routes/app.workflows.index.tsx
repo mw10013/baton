@@ -27,7 +27,7 @@ import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { SocketBanner } from "@/lib/SocketBanner";
 import { useWorkflowEditorWindow } from "@/lib/workflowEditorWindow";
-import { workflowResultMessage } from "@/lib/workflowShared";
+import { TAG_HELP, workflowResultMessage } from "@/lib/workflowShared";
 
 const CREATE_MODAL = "create-workflow";
 const WORKFLOWS_PAGE_SIZE = 50;
@@ -444,7 +444,7 @@ function RouteComponent() {
           />
           <s-text-field
             label="Tag"
-            details="Add this tag to your products in Shopify. Their items will follow this workflow."
+            details={TAG_HELP}
             value={tag}
             {...(tagError === null ? {} : { error: tagError })}
             onInput={(event) => {

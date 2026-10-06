@@ -300,21 +300,7 @@ function RouteComponent() {
     </s-button>
   );
 
-  /** No team at all in the shop, which only page one can tell. */
-  const shopHasNoTeams =
-    teamCount === 0 && candidates.length === 0 && teamsAfter === undefined;
-
   const renderTeams = () => {
-    if (shopHasNoTeams)
-      return (
-        <EmptyLine
-          heading="No teams yet"
-          action={<s-button href="/app/teams">Go to Teams</s-button>}
-        >
-          This store has no teams yet. Create one on Teams, then add this
-          member.
-        </EmptyLine>
-      );
     if (teamCount === 0)
       return (
         <EmptyLine heading="Not on a team yet" action={addButton(false)}>
@@ -448,9 +434,14 @@ function RouteComponent() {
       >
         {candidates.length === 0 ? (
           <s-paragraph>
-            {teamCount === 0
-              ? "This store has no teams yet. Create one on Teams, then add this member."
-              : "This member is on every team."}
+            {teamCount === 0 ? (
+              <>
+                No teams yet. Create one on{" "}
+                <s-link href="/app/teams">Teams</s-link>.
+              </>
+            ) : (
+              "This member is on every team."
+            )}
           </s-paragraph>
         ) : (
           <Things>
@@ -494,11 +485,7 @@ function RouteComponent() {
         >
           Cancel
         </s-button>
-        {candidates.length === 0 ? (
-          <s-button slot="primary-action" variant="primary" href="/app/teams">
-            Go to Teams
-          </s-button>
-        ) : (
+        {candidates.length > 0 && (
           <s-button
             slot="primary-action"
             variant="primary"

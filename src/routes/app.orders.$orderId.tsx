@@ -1178,14 +1178,8 @@ function RouteComponent() {
               {renderRun(item, itemState.run, itemState.tasks)}
               {orderOpen &&
                 itemState.attachable &&
-                Domain.runIsClosed(itemState.run) && (
-                  <>
-                    <s-paragraph color="subdued">
-                      Nothing starts on this item until you choose a workflow.
-                    </s-paragraph>
-                    {workflowSelect(item, itemState.options, itemState.matched)}
-                  </>
-                )}
+                Domain.runIsClosed(itemState.run) &&
+                workflowSelect(item, itemState.options, itemState.matched)}
             </>
           );
         }

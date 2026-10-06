@@ -35,6 +35,7 @@ import {
   RENAME_FIELD_LABEL,
   RENAME_HEADING,
   RENAMED_TOAST,
+  TAG_HELP,
   turnOnBody,
   workflowResultMessage,
 } from "@/lib/workflowShared";
@@ -186,7 +187,7 @@ function RouteComponent() {
         return;
       }
       await shopify.modal.hide(DUPLICATE_MODAL);
-      shopify.toast.show(`Copied to “${result.workflow.name}”`);
+      shopify.toast.show("Workflow duplicated");
       await navigate({
         to: "/app/workflows/$workflowId/edit",
         params: { workflowId: result.workflow.id },
@@ -455,7 +456,7 @@ function RouteComponent() {
           />
           <s-text-field
             label="Tag"
-            details="In Shopify, put this tag on the products the new workflow should build."
+            details={TAG_HELP}
             value={copy.tag}
             {...(copyTagError === null ? {} : { error: copyTagError })}
             onInput={(event) => {

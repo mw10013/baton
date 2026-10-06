@@ -100,8 +100,13 @@ export const itemTriggerLine = (tag: string) =>
 export const turnOnBody = (tag: string) =>
   `Every open order with an item tagged \u201C${tag}\u201D starts this workflow on that item.`;
 
-/** The toast verb after Turn off. */
-export const TURNED_OFF = "Turned off";
+/**
+ * The tag's help, one wording wherever a tag is set (the Create workflow and
+ * Duplicate workflow dialogs, and the Edit tag dialog's first line): where
+ * the tag goes, in the present tense.
+ */
+export const TAG_HELP =
+  "In Shopify, put this tag on the products the workflow should build.";
 
 const taskList = (tasks: readonly Domain.TaskWithTeamName[]) =>
   tasks.map((task) => task.name).join(", ");

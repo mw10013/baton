@@ -1,4 +1,3 @@
-import { useAppBridge } from "@shopify/app-bridge-react";
 import { useMutation } from "@tanstack/react-query";
 import { Match, Schema } from "effect";
 
@@ -9,7 +8,6 @@ import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
 import {
   TURN_OFF_BODY,
   TURN_OFF_HEADING,
-  TURNED_OFF,
   turnOnBlocker,
 } from "@/lib/workflowShared";
 
@@ -75,7 +73,6 @@ export function WorkflowSwitch({
   readonly onMessage: (message: string | null) => void;
 }) {
   const workflowId = workflow.id;
-  const shopify = useAppBridge();
   const { agent, identified } = useShopAgent();
 
   const call = <A,>(
@@ -105,11 +102,6 @@ export function WorkflowSwitch({
            surfaces. */
         hideModal(TURN_ON_MODAL);
         hideModal(TURN_OFF_MODAL);
-        shopify.toast.show(
-          Domain.workflowIsOn(result.workflow)
-            ? "Turned on."
-            : `${TURNED_OFF}.`,
-        );
       }
       await onChanged();
     },
@@ -149,9 +141,6 @@ export function WorkflowSwitch({
       <s-modal id={TURN_ON_MODAL} heading={`Turn on ${workflow.name}?`}>
         <Things>
           <s-paragraph>{turnOnBody}</s-paragraph>
-          {appliesFirst && (
-            <s-paragraph>Your tasks are applied at the same time.</s-paragraph>
-          )}
         </Things>
         <s-button
           slot="secondary-actions"
