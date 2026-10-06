@@ -310,13 +310,15 @@ function RouteComponent() {
             <FilterRow
               main={
                 <Inline>
-                  <s-button variant="primary">All</s-button>
-                  <s-button variant="tertiary">
+                  <s-press-button variant="tertiary" pressed>
+                    All
+                  </s-press-button>
+                  <s-press-button variant="tertiary">
                     {Domain.WORKFLOW_STATE_LABEL.active}
-                  </s-button>
-                  <s-button variant="tertiary">
+                  </s-press-button>
+                  <s-press-button variant="tertiary">
                     {Domain.WORKFLOW_STATE_LABEL.inactive}
-                  </s-button>
+                  </s-press-button>
                 </Inline>
               }
               search={search}

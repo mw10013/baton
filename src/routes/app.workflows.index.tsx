@@ -266,14 +266,15 @@ function RouteComponent() {
     q === undefined && state === undefined && after === undefined;
 
   const stateButton = (label: string, value?: Domain.WorkflowsIndexState) => (
-    <s-button
-      variant={state === value ? "primary" : "tertiary"}
+    <s-press-button
+      variant="tertiary"
+      pressed={state === value}
       onClick={() => {
         setFilters({ state: value ?? null });
       }}
     >
       {label}
-    </s-button>
+    </s-press-button>
   );
 
   const createButton = (slotted: boolean) => (
