@@ -1748,8 +1748,8 @@ export const ListOrdersInput = Schema.Struct({
    * or cancelled order and only open runs have current tasks
    * ({@link currentTasks}). A blocked run holds no team: its team cannot
    * move it, and `RunCounts.blocked` is its alarm. A team with no members
-   * still matches, so the team page's drill-in shows the orders that team
-   * needs a member for.
+   * still matches, so the filter shows the orders that team needs a member
+   * for.
    *
    * Always send the key. `ShopAgent.listOrders` parses with
    * `onExcessProperty: "error"`, and an omitted key is a different failure

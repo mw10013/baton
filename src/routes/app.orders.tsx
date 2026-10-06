@@ -35,8 +35,7 @@ declare module "@tanstack/react-router" {
  * `show` is Open. `?q=` is the search (`Domain.searchTerm`): it searches every
  * stored order and the filters are then ignored (`Domain.ListOrdersInput.q`),
  * though they stay in the URL so Clear search returns to them. `?team=` keeps
- * only orders waiting on that team, which is the link the team page drills in
- * with. An old `?view=`, `?position=` or `?issues=` is not a key and is
+ * only orders waiting on that team. An old `?view=`, `?position=` or `?issues=` is not a key and is
  * dropped by the first navigation.
  * `?after=` is the page, as the keyset cursor it starts after; an absent
  * `after` is page one.

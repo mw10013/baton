@@ -435,8 +435,7 @@ function RouteComponent() {
    *
    * Show is the main filter ({@link Domain.OrdersShow}), and the strip sets
    * the same value. Team is a select rather than buttons: the
-   * team list is unbounded. The primary way in is the drill-in from the team
-   * page, which sets `?team=`. It keeps the orders waiting on the team
+   * team list is unbounded. It sets `?team=` and keeps the orders waiting on the team
    * ({@link Domain.ListOrdersInput} `team`). Under Fulfilled it can only match nothing, because a closed
    * order waits on no team; that reads as an
    * empty list with its text, which is better than a control that disappears.
@@ -496,7 +495,7 @@ function RouteComponent() {
               {name}
             </s-option>
           ))}
-          {/* A link that set `?team=` outlives the team it named. Without
+          {/* A bookmarked `?team=` outlives the team it named. Without
             this the control would read "Any team" while the list stayed
             filtered to nothing. */}
           {team !== null && !teamName.has(team) && (

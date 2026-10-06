@@ -509,18 +509,10 @@ function RouteComponent() {
           and a second mark for one fault reads as two. The teams index keeps
           its badge, where the row is the only place the fact shows. */}
       {addButton(true)}
-      {/* The drill-in that makes the orders filter discoverable from the
-          suspicion that prompts it — "is this team backed up?" — rather than
-          from browsing a select. `?team=` means waiting on: the orders whose
-          current task is this team's right now (open orders only, see
-          `Domain.ListOrdersInput.team`), not every order it ever touched. Order positions stay on Orders; this page is the team's members
-          and the workflows that use it, which is configuration, not run state. */}
-      <s-button
-        slot="secondary-actions"
-        href={`/app/orders?team=${encodeURIComponent(team.id)}`}
-      >
-        Orders waiting on this team
-      </s-button>
+      {/* No link to this team's orders: this page is the team's members
+          and the workflows that use it, which is configuration, not order
+          state. The orders screen's Team filter answers "is this team backed
+          up?", and a link here would pick one order state over the others. */}
       <s-button slot="secondary-actions" commandFor="team-actions">
         More actions
       </s-button>
