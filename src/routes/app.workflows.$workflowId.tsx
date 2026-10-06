@@ -196,7 +196,7 @@ function RouteComponent() {
   });
 
   /**
-   * The copy's tag mirrors its name until the merchant's first keystroke in
+   * The new workflow's tag mirrors its name until the merchant's first keystroke in
    * the tag field, the same suggestion the create dialog makes: trimmed and
    * lowercased here, in the route. `Domain.WorkflowTag` only trims; a tag is
    * compared exactly, so the fold is a default for a string the merchant will
@@ -455,7 +455,7 @@ function RouteComponent() {
           />
           <s-text-field
             label="Tag"
-            details="In Shopify, put this tag on the products the copy should build."
+            details="In Shopify, put this tag on the products the new workflow should build."
             value={copy.tag}
             {...(copyTagError === null ? {} : { error: copyTagError })}
             onInput={(event) => {

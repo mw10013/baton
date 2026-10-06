@@ -1025,7 +1025,7 @@ describe("WorkflowRepository duplicate", () => {
         strictEqual(Domain.workflowIsOn(source.workflow), true);
         strictEqual(tagOf(source.workflow), "engraved");
 
-        // A second copy under the first copy's name is refused.
+        // A second duplicate under the first one's name is refused.
         strictEqual(
           (yield* repo
             .duplicateWorkflow({

@@ -608,7 +608,7 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  /** Duplicate: the copy is off, keeps the tasks, and takes the name and tag the dialog collected (`WorkflowRepository.duplicateWorkflow`). */
+  /** Duplicate: the new workflow is off, keeps the tasks, and takes the name and tag the dialog collected (`WorkflowRepository.duplicateWorkflow`). */
   const duplicateWorkflow = ({
     workflowId,
     name,

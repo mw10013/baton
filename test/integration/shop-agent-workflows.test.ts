@@ -843,7 +843,7 @@ describe("ShopAgent workflow run callables", () => {
       tag: "engraved",
       workflowName: "Engraving",
     });
-    // Duplicate: the copy's own tag.
+    // Duplicate: the new workflow's own tag.
     expect(
       await agent.duplicateWorkflow({
         workflowId: other.id,

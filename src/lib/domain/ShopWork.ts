@@ -1029,9 +1029,9 @@ export const UpdateWorkflowTagInput = Schema.Struct({
 export type UpdateWorkflowTagInput = typeof UpdateWorkflowTagInput.Type;
 
 /**
- * The copy's name and tag are the merchant's, prefilled by the Duplicate
- * dialog; the repository copies tasks and steps and leaves the copy off with
- * no draft ({@link WorkflowResult} carries the copy).
+ * The new workflow's name and tag are the merchant's, prefilled by the
+ * Duplicate dialog; the repository copies tasks and steps and leaves the new
+ * workflow off with no draft ({@link WorkflowResult} carries it).
  */
 export const DuplicateWorkflowInput = Schema.Struct({
   workflowId: BoundedId,

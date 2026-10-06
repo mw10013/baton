@@ -422,10 +422,10 @@ test("creating a workflow with a taken tag is refused under the field and names 
 });
 
 /**
- * Duplicate asks for the copy's name and tag, both prefilled, and the copy
- * lands off with the tag the merchant chose.
+ * Duplicate asks for the new workflow's name and tag, both prefilled, and
+ * the new workflow lands off with the tag the merchant chose.
  */
-test("duplicate asks for a name and a tag, and the copy is off with the given tag", async ({
+test("duplicate asks for a name and a tag, and the new workflow is off with the given tag", async ({
   page,
 }) => {
   test.setTimeout(120_000);
@@ -463,7 +463,7 @@ test("duplicate asks for a name and a tag, and the copy is off with the given ta
     frame.getByText(`is already ${SOURCE}'s tag`, { exact: false }),
   ).toBeVisible();
 
-  /* A free tag goes through, landing in the copy's editor — this route
+  /* A free tag goes through, landing in the new workflow's editor — this route
      navigates the app's own frame, unlike Create, which opens the window. */
   await tagField.fill("e2e-ring-copy");
   await frame.getByRole("button", { name: "Duplicate", exact: true }).click();
