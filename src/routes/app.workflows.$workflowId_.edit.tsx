@@ -642,6 +642,16 @@ function RouteComponent() {
     );
   };
 
+  /* More actions comes first, before Discard, as in Flow's editor. A page
+     title bar keeps the order the buttons are written in; the admin's window
+     title bar reverses its secondary buttons, so in a window it is written
+     after Discard. */
+  const moreActions = (
+    <s-button slot="secondary-actions" commandFor="editor-actions">
+      More actions
+    </s-button>
+  );
+
   return (
     <s-page heading={workflow.name} inlineSize="base">
       {/* In a window the admin's own X is the exit; a breadcrumb would be a second one. */}
@@ -658,9 +668,7 @@ function RouteComponent() {
           Draft
         </s-badge>
       )}
-      <s-button slot="secondary-actions" commandFor="editor-actions">
-        More actions
-      </s-button>
+      {!inWindow && moreActions}
       {showSwitch ? (
         <WorkflowSwitch
           workflow={workflow}
@@ -700,6 +708,7 @@ function RouteComponent() {
           </s-button>
         </>
       )}
+      {inWindow && moreActions}
       <s-menu id="editor-actions" accessibilityLabel="More actions">
         <s-button icon="edit" commandFor={RENAME_MODAL} command="--show">
           Rename
