@@ -539,73 +539,6 @@ describe("Repository SQL (D1 ShopSession)", () => {
     );
 
     it.effect(
-      "listMemberTeams lists every edge with the team's count, ordered by team name",
-      () =>
-        run(
-          Effect.gen(function* () {
-            const repo = yield* Repository;
-            const shop = shopOf("m.myshopify.com");
-            yield* seed(repo, [shop]);
-            const alone = emailOf("alone@example.com");
-            const other = emailOf("other@example.com");
-            yield* repo.addMember({
-              shop,
-              email: alone,
-            });
-            yield* repo.addMember({
-              shop,
-              email: other,
-            });
-            const members = yield* repo.listMembers(shop);
-            const idOf = (email: string) =>
-              members.find((m) => m.email === email)?.id ??
-              Schema.decodeUnknownSync(Domain.MemberId)("nope");
-            const solo = yield* repo.createTeam({
-              shop,
-              name: Schema.decodeUnknownSync(Domain.TeamName)("Solo"),
-            });
-            const shared = yield* repo.createTeam({
-              shop,
-              name: Schema.decodeUnknownSync(Domain.TeamName)("a shared"),
-            });
-            for (const [teamId, email] of [
-              [solo.id, alone],
-              [shared.id, alone],
-              [shared.id, other],
-            ] as const)
-              yield* repo.setTeamMember({
-                shop,
-                teamId,
-                memberId: idOf(email),
-                inTeam: true,
-              });
-            const rows = yield* repo.listMemberTeams(shop);
-            strictEqual(
-              rows
-                .map(
-                  (row) =>
-                    `${row.memberId === idOf(alone) ? "alone" : "other"}:${row.teamName}:${String(row.teamMemberCount)}`,
-                )
-                .join(","),
-              "alone:Solo:1,alone:a shared:2,other:a shared:2",
-            );
-            /* A sole membership is `teamMemberCount === 1`. */
-            strictEqual(
-              rows
-                .filter((row) => row.teamMemberCount === 1)
-                .map((row) => row.teamName)
-                .join(","),
-              "Solo",
-            );
-            strictEqual(
-              (yield* repo.listMemberTeams(shopOf("o.myshopify.com"))).length,
-              0,
-            );
-          }),
-        ),
-    );
-
-    it.effect(
       "a member's teams are added as a batch and removed one at a time from either side",
       () =>
         run(
@@ -627,8 +560,17 @@ describe("Repository SQL (D1 ShopSession)", () => {
               name: teamNameOf("F"),
             });
             const names = () =>
-              Effect.map(repo.listMemberTeams(shop), (rows) =>
-                rows.map((row) => row.teamName).join(","),
+              Effect.map(
+                repo.findMemberDetail({
+                  shop,
+                  id: member.id,
+                  teamsAfter: null,
+                  limit: 10,
+                }),
+                (detail) =>
+                  Option.getOrThrow(detail)
+                    .teams.map((team) => team.name)
+                    .join(","),
               );
             /* From the member's side: a batch, and a team from another
                shop is dropped by the join. */
@@ -674,7 +616,6 @@ describe("Repository SQL (D1 ShopSession)", () => {
               })
               .pipe(Effect.flip);
             strictEqual(refused._tag, "MemberNotFoundError");
-            strictEqual((yield* repo.listMemberTeams(other)).length, 0);
           }),
         ),
     );
@@ -723,10 +664,6 @@ describe("Repository SQL (D1 ShopSession)", () => {
           );
           strictEqual(first.member.email, "worker@example.com");
           strictEqual(first.teams.map((team) => team.name).join(","), "A,B,C");
-          strictEqual(
-            first.teams.map((team) => team.memberCount).join(","),
-            "2,1,1",
-          );
           strictEqual(first.teamCount, 4);
           strictEqual(first.nextCursor, "C");
           strictEqual(first.candidates.map((team) => team.name).join(","), "E");

@@ -231,6 +231,19 @@ export const optionAnnotationHits = (
 ): readonly { readonly line: number; readonly text: string }[] =>
   tagHits(source, /<s-option\b[^>]*>[^<]*\(/gu);
 
+/**
+ * A `details` slot is refused outside `src/components/screen/`: a choice
+ * among records shows the record's name (the controls table on `Control`),
+ * and "No members" or "Already on Cutting" under a choice is a state or
+ * relation the record's own page says. The text-limit part keeps the slot
+ * for its countdown. The caller applies the directory rule; this reads one
+ * source.
+ */
+export const detailsSlotHits = (
+  source: string,
+): readonly { readonly line: number; readonly text: string }[] =>
+  tagHits(source, /\bslot="details"/gu);
+
 /** One exported name in a source file, with its 1-based line and what kind of declaration it is. */
 export interface ExportedName {
   readonly name: string;

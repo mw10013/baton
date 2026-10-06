@@ -95,11 +95,9 @@ const decodeMemberIds = Schema.decodeUnknownEffect(
 /**
  * `teamWorkflows` is Durable Object data joined into a D1 page by the
  * loader — see the loader-versus-socket rule on
- * `ShopAgentClient`. `memberTeams` is the hint the Add members
- * dialog shows beside each candidate: where they already work.
+ * `ShopAgentClient`.
  */
 interface TeamLoaderData extends Domain.TeamDetail {
-  readonly memberTeams: readonly Domain.MemberTeam[];
   readonly teamWorkflows: Domain.TeamWorkflowsPage;
 }
 
@@ -118,7 +116,6 @@ const getLoaderData = createServerFn({ method: "GET" })
           limit: DETAILS_PAGE_SIZE,
         });
         if (Option.isNone(detail)) return yield* Effect.fail(notFound());
-        const memberTeams = yield* repository.listMemberTeams(shop);
         const client = yield* ShopAgentClient;
         const teamWorkflows = yield* client.listTeamWorkflows(shop, {
           teamId: detail.value.team.id,
@@ -127,7 +124,6 @@ const getLoaderData = createServerFn({ method: "GET" })
         });
         return {
           ...detail.value,
-          memberTeams,
           teamWorkflows,
         } satisfies TeamLoaderData;
       }),
@@ -229,15 +225,8 @@ export const Route = createFileRoute("/app/teams/$teamId")({
  * slot entirely at "large".
  */
 function RouteComponent() {
-  const {
-    team,
-    members,
-    memberCount,
-    nextCursor,
-    candidates,
-    memberTeams,
-    teamWorkflows,
-  } = Route.useLoaderData();
+  const { team, members, memberCount, nextCursor, candidates, teamWorkflows } =
+    Route.useLoaderData();
   const { membersAfter, workflowsAfter } = Route.useSearch();
   const router = useRouter();
   const navigate = useNavigate({ from: Route.fullPath });
@@ -381,11 +370,6 @@ function RouteComponent() {
           failedMutation.mutation.error,
           failedMutation.fallback,
         );
-
-  const otherTeams = (memberId: Domain.MemberId) =>
-    memberTeams
-      .filter((row) => row.memberId === memberId)
-      .map((row) => row.teamName);
 
   const addTrimmed = addQuery.trim().toLowerCase();
   const matches =
@@ -725,19 +709,11 @@ function RouteComponent() {
                   changeSelected([...event.currentTarget.values]);
                 }}
               >
-                {matches.map((member) => {
-                  const names = otherTeams(member.id);
-                  return (
-                    <s-choice key={member.id} value={member.id}>
-                      {member.email}
-                      {names.length > 0 && (
-                        <s-text slot="details">
-                          {`Already on ${names.join(", ")}`}
-                        </s-text>
-                      )}
-                    </s-choice>
-                  );
-                })}
+                {matches.map((member) => (
+                  <s-choice key={member.id} value={member.id}>
+                    {member.email}
+                  </s-choice>
+                ))}
               </s-choice-list>
             )}
           </Things>

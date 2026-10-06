@@ -275,14 +275,6 @@ export class Repository extends Context.Service<
       Domain.MemberId,
       SqlError.SqlError | RepositoryError | MemberNotFoundError
     >;
-    /** Every `(member, team)` edge in the shop with the team's member count; see `Domain.MemberTeam`. */
-    readonly listMemberTeams: (
-      shop: Domain.Shop,
-    ) => Effect.Effect<
-      readonly Domain.MemberTeam[],
-      SqlError.SqlError | RepositoryError
-    >;
-    /** The member page's read; the mirror of {@link findTeamDetail}. */
     readonly findMemberDetail: (params: {
       readonly shop: Domain.Shop;
       readonly id: Domain.MemberId;
@@ -785,33 +777,8 @@ export class Repository extends Context.Service<
       });
 
       /**
-       * Reads through `D1Primary` for the same reason {@link listMembers}
-       * does: the team page re-reads right after a primary write. The
-       * count is a correlated subquery so it is the team's total, not the
-       * count of rows this join happens to return.
-       */
-      const listMemberTeams = Effect.fn("Repository.listMemberTeams")(
-        function* (shop: Domain.Shop) {
-          const rows = yield* sqlPrimary`
-            select tm.memberId, tm.teamId, t.name as teamName,
-              (select count(*) from TeamMember x where x.teamId = tm.teamId) as teamMemberCount
-            from TeamMember tm
-            join Team t on t.id = tm.teamId
-            join Member m on m.id = tm.memberId
-            where t.shop = ${shop}
-            order by t.name, m.email
-          `;
-          return yield* decodeRepository(
-            Schema.Array(Domain.MemberTeam),
-            "Invalid MemberTeam rows",
-          )(rows);
-        },
-      );
-
-      /**
        * The mirror of {@link findTeamDetail}: one page of the member's teams
-       * in name order, each with its member count and the edge's date, the
-       * count of every team they are on, and the shop's teams they are not
+       * in name order, the count of every team they are on, and the shop's teams they are not
        * on. Reads through `D1Primary` because the member page re-reads right
        * after its own primary writes.
        */
@@ -826,8 +793,7 @@ export class Repository extends Context.Service<
             yield* sqlPrimary`select * from Member where id = ${params.id} and shop = ${params.shop}`;
           if (memberRows[0] === undefined) return Option.none();
           const teamRows = yield* sqlPrimary`
-            select t.id, t.name,
-              (select count(*) from TeamMember x where x.teamId = t.id) as memberCount
+            select t.id, t.name
             from TeamMember tm
             join Team t on t.id = tm.teamId
             where tm.memberId = ${params.id} and t.shop = ${params.shop}
@@ -841,8 +807,7 @@ export class Repository extends Context.Service<
             where tm.memberId = ${params.id} and t.shop = ${params.shop}
           `;
           const candidateRows = yield* sqlPrimary`
-            select t.id, t.name,
-              (select count(*) from TeamMember x where x.teamId = t.id) as memberCount
+            select t.id, t.name
             from Team t
             where t.shop = ${params.shop}
               and not exists (select 1 from TeamMember tm where tm.teamId = t.id and tm.memberId = ${params.id})
@@ -1327,7 +1292,6 @@ export class Repository extends Context.Service<
         addMember,
         countMembers,
         deleteMember,
-        listMemberTeams,
         findMemberDetail,
         addMemberTeams,
         findMember,

@@ -481,9 +481,6 @@ function RouteComponent() {
                 {matches.map((team) => (
                   <s-choice key={team.id} value={team.id}>
                     {team.name}
-                    {team.memberCount === 0 && (
-                      <s-text slot="details">No members</s-text>
-                    )}
                   </s-choice>
                 ))}
               </s-choice-list>

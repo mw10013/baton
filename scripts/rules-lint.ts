@@ -17,10 +17,11 @@
  * ({@link modelShapeReferenceHits}); and, in the object, nothing that keeps
  * it from hibernating ({@link hibernationBlockerHits}); and, in a route or a
  * component outside `src/components/screen/`, no layout ({@link layoutHits});
- * and, on the merchant's and member's screens, the controls table's three
+ * and, on the merchant's and member's screens, the controls table's four
  * syntactic rules: no info banner ({@link infoBannerHits}), no `maxLength`
- * on a field outside `src/components/screen/` ({@link maxLengthHits}), and no
- * parenthesis in an option ({@link optionAnnotationHits}).
+ * on a field outside `src/components/screen/` ({@link maxLengthHits}), no
+ * parenthesis in an option ({@link optionAnnotationHits}), and no `details`
+ * slot outside `src/components/screen/` ({@link detailsSlotHits}).
  *
  * A grep, not an oxlint rule: the pattern is three tokens and has stayed
  * quiet. Union narrowing on `actor.role` and the connection state's `role`
@@ -34,6 +35,7 @@ import {
   bareStatePredicateHits,
   contextImportHits,
   contextImports,
+  detailsSlotHits,
   hibernationBlockerHits,
   infoBannerHits,
   INLINE_COMPARISONS,
@@ -141,6 +143,17 @@ if (optionHits.length > 0) {
     "rules-lint: a parenthesis in an s-option; a select is a list of names (the controls table on Control):",
   );
   for (const hit of optionHits) console.error(`  ${hit}`);
+}
+
+const slotHits = tagHitsIn(
+  COPY_FILES.filter((path) => !path.includes("/components/screen/")),
+  detailsSlotHits,
+);
+if (slotHits.length > 0) {
+  console.error(
+    "rules-lint: a details slot outside src/components/screen/; a choice among records shows the record's name (the controls table on Control):",
+  );
+  for (const hit of slotHits) console.error(`  ${hit}`);
 }
 
 const LIB_FILES = walk(join(ROOT, "lib"));
@@ -261,6 +274,7 @@ if (
   infoHits.length > 0 ||
   fieldHits.length > 0 ||
   optionHits.length > 0 ||
+  slotHits.length > 0 ||
   stemHits.length > 0 ||
   predicateHits.length > 0
 )

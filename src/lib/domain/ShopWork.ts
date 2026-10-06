@@ -544,17 +544,17 @@ export type TeamDetail = typeof TeamDetail.Type;
 
 /**
  * What the member page reads, the mirror of {@link TeamDetail}: the member,
- * one page of their teams in name order with each team's member count, and
- * the shop's teams they are not on, the Add to teams dialog's candidates.
+ * one page of their teams in name order, and the shop's teams they are not
+ * on, the Add to teams dialog's candidates.
  * `teamCount` is every team the member is on; `nextCursor` is the last team
  * name on the page, `null` on the last page.
  */
 export const MemberDetail = Schema.Struct({
   member: Member,
-  teams: Schema.Array(TeamWithMemberCount),
+  teams: Schema.Array(Schema.Struct({ id: TeamId, name: TeamName })),
   teamCount: Schema.Number,
   nextCursor: Schema.NullOr(TeamName),
-  candidates: Schema.Array(TeamWithMemberCount),
+  candidates: Schema.Array(Schema.Struct({ id: TeamId, name: TeamName })),
 });
 export type MemberDetail = typeof MemberDetail.Type;
 
@@ -571,19 +571,6 @@ export const MemberAccess = Schema.Struct({
   teams: Schema.Array(Schema.Struct({ id: TeamId, name: TeamName })),
 });
 export type MemberAccess = typeof MemberAccess.Type;
-
-/**
- * One row per `(member, team)` edge in a shop, with the team's total member
- * count riding along: the team page's Add members dialog reads it to say
- * where each candidate already works.
- */
-export const MemberTeam = Schema.Struct({
-  memberId: MemberId,
-  teamId: TeamId,
-  teamName: TeamName,
-  teamMemberCount: Schema.Number,
-});
-export type MemberTeam = typeof MemberTeam.Type;
 
 export const WorkflowId = Schema.NonEmptyString.pipe(
   Schema.brand("WorkflowId"),

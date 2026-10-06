@@ -268,6 +268,21 @@ describe("an s-option carries no parenthesis", () => {
   });
 });
 
+describe("a details slot is refused outside src/components/screen/", () => {
+  it("refuses a note under a choice and passes a choice that is a name", () => {
+    const source = [
+      "<s-choice value={team.id}>",
+      "  {team.name}",
+      '  <s-text slot="details">No members</s-text>',
+      "</s-choice>",
+      "<s-choice value={member.id}>{member.email}</s-choice>",
+    ].join("\n");
+    expect(RulesLint.detailsSlotHits(source).map(({ line }) => line)).toEqual([
+      3,
+    ]);
+  });
+});
+
 describe("Saved, Saving and Syncing are retired as a sentence's start in screen copy", () => {
   it("refuses a status sentence and passes Note saved and stopped syncing", () => {
     const source = [
