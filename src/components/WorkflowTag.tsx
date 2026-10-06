@@ -4,6 +4,7 @@ import { Schema } from "effect";
 
 import { Fields } from "@/components/screen/Fields";
 import { Inline } from "@/components/screen/Inline";
+import { textLimitError } from "@/components/screen/TextLimit";
 import * as Domain from "@/lib/Domain";
 import * as PolarisModal from "@/lib/polarisModal";
 import { workflowResultMessage } from "@/lib/workflowShared";
@@ -52,6 +53,11 @@ export function WorkflowTag({
 
   const save = async () => {
     if (busy || folded === "" || !changed) return;
+    const limit = textLimitError(folded, Domain.TAG_MAX_LENGTH);
+    if (limit !== null) {
+      setError(limit);
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -99,7 +105,6 @@ export function WorkflowTag({
             label="Tag"
             placeholder="e.g. engraved"
             value={value}
-            maxLength={255}
             disabled={busy}
             {...(error === null ? {} : { error })}
             onInput={(event) => {

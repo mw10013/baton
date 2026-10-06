@@ -60,18 +60,19 @@ test("orders screen syncs open orders and lists them", async ({ page }) => {
   const sync = page.getByRole("button", { name: "Sync open orders" });
   await expect.poll(() => hoistedEnabled(sync)).toBe(true);
 
-  /* The completion signal is the "Syncing…" line appearing and then going,
-     the only sync status the screen shows. Seeing it appear first is what
-     proves a run was created: the button alone is enabled both before the click
-     and after the run. The run's 15-30s floor keeps the line on screen far
-     longer than the assertion's retry interval, so it cannot come and go
-     unseen. */
+  /* The completion signal is the Sync button going disabled while the
+     sync runs and enabled when it ends: the only sync status the screen
+     shows. Seeing it disabled first is what proves a run was created. The
+     run's 15-30s floor keeps it disabled far longer than the poll interval,
+     so it cannot come and go unseen. */
   await clickHoisted(sync);
 
-  const syncing = frame.getByText(/^Syncing/u);
-  await expect(syncing).toBeVisible({ timeout: 30_000 });
-  await expect(syncing).toBeHidden({ timeout: 120_000 });
-  await expect.poll(() => hoistedEnabled(sync)).toBe(true);
+  await expect
+    .poll(() => hoistedEnabled(sync), { timeout: 30_000 })
+    .toBe(false);
+  await expect
+    .poll(() => hoistedEnabled(sync), { timeout: 120_000 })
+    .toBe(true);
 
   const rows = frame.locator("s-table-row");
   await expect(rows.first()).toBeVisible({ timeout: 30_000 });

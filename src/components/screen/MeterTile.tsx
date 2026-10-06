@@ -35,7 +35,8 @@ export function MeterTile({
   readonly headline: string;
   readonly count: number;
   readonly limit: number;
-  readonly detail: React.ReactNode;
+  /** What passing the limit means, or the next reset; nothing when there is nothing to say (the copy table's body row on `CopySlot`: no explanation beside content). */
+  readonly detail?: React.ReactNode;
 }) {
   return (
     <s-clickable
@@ -53,7 +54,9 @@ export function MeterTile({
           max={limit}
           value={count}
         />
-        <s-paragraph color="subdued">{detail}</s-paragraph>
+        {detail !== undefined && (
+          <s-paragraph color="subdued">{detail}</s-paragraph>
+        )}
       </s-grid>
     </s-clickable>
   );

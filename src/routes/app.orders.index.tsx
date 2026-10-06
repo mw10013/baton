@@ -144,24 +144,6 @@ const issueBadges = (row: Domain.OrderRow) =>
   ));
 
 /**
- * The sync's whole status line: only while a sync runs. At rest there is
- * no line, not even a "Last synced" time: order webhooks keep the list
- * current after the first sync, so a standing timestamp would read as
- * something the merchant has to keep fresh, and an old one would make a
- * current list look stale.
- */
-const syncStatusText = (
-  data: Domain.OrdersIndexData | undefined,
-  isError: boolean,
-) => {
-  if (isError) return "Couldn't read sync status.";
-  if (data === undefined) return "Loading…";
-  return data.syncState.inFlight
-    ? "Syncing… this page updates as orders arrive."
-    : null;
-};
-
-/**
  * What an empty list says, one line each (the `empty` slot, `CopySlot`).
  * With a team selected the list is narrowed by two filters, so the text says
  * that rather than claiming one value is empty. A search has its own heading
@@ -669,7 +651,6 @@ function RouteComponent() {
     );
 
   const syncError = data?.syncState.lastError ?? null;
-  const syncStatus = syncStatusText(data, ordersQuery.isError);
 
   return (
     <s-page heading="Orders" inlineSize="large">
@@ -683,8 +664,13 @@ function RouteComponent() {
           https://shopify.dev/docs/api/app-home/latest/patterns/templates/resource-index */}
       {syncButton(true)}
 
-      {/* The head, in order: the sync's error and status, then the strip
-          or under a search the line that replaces it, then the filter row.
+      {/* The head, in order: the sync's error, then the strip or under a
+          search the line that replaces it, then the filter row. No sync
+          status line: the Sync button is disabled while a sync runs and the
+          rows fill as orders arrive (the controls table's "a write in
+          flight" row on `Control`); at rest there is no "Last synced" time
+          either, because order webhooks keep the list current and a
+          standing timestamp would read as something to keep fresh.
           The strip and the filters are gated on there being something to
           filter: see `neverStored`. A failed read renders as a failure
           rather than "Loading orders…" forever: a decode mismatch, a dropped
@@ -696,9 +682,6 @@ function RouteComponent() {
           <>
             {syncError !== null && (
               <s-banner tone="critical">{syncError}</s-banner>
-            )}
-            {syncStatus !== null && (
-              <s-paragraph color="subdued">{syncStatus}</s-paragraph>
             )}
             {ordersQuery.isError && (
               <s-banner tone="critical">

@@ -151,21 +151,3 @@ export const unassignedLine = (
     ? `No team on ${taskList(orphans)}. Assign one before you apply.`
     : null;
 };
-
-/**
- * The `empty_team` fault's sentence for a workflow page banner: the teams
- * nobody is on. `null` when every assigned team has a member.
- */
-export const emptyTeamLine = (
-  tasks: readonly Domain.TaskWithTeamName[],
-): string | null => {
-  const empty = tasks.filter(Domain.hasEmptyTeam);
-  const teamNames = [
-    ...new Set(empty.map((task) => task.teamName ?? "").filter(Boolean)),
-  ];
-  return teamNames.length > 0
-    ? `Nobody is on ${teamNames.join(", ")}. ${
-        empty.length === 1 ? "That task" : "Those tasks"
-      } will wait until a member joins.`
-    : null;
-};

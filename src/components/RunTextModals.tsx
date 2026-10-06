@@ -2,19 +2,9 @@ import * as React from "react";
 
 import { Clamp } from "@/components/screen/Clamp";
 import { Lines } from "@/components/screen/Lines";
+import { textLimitError, textLimitProps } from "@/components/screen/TextLimit";
 import * as Domain from "@/lib/Domain";
-import { formatNumber } from "@/lib/format";
 import * as PolarisModal from "@/lib/polarisModal";
-
-/**
- * How much room is left, shown only from {@link Domain.noteCountFrom}. Without
- * it the cap is invisible until the write refuses a paragraph that is already
- * typed, and the refusal the writer would read is the schema's own words.
- */
-const countdown = (draft: string, maxLength: number) =>
-  draft.length < Domain.noteCountFrom(maxLength)
-    ? {}
-    : { details: `${formatNumber(maxLength - draft.length)} characters left` };
 
 /**
  * One text field in an `s-modal`, the shape both run texts share: the draft
@@ -119,7 +109,7 @@ function TextModal({
           rows={6}
           value={value}
           disabled={pending}
-          {...countdown(value, maxLength)}
+          {...textLimitProps(value, maxLength)}
           {...(error === null ? {} : { error })}
           onInput={(event) => {
             setDraft(event.currentTarget.value);
@@ -137,6 +127,11 @@ function TextModal({
         loading={pending}
         disabled={pending || (!dirty && allowUnchanged !== true)}
         onClick={() => {
+          const limit = textLimitError(value, maxLength);
+          if (limit !== null) {
+            setError(limit);
+            return;
+          }
           void onSubmit(value).then((message) => {
             setError(message);
             if (message === null) close();

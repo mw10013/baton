@@ -325,20 +325,19 @@ function RouteComponent() {
             <s-banner tone="critical">{actions.banner}</s-banner>
           )}
           <BlockBanner run={run} actions={blockActions ?? reviewNote} />
-          {/* A closed run, reached by link: where the block banner would
-              be, why it ended and when ({@link Domain.ClosedReason}). Only
-              the note is left to do on it ({@link Domain.runActions}). */}
-          {Domain.runIsClosed(run) && (
-            <s-banner tone="info" heading={Domain.RUN_STATE_LABEL.closed}>
-              <ClosedLine run={run} viewer="member" />
-            </s-banner>
-          )}
           {/* Item first: what to make is why the page was opened. No age,
               because a member cannot act on it and the workflows list
               carries it. No border, because two bordered blocks on
               one page compete. The Done badge stays: it is the only sign the
               page is read-only. */}
           <Lines>
+            {/* A closed run, reached by link: why it ended and when
+                ({@link Domain.ClosedReason}), as one line with "Closed · "
+                in front, since no badge beside it says so. Not a banner:
+                nothing is disabled that the line does not already explain,
+                and only the note is left to do on it
+                ({@link Domain.runActions}). */}
+            <ClosedLine run={run} viewer="member" prefix />
             {Domain.runIsDone(run) && (
               <Inline>
                 <s-badge tone="neutral">{Domain.RUN_STATE_LABEL.done}</s-badge>

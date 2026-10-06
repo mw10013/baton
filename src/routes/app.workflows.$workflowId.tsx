@@ -14,13 +14,11 @@ import { Effect, Schema } from "effect";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { Lines } from "@/components/screen/Lines";
 import { Panel } from "@/components/screen/Panel";
+import { textLimitError } from "@/components/screen/TextLimit";
 import { Things } from "@/components/screen/Things";
 import { Token } from "@/components/screen/Token";
 import { StepFlow, TeamFaultBanners } from "@/components/WorkflowSteps";
-import {
-  switchResultMessage,
-  WorkflowSwitch,
-} from "@/components/WorkflowSwitch";
+import { WorkflowSwitch } from "@/components/WorkflowSwitch";
 import * as WorkflowTag from "@/components/WorkflowTag";
 import * as Domain from "@/lib/Domain";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
@@ -37,7 +35,6 @@ import {
   RENAME_FIELD_LABEL,
   RENAME_HEADING,
   RENAMED_TOAST,
-  turnOnBlocker,
   turnOnBody,
   workflowResultMessage,
 } from "@/lib/workflowShared";
@@ -262,7 +259,6 @@ function RouteComponent() {
 
   const fresh = neverApplied(detail);
   const hasDraft = draftTasks !== null;
-  const blocker = turnOnBlocker(tasks);
   const on = Domain.workflowIsOn(workflow);
   /** Flow's asymmetry: Turn off is always offered, Turn on only when what would go on is what the editor is holding. */
   const showSwitch = !fresh && (on || !hasDraft);
@@ -351,15 +347,10 @@ function RouteComponent() {
       <s-section accessibilityLabel="Workflow">
         <Things>
           {banner !== null && <s-banner tone="critical">{banner}</s-banner>}
-          {showSwitch && !on && blocker !== null && (
-            <s-banner tone="info" heading="Turn on is unavailable">
-              {/* Wrapped, like `TeamFaultBanners`' lines: `s-banner` renders
-                  its body from elements, and a bare string child never
-                  reaches the page. */}
-              <s-paragraph>{switchResultMessage(blocker)}</s-paragraph>
-            </s-banner>
-          )}
-
+          {/* No standing banner for what blocks Turn on: the disabled switch
+              beside the "Needs a team" banner already says it (the copy
+              table's banner row on `CopySlot`); the press result is
+              `WorkflowSwitch`'s to report through `banner`. */}
           <TeamFaultBanners tasks={tasks} />
 
           <StepFlow
@@ -404,18 +395,12 @@ function RouteComponent() {
           <s-text-field
             label={RENAME_FIELD_LABEL}
             value={name}
-            maxLength={Domain.NAME_MAX_LENGTH}
             {...(nameError === null ? {} : { error: nameError })}
             onInput={(event) => {
               setName(event.currentTarget.value);
               setNameError(null);
             }}
           />
-          {/* `s-text-field` has no counter of its own, and the limit is worth
-              seeing while typing: the field silently stops accepting. */}
-          <s-text color="subdued">
-            {`${String(name.length)}/${String(Domain.NAME_MAX_LENGTH)}`}
-          </s-text>
         </Lines>
         <s-button
           slot="secondary-actions"
@@ -430,6 +415,11 @@ function RouteComponent() {
           loading={renameMutation.isPending}
           disabled={!identified || name.trim().length === 0}
           onClick={() => {
+            const limit = textLimitError(name, Domain.NAME_MAX_LENGTH);
+            if (limit !== null) {
+              setNameError(limit);
+              return;
+            }
             renameMutation.mutate();
           }}
         >
@@ -451,7 +441,6 @@ function RouteComponent() {
           <s-text-field
             label="Name"
             value={copy.name}
-            maxLength={Domain.NAME_MAX_LENGTH}
             {...(copyNameError === null ? {} : { error: copyNameError })}
             onInput={(event) => {
               const next = event.currentTarget.value;
@@ -468,7 +457,6 @@ function RouteComponent() {
             label="Tag"
             details="Put this tag on the products the copy should build."
             value={copy.tag}
-            maxLength={255}
             {...(copyTagError === null ? {} : { error: copyTagError })}
             onInput={(event) => {
               const next = event.currentTarget.value;
@@ -494,6 +482,11 @@ function RouteComponent() {
             copy.tag.trim().length === 0
           }
           onClick={() => {
+            const nameLimit = textLimitError(copy.name, Domain.NAME_MAX_LENGTH);
+            const tagLimit = textLimitError(copy.tag, Domain.TAG_MAX_LENGTH);
+            if (nameLimit !== null) setCopyNameError(nameLimit);
+            if (tagLimit !== null) setCopyTagError(tagLimit);
+            if (nameLimit !== null || tagLimit !== null) return;
             duplicateMutation.mutate();
           }}
         >

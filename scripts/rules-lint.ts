@@ -16,7 +16,11 @@
  * context files, the shapes' one-way dependency
  * ({@link modelShapeReferenceHits}); and, in the object, nothing that keeps
  * it from hibernating ({@link hibernationBlockerHits}); and, in a route or a
- * component outside `src/components/screen/`, no layout ({@link layoutHits}).
+ * component outside `src/components/screen/`, no layout ({@link layoutHits});
+ * and, on the merchant's and member's screens, the controls table's three
+ * syntactic rules: no info banner ({@link infoBannerHits}), no `maxLength`
+ * on a field outside `src/components/screen/` ({@link maxLengthHits}), and no
+ * parenthesis in an option ({@link optionAnnotationHits}).
  *
  * A grep, not an oxlint rule: the pattern is three tokens and has stayed
  * quiet. Union narrowing on `actor.role` and the connection state's `role`
@@ -31,10 +35,13 @@ import {
   contextImportHits,
   contextImports,
   hibernationBlockerHits,
+  infoBannerHits,
   INLINE_COMPARISONS,
   loaderDataExportHits,
+  maxLengthHits,
   modelShapeReferenceHits,
   objectImportHits,
+  optionAnnotationHits,
   RESERVED_STEMS,
   reservedStemHits,
   retiredCopyHits,
@@ -94,6 +101,46 @@ if (placeholderHits.length > 0) {
     "rules-lint: placeholder on an s-text-area; free text has a label and no placeholder:",
   );
   for (const hit of placeholderHits) console.error(`  ${hit}`);
+}
+
+const tagHitsIn = (
+  files: readonly string[],
+  read: (
+    source: string,
+  ) => readonly { readonly line: number; readonly text: string }[],
+) =>
+  files.flatMap((path) => {
+    const file = relative(ROOT, path);
+    return read(readFileSync(path, "utf8")).map(
+      ({ line, text }) => `src/${file}:${String(line)}: ${text}`,
+    );
+  });
+
+const infoHits = tagHitsIn(COPY_FILES, infoBannerHits);
+if (infoHits.length > 0) {
+  console.error(
+    "rules-lint: info banner on a merchant or member screen; an info fact is a line or a badge (the controls table on Control):",
+  );
+  for (const hit of infoHits) console.error(`  ${hit}`);
+}
+
+const fieldHits = tagHitsIn(
+  COPY_FILES.filter((path) => !path.includes("/components/screen/")),
+  maxLengthHits,
+);
+if (fieldHits.length > 0) {
+  console.error(
+    "rules-lint: maxLength on a field outside src/components/screen/; a text limit counts down near the cap and refuses on submit (the controls table on Control):",
+  );
+  for (const hit of fieldHits) console.error(`  ${hit}`);
+}
+
+const optionHits = tagHitsIn(COPY_FILES, optionAnnotationHits);
+if (optionHits.length > 0) {
+  console.error(
+    "rules-lint: a parenthesis in an s-option; a select is a list of names (the controls table on Control):",
+  );
+  for (const hit of optionHits) console.error(`  ${hit}`);
 }
 
 const LIB_FILES = walk(join(ROOT, "lib"));
@@ -211,6 +258,9 @@ if (
   hits.length > 0 ||
   copyHits.length > 0 ||
   placeholderHits.length > 0 ||
+  infoHits.length > 0 ||
+  fieldHits.length > 0 ||
+  optionHits.length > 0 ||
   stemHits.length > 0 ||
   predicateHits.length > 0
 )

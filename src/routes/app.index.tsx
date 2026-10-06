@@ -109,13 +109,24 @@ function RouteComponent() {
   const membersOverBy = memberCount - entitlements.membersIncluded;
   const ordersOverBy = usage.ordersThisCycle - entitlements.ordersPerCycle;
 
-  /* A cycle the object has not been told about yet has no end to name. */
-  const ordersReset = usage.cycleEndAt !== null && (
-    <>
-      {" Resets "}
-      <LocalDateTime value={usage.cycleEndAt} />.
-    </>
-  );
+  /**
+   * The orders tile's line: how far over and what that costs, then when the
+   * cycle resets; a cycle the object has not been told about yet has no end
+   * to name. Nothing when under and unknown: no sentence explains the
+   * product beside its number (the copy table's body row on `CopySlot`).
+   */
+  const ordersDetail =
+    ordersOverBy > 0 || usage.cycleEndAt !== null ? (
+      <>
+        {ordersOverBy > 0 &&
+          `${formatNumber(ordersOverBy)} over. Extra orders are billed at your plan's rate. `}
+        {usage.cycleEndAt !== null && (
+          <>
+            Resets <LocalDateTime value={usage.cycleEndAt} />.
+          </>
+        )}
+      </>
+    ) : undefined;
 
   return (
     <s-page heading="Baton" inlineSize="large">
@@ -131,14 +142,7 @@ function RouteComponent() {
               headline={`${formatNumber(usage.ordersThisCycle)} of ${formatNumber(entitlements.ordersPerCycle)} included`}
               count={usage.ordersThisCycle}
               limit={entitlements.ordersPerCycle}
-              detail={
-                <>
-                  {ordersOverBy > 0
-                    ? `${formatNumber(ordersOverBy)} over. Extra orders are billed at your plan's rate.`
-                    : "Each order counts once, when work starts on it."}
-                  {ordersReset}
-                </>
-              }
+              {...(ordersDetail === undefined ? {} : { detail: ordersDetail })}
             />
             <MeterTile
               heading="Members"
@@ -146,11 +150,11 @@ function RouteComponent() {
               headline={`${formatNumber(memberCount)} ${memberCount === 1 ? "member" : "members"}, ${formatNumber(entitlements.membersIncluded)} included`}
               count={memberCount}
               limit={entitlements.membersIncluded}
-              detail={
-                membersOverBy > 0
-                  ? `${formatNumber(membersOverBy)} past your plan's included seats ${membersOverBy === 1 ? "is" : "are"} billed at your plan's rate.`
-                  : "Members sign in with their email."
-              }
+              {...(membersOverBy > 0
+                ? {
+                    detail: `${formatNumber(membersOverBy)} past your plan's included seats ${membersOverBy === 1 ? "is" : "are"} billed at your plan's rate.`,
+                  }
+                : {})}
             />
           </Tiles>
           <Inline>

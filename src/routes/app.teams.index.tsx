@@ -11,13 +11,13 @@ import {
 import { createServerFn, useServerFn } from "@tanstack/react-start";
 import { Effect, Schema } from "effect";
 
-import { LocalDateTime } from "@/components/LocalDateTime";
 import { EmptyLine } from "@/components/screen/EmptyLine";
 import { FilterRow } from "@/components/screen/FilterRow";
 import { IndexSection } from "@/components/screen/IndexSection";
 import { Inline } from "@/components/screen/Inline";
 import { ListSearchField } from "@/components/screen/ListSearchField";
 import { SearchLine } from "@/components/screen/SearchLine";
+import { textLimitError } from "@/components/screen/TextLimit";
 import * as Domain from "@/lib/Domain";
 import { fieldError, mutationErrorMessage } from "@/lib/form";
 import { Repository } from "@/lib/Repository";
@@ -173,6 +173,19 @@ function RouteComponent() {
     },
   });
 
+  /** The cap is the field's own error before the schema's words can be (the text-limit control on `Control`). */
+  const submit = () => {
+    const limit = textLimitError(
+      form.getFieldValue("name"),
+      Domain.TEAM_NAME_MAX_LENGTH,
+    );
+    if (limit !== null) {
+      setNameError(limit);
+      return;
+    }
+    void form.handleSubmit();
+  };
+
   const createError = createMutation.isError
     ? mutationErrorMessage(createMutation.error, "Couldn't create the team.")
     : null;
@@ -260,7 +273,6 @@ function RouteComponent() {
           <s-table-header listSlot="primary">Team</s-table-header>
           <s-table-header>Members</s-table-header>
           <s-table-header>Workflows</s-table-header>
-          <s-table-header>Created</s-table-header>
         </s-table-header-row>
         <s-table-body>
           {teams.map((team) => {
@@ -276,9 +288,6 @@ function RouteComponent() {
                 </s-table-cell>
                 <s-table-cell>{team.memberCount}</s-table-cell>
                 <s-table-cell>{workflowCount(team)}</s-table-cell>
-                <s-table-cell>
-                  <LocalDateTime value={team.createdAt} />
-                </s-table-cell>
               </s-table-row>
             );
           })}
@@ -312,10 +321,6 @@ function RouteComponent() {
         head={
           !(unfiltered && teams.length === 0) && (
             <>
-              <s-paragraph color="subdued">
-                A team is who can work a task. Assign one to each task in a
-                workflow.
-              </s-paragraph>
               {q !== undefined && matches !== null && matches > 0 && (
                 <SearchLine
                   count={matches}
@@ -356,7 +361,7 @@ function RouteComponent() {
         <form
           onSubmit={(event) => {
             event.preventDefault();
-            void form.handleSubmit();
+            submit();
           }}
         >
           <form.Field name="name">
@@ -365,7 +370,6 @@ function RouteComponent() {
                 label="Name"
                 name={field.name}
                 value={field.state.value}
-                maxLength={Domain.TEAM_NAME_MAX_LENGTH}
                 error={nameError ?? fieldError(field.state.meta.errors)}
                 onInput={(event) => {
                   setNameError(null);
@@ -388,9 +392,7 @@ function RouteComponent() {
           slot="primary-action"
           variant="primary"
           loading={createMutation.isPending}
-          onClick={() => {
-            void form.handleSubmit();
-          }}
+          onClick={submit}
         >
           {Domain.RECORD_VERB_LABEL.create}
         </s-button>

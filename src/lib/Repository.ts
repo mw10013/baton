@@ -827,7 +827,7 @@ export class Repository extends Context.Service<
             yield* sqlPrimary`select * from Member where id = ${params.id} and shop = ${params.shop}`;
           if (memberRows[0] === undefined) return Option.none();
           const teamRows = yield* sqlPrimary`
-            select t.id, t.name, tm.createdAt as inTeamSince,
+            select t.id, t.name,
               (select count(*) from TeamMember x where x.teamId = t.id) as memberCount
             from TeamMember tm
             join Team t on t.id = tm.teamId
@@ -1112,7 +1112,7 @@ export class Repository extends Context.Service<
             yield* sqlPrimary`select * from Team where id = ${params.id} and shop = ${params.shop}`;
           if (teamRows[0] === undefined) return Option.none();
           const memberRows = yield* sqlPrimary`
-          select m.*, tm.createdAt as inTeamSince
+          select m.*
           from TeamMember tm
           join Member m on m.id = tm.memberId
           where tm.teamId = ${params.id} and m.shop = ${params.shop}

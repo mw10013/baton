@@ -1759,10 +1759,12 @@ test("closed runs leave Started by you, Started by others, Ready and Blocked and
     page.getByRole("button", { name: "Actions for #9451" }),
   ).toHaveCount(0);
 
-  /* The workflow page on a closed run says why where a block would be, and
+  /* The workflow page on a closed run says why as one line under the item,
+     not a banner (nothing is disabled that the line does not explain), and
      offers nothing but the note. */
   await rowLink(page, "#9451").click();
-  await expect(page.locator('s-banner[heading="Closed"]')).toBeVisible();
+  await expect(page.getByText(/^Closed · /u).first()).toBeVisible();
+  await expect(page.locator("s-banner")).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Done", exact: true }),
   ).toHaveCount(0);

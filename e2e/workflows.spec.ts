@@ -4,7 +4,13 @@ import { expect, test } from "@playwright/test";
 
 import * as Domain from "@/lib/Domain";
 
-import { appNavLink, clickHoisted, editorFrame, gotoApp } from "./app";
+import {
+  appNavLink,
+  clickHoisted,
+  editorFrame,
+  gotoApp,
+  hoistedEnabled,
+} from "./app";
 import { awaitHydration } from "./hydration";
 import { seedConfig, seedMembers } from "./seed";
 
@@ -159,18 +165,19 @@ test("a fresh workflow turns on from the editor, then edits go through the draft
   await expect(editor.locator(`s-page[heading="${CREATED}"]`)).toBeVisible();
   await awaitHydration(editor);
 
-  /* Never applied: Turn on is the only commit on offer, and it is blocked
-     until there is a step to apply. */
-  await expect(page.getByRole("button", { name: "Turn on" })).toBeVisible();
+  /* Never applied: Turn on is the only commit on offer, and it is disabled
+     until there is a step to apply. The disabled button beside the empty
+     canvas is the whole explanation: no banner restates it. */
+  const turnOn = page.getByRole("button", { name: "Turn on" });
+  await expect(turnOn).toBeVisible();
+  await expect.poll(() => hoistedEnabled(turnOn)).toBe(false);
   await expect(page.getByRole("button", { name: "Apply changes" })).toHaveCount(
     0,
   );
   await expect(
     page.getByRole("button", { name: "Discard changes" }),
   ).toHaveCount(0);
-  await expect(
-    editor.getByText("Add a step to this workflow.", { exact: true }),
-  ).toBeVisible();
+  await expect(editor.locator("s-banner")).toHaveCount(0);
 
   await editor.getByRole("button", { name: "Add step" }).click();
   await taskName.fill("Bake");
@@ -179,7 +186,10 @@ test("a fresh workflow turns on from the editor, then edits go through the draft
     .selectOption({ label: TEAM });
   await editor.getByRole("button", { name: "Add step" }).click();
   await expect(editor.getByText("Step 1", { exact: true })).toBeVisible();
-  await expect(editor.getByText("✓ Saved", { exact: false })).toBeVisible();
+  /* No "Saved" line: the write is the pressed button's spinner, and the
+     step on the canvas is its result. */
+  await expect(editor.getByText("✓ Saved", { exact: false })).toHaveCount(0);
+  await expect.poll(() => hoistedEnabled(turnOn)).toBe(true);
 
   /* One click applies the tasks and turns the switch on, and the dialog says
      both halves. */
@@ -589,7 +599,7 @@ test("the workflows index keeps its filter across the workflow page", async ({
  * `Domain.ORDER_ISSUE_TONE`). Seeded off, because the seed refuses to turn
  * on a workflow with an unassigned task.
  */
-test("the workflows index and the workflow page show Needs a team and Team has no members apart", async ({
+test("the workflow page raises Needs a team as its one banner and marks an empty team's step No members", async ({
   page,
 }) => {
   test.setTimeout(120_000);
@@ -626,12 +636,15 @@ test("the workflows index and the workflow page show Needs a team and Team has n
 
   await frame.getByRole("link", { name: BOTH }).click();
   await expect(frame.locator(`s-page[heading="${BOTH}"]`)).toBeVisible();
+  /* One banner, for the fault that disables Turn on; the empty team is a
+     badge on its step, because it disables nothing. */
   const needsTeam = frame.locator('s-banner[heading="Needs a team"]');
   await expect(needsTeam).toHaveAttribute("tone", "critical");
   await expect(needsTeam).toContainText("No team on Stamp.");
-  const noMembers = frame.locator('s-banner[heading="Team has no members"]');
-  await expect(noMembers).toHaveAttribute("tone", "critical");
-  await expect(noMembers).toContainText(`Nobody is on ${EMPTY}.`);
+  await expect(frame.locator("s-banner")).toHaveCount(1);
+  await expect(frame.locator("s-badge", { hasText: "No members" })).toHaveCount(
+    1,
+  );
 });
 
 /**
@@ -687,11 +700,14 @@ test("the workflows index searches by name and clears back to the list", async (
 });
 
 /**
- * A task's instructions stop at `Domain.TASK_INSTRUCTIONS_MAX_LENGTH`: the
- * field takes no more (`INSTRUCTIONS_HELP` in the editor says why there is
- * no count-down of the editor's own), and its help line names the cap.
+ * A task's instructions are capped at `Domain.TASK_INSTRUCTIONS_MAX_LENGTH`
+ * the way the run note is (the text-limit control on `Control`): no help
+ * line, a countdown from `Domain.noteCountFrom`, and Save refuses past the
+ * cap with the field's own error while the text stays.
  */
-test("the editor stops instructions at 500 characters", async ({ page }) => {
+test("the editor counts instructions down from 300 and refuses 501 on save", async ({
+  page,
+}) => {
   test.setTimeout(120_000);
 
   await seedMembers(
@@ -719,14 +735,17 @@ test("the editor stops instructions at 500 characters", async ({ page }) => {
     name: "Instructions",
     exact: true,
   });
-  await expect(
-    editor.getByText(
-      "Members see this at this step on every item. Up to 500 characters.",
-      { exact: true },
-    ),
-  ).toBeVisible();
-  await instructions.fill("x".repeat(Domain.TASK_INSTRUCTIONS_MAX_LENGTH + 1));
-  await expect(instructions).toHaveValue(
-    "x".repeat(Domain.TASK_INSTRUCTIONS_MAX_LENGTH),
+  /* No help line and no counter on a field far from its cap. */
+  await expect(editor.getByText("characters", { exact: false })).toHaveCount(0);
+  await instructions.fill(
+    "x".repeat(Domain.noteCountFrom(Domain.TASK_INSTRUCTIONS_MAX_LENGTH)),
   );
+  await expect(editor.getByText("200 characters left")).toBeVisible();
+  /* Past the cap the field keeps the text and Save refuses with its own error. */
+  const over = "x".repeat(Domain.TASK_INSTRUCTIONS_MAX_LENGTH + 1);
+  await instructions.fill(over);
+  await expect(instructions).toHaveValue(over);
+  await editor.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(editor.getByText("Up to 500 characters")).toBeVisible();
+  await expect(instructions).toHaveValue(over);
 });

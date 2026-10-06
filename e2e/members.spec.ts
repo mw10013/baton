@@ -111,14 +111,15 @@ test("the members index creates a member and the member page adds it to teams, r
 
 /**
  * The email cap (`Domain.EMAIL_MAX_LENGTH`): an address of 254 characters is
- * created, heads its page, and prints whole in the Details card. The field's
- * `maxLength` stops typing at 254, so a 255-character address never reaches
- * the form; the schema's refusal behind it is pinned by the integration test
+ * created, heads its page, and prints whole in the Details card. The field
+ * sets no `maxLength` (the text-limit control): a 255-character address
+ * stays in the field and Create refuses it with the field's own error; the
+ * schema's refusal behind it is pinned by the integration test
  * "an email over 254 characters is refused and never stored". The created
  * member is deleted at the end, since the seeded member count is pinned
  * elsewhere.
  */
-test("a 254-character email is created and printed whole, and the field takes no more", async ({
+test("a 254-character email is created and printed whole, and 255 is refused on Create", async ({
   page,
 }) => {
   test.setTimeout(120_000);
@@ -131,7 +132,9 @@ test("a 254-character email is created and printed whole, and the field takes no
   await frame.getByRole("button", { name: "Create member" }).click();
   const field = frame.getByRole("textbox", { name: "Email", exact: true });
   await field.fill(tooLong);
-  await expect(field).toHaveValue(tooLong.slice(0, Domain.EMAIL_MAX_LENGTH));
+  await expect(field).toHaveValue(tooLong);
+  await frame.getByRole("button", { name: "Create", exact: true }).click();
+  await expect(frame.getByText("Up to 254 characters")).toBeVisible();
 
   await field.fill(longest);
   await frame.getByRole("button", { name: "Create", exact: true }).click();

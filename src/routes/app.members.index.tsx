@@ -1,3 +1,5 @@
+import * as React from "react";
+
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { useForm } from "@tanstack/react-form";
 import { useMutation } from "@tanstack/react-query";
@@ -9,12 +11,12 @@ import {
 import { createServerFn, useServerFn } from "@tanstack/react-start";
 import { Effect, Schema } from "effect";
 
-import { LocalDateTime } from "@/components/LocalDateTime";
 import { EmptyLine } from "@/components/screen/EmptyLine";
 import { FilterRow } from "@/components/screen/FilterRow";
 import { IndexSection } from "@/components/screen/IndexSection";
 import { ListSearchField } from "@/components/screen/ListSearchField";
 import { SearchLine } from "@/components/screen/SearchLine";
+import { textLimitError } from "@/components/screen/TextLimit";
 import { Token } from "@/components/screen/Token";
 import * as Domain from "@/lib/Domain";
 import { fieldError, mutationErrorMessage } from "@/lib/form";
@@ -161,6 +163,20 @@ function RouteComponent() {
     ? mutationErrorMessage(createMutation.error, "Couldn't create the member.")
     : null;
 
+  /** The cap is the field's own error before the schema's words can be (the text-limit control on `Control`). */
+  const [emailError, setEmailError] = React.useState<string | null>(null);
+  const submit = () => {
+    const limit = textLimitError(
+      form.getFieldValue("email"),
+      Domain.EMAIL_MAX_LENGTH,
+    );
+    if (limit !== null) {
+      setEmailError(limit);
+      return;
+    }
+    void form.handleSubmit();
+  };
+
   /** `replace: true`: a search is the screen's state, not a trail. */
   const setSearch = (next: Domain.ListSearch | null) => {
     void navigate({
@@ -236,7 +252,6 @@ function RouteComponent() {
         <s-table-header-row>
           <s-table-header listSlot="primary">Email</s-table-header>
           <s-table-header>Teams</s-table-header>
-          <s-table-header>Created</s-table-header>
         </s-table-header-row>
         <s-table-body>
           {members.map((member) => (
@@ -250,9 +265,6 @@ function RouteComponent() {
                 ) : (
                   member.teamCount
                 )}
-              </s-table-cell>
-              <s-table-cell>
-                <LocalDateTime value={member.createdAt} />
               </s-table-cell>
             </s-table-row>
           ))}
@@ -285,10 +297,6 @@ function RouteComponent() {
         head={
           !(unfiltered && members.length === 0) && (
             <>
-              <s-paragraph color="subdued">
-                Members sign in with their email. Put each one on a team, or
-                they have nothing to do.
-              </s-paragraph>
               {q !== undefined && matches !== null && matches > 0 && (
                 <SearchLine
                   count={matches}
@@ -328,7 +336,7 @@ function RouteComponent() {
         <form
           onSubmit={(event) => {
             event.preventDefault();
-            void form.handleSubmit();
+            submit();
           }}
         >
           <form.Field name="email">
@@ -338,9 +346,9 @@ function RouteComponent() {
                 name={field.name}
                 details="They sign in with this email. No Shopify account needed."
                 value={field.state.value}
-                maxLength={Domain.EMAIL_MAX_LENGTH}
-                error={fieldError(field.state.meta.errors)}
+                error={emailError ?? fieldError(field.state.meta.errors)}
                 onInput={(event) => {
+                  setEmailError(null);
                   field.handleChange(event.currentTarget.value);
                 }}
                 onBlur={field.handleBlur}
@@ -360,9 +368,7 @@ function RouteComponent() {
           slot="primary-action"
           variant="primary"
           loading={createMutation.isPending}
-          onClick={() => {
-            void form.handleSubmit();
-          }}
+          onClick={submit}
         >
           {Domain.RECORD_VERB_LABEL.create}
         </s-button>

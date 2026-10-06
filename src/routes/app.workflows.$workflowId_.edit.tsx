@@ -10,16 +10,15 @@ import {
 import { createServerFn } from "@tanstack/react-start";
 import { Effect, Match, Schema } from "effect";
 
-import { LocalDateTime } from "@/components/LocalDateTime";
 import { EmptyAside } from "@/components/screen/EmptyAside";
 import { Inline } from "@/components/screen/Inline";
 import { Lines } from "@/components/screen/Lines";
 import { Panel } from "@/components/screen/Panel";
+import { textLimitError, textLimitProps } from "@/components/screen/TextLimit";
 import { Things } from "@/components/screen/Things";
 import { StepFlow, TeamFaultBanners } from "@/components/WorkflowSteps";
 import { WorkflowSwitch } from "@/components/WorkflowSwitch";
 import * as Domain from "@/lib/Domain";
-import { formatNumber } from "@/lib/format";
 import { hideModal } from "@/lib/polarisModal";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
@@ -72,7 +71,12 @@ const taskResultMessage = Match.typeTags<Domain.TaskResult, string | null>()({
   TeamNotFound: () => "That team no longer exists. Choose another.",
 });
 
-/** Imperative: a blocker banner's job is to name the next action, not to restate the state the badges already carry. */
+/**
+ * The result of a press of Apply or Turn on, for the critical banner.
+ * Imperative: it names the next action. Nothing shows it before the press:
+ * a disabled Apply beside an empty canvas, or beside the "Needs a team"
+ * banner, already says why (the copy table's banner row on `CopySlot`).
+ */
 const applyResultMessage = Match.typeTags<Domain.ApplyResult, string | null>()({
   Ok: () => null,
   NotFound: () => "That workflow no longer exists.",
@@ -94,20 +98,6 @@ const discardResultMessage = Match.typeTags<
 /** A blank instructions field means "no instructions", which the wire carries as `null`, never `""`. */
 const instructionsOrNull = (value: string) =>
   value.trim().length === 0 ? null : value;
-
-/**
- * The Instructions field's `help` slot (`CopySlot` in `Screen.ts`): what the
- * text is for and its cap ({@link Domain.TaskInstructions}).
- *
- * The field sets `maxLength`, so typing stops at the cap and Polaris draws
- * its own `n/500` counter in the field. That departs from the run note's
- * field, which counts down only from `Domain.noteCountFrom` and lets the
- * write refuse an over-long note: a task's instructions are edited in a
- * panel whose Save has no field error to land a refusal in, and a field that
- * cannot exceed its cap never needs one. The counter is Polaris's, so the
- * help line carries no count of its own.
- */
-const INSTRUCTIONS_HELP = `Members see this at this step on every item. Up to ${formatNumber(Domain.TASK_INSTRUCTIONS_MAX_LENGTH)} characters.`;
 
 const getLoaderData = createServerFn({ method: "GET" })
   .validator(Schema.toStandardSchemaV1(WorkflowParams))
@@ -198,6 +188,10 @@ function RouteComponent() {
   } | null>(null);
   const [name, setName] = React.useState(detail?.workflow.name ?? "");
   const [nameError, setNameError] = React.useState<string | null>(null);
+  /** The Instructions field's submit error, on either form; one at a time is open. */
+  const [instructionsError, setInstructionsError] = React.useState<
+    string | null
+  >(null);
 
   const invalidate = () => router.invalidate({ sync: true });
 
@@ -501,7 +495,7 @@ function RouteComponent() {
     >
       {teams.map((team) => (
         <s-option key={team.id} value={team.id}>
-          {team.memberCount === 0 ? `${team.name} (no members)` : team.name}
+          {team.name}
         </s-option>
       ))}
     </s-select>
@@ -533,12 +527,16 @@ function RouteComponent() {
         <s-text-area
           label="Instructions"
           rows={2}
-          maxLength={Domain.TASK_INSTRUCTIONS_MAX_LENGTH}
-          details={INSTRUCTIONS_HELP}
           value={adding?.instructions ?? ""}
           disabled={busy}
+          {...textLimitProps(
+            adding?.instructions ?? "",
+            Domain.TASK_INSTRUCTIONS_MAX_LENGTH,
+          )}
+          {...(instructionsError === null ? {} : { error: instructionsError })}
           onInput={(event) => {
             const value = event.currentTarget.value;
+            setInstructionsError(null);
             setAdding((current) =>
               current === null ? current : { ...current, instructions: value },
             );
@@ -555,6 +553,14 @@ function RouteComponent() {
             }
             onClick={() => {
               if (adding === null) return;
+              const limit = textLimitError(
+                adding.instructions,
+                Domain.TASK_INSTRUCTIONS_MAX_LENGTH,
+              );
+              if (limit !== null) {
+                setInstructionsError(limit);
+                return;
+              }
               addStepMutation.mutate({
                 step: adding.step,
                 name: adding.name,
@@ -713,23 +719,10 @@ function RouteComponent() {
       <s-section accessibilityLabel="Steps">
         <Things>
           {banner !== null && <s-banner tone="critical">{banner}</s-banner>}
-          {/* Only while the header offers Turn on or Apply: a workflow that is
-              on with no draft has neither, and its unassigned tasks are
-              `TeamFaultBanners`' to report. */}
-          {blocker !== null &&
-            !(showSwitch && Domain.workflowIsOn(workflow)) && (
-              <s-banner
-                tone="warning"
-                heading={
-                  showSwitch ? "Turn on is unavailable" : "Not ready to apply"
-                }
-              >
-                {/* Wrapped, like {@link TeamFaultBanners}' lines: `s-banner`
-                  renders its body from elements, and a bare string child
-                  never reaches the page. */}
-                <s-paragraph>{applyResultMessage(blocker)}</s-paragraph>
-              </s-banner>
-            )}
+          {/* No standing banner for what blocks Apply or Turn on: the
+              disabled button beside an empty canvas, or beside the "Needs a
+              team" banner, already says it (the copy table's banner row on
+              `CopySlot`). The press result lands in `banner` above. */}
           <TeamFaultBanners tasks={tasks} />
 
           <StepFlow
@@ -739,22 +732,10 @@ function RouteComponent() {
             renderStepFooter={stepFooter}
             footer={canvasFooter()}
           />
-
-          {/* Every task control writes as it is used, so there is no Save for
-              the canvas and nothing on screen would otherwise say the work is
-              safe. The date is the workflow's one date, which every write
-              moves, draft edits included, so it is the edit
-              this line is about. */}
-          <s-text color="subdued">
-            {busy ? (
-              "Saving…"
-            ) : (
-              <>
-                {"\u2713 Saved \u00B7 Last changed on "}
-                <LocalDateTime value={workflow.updatedAt} />
-              </>
-            )}
-          </s-text>
+          {/* No "Saved" line: every task control writes as it is used, the
+              pressed button carries `loading` while it does, and a failed
+              write is the critical banner above (the controls table's "a
+              write in flight" row on `Control`). */}
         </Things>
       </s-section>
 
@@ -786,11 +767,17 @@ function RouteComponent() {
             <s-text-area
               label="Instructions"
               rows={3}
-              maxLength={Domain.TASK_INSTRUCTIONS_MAX_LENGTH}
-              details={INSTRUCTIONS_HELP}
               value={edit.instructions}
               disabled={busy}
+              {...textLimitProps(
+                edit.instructions,
+                Domain.TASK_INSTRUCTIONS_MAX_LENGTH,
+              )}
+              {...(instructionsError === null
+                ? {}
+                : { error: instructionsError })}
               onInput={(event) => {
+                setInstructionsError(null);
                 setEdit({ ...edit, instructions: event.currentTarget.value });
               }}
             />
@@ -884,6 +871,14 @@ function RouteComponent() {
                   edit.teamId === ""
                 }
                 onClick={() => {
+                  const limit = textLimitError(
+                    edit.instructions,
+                    Domain.TASK_INSTRUCTIONS_MAX_LENGTH,
+                  );
+                  if (limit !== null) {
+                    setInstructionsError(limit);
+                    return;
+                  }
                   updateTaskMutation.mutate({
                     taskId: selected.id,
                     name: edit.name,
@@ -955,18 +950,12 @@ function RouteComponent() {
           <s-text-field
             label={RENAME_FIELD_LABEL}
             value={name}
-            maxLength={Domain.NAME_MAX_LENGTH}
             {...(nameError === null ? {} : { error: nameError })}
             onInput={(event) => {
               setName(event.currentTarget.value);
               setNameError(null);
             }}
           />
-          {/* `s-text-field` has no counter of its own, and the limit is worth
-              seeing while typing: the field silently stops accepting. */}
-          <s-text color="subdued">
-            {`${String(name.length)}/${String(Domain.NAME_MAX_LENGTH)}`}
-          </s-text>
         </Lines>
         <s-button
           slot="secondary-actions"
@@ -981,6 +970,11 @@ function RouteComponent() {
           loading={renameMutation.isPending}
           disabled={!identified || name.trim().length === 0}
           onClick={() => {
+            const limit = textLimitError(name, Domain.NAME_MAX_LENGTH);
+            if (limit !== null) {
+              setNameError(limit);
+              return;
+            }
             renameMutation.mutate();
           }}
         >

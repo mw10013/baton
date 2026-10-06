@@ -19,6 +19,7 @@ import { IndexSection } from "@/components/screen/IndexSection";
 import { Inline } from "@/components/screen/Inline";
 import { ListSearchField } from "@/components/screen/ListSearchField";
 import { SearchLine } from "@/components/screen/SearchLine";
+import { textLimitError } from "@/components/screen/TextLimit";
 import { Token } from "@/components/screen/Token";
 import * as Domain from "@/lib/Domain";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
@@ -436,7 +437,6 @@ function RouteComponent() {
             label="Name"
             placeholder="e.g. Engraved ring"
             value={name}
-            maxLength={Domain.NAME_MAX_LENGTH}
             {...(nameError === null ? {} : { error: nameError })}
             onInput={(event) => {
               onNameInput(event.currentTarget.value);
@@ -446,7 +446,6 @@ function RouteComponent() {
             label="Tag"
             details="Add this tag to your products in Shopify. Their items will follow this workflow."
             value={tag}
-            maxLength={255}
             {...(tagError === null ? {} : { error: tagError })}
             onInput={(event) => {
               setTag(event.currentTarget.value);
@@ -470,6 +469,11 @@ function RouteComponent() {
             !identified || name.trim().length === 0 || tag.trim().length === 0
           }
           onClick={() => {
+            const nameLimit = textLimitError(name, Domain.NAME_MAX_LENGTH);
+            const tagLimit = textLimitError(tag, Domain.TAG_MAX_LENGTH);
+            if (nameLimit !== null) setNameError(nameLimit);
+            if (tagLimit !== null) setTagError(tagLimit);
+            if (nameLimit !== null || tagLimit !== null) return;
             createMutation.mutate();
           }}
         >

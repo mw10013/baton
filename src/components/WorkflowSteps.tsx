@@ -1,13 +1,14 @@
 import type * as React from "react";
 
 import { Connector } from "@/components/screen/Connector";
+import { Inline } from "@/components/screen/Inline";
 import { Lines } from "@/components/screen/Lines";
 import { Panel } from "@/components/screen/Panel";
 import { Prose } from "@/components/screen/Prose";
 import { SelectableCard } from "@/components/screen/SelectableCard";
 import * as Domain from "@/lib/Domain";
 import * as WorkflowLayout from "@/lib/WorkflowLayout";
-import { emptyTeamLine, unassignedLine } from "@/lib/workflowShared";
+import { unassignedLine } from "@/lib/workflowShared";
 
 /**
  * The tasks of an item workflow drawn as the merchant reads them: top to
@@ -22,16 +23,25 @@ import { emptyTeamLine, unassignedLine } from "@/lib/workflowShared";
 
 /**
  * The team under a task name, or "No team" in its place: a fact, not an
- * alarm. No badge for an unassigned task or an empty team here, because
- * {@link TeamFaultBanners} above the steps already raises each issue under
- * its label and names the task or team, and a second red mark on the same
- * page for one fault reads as two.
+ * alarm. One mark per fault on the page: an unassigned task is
+ * {@link TeamFaultBanners}' to raise, because it disables Apply and Turn on,
+ * so there is no badge for it here; an empty team disables nothing, so it is
+ * a badge beside the team's name and no banner (the controls table's "a fact
+ * about the page that disables things" row on `Control`). The badge's word
+ * is the teams index's, "No members"; the workflows index's badge for the
+ * same fault reads {@link Domain.WORKFLOW_FAULT_LABEL} because it has no
+ * team name beside it.
  */
 export function TeamLine({ task }: { readonly task: Domain.TaskWithTeamName }) {
   return (
-    <s-text color="subdued">
-      {Domain.workflowTaskIsUnassigned(task) ? "No team" : task.teamName}
-    </s-text>
+    <Inline>
+      <s-text color="subdued">
+        {Domain.workflowTaskIsUnassigned(task) ? "No team" : task.teamName}
+      </s-text>
+      {Domain.hasEmptyTeam(task) && (
+        <s-badge tone="warning">No members</s-badge>
+      )}
+    </Inline>
   );
 }
 
@@ -132,37 +142,29 @@ export function StepFlow({
 }
 
 /**
- * One banner per {@link Domain.WorkflowFault} a workflow carries, headed by
- * the fault's label ({@link Domain.WORKFLOW_FAULT_LABEL}) and toned
- * {@link Domain.ORDER_ISSUE_TONE} so a fault reads the same here as on the
- * workflows index. Nothing when the workflow has neither. Two banners rather than one
- * because the faults have different remedies, and one heading over both
- * would name neither.
+ * The one banner a workflow page raises: the `unassigned`
+ * {@link Domain.WorkflowFault}, headed by its label
+ * ({@link Domain.WORKFLOW_FAULT_LABEL}) and toned
+ * {@link Domain.ORDER_ISSUE_TONE} so it reads the same here as on the
+ * workflows index. A banner because it disables Apply and Turn on; the
+ * `empty_team` fault disables nothing and is a badge on the step
+ * ({@link TeamLine}). Nothing when every task has a team.
  */
 export function TeamFaultBanners({
   tasks,
 }: {
   readonly tasks: readonly Domain.TaskWithTeamName[];
 }) {
-  const banners = [
-    { fault: "unassigned" as const, line: unassignedLine(tasks) },
-    { fault: "empty_team" as const, line: emptyTeamLine(tasks) },
-  ];
+  const line = unassignedLine(tasks);
+  if (line === null) return null;
   return (
-    <>
-      {banners.map(({ fault, line }) =>
-        line === null ? null : (
-          <s-banner
-            key={fault}
-            tone={Domain.ORDER_ISSUE_TONE}
-            heading={Domain.WORKFLOW_FAULT_LABEL[fault]}
-          >
-            {/* An element, not a bare string: `s-banner` renders its body
-                from elements, and a bare string child never reaches the page. */}
-            <s-text>{line}</s-text>
-          </s-banner>
-        ),
-      )}
-    </>
+    <s-banner
+      tone={Domain.ORDER_ISSUE_TONE}
+      heading={Domain.WORKFLOW_FAULT_LABEL.unassigned}
+    >
+      {/* An element, not a bare string: `s-banner` renders its body
+          from elements, and a bare string child never reaches the page. */}
+      <s-text>{line}</s-text>
+    </s-banner>
   );
 }

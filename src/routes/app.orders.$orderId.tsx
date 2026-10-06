@@ -174,11 +174,11 @@ interface TextWrite extends RunWrite {
 /** The merchant as the actor every action set on this page is computed for. */
 const MERCHANT: Domain.Actor = { role: "merchant" };
 
-/** The teams as select options, an empty team named so the pick is not a surprise. */
+/** The teams as select options: names only (the controls table's "a choice among records" row on `Control`). */
 const teamOptions = (teams: readonly Domain.TeamWithMemberCount[]) =>
   teams.map((team) => (
     <s-option key={team.id} value={team.id}>
-      {team.memberCount === 0 ? `${team.name} (no members)` : team.name}
+      {team.name}
     </s-option>
   ));
 

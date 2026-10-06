@@ -1,5 +1,7 @@
 import { expect, type FrameLocator, test } from "@playwright/test";
 
+import * as Domain from "@/lib/Domain";
+
 import { appNavLink, clickHoisted, gotoApp } from "./app";
 import { seedConfig, seedMembers } from "./seed";
 
@@ -56,9 +58,14 @@ test("teams screen creates, adds members to, renames, and deletes a team", async
      something the create dialog does on its own. Creating lands on the new
      team's page, since the next thing is always adding people. */
   await frame.getByRole("button", { name: "Create team" }).click();
-  await frame
-    .getByRole("textbox", { name: "Name", exact: true })
-    .fill(`  ${TEAM}  `);
+  /* A one-line field shows no counter and refuses past its cap on submit
+     with its own error (the text-limit control). */
+  const nameField = frame.getByRole("textbox", { name: "Name", exact: true });
+  await nameField.fill("x".repeat(Domain.TEAM_NAME_MAX_LENGTH + 1));
+  await expect(frame.getByText("characters", { exact: false })).toHaveCount(0);
+  await frame.getByRole("button", { name: "Create", exact: true }).click();
+  await expect(frame.getByText("Up to 32 characters")).toBeVisible();
+  await nameField.fill(`  ${TEAM}  `);
   await frame.getByRole("button", { name: "Create", exact: true }).click();
   await expect(frame.locator(`s-page[heading="${TEAM}"]`)).toBeVisible();
   await expect(frame.getByText("Not used by any workflow yet.")).toBeVisible();

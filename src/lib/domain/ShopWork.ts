@@ -119,7 +119,7 @@
  * | blocked     | a run on the order is blocked, the run-state word         | Blocked                  |
  *
  * Workflow faults, shop work: zero or more per workflow, derived, never
- * stored, shown on the workflows index and the workflow page ({@link WorkflowFault}):
+ * stored, shown as badges on the workflows index ({@link WorkflowFault}):
  *
  * | word       | meaning                          | screen              |
  * | ---------- | -------------------------------- | ------------------- |
@@ -127,7 +127,10 @@
  * | empty team | a task on a team with no members | Team has no members |
  *
  * `unassigned` is a workflow fault and an order issue with one label, so one
- * fault reads the same wherever it shows.
+ * fault reads the same wherever it shows. On the workflow page `unassigned`
+ * is the one banner, under the same label; `empty team` is a "No members"
+ * badge beside the team's name on the step, the teams index's word for the
+ * team's own state ({@link WORKFLOW_FAULT_LABEL}).
  *
  * Verbs, shop work. Who may do each, and in which state, is the matrix on
  * {@link taskActions} or {@link runActions}, not here; the four workflow
@@ -300,7 +303,10 @@ export const ORDER_POSITION_LABEL = {
 
 /**
  * The vocabulary's workflow-faults screen column: the workflows index's
- * badges and the workflow page's banners, with {@link ORDER_ISSUE_TONE}.
+ * badges, with {@link ORDER_ISSUE_TONE}; on a workflow page `unassigned` is
+ * the one banner (it disables Apply and Turn on) and `empty_team` is a
+ * "No members" badge on the step, the teams index's word, because it
+ * disables nothing and sits beside the team's name.
  */
 export const WORKFLOW_FAULT_LABEL = {
   unassigned: "Needs a team",
@@ -525,13 +531,7 @@ export type MemberSummary = typeof MemberSummary.Type;
  */
 export const TeamDetail = Schema.Struct({
   team: Team,
-  members: Schema.Array(
-    Schema.Struct({
-      ...Member.fields,
-      /** The `TeamMember.createdAt` of the edge. */
-      inTeamSince: Schema.Number,
-    }),
-  ),
+  members: Schema.Array(Member),
   memberCount: Schema.Number,
   nextCursor: Schema.NullOr(Email),
   candidates: Schema.Array(Member),
@@ -547,13 +547,7 @@ export type TeamDetail = typeof TeamDetail.Type;
  */
 export const MemberDetail = Schema.Struct({
   member: Member,
-  teams: Schema.Array(
-    Schema.Struct({
-      ...TeamWithMemberCount.fields,
-      /** The `TeamMember.createdAt` of the edge. */
-      inTeamSince: Schema.Number,
-    }),
-  ),
+  teams: Schema.Array(TeamWithMemberCount),
   teamCount: Schema.Number,
   nextCursor: Schema.NullOr(TeamName),
   candidates: Schema.Array(TeamWithMemberCount),
@@ -597,7 +591,7 @@ export const WorkflowTaskId = Schema.NonEmptyString.pipe(
 );
 export type WorkflowTaskId = typeof WorkflowTaskId.Type;
 
-/** The length of every trimmed name: the schema check, the field `maxLength`, and the rename dialog's counter all read this. */
+/** The length of every trimmed name: the schema check and the field's submit error (`TextLimit` in `src/components/screen/`) read this. */
 export const NAME_MAX_LENGTH = 64;
 
 const trimmedName = <B extends string>(brand: B) =>
@@ -637,7 +631,7 @@ const trimmedText = <B extends string>(brand: B, maxLength: number) =>
     ),
   );
 
-/** The cap {@link TaskInstructions} enforces, exported so the editor's field can stop at it. */
+/** The cap {@link TaskInstructions} enforces, exported so the editor's field can count down to it and refuse past it. */
 export const TASK_INSTRUCTIONS_MAX_LENGTH = 500;
 
 /**
@@ -645,8 +639,8 @@ export const TASK_INSTRUCTIONS_MAX_LENGTH = 500;
  * every item, copied onto every run. Not the procedure: that lives in the
  * shop's own documents, and a field a member reads at the bench holds a few
  * lines, so the cap is {@link TASK_INSTRUCTIONS_MAX_LENGTH}; the editor's
- * field stops at it (`INSTRUCTIONS_HELP` in the workflow editor says why it
- * does not count down like the run note). Trimmed like
+ * field counts down to it and refuses past it like the run note (the
+ * text-limit part, `TextLimit` in `src/components/screen/`). Trimmed like
  * {@link TaskName}; a blank field is sent as `null`, never as an empty
  * string.
  */
@@ -687,6 +681,9 @@ export type RunNote = typeof RunNote.Type;
 export const BlockReason = trimmedText("BlockReason", BLOCK_REASON_MAX_LENGTH);
 export type BlockReason = typeof BlockReason.Type;
 
+/** Shopify's tag length limit: the schema check and the tag fields' submit error read this. */
+export const TAG_MAX_LENGTH = 255;
+
 /**
  * The workflow's one tag: its identity in a form a product can carry. Every
  * workflow has exactly one, from birth, and no two workflows share one. Baton
@@ -702,12 +699,12 @@ export type BlockReason = typeof BlockReason.Type;
  * merchant copies it onto products, so a case typo on the product is the same
  * failure as any other typo: the order shows under Not started with the
  * workflow in the Workflow select. Trimmed because a value Baton stores is
- * clean when stored. 255 is Shopify's tag length limit; Baton adds no
+ * clean when stored. {@link TAG_MAX_LENGTH} is Shopify's tag length limit; Baton adds no
  * character rules of its own beyond what Shopify allows in a tag.
  */
 export const WorkflowTag = Schema.String.pipe(
   Schema.decodeTo(
-    Schema.NonEmptyString.check(Schema.isMaxLength(255)).pipe(
+    Schema.NonEmptyString.check(Schema.isMaxLength(TAG_MAX_LENGTH)).pipe(
       Schema.brand("WorkflowTag"),
     ),
     {
@@ -787,9 +784,9 @@ export type WorkflowState = typeof WorkflowState.Type;
  * unassigned task carries the `unassigned` {@link WorkflowFault} (**Needs a
  * team**) and one with a task on a team with no members the `empty_team`
  * fault (**Team has no members**), labelled by {@link WORKFLOW_FAULT_LABEL}
- * and toned {@link ORDER_ISSUE_TONE}, on the workflows index as badges and
- * on the workflow page as banners. Both are derived on every read and never
- * stored.
+ * and toned {@link ORDER_ISSUE_TONE}, as badges on the workflows index; on
+ * the workflow page `unassigned` is a banner and `empty_team` a "No members"
+ * badge on the step. Both are derived on every read and never stored.
  * **Apply and Turn on refuse only a fault the draft itself can fix.** An
  * unassigned task is fixed in the draft, so both refuse it. An empty team is
  * fixed on the team page, outside the draft, so neither refuses it: refusing

@@ -217,6 +217,71 @@ describe("an s-text-area has a label and no placeholder", () => {
   });
 });
 
+describe("an info banner is refused on a merchant or member screen", () => {
+  it("reads the opening tag across lines and passes warning and critical", () => {
+    const source = [
+      "<s-banner",
+      '  tone="info"',
+      '  heading="Closed"',
+      ">",
+      '<s-banner tone="warning">{text}</s-banner>',
+      '<s-banner tone="critical">{text}</s-banner>',
+    ].join("\n");
+    expect(RulesLint.infoBannerHits(source)).toEqual([
+      { line: 1, text: "<s-banner" },
+    ]);
+  });
+});
+
+describe("maxLength is refused on a field outside src/components/screen/", () => {
+  it("reads text, text-area and email fields and leaves a select alone", () => {
+    const source = [
+      '<s-text-field label="Name" maxLength={64} />',
+      "<s-text-area",
+      '  label="Instructions"',
+      "  maxLength={500}",
+      "/>",
+      '<s-email-field label="Email" maxLength={254} />',
+      '<s-text-field label="Name" />',
+      '<s-select label="Team" maxLength={3} />',
+    ].join("\n");
+    expect(RulesLint.maxLengthHits(source).map(({ line }) => line)).toEqual([
+      1, 2, 6,
+    ]);
+  });
+});
+
+describe("an s-option carries no parenthesis", () => {
+  it("reads the option's text on the opening line or the next, and passes a name", () => {
+    const source = [
+      "<s-option value={team.id}>",
+      // oxlint-disable-next-line no-template-curly-in-string -- source under test, not a template
+      "  {team.memberCount === 0 ? `${team.name} (no members)` : team.name}",
+      "</s-option>",
+      '<s-option value="a">A Team (empty)</s-option>',
+      '<s-option value="b">B Team</s-option>',
+      "<s-option value={team.id}>{team.name}</s-option>",
+    ].join("\n");
+    expect(
+      RulesLint.optionAnnotationHits(source).map(({ line }) => line),
+    ).toEqual([1, 4]);
+  });
+});
+
+describe("Saved, Saving and Syncing are retired as a sentence's start in screen copy", () => {
+  it("refuses a status sentence and passes Note saved and stopped syncing", () => {
+    const source = [
+      'const a = "Saving…";',
+      'const b = "\u2713 Saved · Last changed on ";',
+      'const c = "Syncing… this page updates as orders arrive.";',
+      'const d = "Note saved";',
+      'const e = "Instructions saved";',
+      'const f = "New orders stopped syncing at 2,500 open orders.";',
+    ].join("\n");
+    expect(hits(source, false)).toEqual([1, 2, 3]);
+  });
+});
+
 describe("an exported identifier carries no reserved stem", () => {
   it("refuses a stem anywhere in an exported name, in any case, and leaves locals and the allowed names alone", () => {
     const source = [

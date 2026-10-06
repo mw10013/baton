@@ -26,6 +26,7 @@
  * | picker, pickers            | retired; the control is a select, named by its label (the Workflow select, the Assign team select)        |
  * | Edit teams, Edit members, Edit workflows | retired; a set is edited with Add and a Remove per row, and Edit is a workflow's tasks only (the Record verbs table) |
  * | Remove …? (a heading that asks) | Remove takes a thing out of a set and has no modal; a verb that asks is Delete (the controls table on `Control`) |
+ * | Saved …, Saving …, Syncing … (a sentence that starts so) | a write in flight is `loading` on the pressed button, and a page's resting state is silent (the controls table on `Control`); "Note saved", the toast's form, and "stopped syncing", a fact, stay |
  *
  * And the copy words that are wrong in every slot, whatever the noun: copy
  * states facts and names the act, so it never pleads, apologises, exclaims
@@ -89,6 +90,8 @@ export const RETIRED: readonly RegExp[] = [
   /\bpickers?\b/iu,
   /\bedit (?:teams|members|workflows)\b/iu,
   /^\s*remove\b.*\?\s*$/iu,
+  /^\s*(?:\u2713\s*)?sav(?:ed|ing)\b/iu,
+  /^\s*syncing\b/iu,
   /\bplease\b/iu,
   /\bsuccessfully\b/iu,
   /\boops\b/iu,
@@ -179,6 +182,54 @@ export const textAreaPlaceholderHits = (
       text: source.slice(index).split("\n")[0]?.trim() ?? "",
     }),
   );
+
+/** The 1-based line of a match and the opening line of the element it sits on. */
+const tagHits = (
+  source: string,
+  pattern: RegExp,
+): readonly { readonly line: number; readonly text: string }[] =>
+  [...source.matchAll(pattern)].map(({ index }) => ({
+    line: source.slice(0, index).split("\n").length,
+    text: source.slice(index).split("\n")[0]?.trim() ?? "",
+  }));
+
+/**
+ * An `s-banner` with `tone="info"` on a merchant or member screen is
+ * refused: Baton never dismisses a banner and Polaris's info banner is the
+ * dismissible kind, so an info fact is a line or a badge (the controls table
+ * on `Control`, "a fact about the page that disables things"). The operator
+ * console is not read ({@link copyFiles} leaves it out).
+ */
+export const infoBannerHits = (
+  source: string,
+): readonly { readonly line: number; readonly text: string }[] =>
+  tagHits(source, /<s-banner\b[^>]*?\btone="info"/gsu);
+
+/**
+ * `maxLength` on an `s-text-field`, `s-text-area` or `s-email-field` is
+ * refused outside `src/components/screen/`: Polaris draws an `n/max` counter
+ * on an empty field the moment it is set, and the text-limit control (the
+ * controls table on `Control`) counts down only near the cap and refuses on
+ * submit. The caller applies the directory rule; this reads one source.
+ */
+export const maxLengthHits = (
+  source: string,
+): readonly { readonly line: number; readonly text: string }[] =>
+  tagHits(
+    source,
+    /<s-(?:text-field|text-area|email-field)\b[^>]*?\bmaxLength=/gsu,
+  );
+
+/**
+ * An `s-option` whose text carries a parenthesis is refused: a select is a
+ * list of names, and "(no members)" is a state the page says elsewhere (the
+ * controls table on `Control`, "a choice among records"). The option's text
+ * may be on the opening line or the next.
+ */
+export const optionAnnotationHits = (
+  source: string,
+): readonly { readonly line: number; readonly text: string }[] =>
+  tagHits(source, /<s-option\b[^>]*>[^<]*\(/gu);
 
 /** One exported name in a source file, with its 1-based line and what kind of declaration it is. */
 export interface ExportedName {

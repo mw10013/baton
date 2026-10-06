@@ -335,7 +335,6 @@ function RouteComponent() {
         >
           <s-table-header-row>
             <s-table-header listSlot="primary">Team</s-table-header>
-            <s-table-header>On team since</s-table-header>
             <s-table-header>
               <End>Actions</End>
             </s-table-header>
@@ -345,9 +344,6 @@ function RouteComponent() {
               <s-table-row key={team.id} id={team.id}>
                 <s-table-cell>
                   <s-link href={`/app/teams/${team.id}`}>{team.name}</s-link>
-                </s-table-cell>
-                <s-table-cell>
-                  <LocalDateTime value={team.inTeamSince} />
                 </s-table-cell>
                 <s-table-cell>
                   <End>

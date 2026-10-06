@@ -8,8 +8,9 @@ import * as Domain from "@/lib/Domain";
  * Raw field text to the branded search, or `None` for anything the schema
  * refuses: empty, blank, or past its 64 characters. `None` is "no search",
  * which is what an emptied field means, so the caller needs no second test.
- * The field sets no `maxLength`: Polaris would draw a character counter, and
- * no order number or item word comes near the limit.
+ * The field sets no `maxLength` (the controls table's "a text limit" row on
+ * `Control`): Polaris would draw a character counter, and no order number or
+ * item word comes near the limit, so the field neither counts down nor errs.
  */
 const decodeListSearch = Schema.decodeUnknownOption(Domain.ListSearch);
 

@@ -29,8 +29,8 @@ const decodeSwitchResult = Schema.decodeUnknownPromise(
   Schema.toType(Domain.SwitchResult),
 );
 
-/** Imperative: a blocker banner's job is to name the next action, not to restate the state the badges already carry. */
-export const switchResultMessage = Match.typeTags<
+/** The result of a press of Turn on, for the page's critical banner. Imperative: it names the next action. Nothing shows it before the press: the disabled switch already says it (the copy table's banner row on `CopySlot`). */
+const switchResultMessage = Match.typeTags<
   Domain.SwitchResult,
   string | null
 >()({

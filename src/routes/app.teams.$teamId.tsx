@@ -17,6 +17,7 @@ import { EmptyLine } from "@/components/screen/EmptyLine";
 import { End } from "@/components/screen/End";
 import { Pairs } from "@/components/screen/Pairs";
 import { TableFrame } from "@/components/screen/TableFrame";
+import { textLimitError } from "@/components/screen/TextLimit";
 import { Things } from "@/components/screen/Things";
 import { Token } from "@/components/screen/Token";
 import * as Domain from "@/lib/Domain";
@@ -350,6 +351,19 @@ function RouteComponent() {
     },
   });
 
+  /** The cap is the field's own error before the schema's words can be (the text-limit control on `Control`). */
+  const submitRename = () => {
+    const limit = textLimitError(
+      form.getFieldValue("name"),
+      Domain.TEAM_NAME_MAX_LENGTH,
+    );
+    if (limit !== null) {
+      setNameError(limit);
+      return;
+    }
+    void form.handleSubmit();
+  };
+
   const renameError = renameMutation.isError
     ? mutationErrorMessage(renameMutation.error, "Couldn't rename the team.")
     : null;
@@ -437,7 +451,6 @@ function RouteComponent() {
         >
           <s-table-header-row>
             <s-table-header listSlot="primary">Member</s-table-header>
-            <s-table-header>On team since</s-table-header>
             <s-table-header>
               <End>Actions</End>
             </s-table-header>
@@ -449,9 +462,6 @@ function RouteComponent() {
                   <Token href={`/app/members/${member.id}`}>
                     {member.email}
                   </Token>
-                </s-table-cell>
-                <s-table-cell>
-                  <LocalDateTime value={member.inTeamSince} />
                 </s-table-cell>
                 <s-table-cell>
                   <End>
@@ -603,7 +613,7 @@ function RouteComponent() {
         <form
           onSubmit={(event) => {
             event.preventDefault();
-            void form.handleSubmit();
+            submitRename();
           }}
         >
           <form.Field name="name">
@@ -612,7 +622,6 @@ function RouteComponent() {
                 label="Name"
                 name={field.name}
                 value={field.state.value}
-                maxLength={Domain.TEAM_NAME_MAX_LENGTH}
                 error={nameError ?? fieldError(field.state.meta.errors)}
                 onInput={(event) => {
                   setNameError(null);
@@ -635,9 +644,7 @@ function RouteComponent() {
           slot="primary-action"
           variant="primary"
           loading={renameMutation.isPending}
-          onClick={() => {
-            void form.handleSubmit();
-          }}
+          onClick={submitRename}
         >
           Save
         </s-button>
