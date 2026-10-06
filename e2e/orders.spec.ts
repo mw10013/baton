@@ -732,8 +732,8 @@ test("the order card puts the run's badges on the title line, Manage above its d
 /**
  * One workflow per item, at the two places a merchant meets it.
  *
- * Two workflows that are on, with a tag each, both on the same product, is a state
- * the app refuses to *create* — Apply and Turn on hold one workflow that is on per
+ * Two active workflows, with a tag each, both on the same product, is a state
+ * the app refuses to *create* — Apply and Turn on hold one active workflow per
  * tag — and the local seed is what makes it reachable, because it writes
  * definitions straight into SQLite. That is deliberate: the rule is enforced at
  * the switch, but the runtime has to cope with the state anyway (two workflows
@@ -806,7 +806,7 @@ test("an item matching two workflows waits for the merchant to choose, then chan
   await expect(frame.locator('s-page[heading="#9401"]')).toBeVisible();
 
   /* An item with no run carries the Workflow select at rest, and on a multi-match one it
-     offers every workflow that is on, with the two that matched first. The
+     offers every active workflow, with the two that matched first. The
      sentence says why it asks and names nothing, so it cannot drift from the
      list. The shop may carry other tests' workflows, so the count is not
      pinned; the order is. */

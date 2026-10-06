@@ -12,9 +12,13 @@ import {
 } from "@/lib/workflowShared";
 
 /**
- * The on/off switch of the workflow page and of the editor: the Turn on /
+ * The switch of the workflow page and of the editor: the Turn on /
  * Turn off button and the Turn on and Turn off dialogs. A component of its
  * own so neither surface can restate the rule in its own words.
+ *
+ * The title-bar button names its noun (Turn on workflow, Turn off workflow)
+ * and each modal's primary is the verb alone, by the controls table's "a
+ * verb in the title bar" row on `Control` ({@link Domain.SWITCH_TITLE_LABEL}).
  *
  * Both directions confirm. Turn off is destructive in the merchant's terms —
  * the floor stops getting new work — so it is the critical primary and asks
@@ -52,19 +56,19 @@ export function WorkflowSwitch({
   readonly workflow: Domain.Workflow;
   /** The tasks Turn on will check: the workflow's own, or the draft's when {@link appliesFirst} will promote them. */
   readonly tasks: readonly Domain.TaskWithTeamName[];
-  /** The rule that will create runs once the switch is on, for the Turn on dialog's first line. */
+  /** The rule that will create runs once the workflow is active, for the Turn on dialog's first line. */
   readonly turnOnBody: string;
   /** Where the button goes: both surfaces make it the primary, but the editor and the detail page slot their other controls differently. */
   readonly slot: "primary-action" | "secondary-actions";
   /**
-   * False hides the button. The detail page hides it while a
-   * workflow that is off has a draft: what the merchant would be turning on is
+   * False hides the button. The detail page hides it while an
+   * inactive workflow has a draft: what the merchant would be turning on is
    * not what the editor is holding.
    */
   readonly showControl?: boolean;
   /**
    * Turn on applies the draft in the same click, for a workflow that has
-   * never been applied: promoting tasks that have never run and switching the
+   * never been applied: promoting tasks that have never run and turning the
    * workflow on are one decision (`ShopAgent.applyAndTurnOn`).
    */
   readonly appliesFirst?: boolean;
@@ -87,11 +91,11 @@ export function WorkflowSwitch({
   };
 
   const switchMutation = useMutation({
-    mutationFn: (input: { readonly on: boolean }) =>
+    mutationFn: (input: { readonly state: Domain.WorkflowState }) =>
       call((stub) =>
-        input.on && appliesFirst
+        Domain.workflowIsActive(input) && appliesFirst
           ? stub.applyAndTurnOn({ workflowId })
-          : stub.setWorkflowOn({ workflowId, on: input.on }),
+          : stub.setWorkflowState({ workflowId, state: input.state }),
       ).then(decodeSwitchResult),
     onSuccess: async (result) => {
       onMessage(switchResultMessage(result));
@@ -114,7 +118,7 @@ export function WorkflowSwitch({
   return (
     <>
       {showControl &&
-        (Domain.workflowIsOn(workflow) ? (
+        (Domain.workflowIsActive(workflow) ? (
           <s-button
             slot={slot}
             variant="primary"
@@ -124,7 +128,7 @@ export function WorkflowSwitch({
             commandFor={TURN_OFF_MODAL}
             command="--show"
           >
-            {Domain.VERB_LABEL.turnOff.merchant}
+            {Domain.SWITCH_TITLE_LABEL.turnOff}
           </s-button>
         ) : (
           <s-button
@@ -134,7 +138,7 @@ export function WorkflowSwitch({
             commandFor={TURN_ON_MODAL}
             command="--show"
           >
-            {Domain.VERB_LABEL.turnOn.merchant}
+            {Domain.SWITCH_TITLE_LABEL.turnOn}
           </s-button>
         ))}
 
@@ -155,7 +159,7 @@ export function WorkflowSwitch({
           loading={switching}
           disabled={!identified || switching}
           onClick={() => {
-            switchMutation.mutate({ on: true });
+            switchMutation.mutate({ state: "active" });
           }}
         >
           {Domain.VERB_LABEL.turnOn.merchant}
@@ -177,7 +181,7 @@ export function WorkflowSwitch({
           loading={switching}
           disabled={!identified || switching}
           onClick={() => {
-            switchMutation.mutate({ on: false });
+            switchMutation.mutate({ state: "inactive" });
           }}
         >
           {Domain.VERB_LABEL.turnOff.merchant}

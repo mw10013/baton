@@ -8,7 +8,7 @@ import { WorkflowRepository } from "@/lib/WorkflowRepository";
 /**
  * What a pass reads besides the stored order, wired the way
  * `ShopWorkAgent.eligibleContext` wires it: `teams`, and the workflows found
- * by the order's tags through `WorkflowRepository.listOnWorkflowsByTags`.
+ * by the order's tags through `WorkflowRepository.listActiveWorkflowsByTags`.
  */
 export const reconcileContext = (teams: Domain.EligibleContext["teams"]) =>
   Effect.gen(function* () {
@@ -17,7 +17,7 @@ export const reconcileContext = (teams: Domain.EligibleContext["teams"]) =>
       teams,
       workflowsByTags: (tags) =>
         workflows
-          .listOnWorkflowsByTags({ tags })
+          .listActiveWorkflowsByTags({ tags })
           .pipe(
             Effect.catchTag("WorkflowRepositoryError", (cause) =>
               Effect.fail(

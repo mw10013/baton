@@ -188,7 +188,7 @@ const workflowOf = (id: string, name: string): Domain.Workflow => ({
   id: Schema.decodeUnknownSync(Domain.WorkflowId)(id),
   name: Schema.decodeUnknownSync(Domain.WorkflowName)(name),
   tag: Schema.decodeUnknownSync(Domain.WorkflowTag)(name.toLowerCase()),
-  state: "on",
+  state: "active",
   updatedAt: 0,
 });
 
@@ -755,9 +755,9 @@ describe("ShopAgent refuses what the action set refuses", () => {
         workflowId: created.workflow.id,
       });
       if (applied._tag !== "Ok") throw new Error(applied._tag);
-      const on = await agent.setWorkflowOn({
+      const on = await agent.setWorkflowState({
         workflowId: created.workflow.id,
-        on: true,
+        state: "active",
       });
       if (on._tag !== "Ok") throw new Error(on._tag);
       return created.workflow.id;

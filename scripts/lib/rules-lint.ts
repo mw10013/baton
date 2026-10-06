@@ -268,14 +268,13 @@ export const exportedNames = (source: string): readonly ExportedName[] =>
  *
  * | stem       | why                                                                                  |
  * | ---------- | ------------------------------------------------------------------------------------ |
- * | active     | a workflow is on, a run is open; "active" is Shopify's word for an app subscription  |
  * | roster     | a synonym: the shop's members, the member count, or its teams                        |
  * | slot       | a metaphor for the rule "one run per item"                                           |
  * | tier       | a state of the member's workflows list; billing's tier is Shopify's and not exported |
  * | view       | retired; a filter, a search, or the member's list state                              |
  * | glossary   | the block is the vocabulary                                                          |
  * | production | the deploy environment; the core context is shop work                                |
- * | activated  | nothing; the switch is `state`, `on` / `off`                                         |
+ * | activated  | nothing; the switch is `state`, `active` / `inactive`                                |
  * | import     | retired; the word is sync                                                            |
  * | resync     | retired; the word is sync                                                            |
  * | ambigu     | retired; the word is multi-match                                                     |
@@ -287,7 +286,6 @@ export const exportedNames = (source: string): readonly ExportedName[] =>
  * purpose.
  */
 export const RESERVED_STEMS: readonly string[] = [
-  "active",
   "roster",
   "slot",
   "tier",
@@ -323,7 +321,7 @@ export const reservedStemHits = (source: string): readonly ExportedName[] =>
  * **A state predicate names its noun before the state.** An exported
  * function or const named `is<Word>` has no noun: `isOpen` could be an order
  * or a run, and a word two contexts share is always spoken with its noun
- * (`orderIsOpen`, `runIsOpen`, `workflowIsOn`). Returns the exports in
+ * (`orderIsOpen`, `runIsOpen`, `workflowIsActive`). Returns the exports in
  * `source` named `is` and a capital letter.
  */
 export const bareStatePredicateHits = (

@@ -154,7 +154,7 @@ const seedRun = (startedBy?: Domain.Email) =>
           {
             name: "Engraving",
             tag: "engraved",
-            on: true,
+            state: "active",
             tasks: [
               { name: "Cut", teamId: "team-a", step: 1 },
               { name: "Polish", teamId: "team-b", step: 1 },

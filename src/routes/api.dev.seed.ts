@@ -66,8 +66,8 @@ const DevSeedInput = Schema.Struct({
     Schema.Array(
       Schema.Struct({
         name: Domain.WorkflowName,
-        /** Defaults to on when the entry has tasks and every task is assigned; see `Domain.SeedWorkflowsInput`. */
-        on: Schema.optionalKey(Schema.Boolean),
+        /** Defaults to active when the entry has tasks and every task is assigned; see `Domain.SeedWorkflowsInput`. */
+        state: Schema.optionalKey(Domain.WorkflowState),
         tag: Domain.WorkflowTag,
         tasks: Schema.Array(SeedTaskByTeamName),
         /** A pending draft beside the workflow's `tasks`; the tag is not drafted. */
@@ -220,7 +220,7 @@ export const Route = createFileRoute("/api/dev/seed")({
                 (typeof Domain.SeedWorkflowsInput.Encoded)["workflows"][number]["tasks"][number];
               const seedWorkflows: {
                 name: string;
-                on?: boolean;
+                state?: Domain.WorkflowState;
                 tag: string;
                 tasks: SeedTask[];
                 draft?: { tasks: SeedTask[] };
@@ -264,7 +264,9 @@ export const Route = createFileRoute("/api/dev/seed")({
                     : { tasks: draftTasks };
                 seedWorkflows.push({
                   name: workflow.name,
-                  ...(workflow.on === undefined ? {} : { on: workflow.on }),
+                  ...(workflow.state === undefined
+                    ? {}
+                    : { state: workflow.state }),
                   tag: workflow.tag,
                   tasks,
                   ...(draft === undefined ? {} : { draft }),

@@ -172,7 +172,7 @@ const RUN_FOR_ITEM = `select 1 from Run r
 export const ITEM_MATCHES = `(select count(distinct w.id)
   from json_each(li.productTags) tag
   join Workflow w on w.tag = tag.value
-  where w.state = 'on'
+  where w.state = 'active'
     and json_array_length(w.tasks) > 0
     and not exists (
       select 1 from json_each(w.tasks) t

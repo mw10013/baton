@@ -253,7 +253,7 @@ const taskResult = <R>(
  * Every repository refusal under the action set is a race between the
  * render and the click, so each answers `NotAllowed` ({@link Domain.RunResult}).
  * `WorkflowRepositoryError` and `SchemaError` ride along because the actions
- * that can create a run load the start context (the workflows that are on, from this
+ * that can create a run load the start context (the active workflows, from this
  * object, teams from D1) first.
  */
 const NOT_ALLOWED = Effect.succeed<Domain.RunResult>({ _tag: "NotAllowed" });
@@ -608,7 +608,7 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  /** Duplicate: the new workflow is off, keeps the tasks, and takes the name and tag the dialog collected (`WorkflowRepository.duplicateWorkflow`). */
+  /** Duplicate: the new workflow is inactive, keeps the tasks, and takes the name and tag the dialog collected (`WorkflowRepository.duplicateWorkflow`). */
   const duplicateWorkflow = ({
     workflowId,
     name,
@@ -662,7 +662,7 @@ const make = Effect.gen(function* () {
     const shop = host.shop();
     const publish = () => host.publish;
     const reconcileAll = (workflow: Domain.Workflow) =>
-      reconcileAllIfOn("updateWorkflowTag", workflow);
+      reconcileAllIfActive("updateWorkflowTag", workflow);
     return workflowResult(
       Effect.gen(function* () {
         const workflow = yield* (yield* WorkflowRepository).updateWorkflowTag({
@@ -694,7 +694,7 @@ const make = Effect.gen(function* () {
   };
 
   /**
-   * Apply changes. On an on workflow, reconciles every stored order once
+   * Apply changes. On an active workflow, reconciles every stored order once
    * afterwards: new tasks can make a workflow eligible for an item it was not, and those
    * orders should start now rather than at whatever moment Shopify next edits
    * them. Publishes because the next order starts against the new tasks,
@@ -707,7 +707,7 @@ const make = Effect.gen(function* () {
     const shop = host.shop();
     const publish = () => host.publish;
     const reconcileAll = (workflow: Domain.Workflow) =>
-      reconcileAllIfOn("applyDraft", workflow);
+      reconcileAllIfActive("applyDraft", workflow);
     return applyResult(
       Effect.gen(function* () {
         const workflow = yield* (yield* WorkflowRepository).applyDraft({
@@ -741,31 +741,31 @@ const make = Effect.gen(function* () {
   };
 
   /**
-   * The on/off switch: writes `state`. Either way every stored order is reconciled
+   * The switch: writes `state`. Either way every stored order is reconciled
    * once, so a run for anything that now qualifies is created here rather than at whatever
-   * moment Shopify next edits it — and off qualifies things too, because
+   * moment Shopify next edits it — and turning off qualifies things too, because
    * removing one of two matching workflows resolves a multi-match and starts
    * the survivor (see {@link reconcileAllNow}). Publishes for the reason on
    * {@link applyDraft}.
    */
-  const setWorkflowOn = ({
+  const setWorkflowState = ({
     workflowId,
-    on,
-  }: typeof Domain.SetWorkflowOnInput.Type) => {
+    state,
+  }: typeof Domain.SetWorkflowStateInput.Type) => {
     const shop = host.shop();
     const publish = () => host.publish;
     const reconcileAll = (workflow: Domain.Workflow) =>
-      reconcileAllNow("setWorkflowOn", workflow.id);
+      reconcileAllNow("setWorkflowState", workflow.id);
     return switchResult(
       Effect.gen(function* () {
-        const workflow = yield* (yield* WorkflowRepository).setWorkflowOn({
+        const workflow = yield* (yield* WorkflowRepository).setWorkflowState({
           workflowId,
-          on,
+          state,
           teams: yield* teams(),
         });
         yield* Effect.logInfo(
-          `ShopAgent.setWorkflowOn: shop=${shop} workflowId=${workflowId} on=${String(on)}`,
-        ).pipe(Effect.annotateLogs({ shop, workflowId, on }));
+          `ShopAgent.setWorkflowState: shop=${shop} workflowId=${workflowId} state=${state}`,
+        ).pipe(Effect.annotateLogs({ shop, workflowId, state }));
         yield* reconcileAll(workflow);
         return workflow;
       }),
@@ -775,9 +775,9 @@ const make = Effect.gen(function* () {
   /**
    * The editor's Turn on for a workflow that has never been applied: applies
    * the draft and turns the switch on in one transaction, then reconciles
-   * every stored order once, exactly as {@link setWorkflowOn} does — the
+   * every stored order once, exactly as {@link setWorkflowState} does — the
    * merchant made one decision, so a failure must leave the workflow
-   * untouched rather than applied and off.
+   * untouched rather than applied and inactive.
    */
   const applyAndTurnOn = ({
     workflowId,
@@ -878,7 +878,7 @@ const make = Effect.gen(function* () {
         teams: yield* teams(),
         workflowsByTags: (tags) =>
           workflows
-            .listOnWorkflowsByTags({ tags })
+            .listActiveWorkflowsByTags({ tags })
             .pipe(
               Effect.catchTag("WorkflowRepositoryError", (cause) =>
                 Effect.fail(
@@ -891,7 +891,7 @@ const make = Effect.gen(function* () {
   };
 
   /**
-   * Reconcile every stored open paid order once against the workflows that are on *now*,
+   * Reconcile every stored open paid order once against the active workflows *now*,
    * so anything that now qualifies starts at this moment rather than at
    * whatever moment Shopify next edits it. Reconcile is an idempotent state
    * check, so running it over every order is safe. Not the write's
@@ -901,11 +901,11 @@ const make = Effect.gen(function* () {
    * reaches a screen (pass rule 6 on {@link Domain.reconcileItem}).
    *
    * Unconditional, because a workflow turning off creates runs too: one item
-   * matched by two workflows that are on is a multi-match and carries no run, so
+   * matched by two active workflows is a multi-match and carries no run, so
    * turning one of them off — or deleting it — leaves a single match and the
-   * survivor's run begins. That is why {@link setWorkflowOn} and
+   * survivor's run begins. That is why {@link setWorkflowState} and
    * {@link removeWorkflow} call this directly rather than through
-   * {@link reconcileAllIfOn}.
+   * {@link reconcileAllIfActive}.
    *
    * Sends the usage queue after the pass ({@link flushUsageEvents}), whether
    * or not it finished: pass rule 4 on {@link Domain.reconcileItem}.
@@ -923,16 +923,16 @@ const make = Effect.gen(function* () {
   };
 
   /**
-   * {@link reconcileAllNow}, skipped when the workflow is off: for the
+   * {@link reconcileAllNow}, skipped when the workflow is inactive: for the
    * definition writes (Apply, Edit tag) that change *how* a workflow
-   * matches. An off workflow matches nothing either way, so nothing about the
-   * workflows that are on changed and the pass would be a full scan for no writes. Turn
+   * matches. An inactive workflow matches nothing either way, so nothing about the
+   * active workflows changed and the pass would be a full scan for no writes. Turn
    * off and delete do move it, and use {@link reconcileAllNow}.
    */
-  const reconcileAllIfOn = (caller: string, workflow: Domain.Workflow) => {
+  const reconcileAllIfActive = (caller: string, workflow: Domain.Workflow) => {
     const run = () => reconcileAllNow(caller, workflow.id);
     return Effect.gen(function* () {
-      if (!Domain.workflowIsOn(workflow)) return;
+      if (!Domain.workflowIsActive(workflow)) return;
       yield* run();
     });
   };
@@ -977,7 +977,7 @@ const make = Effect.gen(function* () {
       if (Option.isNone(detail)) return null;
       const { order, lineItems } = detail.value;
       const repository = yield* WorkflowRepository;
-      const matched = (yield* repository.listOnWorkflowsByTags({
+      const matched = (yield* repository.listActiveWorkflowsByTags({
         tags: [...new Set(lineItems.flatMap(({ productTags }) => productTags))],
       })).filter(({ tasks }) => tasks.length > 0);
       const shopTeams = yield* teams();
@@ -987,7 +987,7 @@ const make = Effect.gen(function* () {
         runs: yield* runs.listRunsForOrder({ orderId: order.id }),
         teams: shopTeams,
         matchedWorkflows: matched,
-        otherWorkflows: (yield* repository.listOnWorkflowNames()).filter(
+        otherWorkflows: (yield* repository.listActiveWorkflowNames()).filter(
           (workflow) =>
             !matched.some((detail) => detail.workflow.id === workflow.id),
         ),
@@ -2138,7 +2138,7 @@ const make = Effect.gen(function* () {
     createDraft,
     applyDraft,
     discardDraft,
-    setWorkflowOn,
+    setWorkflowState,
     applyAndTurnOn,
     removeWorkflow,
     getOrderDetail,

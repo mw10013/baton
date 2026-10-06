@@ -212,7 +212,7 @@ const TEAMS = [{ id: Schema.decodeUnknownSync(Domain.TeamId)("t") }];
 /** A workflow tagged `tag`, one task on team `t` unless `teamId` says otherwise. */
 const detailOf = (
   tag: string,
-  state: Domain.WorkflowState = "on",
+  state: Domain.WorkflowState = "active",
   teamId: string | null = "t",
 ): Domain.WorkflowDetail => {
   const id = Schema.decodeUnknownSync(Domain.WorkflowId)(tag);
@@ -296,11 +296,11 @@ describe("Domain.multiMatchItems", () => {
     );
   });
 
-  it("a match needs an eligible workflow: an off workflow or one with an unassigned task is not a match", () => {
+  it("a match needs an eligible workflow: an inactive workflow or one with an unassigned task is not a match", () => {
     const details = [
       detailOf("w1"),
-      detailOf("w2", "off"),
-      detailOf("w3", "on", null),
+      detailOf("w2", "inactive"),
+      detailOf("w3", "active", null),
     ];
     strictEqual(
       Domain.multiMatchItems(

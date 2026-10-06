@@ -300,15 +300,15 @@ describe("Saved, Saving and Syncing are retired as a sentence's start in screen 
 describe("an exported identifier carries no reserved stem", () => {
   it("refuses a stem anywhere in an exported name, in any case, and leaves locals and the allowed names alone", () => {
     const source = [
-      "export const isActive = () => true;",
+      "export const isTier = () => true;",
       "export type TeamRoster = { id: string };",
       "export const RunTier = 1;",
       "const rosterAtCeiling = 1;",
       "export const CopySlot = 1;",
-      "export const workflowIsOn = () => true;",
+      "export const workflowIsActive = () => true;",
     ].join("\n");
     expect(RulesLint.reservedStemHits(source)).toEqual([
-      { name: "isActive", line: 1, kind: "const" },
+      { name: "isTier", line: 1, kind: "const" },
       { name: "TeamRoster", line: 2, kind: "type" },
       { name: "RunTier", line: 3, kind: "const" },
     ]);

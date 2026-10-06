@@ -48,7 +48,7 @@ const seed = Effect.gen(function* () {
       workflows: Array.from({ length: 20 }, (_, w) => ({
         name: `Workflow ${String(w)}`,
         tag: `w${String(w)}`,
-        on: true,
+        state: "active",
         tasks: [0, 1, 2].map((t) => ({
           name: `Task ${String(t)}`,
           teamId: `team-${String((w + t) % TEAMS.length)}`,

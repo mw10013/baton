@@ -412,7 +412,7 @@ const seedStates = Effect.gen(function* () {
   for (const id of ["w1", "w2"]) {
     yield* sql`
       insert into Workflow (id, name, tag, state, updatedAt, tasks)
-      values (${id}, ${id}, ${id}, 'on', 0, ${taskList(id, "team-cut")})
+      values (${id}, ${id}, ${id}, 'active', 0, ${taskList(id, "team-cut")})
     `;
   }
   for (const { n, order, states, matched } of cases) {
@@ -535,10 +535,10 @@ describe("OrderRepository.listOrders multi-match", () => {
           Domain.WorkflowState,
           string | null,
         ])[] = [
-          ["w1", "on", "team-cut"],
-          ["w2", "on", "team-cut"],
-          ["w3", "off", "team-cut"],
-          ["w4", "on", null],
+          ["w1", "active", "team-cut"],
+          ["w2", "active", "team-cut"],
+          ["w3", "inactive", "team-cut"],
+          ["w4", "active", null],
         ];
         for (const [id, state, teamId] of cases) {
           yield* sql`
@@ -600,7 +600,7 @@ describe("OrderRepository.listOrders by tag", () => {
         const sql = yield* SqlClient.SqlClient;
         const insert = (id: string) => sql`
           insert into Workflow (id, name, tag, state, updatedAt, tasks)
-          values (${id}, ${id}, ${id}, 'on', 0, ${taskList(id, "team-cut")})
+          values (${id}, ${id}, ${id}, 'active', 0, ${taskList(id, "team-cut")})
         `;
         yield* insert("w1");
         yield* insert("w2");

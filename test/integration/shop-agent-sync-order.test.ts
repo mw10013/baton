@@ -138,7 +138,7 @@ afterEach(async () => {
   await env.D1.exec("delete from ShopSession");
 });
 
-/** A workflow that is on, tagged `engraved`, with one step for `teamId`. */
+/** An active workflow, tagged `engraved`, with one step for `teamId`. */
 const turnOnEngraving = async (
   agent: Awaited<ReturnType<typeof getAgentByName<Cloudflare.Env, ShopAgent>>>,
   teamId: Domain.TeamId,
@@ -152,7 +152,7 @@ const turnOnEngraving = async (
   await agent.addStep({ workflowId, name: "Engrave", teamId });
   const applied = await agent.applyDraft({ workflowId });
   if (applied._tag !== "Ok") throw new Error(applied._tag);
-  const on = await agent.setWorkflowOn({ workflowId, on: true });
+  const on = await agent.setWorkflowState({ workflowId, state: "active" });
   if (on._tag !== "Ok") throw new Error(on._tag);
   return workflowId;
 };
@@ -242,7 +242,7 @@ describe("ShopAgent one-order sync", () => {
     await agent.addStep({ workflowId, name: "Engrave", teamId: team.id });
     const applied = await agent.applyDraft({ workflowId });
     if (applied._tag !== "Ok") throw new Error(applied._tag);
-    const on = await agent.setWorkflowOn({ workflowId, on: true });
+    const on = await agent.setWorkflowState({ workflowId, state: "active" });
     if (on._tag !== "Ok") throw new Error(on._tag);
 
     await agent.syncOrder({ orderId: ORDER_ID });

@@ -2,14 +2,17 @@ import { createFileRoute, notFound } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { Effect, Schema } from "effect";
 
+import { LocalDateTime } from "@/components/LocalDateTime";
 import { BackLink } from "@/components/screen/BackLink";
 import { Clamp } from "@/components/screen/Clamp";
 import { ClampedProse } from "@/components/screen/ClampedProse";
 import { EmptyLine } from "@/components/screen/EmptyLine";
 import { FilterRow } from "@/components/screen/FilterRow";
 import { IndexSection } from "@/components/screen/IndexSection";
+import { Inline } from "@/components/screen/Inline";
 import { ListSearchField } from "@/components/screen/ListSearchField";
 import { Name } from "@/components/screen/Name";
+import { PageNote } from "@/components/screen/PageNote";
 import { Prose } from "@/components/screen/Prose";
 import { ResourceRow, RowLine } from "@/components/screen/ResourceRow";
 import { SearchLine } from "@/components/screen/SearchLine";
@@ -86,6 +89,9 @@ const TAG_255 = "engraved-boards-rush-and-standard-".repeat(8).slice(0, 255);
 const TASKS_20 = Array.from({ length: 20 }, (_, index) =>
   index % 2 === 0 ? TASK_64 : TASK_64_B,
 );
+
+/** A date whose "Last updated on" line is the longest: a two-digit day in September. */
+const UPDATED_AT = Date.UTC(2026, 8, 30, 23, 59);
 
 const ORDER_STRIP: readonly (keyof Domain.OrderCounts)[] = [
   "open",
@@ -298,6 +304,25 @@ function RouteComponent() {
             </s-table-body>
           </s-table>
         </IndexSection>
+        <IndexSection
+          label="Workflows index"
+          head={
+            <FilterRow
+              main={
+                <Inline>
+                  <s-button variant="primary">All</s-button>
+                  <s-button variant="tertiary">
+                    {Domain.WORKFLOW_STATE_LABEL.active}
+                  </s-button>
+                  <s-button variant="tertiary">
+                    {Domain.WORKFLOW_STATE_LABEL.inactive}
+                  </s-button>
+                </Inline>
+              }
+              search={search}
+            />
+          }
+        />
         <IndexSection label="Deepest read">
           <ShowMore
             hidden={140}
@@ -315,6 +340,9 @@ function RouteComponent() {
             next order.
           </EmptyLine>
         </IndexSection>
+        <PageNote>
+          Last updated on <LocalDateTime value={UPDATED_AT} />
+        </PageNote>
         <s-section heading="Text fits">
           <s-paragraph>
             <Name>{TASK_64}</Name>

@@ -133,7 +133,7 @@ const seedOrder = (shop: string, processedAt: number, tag: string) =>
       ),
   );
 
-/** An applied, off workflow matching `tag`, with one task on `teamId`. */
+/** An applied, inactive workflow matching `tag`, with one task on `teamId`. */
 const offWorkflow = async (
   agent: Awaited<ReturnType<typeof getAgentByName<Cloudflare.Env, ShopAgent>>>,
   tag: string,
@@ -268,7 +268,7 @@ describe("ShopAgent usage flush", () => {
     // Tagged for no workflow, so nothing creates its run but the attach.
     await seedOrder(shop, Date.now() - DAY, "untagged");
     const workflowId = await offWorkflow(agent, "engrave", team.id);
-    await agent.setWorkflowOn({ workflowId, on: true });
+    await agent.setWorkflowState({ workflowId, state: "active" });
     strictEqual(appEvents.length, 0);
 
     const attached = await agent.merchantAttachWorkflow({
@@ -289,7 +289,7 @@ describe("ShopAgent usage flush", () => {
     const workflowId = await offWorkflow(agent, "engrave", team.id);
     await seedOrder(shop, Date.now(), "engrave");
 
-    const on = await agent.setWorkflowOn({ workflowId, on: true });
+    const on = await agent.setWorkflowState({ workflowId, state: "active" });
     if (on._tag !== "Ok") throw new Error(on._tag);
     deepStrictEqual(appEvents, [{ idempotencyKey: countKey, value: 1 }]);
     const usage = await agent.getUsage();
@@ -319,7 +319,7 @@ describe("ShopAgent usage flush", () => {
     const turnedOn = await runInDurableObject(
       env.SHOP_AGENT.getByName(shop),
       (object) =>
-        object.setWorkflowOn({ workflowId, on: true }).then(
+        object.setWorkflowState({ workflowId, state: "active" }).then(
           () => "ok",
           () => "failed",
         ),

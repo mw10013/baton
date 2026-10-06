@@ -50,11 +50,11 @@ import type {
  * cannot be mistaken for a mistake: `Retired team (empty)` has nobody on it,
  * `Tag stamping (unassigned task)` has a task with no team (what a team delete
  * leaves behind) and one on the empty team, `Sample pull (no steps)`
- * has none, and `Frame and glaze` is seeded off.
+ * has none, and `Frame and glaze` is seeded inactive.
  *
  * An invariant the ordinary write path enforces and the seed only checks in
  * part, so the fixture must honour it by construction: a workflow with an
- * unassigned task cannot be on; the seed defaults it off.
+ * unassigned task cannot be active; the seed defaults it inactive.
  *
  * Orders are written straight into the shop's object, bypassing Shopify, so
  * every lifecycle state a workflows list or order page can show exists without tagging
@@ -178,7 +178,7 @@ const AT_CAP_WORKFLOW =
  * Each workflow is a distinct shape so the editor, workflows list, and order page each
  * have one row per case to look at: linear, a parallel step in the middle
  * with the first team returning, a parallel first step, instructions with a
- * pending draft, the off / unassigned / no-tasks rows, and one at the caps.
+ * pending draft, the inactive / unassigned / no-tasks rows, and one at the caps.
  *
  * Named the way merchants name them: after the process ("Stamp and bind" for
  * the leather journal) or after the product. "Signet ring" is the
@@ -255,10 +255,10 @@ export const workflows: readonly SeedWorkflow[] = [
     },
   },
   {
-    // the photo frame: parallel first step, three wide; seeded off so the list has an "Off"
+    // the photo frame: parallel first step, three wide; seeded inactive so the list has an Inactive
     // row and it creates nothing until it is turned on
     name: "Frame and glaze",
-    on: false,
+    state: "inactive",
     tag: TAG.frame,
     tasks: [
       task("Cut frame", WOODSHOP, { step: 1 }),
@@ -271,7 +271,7 @@ export const workflows: readonly SeedWorkflow[] = [
     // the pet tag: one unassigned task (what a team delete leaves) and one on the empty
     // team: "Needs a team" and "Team has no members" on the workflows index
     // and as banners on the workflow page, Turn on refused until the
-    // unassigned task is assigned; off, so no order carries its issues
+    // unassigned task is assigned; inactive, so no order carries its issues
     name: "Tag stamping (unassigned task)",
     tag: TAG.petTag,
     tasks: [task("Stamp", null), task("Attach ring", RETIRED_TEAM_EMPTY)],
@@ -346,12 +346,12 @@ export const workflows: readonly SeedWorkflow[] = [
     },
   },
   {
-    // on, and it creates runs: an empty team does not block a start, so the
+    // active, and it creates runs: an empty team does not block a start, so the
     // second task lands on a team nobody is on — the order page's card names it
     // and no workflows list anywhere shows the card. Distinct from
-    // Pet tag, which is off because a task has no team at all.
+    // Pet tag, which is inactive because a task has no team at all.
     name: "Ring and stamp (empty team task)",
-    on: true,
+    state: "active",
     tag: TAG.keychain,
     tasks: [task("Cut", LEATHER), task("Attach ring", RETIRED_TEAM_EMPTY)],
   },
@@ -835,7 +835,7 @@ const floorOrders: readonly SeedOrder[] = [
 
 /**
  * The products a workflow can be attached to, and their workflows' tags, cycled by the generated
- * rows below. Frame and glaze (off), Tag stamping (unassigned task) and
+ * rows below. Frame and glaze (inactive), Tag stamping (unassigned task) and
  * Sample pull (no steps) are left out because they create nothing, and `rush` because a second tag would
  * make every generated row a multi-match.
  */

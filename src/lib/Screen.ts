@@ -37,7 +37,7 @@ import { Schema } from "effect";
  *   "sync window", "unassigned" are the implementer's.
  * - Contractions, as Shopify's grammar guide asks
  *   (`refs/shopify-docs/docs/apps/design/content/grammar-and-mechanics.md`):
- *   "Couldn't load orders", "You don't have access", "it's off".
+ *   "Couldn't load orders", "You don't have access", "it's inactive".
  * - Facts, not feelings: no apology, no congratulation, no "oops", no
  *   "great", no "successfully".
  * - The person is "you". A member reads "the merchant", never "your
@@ -125,12 +125,13 @@ export type CopySlot = typeof CopySlot.Type;
  * | a list of things the merchant creates | an index page: a table, one row per thing, the thing's name a link to its page; no buttons on a row | row buttons that edit or delete |
  * | creating a thing | the record verbs' create or add label + <noun> in the title bar (Create team, Add member); the modal's heading uses the same words and its primary button the verb alone; a modal that asks only for what identifies the thing; on success, the thing's page | asking for its relations in the create modal |
  * | everything about one thing | its details page: the heading is its name, printed whole again in its Details card when it is a token; its edits and its delete are there and nowhere else | a second place that edits it |
- * | a field of the thing (its name) | Rename in More actions; a modal with one field | inline editing |
+ * | a field of the thing (its name) | Rename in More actions; a modal with one field, primary Save | inline editing |
  * | a set the thing holds (a team's members, a member's teams) | a section on the details page, one row per related thing, its name a link; an Add button (Add members, Add to teams) opens a modal of candidates only, with a search from six; Remove on each row | a checklist of everything, saved whole |
  * | a related set on an index row | a count; a badge when it is zero and that is a fault (No members, No teams) | the names; chips; `+N` |
- * | deleting a thing | Delete on its page; the modal: heading "Delete <name>?" for a capped name, "Delete <noun>?" with the name in the body when it is a token; body the `confirm` slot; primary Delete (critical), dismiss Cancel; on success, the index and a toast "<Noun> deleted" | a delete on an index row; a body that explains the product |
+ * | deleting a thing | on its page, in More actions or the title bar, labelled by the "a verb in the title bar" row; the modal: heading "Delete <name>?" for a capped name, "Delete <noun>?" with the name in the body when it is a token; body the `confirm` slot; primary Delete (critical), dismiss Cancel; on success, the index and a toast "<Noun> deleted" | a delete on an index row; a body that explains the product |
  * | taking a thing out of a set | Remove, on the row in the set; no modal and no toast, because Add puts it back on the same screen | "Remove" for a delete |
  * | More actions with one entry | the entry as a secondary button in the title bar | a menu with one item |
+ * | a verb in the title bar | the button names its noun: Turn off workflow, Create team, Add member, Delete member; Edit alone, because the noun is the page; a menu entry is the verb alone (Rename, Delete); a modal primary is the verb alone (Turn off, Delete), or Save when the modal edits a field | a verb-alone button in the title bar beside Edit; a noun on a menu entry or a modal primary |
  * | a merchant table with more rows than its page | `s-table paginate`, read from the server a page at a time, the page in the URL; 25 rows on an index, 10 on a details page; the controls only when there is another page; Previous is the browser's Back when that table's Next pushed the entry, else page one | Show more; loading every row and hiding some; a Back that moves another table's page |
  * | going back from a member page to the list that opened it                          | a back-arrow link named for the list on its own line above the heading; a history step back when the list opened the page, so its depth and scroll return | the app's mark as the only way back; a breadcrumb slot a phone folds into a menu |
  */
@@ -210,7 +211,7 @@ export type ScreenTemplate = typeof ScreenTemplate.Type;
  * | -------------- | ------------------------------------------------------------------------------------ | ----------------------------------- | ---------------------------------------------------------------------------------------------------------- | --------------------------------- | --------------------------------------------------- |
  * | index section  | the list's frame: one card holding its head (banners, strip or search line, filter row) and the list | `IndexSection`  | frame, padding none; `base` around and between the head's things                                           | index                             | a card in a card; a second list in one card         |
  * | strip          | counts that are also the main filter                                                 | `Strip`                             | one column per cell above the breakpoint and three below; cell padding; the count at the cell's foot      | index                             | a red cell; a cell that comes and goes with the data |
- * | filter row     | the main filter, the search and a secondary filter                                   | `FilterRow`                         | columns (10rem, the rest, 12rem) above the breakpoint, stacked below                                      | index                             | a visible label over the row; the table's filters slot |
+ * | filter row     | the main filter, the search and a secondary filter                                   | `FilterRow`                         | columns (at least 10rem and its content, the rest, 12rem) above the breakpoint, stacked below            | index                             | a visible label over the row; the table's filters slot |
  * | search field   | the list's search                                                                    | `ListSearchField`                   | submits on Enter and blur                                                                                  | index                             | a debounce; a character counter                     |
  * | search line    | how many rows a search matches, and Clear search, in the filters' place              | `SearchLine`                        | the sentence's form; `base` to its button                                                                  | index                             | filters that look set but do nothing                |
  * | index table    | the merchant's rows                                                                  | `s-table`                           | columns, pagination, the list slots on a phone                                                             | index                             | a resource row                                      |
@@ -220,6 +221,7 @@ export type ScreenTemplate = typeof ScreenTemplate.Type;
  * | details card   | a section of a details page                                                          | `s-section`                         | Polaris's card padding                                                                                     | details, homepage, editor         | a card inside a card                                |
  * | member area    | the member area's root: every member screen inside it                               | `MemberArea`                        | `overflow-wrap: anywhere` for every token on a member screen                                               | index, details                    | a table or badge a mid-word break would spoil       |
  * | page body      | a page of plain content rather than cards: the member's workflow page                | `PageBody`                          | `base` between things; the phone inset that lines text up with the heading                                | details                           | a card around the content                           |
+ * | page note      | one subdued line between the title bar and the first card: Last updated on the workflow page | `PageNote`                  | `base` below it; the line's own column, lined up with the cards                                            | details                           | a second line; a sentence that belongs in a card    |
  * | lines          | the lines of one thing: a label over its value, a note over its button              | `Lines`                             | `small-300` between lines                                                                                  | index, details, homepage, editor  | two things that do not belong together              |
  * | inline row     | things side by side, wrapping: a name and its badge, a row of buttons               | `Inline`                            | `small-300` between things; centred on the line                                                            | index, details, homepage, editor  | a column layout                                     |
  * | framed list    | entries that make one stop, in one bordered box with a rule between them             | `FramedList`                        | the border, the rules, `small-300` padding                                                                 | details                           | a box per entry                                     |
@@ -269,6 +271,7 @@ export const ScreenPart = Schema.Literals([
   "details card",
   "member area",
   "page body",
+  "page note",
   "lines",
   "inline row",
   "framed list",

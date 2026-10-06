@@ -102,9 +102,9 @@ const seedRun = Effect.gen(function* () {
     teamId: TEAM.id,
   });
   yield* workflows.applyDraft({ workflowId: workflow.id, teams: [TEAM] });
-  yield* workflows.setWorkflowOn({
+  yield* workflows.setWorkflowState({
     workflowId: workflow.id,
-    on: true,
+    state: "active",
     teams: [TEAM],
   });
   const context = yield* reconcileContext([TEAM]);
@@ -253,7 +253,7 @@ describe("data model", () => {
         const sql = yield* SqlClient.SqlClient;
         const insert = (id: string, name: string, tag: string) => sql`
           insert into Workflow (id, name, tag, state, updatedAt)
-          values (${id}, ${name}, ${tag}, 'off', 0)
+          values (${id}, ${name}, ${tag}, 'inactive', 0)
         `;
         yield* insert("w1", "Mugs", "mug");
         const sameTag = yield* Effect.flip(insert("w2", "Cups", "mug"));
@@ -405,9 +405,9 @@ describe("data model", () => {
           runTasks: yield* count("RunTask"),
           workflowTasks: yield* workflowTaskCount,
         };
-        yield* workflows.setWorkflowOn({
+        yield* workflows.setWorkflowState({
           workflowId,
-          on: false,
+          state: "inactive",
           teams: [TEAM],
         });
         yield* runs.reconcileAll(yield* reconcileContext([TEAM]));

@@ -179,8 +179,10 @@ export const Route = createFileRoute("/app/members/$memberId")({
  * The member page, the mirror of the team page: the member's teams are the
  * one table, Add to teams is the primary action, and Remove on a row takes
  * them off that team with no modal, since Add to teams puts them back on
- * this screen. Delete is the one other action, a secondary button rather
- * than a More actions menu of one entry.
+ * this screen. Delete member is the one other action, a secondary button
+ * rather than a More actions menu of one entry, and it names its noun
+ * because it sits in the title bar (the controls table's "a verb in the
+ * title bar" row on `Control`); the modal's primary is Delete alone.
  *
  * Headed by the email, as a Shopify customer page is headed by the name: a
  * title bar cuts a long one, so the Details card prints it whole as its
@@ -365,7 +367,7 @@ function RouteComponent() {
         commandFor={DELETE_MODAL}
         command="--show"
       >
-        {Domain.RECORD_VERB_LABEL.delete}
+        {`${Domain.RECORD_VERB_LABEL.delete} member`}
       </s-button>
 
       <SocketBanner />

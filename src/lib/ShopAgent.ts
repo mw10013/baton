@@ -713,7 +713,7 @@ export class ShopAgent extends Agent {
    * | the sync workflow completes, or fails (its error sink, then its callback)  | written | the open-orders sync publishes to every screen when its workflow completes; the open-orders sync publishes to every screen when its workflow fails |
    * | Sync this order pressed                                                    | changed | Sync this order publishes when it changed something, and nothing when it did not |
    * | Edit tag, Apply                                                            | written | Edit tag and Apply publish to every screen whether or not a run moved; a refused call publishes nothing |
-   * | the on/off switch, the editor's Turn on, Delete workflow, Delete team      | written | turning a workflow on or off, deleting it, or deleting a team publishes to every screen; a refused call publishes nothing |
+   * | the switch, the editor's Turn on, Delete workflow, Delete team      | written | turning a workflow on or off, deleting it, or deleting a team publishes to every screen; a refused call publishes nothing |
    * | Assign a task's team                                                       | written | assigning a task's team publishes to every screen |
    * | Attach workflow                                                            | written | Attach workflow publishes to every screen |
    * | Cancel workflow                                                            | written | Cancel workflow publishes to every screen |
@@ -1474,18 +1474,22 @@ export class ShopAgent extends Agent {
     );
   }
 
-  /** The on/off switch; the rule is on {@link ShopWorkAgent}'s `setWorkflowOn`. */
+  /** The switch; the rule is on {@link ShopWorkAgent}'s `setWorkflowState`. */
   @callable()
-  setWorkflowOn(
-    input: typeof Domain.SetWorkflowOnInput.Encoded,
+  setWorkflowState(
+    input: typeof Domain.SetWorkflowStateInput.Encoded,
   ): Promise<Domain.SwitchResult> {
     return this.runEffect(
-      callableEffect("ShopAgent.setWorkflowOn", Domain.SetWorkflowOnInput, {
-        role: "merchant",
-        parse: { onExcessProperty: "error" },
-      })((decoded) =>
+      callableEffect(
+        "ShopAgent.setWorkflowState",
+        Domain.SetWorkflowStateInput,
+        {
+          role: "merchant",
+          parse: { onExcessProperty: "error" },
+        },
+      )((decoded) =>
         ShopWorkAgent.pipe(
-          Effect.flatMap((shopWork) => shopWork.setWorkflowOn(decoded)),
+          Effect.flatMap((shopWork) => shopWork.setWorkflowState(decoded)),
         ),
       )(input),
     );

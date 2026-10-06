@@ -74,7 +74,7 @@ const attachResultMessage = Match.typeTags<
   AlreadyExists: () => "That workflow is already on this item.",
   LineItemNotFound: () => "That item no longer exists.",
   WorkflowNotEligible: () =>
-    "That workflow can't start: it's off, has no steps, or has a task with no team.",
+    "That workflow can't start: it's inactive, has no steps, or has a task with no team.",
   OrderClosed: () =>
     "This order is cancelled or fulfilled in Shopify, so there is no work left to attach.",
   NothingToMake: () =>
@@ -955,7 +955,7 @@ function RouteComponent() {
     );
     /**
      * `Change workflow`, handed to `manageRows`. Absent when the field is
-     * false, when the shop's only workflow that is on is the one an open run
+     * false, when the shop's only active workflow is the one an open run
      * already has, and on a closed run, whose item takes a new workflow from
      * the Workflow select at rest under it ({@link workflowSelect}). A done run gets
      * it here rather than the select because replacing it loses a record, and

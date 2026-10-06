@@ -35,7 +35,7 @@ const clickMenuItem = (frame: FrameLocator, name: string) =>
  *
  * What it is really here to prove is the draft lifecycle, because that is the
  * part no unit test can see. A workflow that has never been applied is a
- * draft and nothing else, so the editor offers **Turn on** and that one click
+ * draft and nothing else, so the editor offers **Turn on workflow** and that one click
  * applies and activates; from then on the first saved change starts a draft,
  * Apply promotes it, and Discard throws it away. It also covers the one thing
  * that makes the lazy draft possible — editing a task that only exists on the
@@ -47,8 +47,8 @@ const clickMenuItem = (frame: FrameLocator, name: string) =>
  * chrome, where "Draft" is not ours to locate reliably, while the button set
  * is the same fact and is what the merchant acts on.
  *
- * Title-bar controls (Create, Edit, Apply, Turn on, Turn off, Close, More
- * actions) are hoisted out of the iframe by App Bridge, so they are driven
+ * Title-bar controls (Create, Edit, Apply, Turn on workflow, Turn off
+ * workflow, Close, More actions) are hoisted out of the iframe by App Bridge, so they are driven
  * with `clickHoisted` and are all buttons there. `clickHoisted` waits for the
  * hoisted proxy to be enabled, which matters here more than anywhere: the
  * editor's controls are disabled until the `ShopAgent` socket identifies, a
@@ -58,7 +58,7 @@ const clickMenuItem = (frame: FrameLocator, name: string) =>
  * detail pages are `frame` (`appFrame`), while the editor runs in its own
  * `s-app-window` iframe, `editor` (`editorFrame`), that the admin mounts
  * beside the app's rather than inside it. Create opens the editor straight
- * away, so everything between Create and Turn on — the task forms, the canvas
+ * away, so everything between Create and Turn on workflow — the task forms, the canvas
  * — is `editor`, and the detail page only comes back once the window hides.
  * Modals render in whichever frame opened them.
  *
@@ -168,7 +168,10 @@ test("a fresh workflow turns on from the editor, then edits go through the draft
   /* Never applied: Turn on is the only commit on offer, and it is disabled
      until there is a step to apply. The disabled button beside the empty
      canvas is the whole explanation: no banner restates it. */
-  const turnOn = page.getByRole("button", { name: "Turn on" });
+  const turnOn = page.getByRole("button", {
+    name: "Turn on workflow",
+    exact: true,
+  });
   await expect(turnOn).toBeVisible();
   await expect.poll(() => hoistedEnabled(turnOn)).toBe(false);
   await expect(page.getByRole("button", { name: "Apply changes" })).toHaveCount(
@@ -192,14 +195,24 @@ test("a fresh workflow turns on from the editor, then edits go through the draft
   await expect.poll(() => hoistedEnabled(turnOn)).toBe(true);
 
   /* One click applies the tasks and turns the switch on. */
-  await clickHoisted(page.getByRole("button", { name: "Turn on" }));
+  await clickHoisted(
+    page.getByRole("button", {
+      name: "Turn on workflow",
+      exact: true,
+    }),
+  );
   await expect(
     editor.getByText("starts this workflow on that item", { exact: false }),
   ).toBeVisible();
   await editor.getByRole("button", { name: "Turn on", exact: true }).click();
   /* Applied and on: the editor now offers the other direction and nothing to
      apply. */
-  await expect(page.getByRole("button", { name: "Turn off" })).toBeVisible();
+  await expect(
+    page.getByRole("button", {
+      name: "Turn off workflow",
+      exact: true,
+    }),
+  ).toBeVisible();
   await expect(page.getByRole("button", { name: "Apply changes" })).toHaveCount(
     0,
   );
@@ -298,19 +311,29 @@ test("a fresh workflow turns on from the editor, then edits go through the draft
     .click();
   await clickHoisted(page.getByRole("button", { name: "Apply changes" }));
   await expect(
-    editor.getByText("This workflow is on,", { exact: false }),
+    editor.getByText("This workflow is active,", { exact: false }),
   ).toBeVisible();
   await editor.getByRole("button", { name: "Apply", exact: true }).click();
   await expect(frame.locator(`s-page[heading="${CREATED}"]`)).toBeVisible();
   await expect(frame.getByText("Bake and rest", { exact: true })).toBeVisible();
 
   /* Turn off confirms too, and says what keeps going. */
-  await clickHoisted(page.getByRole("button", { name: "Turn off" }));
+  await clickHoisted(
+    page.getByRole("button", {
+      name: "Turn off workflow",
+      exact: true,
+    }),
+  );
   await expect(
     frame.getByText("Items already on it keep going.", { exact: false }),
   ).toBeVisible();
   await frame.getByRole("button", { name: "Turn off", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Turn on" })).toBeVisible();
+  await expect(
+    page.getByRole("button", {
+      name: "Turn on workflow",
+      exact: true,
+    }),
+  ).toBeVisible();
 });
 
 /**
@@ -329,7 +352,7 @@ test("turning on a workflow creates runs on the open orders already stored", asy
     [
       {
         name: EXISTING,
-        on: false,
+        state: "inactive",
         tag: "e2e-ring",
         tasks: [{ name: "Cut", team: TEAM }],
       },
@@ -347,9 +370,19 @@ test("turning on a workflow creates runs on the open orders already stored", asy
   await frame.getByRole("link", { name: EXISTING }).click();
   await expect(frame.locator(`s-page[heading="${EXISTING}"]`)).toBeVisible();
 
-  await clickHoisted(page.getByRole("button", { name: "Turn on" }));
+  await clickHoisted(
+    page.getByRole("button", {
+      name: "Turn on workflow",
+      exact: true,
+    }),
+  );
   await frame.getByRole("button", { name: "Turn on", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Turn off" })).toBeVisible();
+  await expect(
+    page.getByRole("button", {
+      name: "Turn off workflow",
+      exact: true,
+    }),
+  ).toBeVisible();
 
   /* The order page shows the run that Turn on created: the item's
      section carries Manage, whose drawer names the workflow, and with a run on
@@ -370,7 +403,7 @@ test("turning on a workflow creates runs on the open orders already stored", asy
 });
 
 /**
- * The tag is the workflow's key: unique across the shop, on or off, and
+ * The tag is the workflow's key: unique across the shop, active or inactive, and
  * refused where the merchant typed it. The switch says nothing about it.
  */
 test("creating a workflow with a taken tag is refused under the field and names the holder", async ({
@@ -386,7 +419,7 @@ test("creating a workflow with a taken tag is refused under the field and names 
     [
       {
         name: HOLDER,
-        on: true,
+        state: "active",
         tag: "e2e-ring",
         tasks: [{ name: "Cut", team: TEAM }],
       },
@@ -419,7 +452,7 @@ test("creating a workflow with a taken tag is refused under the field and names 
  * Duplicate asks for the new workflow's name and tag, both prefilled, and
  * the new workflow lands off with the tag the merchant chose.
  */
-test("duplicate asks for a name and a tag, and the new workflow is off with the given tag", async ({
+test("duplicate asks for a name and a tag, and the new workflow is inactive with the given tag", async ({
   page,
 }) => {
   test.setTimeout(120_000);
@@ -432,7 +465,7 @@ test("duplicate asks for a name and a tag, and the new workflow is off with the 
     [
       {
         name: SOURCE,
-        on: true,
+        state: "active",
         tag: "e2e-ring",
         tasks: [{ name: "Cut", team: TEAM }],
       },
@@ -463,7 +496,7 @@ test("duplicate asks for a name and a tag, and the new workflow is off with the 
   await frame.getByRole("button", { name: "Duplicate", exact: true }).click();
   await expect(frame.locator(`s-page[heading="${SOURCE} copy"]`)).toBeVisible();
 
-  /* The copy carries the tag the dialog collected, and is off. */
+  /* The copy carries the tag the dialog collected, and is inactive. */
   await clickHoisted(appNavLink(page, "Workflows"));
   const copyRow = frame
     .locator("s-table-row")
@@ -472,7 +505,7 @@ test("duplicate asks for a name and a tag, and the new workflow is off with the 
     copyRow.getByText("e2e-ring-copy", { exact: true }),
   ).toBeVisible();
   await expect(
-    copyRow.getByText(Domain.WORKFLOW_STATE_LABEL.off, { exact: true }),
+    copyRow.getByText(Domain.WORKFLOW_STATE_LABEL.inactive, { exact: true }),
   ).toBeVisible();
 });
 
@@ -491,13 +524,13 @@ test("editing the tag from the detail page writes immediately and starts no draf
     [
       {
         name: SOURCE,
-        on: true,
+        state: "active",
         tag: "e2e-ring",
         tasks: [{ name: "Cut", team: TEAM }],
       },
       {
         name: RIVAL,
-        on: true,
+        state: "active",
         tag: "e2e-rush",
         tasks: [{ name: "Cut", team: TEAM }],
       },
@@ -553,7 +586,7 @@ test("the workflows index keeps its filter across the workflow page", async ({
       {
         name: OFF,
         tag: "e2e-keep-off",
-        on: false,
+        state: "inactive",
         tasks: [{ name: "Cut", team: TEAM }],
       },
     ],
@@ -566,21 +599,21 @@ test("the workflows index keeps its filter across the workflow page", async ({
 
   await frame
     .getByRole("button", {
-      name: Domain.WORKFLOW_STATE_LABEL.on,
+      name: Domain.WORKFLOW_STATE_LABEL.active,
       exact: true,
     })
     .click();
-  await expect.poll(state).toBe("on");
+  await expect.poll(state).toBe("active");
   await expect(frame.getByRole("link", { name: OFF })).toHaveCount(0);
 
   await frame.getByRole("link", { name: EXISTING }).click();
   await expect(frame.locator(`s-page[heading="${EXISTING}"]`)).toBeVisible();
-  await expect.poll(state).toBe("on");
+  await expect.poll(state).toBe("active");
 
   /* The hoisted breadcrumb's back arrow; see the orders round trip. */
   await clickHoisted(page.locator('button[aria-label="Workflows"]'));
   await expect(frame.getByRole("link", { name: EXISTING })).toBeVisible();
-  await expect.poll(state).toBe("on");
+  await expect.poll(state).toBe("active");
   await expect(frame.getByRole("link", { name: OFF })).toHaveCount(0);
 });
 
@@ -611,7 +644,7 @@ test("the workflow page raises Needs a team as its one banner and marks an empty
       {
         name: BOTH,
         tag: "e2e-both-faults",
-        on: false,
+        state: "inactive",
         tasks: [
           { name: "Stamp", team: null },
           { name: "Attach ring", team: EMPTY },

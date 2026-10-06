@@ -148,10 +148,10 @@ export const Route = createFileRoute("/app/workflows/$workflowId_/edit")({
  *   one confirmed step (`ShopAgent.applyAndTurnOn`). Apply on its own would
  *   leave the merchant with tasks in force that create nothing, then ask them
  *   to turn on the thing they just applied;
- * - applied with no draft — no badge, and the plain on/off switch, because
+ * - applied with no draft — no badge, and the plain switch, because
  *   there is nothing here to commit;
  * - applied with a draft — `Draft`, **Discard changes** and **Apply changes**,
- *   and no on/off control: the switch is about what is in force, and what
+ *   and no switch: the switch is about what is in force, and what
  *   is in force is not what is on the canvas.
  *
  * Close leaves the draft alone; only Apply and Discard end it.
@@ -688,7 +688,7 @@ function RouteComponent() {
             variant="primary"
             loading={applyMutation.isPending}
             disabled={!identified || busy || blocker !== null}
-            {...(Domain.workflowIsOn(workflow)
+            {...(Domain.workflowIsActive(workflow)
               ? { commandFor: APPLY_MODAL, command: "--show" as const }
               : {
                   onClick: () => {

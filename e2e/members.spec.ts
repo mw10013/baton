@@ -91,9 +91,11 @@ test("the members index adds a member and the member page adds it to teams, remo
     frame.locator(`s-page[heading="${MEMBER_EMAIL}"]`),
   ).toBeVisible();
 
-  /* Delete is a title-bar button; its modal is headed "Delete member?" and
+  /* Delete member is a title-bar button; its modal is headed "Delete member?" and
      names the email in its body. */
-  await clickHoisted(page.getByRole("button", { name: "Delete", exact: true }));
+  await clickHoisted(
+    page.getByRole("button", { name: "Delete member", exact: true }),
+  );
   const deleteDialog = frame.locator("s-modal#delete-member");
   await expect(
     deleteDialog.getByText(MEMBER_EMAIL, { exact: true }),
@@ -145,7 +147,9 @@ test("a 254-character email is added and printed whole, and 255 is refused on Ad
     }),
   ).toBeVisible();
 
-  await clickHoisted(page.getByRole("button", { name: "Delete", exact: true }));
+  await clickHoisted(
+    page.getByRole("button", { name: "Delete member", exact: true }),
+  );
   await frame
     .locator("s-modal#delete-member")
     .getByRole("button", { name: "Delete", exact: true })

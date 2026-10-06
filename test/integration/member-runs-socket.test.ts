@@ -146,9 +146,9 @@ const seedShopWithWork = async (shopName: string) => {
   });
   const applied = await agent.applyDraft({ workflowId: created.workflow.id });
   if (applied._tag !== "Ok") throw new Error(applied._tag);
-  const live = await agent.setWorkflowOn({
+  const live = await agent.setWorkflowState({
     workflowId: created.workflow.id,
-    on: true,
+    state: "active",
   });
   if (live._tag !== "Ok") throw new Error(live._tag);
   const attached = await agent.merchantAttachWorkflow({
@@ -400,9 +400,9 @@ describe("what each write publishes", () => {
       await receivedInvalidations(screens.member, count);
     };
 
-    await agent.setWorkflowOn({ workflowId, on: false });
+    await agent.setWorkflowState({ workflowId, state: "inactive" });
     await everyScreen(1);
-    await agent.setWorkflowOn({ workflowId, on: true });
+    await agent.setWorkflowState({ workflowId, state: "active" });
     await everyScreen(2);
     const created = await agent.createWorkflow({ name: "Box", tag: "box" });
     if (created._tag !== "Ok") throw new Error(created._tag);
@@ -514,9 +514,9 @@ describe("what each write publishes", () => {
     expect(edited._tag).toBe("NotFound");
     const applied = await agent.applyDraft({ workflowId });
     expect(applied._tag).toBe("NoDraft");
-    const switched = await agent.setWorkflowOn({
+    const switched = await agent.setWorkflowState({
       workflowId: "missing",
-      on: false,
+      state: "inactive",
     });
     expect(switched._tag).toBe("NotFound");
     await receivesNoMore(screens.merchant, 1);

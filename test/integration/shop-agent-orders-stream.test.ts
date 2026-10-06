@@ -319,7 +319,7 @@ describe("runShopAgentOrdersStream", () => {
 /**
  * The bulk path routes with the same rules as a webhook: the reconcile hook
  * runs inside each order's upsert transaction, and the source changes
- * nothing: an on workflow applies to every open order the file carries,
+ * nothing: an active workflow applies to every open order the file carries,
  * however old.
  */
 describe("runShopAgentOrdersStream with afterWrite", () => {
@@ -390,9 +390,9 @@ describe("runShopAgentOrdersStream with afterWrite", () => {
           workflowId: workflow.id,
           teams: [team],
         });
-        yield* workflows.setWorkflowOn({
+        yield* workflows.setWorkflowState({
           workflowId: workflow.id,
-          on: true,
+          state: "active",
           teams: [team],
         });
         const context = yield* reconcileContext([team]);

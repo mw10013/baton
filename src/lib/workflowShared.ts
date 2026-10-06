@@ -74,7 +74,7 @@ export const neverApplied = (detail: {
  */
 export const APPLY_HEADING = "Apply changes?";
 export const APPLY_BODY =
-  "This workflow is on, so the changes take effect now. Items already on it keep the tasks they started with.";
+  "This workflow is active, so the changes take effect now. Items already on it keep the tasks they started with.";
 export const DISCARD_HEADING = "Discard changes?";
 export const DISCARD_BODY = "Your unsaved changes will be lost.";
 export const TURN_OFF_HEADING = "Turn off workflow?";
@@ -96,7 +96,7 @@ export const RENAMED_TOAST = "Workflow renamed";
 export const itemTriggerLine = (tag: string) =>
   `Starts when an order contains a product tagged \u201C${tag}\u201D.`;
 
-/** The Turn on dialog's first line, both surfaces: the rule that will create runs once the switch is on. */
+/** The Turn on dialog's first line, both surfaces: the rule that will create runs once the workflow is active. */
 export const turnOnBody = (tag: string) =>
   `Every open order with an item tagged \u201C${tag}\u201D starts this workflow on that item.`;
 
@@ -130,7 +130,7 @@ export const turnOnBlocker = (
   return null;
 };
 
-/** Why Apply would be refused, from the draft's tasks; the same checks on and off. */
+/** Why Apply would be refused, from the draft's tasks; the same checks active and inactive alike. */
 export const applyBlocker = (
   tasks: readonly Domain.TaskWithTeamName[],
 ): Domain.ApplyResult | null => {

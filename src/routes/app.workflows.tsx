@@ -30,7 +30,7 @@ declare module "@tanstack/react-router" {
  * `$workflowId`, and a `?state=` on the editor window's URL is harmless.
  *
  * The key is `state`, the list's main filter keyed by its axis
- * (`Domain.WorkflowsIndexState`): On and Off are workflow states. All is the
+ * (`Domain.WorkflowsIndexState`): Active and Inactive are workflow states. All is the
  * default and is written by leaving the key out; a stale `?view=` or
  * `?status=` from before the renames is an unknown key and reads as All.
  *

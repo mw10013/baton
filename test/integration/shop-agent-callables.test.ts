@@ -53,7 +53,7 @@ const CALLABLE_ROLES = {
   createDraft: "merchant",
   applyDraft: "merchant",
   discardDraft: "merchant",
-  setWorkflowOn: "merchant",
+  setWorkflowState: "merchant",
   applyAndTurnOn: "merchant",
   removeWorkflow: "merchant",
   getOrderDetail: "merchant",

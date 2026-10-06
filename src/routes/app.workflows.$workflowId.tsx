@@ -13,6 +13,7 @@ import { Effect, Schema } from "effect";
 
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { Lines } from "@/components/screen/Lines";
+import { PageNote } from "@/components/screen/PageNote";
 import { Panel } from "@/components/screen/Panel";
 import { textLimitError } from "@/components/screen/TextLimit";
 import { Things } from "@/components/screen/Things";
@@ -90,11 +91,16 @@ export const Route = createFileRoute("/app/workflows/$workflowId")({
  * starts and is independent from then on.
  *
  * The header reads left to right as look · change · commit: `Edit`, `More
- * actions`, then the on/off switch as the primary. The switch is absent while
+ * actions`, then the switch as the primary. The switch is absent while
  * the workflow has never been applied (there is nothing in force to turn on —
- * the editor's Turn on applies and turns on in one step) and while a
- * workflow that is off has a draft (what would be turned on is not what the
+ * the editor's Turn on applies and turns on in one step) and while an
+ * inactive workflow has a draft (what would be turned on is not what the
  * editor is holding).
+ *
+ * The title-bar state badge carries no tone, Active and Inactive alike:
+ * the primary button beside it already carries the state's colour
+ * (critical Turn off workflow, primary Turn on workflow). The workflows
+ * index's Active badge is green because there it is the only signal.
  */
 /**
  * The copy dialog's starting values: the suggested name and, mirroring it
@@ -260,9 +266,9 @@ function RouteComponent() {
 
   const fresh = neverApplied(detail);
   const hasDraft = draftTasks !== null;
-  const on = Domain.workflowIsOn(workflow);
+  const active = Domain.workflowIsActive(workflow);
   /** Flow's asymmetry: Turn off is always offered, Turn on only when what would go on is what the editor is holding. */
-  const showSwitch = !fresh && (on || !hasDraft);
+  const showSwitch = !fresh && (active || !hasDraft);
 
   return (
     <s-page heading={workflow.name} inlineSize="base">
@@ -274,20 +280,20 @@ function RouteComponent() {
       </s-link>
       {/* A workflow that has never been applied has no state to report: it is
           a draft and nothing else, so the one badge says that instead of
-          calling it off. */}
+          calling it inactive. */}
       {fresh ? (
         <s-badge slot="accessory" tone="info">
           Draft
         </s-badge>
       ) : (
         <>
-          {on ? (
-            <s-badge slot="accessory" tone="success">
-              {Domain.WORKFLOW_STATE_LABEL.on}
+          {active ? (
+            <s-badge slot="accessory">
+              {Domain.WORKFLOW_STATE_LABEL.active}
             </s-badge>
           ) : (
             <s-badge slot="accessory">
-              {Domain.WORKFLOW_STATE_LABEL.off}
+              {Domain.WORKFLOW_STATE_LABEL.inactive}
             </s-badge>
           )}
           {hasDraft && (
@@ -341,9 +347,9 @@ function RouteComponent() {
 
       <SocketBanner />
 
-      <s-paragraph color="subdued">
+      <PageNote>
         Last updated on <LocalDateTime value={workflow.updatedAt} />
-      </s-paragraph>
+      </PageNote>
 
       <s-section accessibilityLabel="Workflow">
         <Things>

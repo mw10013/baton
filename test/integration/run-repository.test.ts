@@ -178,9 +178,9 @@ const goLive = (workflowId: string) =>
   Effect.gen(function* () {
     const workflows = yield* WorkflowRepository;
     yield* workflows.applyDraft({ workflowId, teams: TEAMS });
-    return yield* workflows.setWorkflowOn({
+    return yield* workflows.setWorkflowState({
       workflowId,
-      on: true,
+      state: "active",
       teams: TEAMS,
     });
   });
@@ -189,9 +189,9 @@ const goLive = (workflowId: string) =>
 const turnOff = (workflowId: string) =>
   Effect.gen(function* () {
     const workflows = yield* WorkflowRepository;
-    yield* workflows.setWorkflowOn({
+    yield* workflows.setWorkflowState({
       workflowId,
-      on: false,
+      state: "inactive",
       teams: TEAMS,
     });
   });
@@ -199,9 +199,9 @@ const turnOff = (workflowId: string) =>
 const turnOn = (workflowId: string) =>
   Effect.gen(function* () {
     const workflows = yield* WorkflowRepository;
-    yield* workflows.setWorkflowOn({
+    yield* workflows.setWorkflowState({
       workflowId,
-      on: true,
+      state: "active",
       teams: TEAMS,
     });
   });
@@ -803,7 +803,7 @@ describe("RunRepository.reconcileOrder", () => {
       }),
     ));
 
-  it("a workflow that is on creates runs on every stored open paid order, however old it is", () =>
+  it("an active workflow creates runs on every stored open paid order, however old it is", () =>
     runInRepository(
       Effect.gen(function* () {
         const { a } = yield* seed;
@@ -1367,7 +1367,7 @@ describe("RunRepository.reconcileOrder", () => {
       }),
     ));
 
-  it("creates nothing for an off workflow, a never-applied one, or an unassigned task", () =>
+  it("creates nothing for an inactive workflow, a never-applied one, or an unassigned task", () =>
     runInRepository(
       Effect.gen(function* () {
         const { a, b } = yield* seed;
@@ -1390,10 +1390,10 @@ describe("RunRepository.reconcileOrder", () => {
         ];
         const unassigned = yield* upsertAndReconcile(order(), items, [TEAM_A]);
         strictEqual(unassigned.created, 0);
-        // b switched off: nothing starts even with every team present.
-        yield* workflows.setWorkflowOn({
+        // b turned off: nothing starts even with every team present.
+        yield* workflows.setWorkflowState({
           workflowId: b.id,
-          on: false,
+          state: "inactive",
           teams: TEAMS,
         });
         const off = yield* upsertAndReconcile(
@@ -1401,9 +1401,9 @@ describe("RunRepository.reconcileOrder", () => {
           items,
         );
         strictEqual(off.created, 0);
-        yield* workflows.setWorkflowOn({
+        yield* workflows.setWorkflowState({
           workflowId: b.id,
-          on: true,
+          state: "active",
           teams: TEAMS,
         });
         yield* turnOn(a.id);
@@ -3030,7 +3030,7 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
       }),
     ));
 
-  it("an edit after turn-on still starts the workflow's tasks; apply while on replaces them and earlier runs keep their copies", () =>
+  it("an edit after turn-on still starts the workflow's tasks; apply while active replaces them and earlier runs keep their copies", () =>
     runInRepository(
       Effect.gen(function* () {
         const { a } = yield* seed;
@@ -3068,13 +3068,13 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
           ["Cut", "Finish"],
         );
 
-        // Apply while on: the next order gets three tasks, the earlier runs
+        // Apply while active: the next order gets three tasks, the earlier runs
         // keep their copied tasks.
         const applied = yield* workflows.applyDraft({
           workflowId: a.id,
           teams: TEAMS,
         });
-        strictEqual(Domain.workflowIsOn(applied), true);
+        strictEqual(Domain.workflowIsActive(applied), true);
         const third = yield* upsertAndReconcile(
           order({ updatedAt: PROCESSED_AT + 2 }),
           [lineItem(1, ["a"]), lineItem(2, ["a"]), lineItem(3, ["a"])],

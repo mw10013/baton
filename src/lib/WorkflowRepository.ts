@@ -15,14 +15,14 @@ import * as WorkflowLayout from "@/lib/WorkflowLayout";
  * repository's own invariant, kept distinct from `SqlError.SqlError`.
  */
 /**
- * The run path's workflow read: the on workflows whose tag is one of the
+ * The run path's workflow read: the active workflows whose tag is one of the
  * order's product tags, the rule on `Domain.itemMatches` (by tag, never by
  * scanning). One parameter, the tags as a JSON array. Exported for the test
  * that reads its query plan: the probe searches the unique index on
  * `Workflow.tag`.
  */
-export const ON_WORKFLOWS_BY_TAGS = `select * from Workflow
-  where state = 'on'
+export const ACTIVE_WORKFLOWS_BY_TAGS = `select * from Workflow
+  where state = 'active'
     and tag in (select value from json_each(?))
   order by name`;
 
@@ -62,7 +62,7 @@ export class WorkflowNotFoundError extends Schema.TaggedError<WorkflowNotFoundEr
 ) {}
 
 /**
- * A tag another workflow already carries, on or off. The tag is the
+ * A tag another workflow already carries, active or inactive. The tag is the
  * workflow's key — the one string a product can carry that names it — and the
  * `unique` on `Workflow.tag` is the rule. This error exists so the refusal can
  * name the holder and the merchant is told which field to change, at the
@@ -79,7 +79,7 @@ export class WorkflowTagTakenError extends Schema.TaggedError<WorkflowTagTakenEr
 ) {}
 
 /**
- * A name another workflow already has, on or off, compared exactly. The name
+ * A name another workflow already has, active or inactive, compared exactly. The name
  * is the label merchants and members pick a workflow by — members never see
  * the tag — so no two workflows share one, and the `unique` on
  * `Workflow.name` is the rule. This error exists so the refusal lands under
@@ -248,21 +248,21 @@ export class WorkflowRepository extends Context.Service<
       SqlError.SqlError | WorkflowRepositoryError
     >;
     /**
-     * The switched-on workflows whose tag is one of `tags`, with their tasks,
+     * The active workflows whose tag is one of `tags`, with their tasks,
      * in name order: a probe of the unique `Workflow.tag`, never a scan, by
      * the rule on `Domain.itemMatches`. Reconcile reads it per order with the
      * order's product tags, inside the order's transaction; the order page
      * reads it the same way. Drafts are invisible here by construction:
      * nothing in run creation reads `draftTasks`.
      */
-    readonly listOnWorkflowsByTags: (input: {
+    readonly listActiveWorkflowsByTags: (input: {
       readonly tags: readonly string[];
     }) => Effect.Effect<
       readonly Domain.WorkflowDetail[],
       SqlError.SqlError | WorkflowRepositoryError
     >;
-    /** Every switched-on workflow with tasks, by name: the Workflow select's options past the order's matches. */
-    readonly listOnWorkflowNames: () => Effect.Effect<
+    /** Every active workflow with tasks, by name: the Workflow select's options past the order's matches. */
+    readonly listActiveWorkflowNames: () => Effect.Effect<
       readonly Domain.WorkflowNameRow[],
       SqlError.SqlError | WorkflowRepositoryError
     >;
@@ -289,7 +289,7 @@ export class WorkflowRepository extends Context.Service<
       SqlError.SqlError | WorkflowRepositoryError
     >;
     /**
-     * Inserts the workflow: off, no tasks, carrying its tag, and **no draft**.
+     * Inserts the workflow: inactive, no tasks, carrying its tag, and **no draft**.
      * The draft is the editor's record of unsaved changes and is created by
      * the first change (`editDraft`), so a fresh workflow has none and the
      * editor opens without a Discard button for nothing. The name, then the
@@ -308,7 +308,7 @@ export class WorkflowRepository extends Context.Service<
     >;
     /**
      * A copy of the workflow's tasks, with their steps under new ids, under
-     * the name and tag the merchant chose in the Duplicate dialog; off, with
+     * the name and tag the merchant chose in the Duplicate dialog; inactive, with
      * no draft. The name, then the tag, is checked before the insert, as in
      * `createWorkflow`.
      */
@@ -339,7 +339,7 @@ export class WorkflowRepository extends Context.Service<
     /**
      * Writes the tag on the workflow row immediately, like a rename, and
      * creates no draft: runs snapshot the tag at start, so nothing in flight
-     * moves. Refuses a tag another workflow holds, on or off.
+     * moves. Refuses a tag another workflow holds, active or inactive.
      */
     readonly updateWorkflowTag: (input: {
       readonly workflowId: string;
@@ -352,18 +352,18 @@ export class WorkflowRepository extends Context.Service<
       | WorkflowTagTakenError
     >;
     /**
-     * The on/off switch. On requires: at least one task, every task assigned
-     * to a team in `teams`; it writes `state = 'on'`. A team with no members
+     * The switch. Active requires: at least one task, every task assigned
+     * to a team in `teams`; it writes `state = 'active'`. A team with no members
      * does not refuse. Tags are not
      * its business: every workflow's tag is unique from birth, so the switch
-     * can never collide with one. Off writes
-     * `state = 'off'` and touches nothing else: open runs are days of
+     * can never collide with one. Inactive writes
+     * `state = 'inactive'` and touches nothing else: open runs are days of
      * physical work and keep going; only new runs stop. Neither direction
      * creates, applies, or discards a draft, or looks at whether one exists.
      */
-    readonly setWorkflowOn: (input: {
+    readonly setWorkflowState: (input: {
       readonly workflowId: string;
-      readonly on: boolean;
+      readonly state: Domain.WorkflowState;
       readonly teams: Teams;
     }) => Effect.Effect<
       Domain.Workflow,
@@ -390,8 +390,8 @@ export class WorkflowRepository extends Context.Service<
      * Replaces the workflow's tasks with the draft's and clears the draft, in
      * one statement: an order sees the old definition or the new one, never
      * a half-edit. Refused with no draft, an empty draft, or an unassigned
-     * task, on and off alike. The tag is not drafted, so Apply never reads or
-     * writes it. Does not touch `state`: the workflow stays on or off, and
+     * task, active and inactive alike. The tag is not drafted, so Apply never reads or
+     * writes it. Does not touch `state`: the workflow stays active or inactive, and
      * the caller reconciles the orders
      * against the new definition. Task ids carry over, since the document is
      * copied whole.
@@ -411,12 +411,12 @@ export class WorkflowRepository extends Context.Service<
     /**
      * Apply and Turn on in one transaction, for the editor's Turn on on a
      * workflow that has never been applied: promoting tasks that have never
-     * run and then switching the workflow on are one decision, and doing them
+     * run and then turning the workflow on are one decision, and doing them
      * as two calls leaves a window where the first succeeded and the second
      * did not. An absent draft is not a refusal here — there is simply nothing
      * to promote, and the eligibility check on the workflow's own tasks then
      * decides. Otherwise the same rules as {@link applyDraft} and
-     * {@link setWorkflowOn}.
+     * {@link setWorkflowState}.
      */
     readonly applyAndTurnOn: (input: {
       readonly workflowId: string;
@@ -838,7 +838,7 @@ export class WorkflowRepository extends Context.Service<
             });
         });
 
-      /** Inserts an off workflow carrying `tasks`, after the ceiling, name and tag checks; in the caller's transaction. */
+      /** Inserts an inactive workflow carrying `tasks`, after the ceiling, name and tag checks; in the caller's transaction. */
       const insertWorkflow = ({
         name,
         tag,
@@ -862,7 +862,7 @@ export class WorkflowRepository extends Context.Service<
               insert into Workflow
                 (id, name, tag, state, updatedAt, tasks)
               values
-                (${crypto.randomUUID()}, ${name}, ${tag}, 'off', ${now}, ${yield* encodeTasks(tasks)})
+                (${crypto.randomUUID()}, ${name}, ${tag}, 'inactive', ${now}, ${yield* encodeTasks(tasks)})
               returning id, name, tag, state, updatedAt
             `,
           );
@@ -984,11 +984,11 @@ export class WorkflowRepository extends Context.Service<
           } satisfies WorkflowWithDraftTasks);
         }),
 
-        listOnWorkflowsByTags: Effect.fn(
-          "WorkflowRepository.listOnWorkflowsByTags",
+        listActiveWorkflowsByTags: Effect.fn(
+          "WorkflowRepository.listActiveWorkflowsByTags",
         )(function* ({ tags }: { readonly tags: readonly string[] }) {
           const rows = yield* decodeWorkflowRows(
-            yield* sql.unsafe(ON_WORKFLOWS_BY_TAGS, [JSON.stringify(tags)]),
+            yield* sql.unsafe(ACTIVE_WORKFLOWS_BY_TAGS, [JSON.stringify(tags)]),
           );
           return rows.map((row): Domain.WorkflowDetail => ({
             workflow: workflowOf(row),
@@ -996,8 +996,8 @@ export class WorkflowRepository extends Context.Service<
           }));
         }),
 
-        listOnWorkflowNames: Effect.fn(
-          "WorkflowRepository.listOnWorkflowNames",
+        listActiveWorkflowNames: Effect.fn(
+          "WorkflowRepository.listActiveWorkflowNames",
         )(function* () {
           return yield* decode(
             Schema.Array(Domain.WorkflowNameRow),
@@ -1005,16 +1005,16 @@ export class WorkflowRepository extends Context.Service<
           )(
             yield* sql`
                 select id, name from Workflow
-                where state = 'on' and json_array_length(tasks) > 0
+                where state = 'active' and json_array_length(tasks) > 0
                 order by name
               `,
           );
         }),
 
         /**
-         * A fixture's `tasks` become the workflow's tasks, switched on
-         * (`state = 'on'`) unless
-         * `on: false` or a task is unassigned. A fixture with no tasks and
+         * A fixture's `tasks` become the workflow's tasks, active
+         * (`state = 'active'`) unless
+         * `state: "inactive"` or a task is unassigned. A fixture with no tasks and
          * no `draft` has no draft either, the state `createWorkflow` leaves a
          * fresh workflow in. `draft` seeds a pending draft beside the
          * workflow.
@@ -1036,10 +1036,12 @@ export class WorkflowRepository extends Context.Service<
               ...workflow,
               tasks: seededTasks(workflow.tasks),
               draftTasks: draftOf(workflow),
-              on:
-                workflow.on ??
+              state:
+                workflow.state ??
                 (workflow.tasks.length > 0 &&
-                  workflow.tasks.every((task) => task.teamId !== null)),
+                workflow.tasks.every((task) => task.teamId !== null)
+                  ? ("active" as const)
+                  : ("inactive" as const)),
             }));
             const invalid = staged.find(
               (workflow) =>
@@ -1054,25 +1056,27 @@ export class WorkflowRepository extends Context.Service<
               });
             // The invariants the ordinary write path enforces that a fixture
             // could otherwise silently break.
-            const onWithoutTasks = staged.find(
-              (workflow) => workflow.on && workflow.tasks.length === 0,
-            );
-            if (onWithoutTasks !== undefined)
-              return yield* new WorkflowRepositoryError({
-                message: `replaceWorkflows: workflow=${onWithoutTasks.name}: a workflow that is on needs tasks`,
-                cause: onWithoutTasks.name,
-              });
-            // Mirrors `SwitchResult.TaskUnassigned`: on with a task nobody
-            // owns is a workflow the list shows as On that creates nothing.
-            const onWithUnassigned = staged.find(
+            const activeWithoutTasks = staged.find(
               (workflow) =>
-                workflow.on &&
+                Domain.workflowIsActive(workflow) &&
+                workflow.tasks.length === 0,
+            );
+            if (activeWithoutTasks !== undefined)
+              return yield* new WorkflowRepositoryError({
+                message: `replaceWorkflows: workflow=${activeWithoutTasks.name}: an active workflow needs tasks`,
+                cause: activeWithoutTasks.name,
+              });
+            // Mirrors `SwitchResult.TaskUnassigned`: active with a task nobody
+            // owns is a workflow the list shows as Active that creates nothing.
+            const activeWithUnassigned = staged.find(
+              (workflow) =>
+                Domain.workflowIsActive(workflow) &&
                 workflow.tasks.some((task) => task.teamId === null),
             );
-            if (onWithUnassigned !== undefined)
+            if (activeWithUnassigned !== undefined)
               return yield* new WorkflowRepositoryError({
-                message: `replaceWorkflows: workflow=${onWithUnassigned.name}: a workflow that is on needs every task assigned`,
-                cause: onWithUnassigned.name,
+                message: `replaceWorkflows: workflow=${activeWithUnassigned.name}: an active workflow needs every task assigned`,
+                cause: activeWithUnassigned.name,
               });
             if (staged.length > Domain.WorkflowLimits.maxWorkflows)
               return yield* new WorkflowRepositoryError({
@@ -1129,7 +1133,7 @@ export class WorkflowRepository extends Context.Service<
                     insert into Workflow
                       (id, name, tag, state, updatedAt, tasks, draftTasks)
                     values
-                      (${workflowId}, ${workflow.name}, ${workflow.tag}, ${workflow.on ? "on" : "off"}, ${now}, ${tasks}, ${draftTasks})
+                      (${workflowId}, ${workflow.name}, ${workflow.tag}, ${workflow.state}, ${now}, ${tasks}, ${draftTasks})
                   `;
                 }
                 return seeded;
@@ -1218,22 +1222,20 @@ export class WorkflowRepository extends Context.Service<
           },
         ),
 
-        setWorkflowOn: Effect.fn("WorkflowRepository.setWorkflowOn")(
+        setWorkflowState: Effect.fn("WorkflowRepository.setWorkflowState")(
           function* ({
             workflowId,
-            on,
+            state,
             teams,
           }: {
             readonly workflowId: string;
-            readonly on: boolean;
+            readonly state: Domain.WorkflowState;
             readonly teams: Teams;
           }) {
             const row = yield* requireWorkflowRow(workflowId);
-            if (on) yield* requireEligibleTasks(workflowId, row.tasks, teams);
-            return yield* updateWorkflowRow(
-              workflowId,
-              sql`state = ${on ? "on" : "off"}`,
-            );
+            if (Domain.workflowIsActive({ state }))
+              yield* requireEligibleTasks(workflowId, row.tasks, teams);
+            return yield* updateWorkflowRow(workflowId, sql`state = ${state}`);
           },
         ),
 
@@ -1291,7 +1293,10 @@ export class WorkflowRepository extends Context.Service<
                   row.draftTasks ?? row.tasks,
                   teams,
                 );
-                return yield* updateWorkflowRow(workflowId, sql`state = 'on'`);
+                return yield* updateWorkflowRow(
+                  workflowId,
+                  sql`state = 'active'`,
+                );
               }),
             );
           },

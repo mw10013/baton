@@ -44,10 +44,10 @@ const decodeWorkflowResult = Schema.decodeUnknownPromise(
  */
 export const stateBadges = (workflow: Domain.WorkflowSummary) => (
   <Inline>
-    {Domain.workflowIsOn(workflow) ? (
-      <s-badge tone="success">{Domain.WORKFLOW_STATE_LABEL.on}</s-badge>
+    {Domain.workflowIsActive(workflow) ? (
+      <s-badge tone="success">{Domain.WORKFLOW_STATE_LABEL.active}</s-badge>
     ) : (
-      <s-badge>{Domain.WORKFLOW_STATE_LABEL.off}</s-badge>
+      <s-badge>{Domain.WORKFLOW_STATE_LABEL.inactive}</s-badge>
     )}
     {workflow.stepCount === 0 && <s-badge tone="warning">No steps</s-badge>}
     {workflow.unassigned && (
@@ -402,8 +402,14 @@ function RouteComponent() {
                   q === undefined ? (
                     <Inline>
                       {stateButton("All")}
-                      {stateButton(Domain.WORKFLOW_STATE_LABEL.on, "on")}
-                      {stateButton(Domain.WORKFLOW_STATE_LABEL.off, "off")}
+                      {stateButton(
+                        Domain.WORKFLOW_STATE_LABEL.active,
+                        "active",
+                      )}
+                      {stateButton(
+                        Domain.WORKFLOW_STATE_LABEL.inactive,
+                        "inactive",
+                      )}
                     </Inline>
                   ) : undefined
                 }

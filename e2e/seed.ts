@@ -1,3 +1,5 @@
+import type * as Domain from "@/lib/Domain";
+
 import { devShop, localUrl } from "./devStore";
 
 /** The local endpoint and the shop to seed, from {@link localUrl} and {@link devShop}. */
@@ -110,8 +112,8 @@ export interface SeedOrder extends SeedProgress {
 /** A workflow definition to create, tasks inline and in order. */
 export interface SeedWorkflow {
   readonly name: string;
-  /** On/off switch; defaults to on when there are tasks and every task is assigned. */
-  readonly on?: boolean;
+  /** The switch; defaults to active when there are tasks and every task is assigned. */
+  readonly state?: Domain.WorkflowState;
   /** The workflow's one tag; products carrying it follow this workflow. */
   readonly tag: string;
   /** The workflow's tasks; may be empty. */

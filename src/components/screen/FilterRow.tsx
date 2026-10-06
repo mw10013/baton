@@ -7,7 +7,12 @@ import { BETWEEN_LINES, sideBySide } from "./layout";
  * `src/lib/Screen.ts`): the main filter, the search, then a secondary
  * filter, each optional but the search. Side by side when the row's
  * container is wider than the breakpoint ({@link sideBySide}), stacked
- * below: the main filter 10rem, the secondary 12rem, the search the rest.
+ * below: the main filter at least 10rem and as wide as its content, the
+ * secondary 12rem, the search the rest. A select fits 10rem; a row of
+ * filter buttons (All, Active, Inactive on the workflows index) is wider,
+ * and a fixed 10rem wrapped its last button onto a second line. The track
+ * is `auto` and the floor (10rem, 160px) is on the box, because a track list carries no
+ * comma ({@link sideBySide}), so `minmax` cannot express it.
  * The selects' labels are hidden on screen and kept for screen readers (the
  * controls table's row for a filter beside a search, `Control` in
  * `src/lib/Screen.ts`); the route renders them so.
@@ -30,7 +35,7 @@ export function FilterRow({
   const hasSecondary = secondary !== undefined && secondary !== null;
   if (!hasMain && !hasSecondary) return search;
   const wide = [
-    ...(hasMain ? ["10rem"] : []),
+    ...(hasMain ? ["auto"] : []),
     "1fr",
     ...(hasSecondary ? ["12rem"] : []),
   ].join(" ");
@@ -41,7 +46,7 @@ export function FilterRow({
         gap={BETWEEN_LINES}
         alignItems="end"
       >
-        {main}
+        {hasMain && <s-box minInlineSize="160px">{main}</s-box>}
         {search}
         {secondary}
       </s-grid>

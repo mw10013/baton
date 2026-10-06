@@ -132,11 +132,11 @@ export interface ReconcileAllCounts {
 }
 
 /**
- * The on workflows whose tag is one of `tags`, with their tasks: how a pass
+ * The active workflows whose tag is one of `tags`, with their tasks: how a pass
  * finds the workflows that can match an order, from the order's own tags
  * (the rule on {@link Domain.itemMatches}). Passed in rather than read here
  * so the two repositories stay independent: the agent hands over
- * `WorkflowRepository.listOnWorkflowsByTags`. It runs inside the order's
+ * `WorkflowRepository.listActiveWorkflowsByTags`. It runs inside the order's
  * transaction, so it must be plain statements.
  */
 export type WorkflowsByTags = (
@@ -190,7 +190,7 @@ export class RunRepository extends Context.Service<
     /**
      * `reconcileOrder` over every open, paid order, one transaction each
      * (pass rule 2 on {@link Domain.reconcileItem}): what runs after a
-     * definition changes on an on workflow (Turn on, Apply). Returns its
+     * definition changes on an active workflow (Turn on, Apply). Returns its
      * counts ({@link ReconcileAllCounts}). Fulfilled orders are excluded on purpose —
      * reconcile treats fulfilled as terminal and there is nothing left to
      * make or pack — and unpaid ones because they reconcile when they pay.
