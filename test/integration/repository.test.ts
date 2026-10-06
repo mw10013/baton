@@ -387,35 +387,33 @@ describe("Repository SQL (D1 ShopSession)", () => {
   });
 
   describe("Member", () => {
-    it.effect(
-      "createMember inserts idempotently; listMembers round-trips",
-      () =>
-        run(
-          Effect.gen(function* () {
-            const repo = yield* Repository;
-            const shop = shopOf("m.myshopify.com");
-            yield* seed(repo, [shop]);
-            const email = emailOf("worker@example.com");
-            yield* repo.createMember({
-              shop,
-              email,
-            });
-            const first = yield* repo.listMembers(shop);
-            strictEqual(first.length, 1);
-            strictEqual(first[0].email, email);
-            yield* repo.createMember({
-              shop,
-              email,
-            });
-            const second = yield* repo.listMembers(shop);
-            strictEqual(second.length, 1);
-            strictEqual(second[0].id, first[0].id);
-          }),
-        ),
+    it.effect("addMember inserts idempotently; listMembers round-trips", () =>
+      run(
+        Effect.gen(function* () {
+          const repo = yield* Repository;
+          const shop = shopOf("m.myshopify.com");
+          yield* seed(repo, [shop]);
+          const email = emailOf("worker@example.com");
+          yield* repo.addMember({
+            shop,
+            email,
+          });
+          const first = yield* repo.listMembers(shop);
+          strictEqual(first.length, 1);
+          strictEqual(first[0].email, email);
+          yield* repo.addMember({
+            shop,
+            email,
+          });
+          const second = yield* repo.listMembers(shop);
+          strictEqual(second.length, 1);
+          strictEqual(second[0].id, first[0].id);
+        }),
+      ),
     );
 
     it.effect(
-      "createMember refuses at the ceiling and says so, and is a no-op for an existing email",
+      "addMember refuses at the ceiling and says so, and is a no-op for an existing email",
       () =>
         run(
           Effect.gen(function* () {
@@ -424,13 +422,13 @@ describe("Repository SQL (D1 ShopSession)", () => {
             yield* seed(repo, [shop]);
             const { maxMembers } = Domain.ShopLimits;
             for (let index = 0; index < maxMembers; index += 1)
-              yield* repo.createMember({
+              yield* repo.addMember({
                 shop,
                 email: emailOf(`m${String(index)}@example.com`),
               });
             strictEqual(yield* repo.countMembers(shop), maxMembers);
             const refused = yield* Effect.flip(
-              repo.createMember({ shop, email: emailOf("over@example.com") }),
+              repo.addMember({ shop, email: emailOf("over@example.com") }),
             );
             assertTrue(refused instanceof MemberCeilingError);
             strictEqual(
@@ -439,7 +437,7 @@ describe("Repository SQL (D1 ShopSession)", () => {
             );
             // At the ceiling, re-adding somebody who is already a member is
             // still a no-op rather than a refusal.
-            yield* repo.createMember({
+            yield* repo.addMember({
               shop,
               email: emailOf("m0@example.com"),
             });
@@ -466,7 +464,7 @@ describe("Repository SQL (D1 ShopSession)", () => {
             const shop = shopOf("m.myshopify.com");
             yield* seed(repo, [shop]);
             const email = emailOf("worker@example.com");
-            yield* repo.createMember({
+            yield* repo.addMember({
               shop,
               email,
             });
@@ -492,14 +490,14 @@ describe("Repository SQL (D1 ShopSession)", () => {
         ),
     );
 
-    it.effect("createMember after deleteMember mints a new id", () =>
+    it.effect("addMember after deleteMember mints a new id", () =>
       run(
         Effect.gen(function* () {
           const repo = yield* Repository;
           const shop = shopOf("m.myshopify.com");
           yield* seed(repo, [shop]);
           const email = emailOf("worker@example.com");
-          yield* repo.createMember({
+          yield* repo.addMember({
             shop,
             email,
           });
@@ -507,7 +505,7 @@ describe("Repository SQL (D1 ShopSession)", () => {
             yield* repo.findMember({ shop, email }),
           );
           yield* repo.deleteMember({ shop, email });
-          yield* repo.createMember({
+          yield* repo.addMember({
             shop,
             email,
           });
@@ -525,11 +523,11 @@ describe("Repository SQL (D1 ShopSession)", () => {
           const repo = yield* Repository;
           yield* seed(repo, ["a.myshopify.com", "b.myshopify.com"]);
           const email = emailOf("multi@example.com");
-          yield* repo.createMember({
+          yield* repo.addMember({
             shop: shopOf("a.myshopify.com"),
             email,
           });
-          yield* repo.createMember({
+          yield* repo.addMember({
             shop: shopOf("b.myshopify.com"),
             email,
           });
@@ -550,11 +548,11 @@ describe("Repository SQL (D1 ShopSession)", () => {
             yield* seed(repo, [shop]);
             const alone = emailOf("alone@example.com");
             const other = emailOf("other@example.com");
-            yield* repo.createMember({
+            yield* repo.addMember({
               shop,
               email: alone,
             });
-            yield* repo.createMember({
+            yield* repo.addMember({
               shop,
               email: other,
             });
@@ -616,7 +614,7 @@ describe("Repository SQL (D1 ShopSession)", () => {
             const shop = shopOf("m.myshopify.com");
             const other = shopOf("o.myshopify.com");
             yield* seed(repo, [shop, other]);
-            const member = yield* repo.createMember({
+            const member = yield* repo.addMember({
               shop,
               email: emailOf("worker@example.com"),
             });
@@ -687,11 +685,11 @@ describe("Repository SQL (D1 ShopSession)", () => {
           const repo = yield* Repository;
           const shop = shopOf("m.myshopify.com");
           yield* seed(repo, [shop]);
-          const member = yield* repo.createMember({
+          const member = yield* repo.addMember({
             shop,
             email: emailOf("worker@example.com"),
           });
-          const other = yield* repo.createMember({
+          const other = yield* repo.addMember({
             shop,
             email: emailOf("other@example.com"),
           });
@@ -765,7 +763,7 @@ describe("Repository SQL (D1 ShopSession)", () => {
             const shop = shopOf("m.myshopify.com");
             yield* seed(repo, [shop]);
             for (const email of ["c@x.com", "a@x.com", "b@y.com"])
-              yield* repo.createMember({ shop, email: emailOf(email) });
+              yield* repo.addMember({ shop, email: emailOf(email) });
             const team = yield* repo.createTeam({
               shop,
               name: Schema.decodeUnknownSync(Domain.TeamName)("Cut"),
@@ -831,7 +829,7 @@ describe("Repository SQL (D1 ShopSession)", () => {
           const longest = yield* Schema.decodeUnknownEffect(Domain.Email)(
             emailOfLength(Domain.EMAIL_MAX_LENGTH),
           );
-          yield* repo.createMember({ shop, email: longest });
+          yield* repo.addMember({ shop, email: longest });
           const refused = yield* Schema.decodeUnknownEffect(Domain.Email)(
             emailOfLength(Domain.EMAIL_MAX_LENGTH + 1),
           ).pipe(Effect.flip);
@@ -864,11 +862,11 @@ describe("Repository SQL (D1 ShopSession)", () => {
           const repo = yield* Repository;
           yield* seed(repo, ["a.myshopify.com", "b.myshopify.com"]);
           const email = emailOf("multi@example.com");
-          yield* repo.createMember({
+          yield* repo.addMember({
             shop: shopOf("b.myshopify.com"),
             email,
           });
-          yield* repo.createMember({
+          yield* repo.addMember({
             shop: shopOf("a.myshopify.com"),
             email,
           });
@@ -886,11 +884,11 @@ describe("Repository SQL (D1 ShopSession)", () => {
           const repo = yield* Repository;
           yield* seed(repo, ["a.myshopify.com", "b.myshopify.com"]);
           const email = emailOf("multi@example.com");
-          yield* repo.createMember({
+          yield* repo.addMember({
             shop: shopOf("a.myshopify.com"),
             email,
           });
-          yield* repo.createMember({
+          yield* repo.addMember({
             shop: shopOf("b.myshopify.com"),
             email,
           });
@@ -921,7 +919,7 @@ describe("Repository SQL (D1 ShopSession)", () => {
           const team = yield* seedTeam(shop, "  Cut & Sew  ");
           strictEqual(team.name, "Cut & Sew");
           const email = emailOf("worker@example.com");
-          yield* repo.createMember({
+          yield* repo.addMember({
             shop,
             email,
           });
@@ -1020,7 +1018,7 @@ describe("Repository SQL (D1 ShopSession)", () => {
             yield* seed(repo, [shop]);
             const team = yield* seedTeam(shop, "Cut");
             const email = emailOf("worker@example.com");
-            yield* repo.createMember({
+            yield* repo.addMember({
               shop,
               email,
             });
@@ -1058,7 +1056,7 @@ describe("Repository SQL (D1 ShopSession)", () => {
           yield* seed(repo, [shop, other]);
           const team = yield* seedTeam(shop, "Cut");
           const email = emailOf("worker@example.com");
-          yield* repo.createMember({
+          yield* repo.addMember({
             shop: other,
             email,
           });
@@ -1094,11 +1092,11 @@ describe("Repository SQL (D1 ShopSession)", () => {
             yield* seed(repo, [shop, other]);
             const team = yield* seedTeam(shop, "Cut");
             for (const email of ["a@example.com", "b@example.com"])
-              yield* repo.createMember({
+              yield* repo.addMember({
                 shop,
                 email: emailOf(email),
               });
-            yield* repo.createMember({
+            yield* repo.addMember({
               shop: other,
               email: emailOf("f@example.com"),
             });
@@ -1144,7 +1142,7 @@ describe("Repository SQL (D1 ShopSession)", () => {
             yield* seed(repo, [shop]);
             const team = yield* seedTeam(shop, "Cut");
             for (const email of ["c@x.com", "a@x.com", "b@x.com", "out@x.com"])
-              yield* repo.createMember({ shop, email: emailOf(email) });
+              yield* repo.addMember({ shop, email: emailOf(email) });
             const members = yield* repo.listMembers(shop);
             yield* repo.addTeamMembers({
               shop,
@@ -1248,7 +1246,7 @@ describe("Repository SQL (D1 ShopSession)", () => {
           yield* seed(repo, [shop]);
           const team = yield* seedTeam(shop, "Cut");
           const email = emailOf("worker@example.com");
-          yield* repo.createMember({
+          yield* repo.addMember({
             shop,
             email,
           });
@@ -1278,7 +1276,7 @@ describe("Repository SQL (D1 ShopSession)", () => {
           const shop = shopOf("t.myshopify.com");
           yield* seed(repo, [shop]);
           const email = emailOf("worker@example.com");
-          yield* repo.createMember({
+          yield* repo.addMember({
             shop,
             email,
           });
@@ -1315,7 +1313,7 @@ describe("Repository SQL (D1 ShopSession)", () => {
             const shop = shopOf("t.myshopify.com");
             yield* seed(repo, [shop]);
             const email = emailOf("worker@example.com");
-            yield* repo.createMember({
+            yield* repo.addMember({
               shop,
               email,
             });

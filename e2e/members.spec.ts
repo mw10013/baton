@@ -6,7 +6,7 @@ import { appNavLink, clickHoisted, gotoApp } from "./app";
 import { seedConfig, seedMembers } from "./seed";
 
 /**
- * The embedded half of member access: creating a member on the members
+ * The embedded half of member access: adding a member on the members
  * index, putting them on teams and taking them off on the member page, and
  * deleting them there. What a member can then *do* with that grant is
  * `member-area.member.spec.ts`, which runs outside the admin entirely.
@@ -24,7 +24,7 @@ const EMPTY_STATE = "No members yet";
 const emailOfLength = (length: number) =>
   `${"a".repeat(length - "@example.com".length)}@example.com`;
 
-test("the members index creates a member and the member page adds it to teams, removes it, and deletes it", async ({
+test("the members index adds a member and the member page adds it to teams, removes it, and deletes it", async ({
   page,
 }) => {
   /* `gotoApp` spends 4-6s on a healthy load and each of the mutations below
@@ -45,13 +45,13 @@ test("the members index creates a member and the member page adds it to teams, r
 
   /* Padded and mixed-case on purpose: `Domain.Email` trims and lowercases at
      decode, so the heading that comes back is the proof that normalization
-     is structural rather than something the dialog does on its own. Create
+     is structural rather than something the dialog does on its own. Add
      asks for the email only and lands on the member page. */
-  await frame.getByRole("button", { name: "Create member" }).click();
+  await frame.getByRole("button", { name: "Add member" }).click();
   await frame
     .getByRole("textbox", { name: "Email", exact: true })
     .fill("  E2E.Member@Example.COM  ");
-  await frame.getByRole("button", { name: "Create", exact: true }).click();
+  await frame.getByRole("button", { name: "Add", exact: true }).click();
   await expect(
     frame.locator(`s-page[heading="${MEMBER_EMAIL}"]`),
   ).toBeVisible();
@@ -111,15 +111,15 @@ test("the members index creates a member and the member page adds it to teams, r
 
 /**
  * The email cap (`Domain.EMAIL_MAX_LENGTH`): an address of 254 characters is
- * created, heads its page, and prints whole in the Details card. The field
+ * added, heads its page, and prints whole in the Details card. The field
  * sets no `maxLength` (the text-limit control): a 255-character address
- * stays in the field and Create refuses it with the field's own error; the
+ * stays in the field and Add refuses it with the field's own error; the
  * schema's refusal behind it is pinned by the integration test
- * "an email over 254 characters is refused and never stored". The created
+ * "an email over 254 characters is refused and never stored". The added
  * member is deleted at the end, since the seeded member count is pinned
  * elsewhere.
  */
-test("a 254-character email is created and printed whole, and 255 is refused on Create", async ({
+test("a 254-character email is added and printed whole, and 255 is refused on Add", async ({
   page,
 }) => {
   test.setTimeout(120_000);
@@ -129,15 +129,15 @@ test("a 254-character email is created and printed whole, and 255 is refused on 
 
   const frame = await gotoApp(page);
   await clickHoisted(appNavLink(page, "Members"));
-  await frame.getByRole("button", { name: "Create member" }).click();
+  await frame.getByRole("button", { name: "Add member" }).click();
   const field = frame.getByRole("textbox", { name: "Email", exact: true });
   await field.fill(tooLong);
   await expect(field).toHaveValue(tooLong);
-  await frame.getByRole("button", { name: "Create", exact: true }).click();
+  await frame.getByRole("button", { name: "Add", exact: true }).click();
   await expect(frame.getByText("Up to 254 characters")).toBeVisible();
 
   await field.fill(longest);
-  await frame.getByRole("button", { name: "Create", exact: true }).click();
+  await frame.getByRole("button", { name: "Add", exact: true }).click();
   await expect(frame.locator(`s-page[heading="${longest}"]`)).toBeVisible();
   await expect(
     frame.locator('s-section[heading="Details"]').getByText(longest, {
@@ -160,7 +160,7 @@ test("a 254-character email is created and printed whole, and 255 is refused on 
  * `Domain.ShopLimits.maxMembers` after the add. The home page's Members tile
  * is where the merchant is told the extra seats are billed.
  */
-test("creating a member past the included seats succeeds and the home tile says it is billed", async ({
+test("adding a member past the included seats succeeds and the home tile says it is billed", async ({
   page,
 }) => {
   test.setTimeout(120_000);
@@ -179,11 +179,11 @@ test("creating a member past the included seats succeeds and the home tile says 
   await expect(frame.locator('s-page[heading="Members"]')).toBeVisible();
   await expect(frame.getByText(seeded[0] ?? "", { exact: true })).toBeVisible();
 
-  await clickHoisted(page.getByRole("button", { name: "Create member" }));
+  await clickHoisted(page.getByRole("button", { name: "Add member" }));
   await frame
     .getByRole("textbox", { name: "Email", exact: true })
     .fill(MEMBER_EMAIL);
-  await frame.getByRole("button", { name: "Create", exact: true }).click();
+  await frame.getByRole("button", { name: "Add", exact: true }).click();
   await expect(
     frame.locator(`s-page[heading="${MEMBER_EMAIL}"]`),
   ).toBeVisible();

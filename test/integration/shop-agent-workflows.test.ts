@@ -1335,7 +1335,7 @@ describe("ShopAgent workflow run callables", () => {
       Effect.gen(function* () {
         const repo = yield* Repository;
         const email = Schema.decodeUnknownSync(Domain.Email)(memberEmail);
-        yield* repo.createMember({
+        yield* repo.addMember({
           shop: shopOf(shop),
           email,
         });

@@ -116,7 +116,7 @@ export type ShopSessionRedacted = typeof ShopSessionRedacted.Type;
 /**
  * The longest email a member can have: 254 characters, the mail standard's
  * own ceiling (RFC 5321: a path is 256 octets with its angle brackets). The
- * Create member field's `maxLength` reads this. See {@link Email}.
+ * Add member field's `maxLength` reads this. See {@link Email}.
  */
 export const EMAIL_MAX_LENGTH = 254;
 

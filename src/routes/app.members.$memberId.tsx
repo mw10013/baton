@@ -402,8 +402,8 @@ function RouteComponent() {
               value: <Token>{member.email}</Token>,
             },
             {
-              key: "created",
-              label: "Created",
+              key: "added",
+              label: "Added",
               value: <LocalDateTime value={member.createdAt} />,
             },
           ]}

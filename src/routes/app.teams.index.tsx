@@ -349,10 +349,10 @@ function RouteComponent() {
 
       <s-modal
         id={CREATE_MODAL}
-        heading="Create team"
+        heading={`${Domain.RECORD_VERB_LABEL.create} team`}
         /* Reset on the way out, not on the way in: `show` can fire after a field
            has already taken input, and a reset there wipes what was typed
-           (the members index's Create member dialog did exactly that). */
+           (the members index's Add member dialog did exactly that). */
         onAfterHide={() => {
           form.reset();
           setNameError(null);

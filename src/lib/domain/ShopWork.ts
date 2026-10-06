@@ -162,25 +162,29 @@
  * | turn on         | workflow | off → on                                 | (none)      | Turn on         |
  * | turn off        | workflow | on → off                                 | (none)      | Turn off        |
  *
- * Record verbs, shop work: what the merchant does to a thing they create
- * (a team, a workflow, a member) or to a set one holds, beside the work
- * verbs above. Create and Delete are for a thing that begins or stops
- * existing in Baton; Add and Remove are for a set, where both sides already
- * exist, so a member is created, not added (re-creating a deleted email
- * mints a new id). Edit is a workflow's tasks only; "Edit <noun>s" for a set
- * is retired, and Remove never names a delete. Which control each one is,
- * is the controls table on `Control` in `Screen.ts`. The screen column is
+ * Record verbs, shop work: what the merchant does to a team, a workflow or
+ * a member, or to a set one holds, beside the work verbs above. Create is
+ * for a thing the merchant makes from nothing (a team, a workflow). Add is
+ * for a person brought into the shop (a member), a thing already in the
+ * shop put in a set, and a step or a task made inside the workflow editor.
+ * A member is added though adding writes a new row: the merchant does not
+ * make the person, and the new row (a deleted email re-added mints a new
+ * id) is a storage fact the screen never shows. Delete is a member's delete
+ * as it is a team's, and Remove still never names a delete: it takes a
+ * thing out of a set and both still exist. Edit is a workflow's tasks only;
+ * "Edit <noun>s" for a set is retired. Which control each one is, is the
+ * controls table on `Control` in `Screen.ts`. The screen column is
  * {@link RECORD_VERB_LABEL}, and a button reads its verb from it:
  *
- * | word      | on a     | for                                                        | merchant  |
- * | --------- | -------- | ---------------------------------------------------------- | --------- |
- * | create    | thing    | a team, a workflow or a member begins to exist             | Create    |
- * | delete    | thing    | it stops existing, with nothing of it kept                 | Delete    |
- * | add       | set      | puts a member on a team, or a team in a member's teams     | Add       |
- * | remove    | set      | takes a member off a team; both still exist                | Remove    |
- * | rename    | thing    | changes its name                                           | Rename    |
- * | edit      | workflow | changes its tasks, through the draft                       | Edit      |
- * | duplicate | workflow | copies it under a new name and tag                         | Duplicate |
+ * | word      | on a                      | for                                                                                                                       | merchant  |
+ * | --------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------- | --------- |
+ * | create    | thing                     | a team or a workflow begins to exist                                                                                      | Create    |
+ * | delete    | thing                     | it stops existing, with nothing of it kept                                                                                | Delete    |
+ * | add       | member, set, step or task | a member joins the shop; a member goes on a team, or a team into a member's teams; a step or a task is made in the editor | Add       |
+ * | remove    | set                       | takes a member off a team; both still exist                                                                               | Remove    |
+ * | rename    | thing                     | changes its name                                                                                                          | Rename    |
+ * | edit      | workflow                  | changes its tasks, through the draft                                                                                      | Edit      |
+ * | duplicate | workflow                  | copies it under a new name and tag                                                                                        | Duplicate |
  */
 
 /**

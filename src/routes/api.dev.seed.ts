@@ -112,7 +112,7 @@ const DevSeedInput = Schema.Struct({
  * test runner: Playwright is one of two peer callers, and an `e2e` name invites
  * someone editing tests to reshape the prototyping fixture unaware.
  *
- * Writes through `D1Primary` for the same reason `Repository.createMember` does:
+ * Writes through `D1Primary` for the same reason `Repository.addMember` does:
  * the sign-in gate reads membership off the primary, and a seed that landed on
  * a replica-lagged path could let the very next `/login` deny a member it just
  * granted.
@@ -186,7 +186,7 @@ export const Route = createFileRoute("/api/dev/seed")({
               for (const email of members) {
                 if (keepIdentities !== true)
                   yield* sql`delete from User where email = ${email}`;
-                yield* repository.createMember({ shop, email });
+                yield* repository.addMember({ shop, email });
               }
               const memberIds = new Map(
                 (yield* repository.listMembers(shop)).map((member) => [

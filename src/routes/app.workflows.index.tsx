@@ -426,7 +426,7 @@ function RouteComponent() {
 
       <s-modal
         id={CREATE_MODAL}
-        heading="Create workflow"
+        heading={`${Domain.RECORD_VERB_LABEL.create} workflow`}
         /* Reset on the way out, not on the way in: `show` can fire after a
            field has already taken input, and a reset there wipes what was
            typed (the members index's create dialog did exactly that). */

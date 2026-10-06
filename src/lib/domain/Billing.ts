@@ -374,7 +374,7 @@ export const openOrdersAtCeiling = (openOrders: number) =>
 
 /**
  * A shop's members are at their ceiling when there are
- * {@link ShopLimits.maxMembers} members, on any plan. `Repository.createMember`
+ * {@link ShopLimits.maxMembers} members, on any plan. `Repository.addMember`
  * refuses a new email there, and the merchant is told to contact support. It
  * is the one refusal on the members: {@link Entitlements.membersIncluded} bills,
  * it does not block.

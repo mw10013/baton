@@ -27,9 +27,9 @@ import { SocketBanner } from "@/lib/SocketBanner";
 import { useNextPageEntry } from "@/lib/tablePages";
 import { INDEX_PAGE_SIZE, sessionShop } from "@/lib/teams";
 
-const CREATE_MODAL = "create-member";
+const ADD_MODAL = "add-member";
 
-const CreateMemberInput = Schema.Struct({
+const AddMemberInput = Schema.Struct({
   email: Schema.String.check(
     Schema.isNonEmpty({ message: "Enter an email" }),
     Schema.isMaxLength(Domain.EMAIL_MAX_LENGTH, {
@@ -37,7 +37,7 @@ const CreateMemberInput = Schema.Struct({
     }),
   ),
 });
-type CreateMemberInput = typeof CreateMemberInput.Type;
+type AddMemberInput = typeof AddMemberInput.Type;
 
 const decodeEmail = Schema.decodeUnknownEffect(Domain.Email);
 
@@ -90,19 +90,19 @@ const getLoaderData = createServerFn({ method: "GET" })
   );
 
 /**
- * Creating stays idempotent for the row (`Repository.createMember`), and
+ * Adding stays idempotent for the row (`Repository.addMember`), and
  * returns it so the page can land on the member page, where Add to teams is
  * the next step. It queues no seat event: the next revalidation raises the
  * seat mark to the member count (the "revalidation, same cycle start" row on
  * `Domain.ShopUsage`).
  */
-const createMemberFn = createServerFn({ method: "POST" })
-  .validator(Schema.toStandardSchemaV1(CreateMemberInput))
+const addMemberFn = createServerFn({ method: "POST" })
+  .validator(Schema.toStandardSchemaV1(AddMemberInput))
   .middleware([shopifyServerFnMiddleware])
   .handler(({ data, context: { runEffect, session } }) =>
     runEffect(
       Effect.gen(function* () {
-        return yield* (yield* Repository).createMember({
+        return yield* (yield* Repository).addMember({
           shop: yield* sessionShop(session.shop),
           email: yield* decodeEmail(data.email),
         });
@@ -137,30 +137,30 @@ function RouteComponent() {
   const navigate = useNavigate({ from: Route.fullPath });
   const nextPageEntry = useNextPageEntry("after");
   const shopify = useAppBridge();
-  const createMember = useServerFn(createMemberFn);
+  const addMember = useServerFn(addMemberFn);
 
-  const createMutation = useMutation({
-    mutationFn: (data: CreateMemberInput) => createMember({ data }),
-    onSuccess: async (created) => {
-      await shopify.modal.hide(CREATE_MODAL);
+  const addMutation = useMutation({
+    mutationFn: (data: AddMemberInput) => addMember({ data }),
+    onSuccess: async (added) => {
+      await shopify.modal.hide(ADD_MODAL);
       await router.invalidate({ sync: true });
       await navigate({
         to: "/app/members/$memberId",
-        params: { memberId: created.id },
+        params: { memberId: added.id },
       });
     },
   });
 
   const form = useForm({
-    defaultValues: { email: "" } satisfies CreateMemberInput,
-    validators: { onSubmit: Schema.toStandardSchemaV1(CreateMemberInput) },
+    defaultValues: { email: "" } satisfies AddMemberInput,
+    validators: { onSubmit: Schema.toStandardSchemaV1(AddMemberInput) },
     onSubmit: ({ value }) => {
-      createMutation.mutate(value);
+      addMutation.mutate(value);
     },
   });
 
-  const banner = createMutation.isError
-    ? mutationErrorMessage(createMutation.error, "Couldn't create the member.")
+  const banner = addMutation.isError
+    ? mutationErrorMessage(addMutation.error, "Couldn't add the member.")
     : null;
 
   /** The cap is the field's own error before the schema's words can be (the text-limit control on `Control`). */
@@ -203,21 +203,21 @@ function RouteComponent() {
   /** No search and page one: an empty page here means the shop has no members. */
   const unfiltered = q === undefined && after === undefined;
 
-  const createButton = (slotted: boolean) => (
+  const addButton = (slotted: boolean) => (
     <s-button
       {...(slotted ? { slot: "primary-action" as const } : {})}
       variant="primary"
-      commandFor={CREATE_MODAL}
+      commandFor={ADD_MODAL}
       command="--show"
     >
-      {`${Domain.RECORD_VERB_LABEL.create} member`}
+      {`${Domain.RECORD_VERB_LABEL.add} member`}
     </s-button>
   );
 
   const renderRows = () => {
     if (unfiltered && members.length === 0)
       return (
-        <EmptyLine heading="No members yet" action={createButton(false)}>
+        <EmptyLine heading="No members yet" action={addButton(false)}>
           Members sign in with their email. Put each one on a team, or they have
           nothing to do.
         </EmptyLine>
@@ -278,12 +278,12 @@ function RouteComponent() {
       <SocketBanner />
       {/* Unconditional, empty list included: the resource-index template keeps
           the title-bar primary action and lets the empty state carry a second
-          copy, so "create is top right" holds on the visit where it matters
+          copy, so "add is top right" holds on the visit where it matters
           most. App Bridge hoists this one out of the iframe, so the in-card
           twin is not a duplicate in the frame's DOM — frame- and page-scoped
           e2e locators stay disjoint.
           https://shopify.dev/docs/api/app-home/latest/patterns/templates/resource-index */}
-      {createButton(true)}
+      {addButton(true)}
 
       {banner !== null && <s-banner tone="critical">{banner}</s-banner>}
 
@@ -324,11 +324,11 @@ function RouteComponent() {
       </IndexSection>
 
       <s-modal
-        id={CREATE_MODAL}
-        heading="Create member"
+        id={ADD_MODAL}
+        heading={`${Domain.RECORD_VERB_LABEL.add} member`}
         /* Reset on the way out, not on the way in: `show` can fire after the
            field has already taken input, and a reset there wipes what was
-           typed, so Create submits an empty email. */
+           typed, so Add submits an empty email. */
         onAfterHide={() => {
           form.reset();
         }}
@@ -359,7 +359,7 @@ function RouteComponent() {
         </form>
         <s-button
           slot="secondary-actions"
-          commandFor={CREATE_MODAL}
+          commandFor={ADD_MODAL}
           command="--hide"
         >
           Cancel
@@ -367,10 +367,10 @@ function RouteComponent() {
         <s-button
           slot="primary-action"
           variant="primary"
-          loading={createMutation.isPending}
+          loading={addMutation.isPending}
           onClick={submit}
         >
-          {Domain.RECORD_VERB_LABEL.create}
+          {Domain.RECORD_VERB_LABEL.add}
         </s-button>
       </s-modal>
     </s-page>

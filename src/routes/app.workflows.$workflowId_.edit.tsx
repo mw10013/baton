@@ -569,7 +569,7 @@ function RouteComponent() {
               });
             }}
           >
-            {step === null ? "Add step" : "Add task"}
+            {`${Domain.RECORD_VERB_LABEL.add} ${step === null ? "step" : "task"}`}
           </s-button>
           <s-button
             variant="tertiary"
@@ -609,7 +609,7 @@ function RouteComponent() {
             openAdd(step);
           }}
         >
-          Add task
+          {`${Domain.RECORD_VERB_LABEL.add} task`}
         </s-button>
       </Inline>
     );
@@ -636,7 +636,7 @@ function RouteComponent() {
             openAdd(null);
           }}
         >
-          Add step
+          {`${Domain.RECORD_VERB_LABEL.add} step`}
         </s-button>
       </Inline>
     );

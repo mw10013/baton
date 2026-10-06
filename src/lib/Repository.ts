@@ -249,12 +249,11 @@ export class Repository extends Context.Service<
     >;
     /**
      * Idempotent for the row, and the ceiling ({@link Domain.membersAtCeiling})
-     * is applied to *creations* only: an email already a member is
-     * created again without consulting it, so a shop at or over the ceiling (a
-     * lowered constant) can still re-run the same create without being told it
-     * is full. Returns the row, new or existing.
+     * is applied to *new* members only: adding an email already a member
+     * does not consult it, so a shop at or over the ceiling (a lowered
+     * constant) can still re-run the same add without being told it is full. Returns the row, new or existing.
      */
-    readonly createMember: (
+    readonly addMember: (
       member: Pick<Domain.Member, "shop" | "email">,
     ) => Effect.Effect<
       Domain.Member,
@@ -647,7 +646,7 @@ export class Repository extends Context.Service<
 
       /**
        * Reads through `D1Primary`: the embedded members screen re-lists
-       * immediately after `createMember`/`deleteMember`, which write through the
+       * immediately after `addMember`/`deleteMember`, which write through the
        * primary and so never advance the session bookmark — a session read
        * could miss the row just written. Email order, the one order every
        * member read uses, so the unique (shop, email) index answers it.
@@ -731,7 +730,7 @@ export class Repository extends Context.Service<
        * insert, which neither expresses "already a member is exempt" nor
        * reports which of the two conditions refused.
        */
-      const createMember = Effect.fn("Repository.createMember")(function* (
+      const addMember = Effect.fn("Repository.addMember")(function* (
         member: Pick<Domain.Member, "shop" | "email">,
       ) {
         const existing = yield* sqlPrimary`
@@ -755,7 +754,7 @@ export class Repository extends Context.Service<
           yield* sqlPrimary`select * from Member where shop = ${member.shop} and email = ${member.email}`;
         return yield* decodeRepository(
           Domain.Member,
-          "Member missing right after createMember",
+          "Member missing right after addMember",
         )(rows[0]);
       });
 
@@ -1010,7 +1009,7 @@ export class Repository extends Context.Service<
         team: Pick<Domain.Team, "shop" | "name">,
       ) {
         // Same count-then-insert shape, and the same accepted race, as
-        // `createMember`; a team name is unique per shop, so there is no
+        // `addMember`; a team name is unique per shop, so there is no
         // "already exists" case to exempt.
         if ((yield* countTeams(team.shop)) >= Domain.ShopLimits.maxTeams)
           return yield* new TeamLimitError({
@@ -1325,7 +1324,7 @@ export class Repository extends Context.Service<
         findOrphanShopAgentIds,
         listMembers,
         listMembersPage,
-        createMember,
+        addMember,
         countMembers,
         deleteMember,
         listMemberTeams,
