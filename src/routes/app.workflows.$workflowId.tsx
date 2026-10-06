@@ -455,7 +455,7 @@ function RouteComponent() {
           />
           <s-text-field
             label="Tag"
-            details="Put this tag on the products the copy should build."
+            details="In Shopify, put this tag on the products the copy should build."
             value={copy.tag}
             {...(copyTagError === null ? {} : { error: copyTagError })}
             onInput={(event) => {

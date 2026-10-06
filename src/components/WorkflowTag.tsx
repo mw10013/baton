@@ -98,8 +98,9 @@ export function WorkflowTag({
       <s-modal id={MODAL} ref={modal} heading="Edit tag">
         <Fields>
           <s-paragraph>
-            Put this tag on the products this workflow should build, in Shopify.
-            Changing it here changes nothing on your products.
+            In Shopify, put this tag on the products this workflow should build.
+            Products that still have the old tag stop matching until you retag
+            them.
           </s-paragraph>
           <s-text-field
             label="Tag"
