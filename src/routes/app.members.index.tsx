@@ -135,7 +135,7 @@ function RouteComponent() {
   const { q, after } = Route.useSearch();
   const router = useRouter();
   const navigate = useNavigate({ from: Route.fullPath });
-  const nextPageEntry = useNextPageEntry("after");
+  const nextPageEntry = useNextPageEntry();
   const shopify = useAppBridge();
   const addMember = useServerFn(addMemberFn);
 
@@ -187,7 +187,7 @@ function RouteComponent() {
   const nextPage = (cursor: Domain.Email) => {
     void navigate({
       search: (prev) => ({ ...prev, after: cursor }),
-      state: { nextPageOf: "after" },
+      state: { nextPage: true },
     });
   };
   const previousPage = () => {

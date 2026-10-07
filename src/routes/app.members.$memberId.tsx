@@ -198,7 +198,7 @@ function RouteComponent() {
   const { teamsAfter } = Route.useSearch();
   const router = useRouter();
   const navigate = useNavigate({ from: Route.fullPath });
-  const nextPageEntry = useNextPageEntry("teamsAfter");
+  const nextPageEntry = useNextPageEntry();
   const shopify = useAppBridge();
   const removeFromTeam = useServerFn(removeFromTeamFn);
   const addMemberTeams = useServerFn(addMemberTeamsFn);
@@ -263,7 +263,7 @@ function RouteComponent() {
   const nextPage = (cursor: Domain.TeamName) => {
     void navigate({
       search: (prev) => ({ ...prev, teamsAfter: cursor }),
-      state: { nextPageOf: "teamsAfter" },
+      state: { nextPage: true },
     });
   };
   const previousPage = () => {

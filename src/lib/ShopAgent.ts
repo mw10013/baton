@@ -2127,41 +2127,4 @@ export class ShopAgent extends Agent {
       )(input),
     );
   }
-
-  /**
-   * The team page's loader read; the rule is on {@link ShopWorkAgent}'s
-   * `listTeamWorkflows`. Plain RPC, not `@callable()`: the team detail page
-   * reads this through its loader via `ShopAgentClient`, so nothing
-   * browser-side calls it. Task ownership is configuration that only changes
-   * on the workflow pages, and a loader read refreshes with
-   * `router.invalidate` and paints during SSR, which a socket query outside
-   * `useLiveQuery` cannot do.
-   */
-  listTeamWorkflows(
-    input: typeof Domain.TeamWorkflowsInput.Encoded,
-  ): Promise<Domain.TeamWorkflowsPage> {
-    return this.runEffect(
-      callableEffect("ShopAgent.listTeamWorkflows", Domain.TeamWorkflowsInput, {
-        role: "rpc",
-      })((decoded) =>
-        ShopWorkAgent.pipe(
-          Effect.flatMap((shopWork) => shopWork.listTeamWorkflows(decoded)),
-        ),
-      )(input),
-    );
-  }
-
-  /**
-   * The teams index's loader read; the rule is on {@link ShopWorkAgent}'s
-   * `countTeamWorkflows`. Plain RPC for the same reason as
-   * {@link ShopAgent.listTeamWorkflows}.
-   */
-  countTeamWorkflows(): Promise<readonly Domain.TeamWorkflowCount[]> {
-    return this.runEffect(
-      ShopWorkAgent.pipe(
-        Effect.flatMap((shopWork) => shopWork.countTeamWorkflows()),
-        Effect.withLogSpan("ShopAgent.countTeamWorkflows"),
-      ),
-    );
-  }
 }

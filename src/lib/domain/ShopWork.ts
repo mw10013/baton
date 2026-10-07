@@ -1279,47 +1279,6 @@ export type DeleteTeamResult = typeof DeleteTeamResult.Type;
 export const DeleteTeamInput = TeamIdInput;
 export type DeleteTeamInput = typeof DeleteTeamInput.Type;
 
-/** A workflow that uses a team: a task of the workflow or of its draft points at it. The team page's Used by table. */
-export const TeamWorkflow = Schema.Struct({
-  workflowId: WorkflowId,
-  workflowName: WorkflowName,
-});
-export type TeamWorkflow = typeof TeamWorkflow.Type;
-
-/**
- * The team page's Used by read: one page of the workflows that use the team,
- * in name order. `after` is the last name of the page before, `null` for
- * page one, a keyset on the name alone since names are unique
- * ({@link Workflow}), as on {@link ListWorkflowsInput}.
- */
-export const TeamWorkflowsInput = Schema.Struct({
-  teamId: BoundedId,
-  after: Schema.NullOr(WorkflowName),
-  limit: Schema.Number.check(
-    Schema.isInt(),
-    Schema.isBetween({ minimum: 1, maximum: 100 }),
-  ),
-});
-export type TeamWorkflowsInput = typeof TeamWorkflowsInput.Type;
-
-/** What {@link TeamWorkflowsInput} reads: the page and the cursor of the next, `null` on the last. */
-export const TeamWorkflowsPage = Schema.Struct({
-  workflows: Schema.Array(TeamWorkflow),
-  nextCursor: Schema.NullOr(WorkflowName),
-});
-export type TeamWorkflowsPage = typeof TeamWorkflowsPage.Type;
-
-/**
- * How many workflows use each team ({@link TeamWorkflow}): the teams index's
- * Workflows column, a count because a related set on an index row is a count.
- * A team no workflow uses has no row.
- */
-export const TeamWorkflowCount = Schema.Struct({
-  teamId: TeamId,
-  workflowCount: Schema.Number,
-});
-export type TeamWorkflowCount = typeof TeamWorkflowCount.Type;
-
 /** Assign a team to any open run task: the remedy that makes team delete safe, and the merchant's way to move work between teams. */
 export const AssignRunTaskTeamInput = Schema.Struct({
   runTaskId: BoundedId,

@@ -250,9 +250,6 @@ describe("ShopAgent workflow callables", () => {
     ]);
     expect(detail?.draftTasks?.map((s) => s.teamId)).toEqual([null, b.id]);
     expect(detail?.teams.map((t) => t.name)).toEqual(["B"]);
-    expect(
-      await agent.listTeamWorkflows({ teamId: a.id, after: null, limit: 10 }),
-    ).toEqual({ workflows: [], nextCursor: null });
     // Off stays off; turning back on names the unassigned task.
     await agent.setWorkflowState({ workflowId, state: "inactive" });
     expect(

@@ -22,7 +22,6 @@ import * as Domain from "@/lib/Domain";
 import { fieldError, mutationErrorMessage } from "@/lib/form";
 import { Repository } from "@/lib/Repository";
 import { lenientSearchKey, ListSearchParam } from "@/lib/searchParams";
-import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { SocketBanner } from "@/lib/SocketBanner";
 import { useNextPageEntry } from "@/lib/tablePages";
@@ -60,17 +59,11 @@ const TeamsLoaderInput = Schema.Struct({
   after: Schema.NullOr(Domain.TeamName),
 });
 
-/**
- * One page of teams in name order. `workflowCounts` is Durable Object data
- * joined into a D1 page by the loader (the loader-versus-socket rule on
- * `ShopAgentClient`): the Workflows column, one count per team that has
- * one.
- */
+/** One page of teams in name order. */
 interface TeamsIndexLoaderData {
   readonly teams: readonly Domain.TeamSummary[];
   readonly nextCursor: Domain.TeamName | null;
   readonly matches: number | null;
-  readonly workflowCounts: readonly Domain.TeamWorkflowCount[];
 }
 
 const getLoaderData = createServerFn({ method: "GET" })
@@ -85,13 +78,10 @@ const getLoaderData = createServerFn({ method: "GET" })
           after,
           q,
         });
-        const workflowCounts =
-          yield* (yield* ShopAgentClient).countTeamWorkflows(session.shop);
         return {
           teams: page.rows,
           nextCursor: page.nextCursor,
           matches: page.matches,
-          workflowCounts,
         } satisfies TeamsIndexLoaderData;
       }),
     ),
@@ -131,15 +121,14 @@ export const Route = createFileRoute("/app/teams/")({
  * The teams page on the workflows pattern: a primary action that opens a
  * modal, a search once there is something to search, and no destructive
  * control on the index — deletion lives on the detail page, where the dialog
- * is. Workflows is how many workflows use each team, from one object read
- * of every team's count; the names are on the team page.
+ * is.
  */
 function RouteComponent() {
-  const { teams, nextCursor, matches, workflowCounts } = Route.useLoaderData();
+  const { teams, nextCursor, matches } = Route.useLoaderData();
   const { q, after } = Route.useSearch();
   const router = useRouter();
   const navigate = useNavigate({ from: Route.fullPath });
-  const nextPageEntry = useNextPageEntry("after");
+  const nextPageEntry = useNextPageEntry();
   const shopify = useAppBridge();
   const createTeam = useServerFn(createTeamFn);
   /**
@@ -202,7 +191,7 @@ function RouteComponent() {
   const nextPage = (cursor: Domain.TeamName) => {
     void navigate({
       search: (prev) => ({ ...prev, after: cursor }),
-      state: { nextPageOf: "after" },
+      state: { nextPage: true },
     });
   };
   const previousPage = () => {
@@ -217,9 +206,6 @@ function RouteComponent() {
   };
   /** No search and page one: an empty page here means the shop has no teams. */
   const unfiltered = q === undefined && after === undefined;
-
-  const workflowCount = (team: Domain.TeamSummary) =>
-    workflowCounts.find((row) => row.teamId === team.id)?.workflowCount ?? 0;
 
   const createButton = (slotted: boolean) => (
     <s-button
@@ -269,7 +255,6 @@ function RouteComponent() {
         <s-table-header-row>
           <s-table-header listSlot="primary">Team</s-table-header>
           <s-table-header>Members</s-table-header>
-          <s-table-header>Workflows</s-table-header>
         </s-table-header-row>
         <s-table-body>
           {teams.map((team) => {
@@ -284,7 +269,6 @@ function RouteComponent() {
                   </Inline>
                 </s-table-cell>
                 <s-table-cell>{team.memberCount}</s-table-cell>
-                <s-table-cell>{workflowCount(team)}</s-table-cell>
               </s-table-row>
             );
           })}

@@ -48,21 +48,17 @@ const DELETE_MODAL = "delete-team";
 const ADD_MODAL = "add-team-members";
 
 /**
- * The team page's URL: the page of each of its two tables, as the last
- * value of the page before (`Repository.findTeamDetail`,
- * `Domain.TeamWorkflowsInput`). Each Next keeps the other key, so paging one
- * table leaves the other where it was. Lenient for the reason on
+ * The team page's URL: the members table's page, as the last email of the
+ * page before (`Repository.findTeamDetail`). Lenient for the reason on
  * `OrdersSearch` (`app.orders.tsx`).
  */
 const TeamSearch = Schema.Struct({
   membersAfter: lenientSearchKey(Domain.Email),
-  workflowsAfter: lenientSearchKey(Domain.WorkflowName),
 });
 
 const TeamLoaderInput = Schema.Struct({
   teamId: Schema.String,
   membersAfter: Schema.NullOr(Domain.Email),
-  workflowsAfter: Schema.NullOr(Domain.WorkflowName),
 });
 
 const NameInput = Schema.Struct({
@@ -92,15 +88,6 @@ const decodeMemberIds = Schema.decodeUnknownEffect(
   Schema.Array(Domain.MemberId),
 );
 
-/**
- * `teamWorkflows` is Durable Object data joined into a D1 page by the
- * loader — see the loader-versus-socket rule on
- * `ShopAgentClient`.
- */
-interface TeamLoaderData extends Domain.TeamDetail {
-  readonly teamWorkflows: Domain.TeamWorkflowsPage;
-}
-
 const getLoaderData = createServerFn({ method: "GET" })
   .validator(Schema.toStandardSchemaV1(TeamLoaderInput))
   .middleware([shopifyServerFnMiddleware])
@@ -116,16 +103,7 @@ const getLoaderData = createServerFn({ method: "GET" })
           limit: DETAILS_PAGE_SIZE,
         });
         if (Option.isNone(detail)) return yield* Effect.fail(notFound());
-        const client = yield* ShopAgentClient;
-        const teamWorkflows = yield* client.listTeamWorkflows(shop, {
-          teamId: detail.value.team.id,
-          after: data.workflowsAfter,
-          limit: DETAILS_PAGE_SIZE,
-        });
-        return {
-          ...detail.value,
-          teamWorkflows,
-        } satisfies TeamLoaderData;
+        return detail.value;
       }),
     ),
   );
@@ -202,7 +180,6 @@ export const Route = createFileRoute("/app/teams/$teamId")({
   validateSearch: Schema.toStandardSchemaV1(TeamSearch),
   loaderDeps: ({ search }) => ({
     membersAfter: search.membersAfter ?? null,
-    workflowsAfter: search.workflowsAfter ?? null,
   }),
   loader: ({ params, deps }) =>
     getLoaderData({ data: { teamId: params.teamId, ...deps } }),
@@ -210,28 +187,29 @@ export const Route = createFileRoute("/app/teams/$teamId")({
 });
 
 /**
- * The team page is about people: its members are the first table, adding is
- * the primary action, and the workflows that use the team are a table of
- * links under it (tasks are edited on the workflow pages). Rename and delete
- * live behind More actions, as on the workflow page. Remove on a member's row
- * has no modal: Add members puts them back on this screen.
+ * The team page is about people: its members are the one table, and adding is
+ * the primary action. The workflows that use the team are not listed: tasks
+ * are edited on the workflow pages, which name each task's team, and a delete
+ * is rare and refused by nothing, its consequence shown where it lands (the
+ * tasks read "Needs a team"). Rename and delete live behind More actions, as
+ * on the workflow page. Remove on a member's row has no modal: Add members
+ * puts them back on this screen.
  *
  * Laid out as Polaris' details template, like the order and workflow detail
- * pages: the two tables own the main column, each under its own heading and
- * paged from the server, and the facts a merchant checks before renaming or
- * deleting sit in the Details aside. That keeps `s-page`'s children
+ * pages: the members table owns the main column, paged from the server, and
+ * the facts a merchant checks before renaming or deleting sit in the Details
+ * aside. That keeps `s-page`'s children
  * sections, which is the only thing it lays out, so nothing floats on the
  * page background. `inlineSize` must stay "base": `s-page` drops the aside
  * slot entirely at "large".
  */
 function RouteComponent() {
-  const { team, members, memberCount, nextCursor, candidates, teamWorkflows } =
+  const { team, members, memberCount, nextCursor, candidates } =
     Route.useLoaderData();
-  const { membersAfter, workflowsAfter } = Route.useSearch();
+  const { membersAfter } = Route.useSearch();
   const router = useRouter();
   const navigate = useNavigate({ from: Route.fullPath });
-  const membersNextEntry = useNextPageEntry("membersAfter");
-  const workflowsNextEntry = useNextPageEntry("workflowsAfter");
+  const nextPageEntry = useNextPageEntry();
   const shopify = useAppBridge();
   const renameTeam = useServerFn(renameTeamFn);
   const setTeamMember = useServerFn(setTeamMemberFn);
@@ -242,36 +220,17 @@ function RouteComponent() {
   const [addQuery, setAddQuery] = React.useState("");
   const [selected, setSelected] = React.useState<readonly string[]>([]);
 
-  /**
-   * Next keeps the other table's key (`search: prev`), so paging one table
-   * leaves the other where it was; Previous is Back when this table's Next
-   * pushed the entry ({@link useNextPageEntry}), page one otherwise.
-   */
+  /** Previous is Back when Next pushed the entry ({@link useNextPageEntry}), page one otherwise. */
   const pageMembers = (cursor: Domain.Email | null) => {
-    if (cursor === null && membersNextEntry) {
+    if (cursor === null && nextPageEntry) {
       router.history.back();
       return;
     }
     void navigate({
       search: (prev) => ({ ...prev, membersAfter: cursor ?? undefined }),
-      ...(cursor === null
-        ? { replace: true }
-        : { state: { nextPageOf: "membersAfter" } }),
+      ...(cursor === null ? { replace: true } : { state: { nextPage: true } }),
     });
   };
-  const pageWorkflows = (cursor: Domain.WorkflowName | null) => {
-    if (cursor === null && workflowsNextEntry) {
-      router.history.back();
-      return;
-    }
-    void navigate({
-      search: (prev) => ({ ...prev, workflowsAfter: cursor ?? undefined }),
-      ...(cursor === null
-        ? { replace: true }
-        : { state: { nextPageOf: "workflowsAfter" } }),
-    });
-  };
-
   const renameMutation = useMutation({
     mutationFn: (name: string) =>
       renameTeam({ data: { teamId: team.id, name } }),
@@ -459,46 +418,6 @@ function RouteComponent() {
     );
   };
 
-  const renderWorkflows = () => {
-    if (teamWorkflows.workflows.length === 0 && workflowsAfter === undefined)
-      return (
-        <s-paragraph color="subdued">Not used by any workflow yet.</s-paragraph>
-      );
-    return (
-      <TableFrame>
-        <s-table
-          paginate={
-            workflowsAfter !== undefined || teamWorkflows.nextCursor !== null
-          }
-          hasPreviousPage={workflowsAfter !== undefined}
-          hasNextPage={teamWorkflows.nextCursor !== null}
-          onPreviousPage={() => {
-            pageWorkflows(null);
-          }}
-          onNextPage={() => {
-            if (teamWorkflows.nextCursor !== null)
-              pageWorkflows(teamWorkflows.nextCursor);
-          }}
-        >
-          <s-table-header-row>
-            <s-table-header listSlot="primary">Workflow</s-table-header>
-          </s-table-header-row>
-          <s-table-body>
-            {teamWorkflows.workflows.map((workflow) => (
-              <s-table-row key={workflow.workflowId} id={workflow.workflowId}>
-                <s-table-cell>
-                  <s-link href={`/app/workflows/${workflow.workflowId}`}>
-                    {workflow.workflowName}
-                  </s-link>
-                </s-table-cell>
-              </s-table-row>
-            ))}
-          </s-table-body>
-        </s-table>
-      </TableFrame>
-    );
-  };
-
   return (
     <s-page heading={team.name} inlineSize="base">
       <s-link slot="breadcrumb-actions" href="/app/teams">
@@ -509,9 +428,8 @@ function RouteComponent() {
           and a second mark for one fault reads as two. The teams index keeps
           its badge, where the row is the only place the fact shows. */}
       {addButton(true)}
-      {/* No link to this team's orders: this page is the team's members
-          and the workflows that use it, which is configuration, not order
-          state. The orders screen's Team filter answers "is this team backed
+      {/* No link to this team's orders: this page is the team's members,
+          which is configuration, not order state. The orders screen's Team filter answers "is this team backed
           up?", and a link here would pick one order state over the others. */}
       <s-button slot="secondary-actions" commandFor="team-actions">
         More actions
@@ -543,11 +461,6 @@ function RouteComponent() {
           {renderMembers()}
         </Things>
       </s-section>
-
-      {/* A table in the main column, not a list in the aside: a team may
-          be used by up to every workflow in the shop, and Shopify pages a
-          details page's tables, not its asides. */}
-      <s-section heading="Used by">{renderWorkflows()}</s-section>
 
       <s-section slot="aside" heading="Details" accessibilityLabel="Details">
         <Pairs

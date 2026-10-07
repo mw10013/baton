@@ -413,18 +413,6 @@ const merchantListRunsForOrder = ({
     Effect.flatMap((repository) => repository.listRunsForOrder({ orderId })),
   );
 
-/** The team page's Used by table, read by its loader. */
-const listTeamWorkflows = (input: Domain.TeamWorkflowsInput) =>
-  WorkflowRepository.pipe(
-    Effect.flatMap((repository) => repository.listTeamWorkflows(input)),
-  );
-
-/** The teams index's Workflows column, read by its loader. */
-const countTeamWorkflows = () =>
-  WorkflowRepository.pipe(
-    Effect.flatMap((repository) => repository.countTeamWorkflows()),
-  );
-
 /**
  * An orders index read's memo key: the input, and the D1 teams the read
  * derives `unassigned` against. Effect compares arrays and plain objects
@@ -2173,9 +2161,7 @@ const make = Effect.gen(function* () {
     merchantAssignRunTaskTeam,
     seedWorkflows,
     seedOrders,
-    listTeamWorkflows,
     listWorkflows,
-    countTeamWorkflows,
     /**
      * For the class's sync wiring, which passes it to `OrdersAgent`'s
      * `fetchAndUpsertOrder` as its `reconciler`; the function it yields is the

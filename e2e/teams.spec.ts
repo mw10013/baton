@@ -68,7 +68,6 @@ test("teams screen creates, adds members to, renames, and deletes a team", async
   await nameField.fill(`  ${TEAM}  `);
   await frame.getByRole("button", { name: "Create", exact: true }).click();
   await expect(frame.locator(`s-page[heading="${TEAM}"]`)).toBeVisible();
-  await expect(frame.getByText("Not used by any workflow yet.")).toBeVisible();
   await expect(frame.getByText("Nobody is on this team")).toBeVisible();
 
   /* Uniqueness is a unique constraint, not a pre-check, so the
@@ -147,16 +146,12 @@ test("teams screen creates, adds members to, renames, and deletes a team", async
 });
 
 /**
- * The team page pages two tables on one URL (`membersAfter`, `workflowsAfter`),
- * the controls table's "a merchant table with more rows than its page" row
- * (`Control` in `Screen.ts`): Next on one table keeps the other's page, and
- * Previous is the browser's Back only when that table's Next pushed the
- * entry, so Previous on the members table never moves the Used by table.
- * Eleven members and eleven workflows: one past a details page of ten.
+ * The team page pages its members table from the server, the controls
+ * table's "a merchant table with more rows than its page" row (`Control` in
+ * `Screen.ts`): Previous after Next is the browser's Back. Eleven members:
+ * one past a details page of ten.
  */
-test("the team page pages its members and its workflows independently", async ({
-  page,
-}) => {
+test("the team page pages its members", async ({ page }) => {
   test.setTimeout(120_000);
 
   const PAGES_TEAM = "E2E Pages";
@@ -164,56 +159,25 @@ test("the team page pages its members and its workflows independently", async ({
     { length: 11 },
     (_, i) => `e2e.page${String(i).padStart(2, "0")}@example.com`,
   );
-  await seedMembers(
-    seedConfig(),
-    members,
-    [{ name: PAGES_TEAM, members }],
-    Array.from({ length: 11 }, (_, i) => ({
-      name: `E2E Pages Workflow ${String(i).padStart(2, "0")}`,
-      tag: `e2e-pages-${String(i)}`,
-      tasks: [{ name: "Cut", team: PAGES_TEAM }],
-    })),
-  );
+  await seedMembers(seedConfig(), members, [{ name: PAGES_TEAM, members }]);
 
   const frame = await gotoApp(page);
   await clickHoisted(appNavLink(page, "Teams"));
-  const row = frame.locator("s-table-row", { hasText: PAGES_TEAM });
-  await expect(row.locator("s-table-cell").nth(2)).toHaveText("11");
   await frame.getByRole("link", { name: PAGES_TEAM }).click();
   await expect(frame.locator(`s-page[heading="${PAGES_TEAM}"]`)).toBeVisible();
 
   const membersTable = frame.locator('s-section[heading="Members"]');
-  const usedBy = frame.locator('s-section[heading="Used by"]');
   const memberRows = membersTable.locator("s-table-row");
-  const workflowRows = usedBy.locator("s-table-row");
   const search = () => new URL(page.url()).searchParams;
   await expect(memberRows).toHaveCount(10);
-  await expect(workflowRows).toHaveCount(10);
 
   await membersTable.getByRole("button", { name: "Go to next page" }).click();
   await expect(memberRows).toHaveCount(1);
-  await expect(workflowRows).toHaveCount(10);
-  await usedBy.getByRole("button", { name: "Go to next page" }).click();
-  await expect(workflowRows).toHaveCount(1);
-  await expect(memberRows).toHaveCount(1);
   await expect.poll(() => search().get("membersAfter")).not.toBeNull();
-  await expect.poll(() => search().get("workflowsAfter")).not.toBeNull();
 
-  /* This entry was pushed by the Used by table's Next, so the members
-     table's Previous is a navigation to its page one, not a Back, and the
-     Used by table stays on its page two. */
   await membersTable
     .getByRole("button", { name: "Go to previous page" })
     .click();
   await expect(memberRows).toHaveCount(10);
-  await expect(workflowRows).toHaveCount(1);
   await expect.poll(() => search().get("membersAfter")).toBeNull();
-  await expect.poll(() => search().get("workflowsAfter")).not.toBeNull();
-
-  /* The Used by table's Next did push this entry (Previous above replaced
-     it), so its Previous is the browser's Back: page one of both. */
-  await usedBy.getByRole("button", { name: "Go to previous page" }).click();
-  await expect(workflowRows).toHaveCount(10);
-  await expect(memberRows).toHaveCount(10);
-  await expect.poll(() => search().get("workflowsAfter")).toBeNull();
 });

@@ -56,8 +56,8 @@ export class ShopAgentClientError extends Schema.TaggedError<ShopAgentClientErro
  * rule is the reason a method appears here rather than as `@callable()` on
  * the object:
  *
- * - **Configuration a page reads and one person edits** (members, teams, the
- *   tasks a team owns, the member's workflows list) goes through a route `loader` — via
+ * - **Configuration a page reads and one person edits** (members, teams,
+ *   the member's workflows list) goes through a route `loader` — via
  *   `Repository` for D1 rows, via this service for Durable Object rows. The
  *   page paints during SSR, and its own mutations refresh it with
  *   `router.invalidate()`. The route's server function is the module-private
@@ -68,9 +68,7 @@ export class ShopAgentClientError extends Schema.TaggedError<ShopAgentClientErro
  *   write) is a live screen: it reads one method twice, through this service
  *   in its loader for the SSR paint and through `useLiveQuery` over the
  *   socket after (the cycle on `Domain.InvalidatedMessage`). A socket
- *   `useQuery` outside the hook never re-reads and belongs on a loader,
- *   which is the bug that moved `listTeamWorkflows` from the socket to this
- *   service.
+ *   `useQuery` outside the hook never re-reads and belongs on a loader.
  *
  * The orders index and the workflows list reads are memoized in the object
  * per key and cleared on every publish (the rule on `ShopAgent.publish`), so
@@ -113,16 +111,6 @@ export class ShopAgentClient extends Context.Service<
       shop: string,
       input: Domain.GetRunForMemberInput,
     ) => Effect.Effect<Domain.RunPageData | null, ShopAgentClientError>;
-    readonly listTeamWorkflows: (
-      shop: string,
-      input: Domain.TeamWorkflowsInput,
-    ) => Effect.Effect<Domain.TeamWorkflowsPage, ShopAgentClientError>;
-    readonly countTeamWorkflows: (
-      shop: string,
-    ) => Effect.Effect<
-      readonly Domain.TeamWorkflowCount[],
-      ShopAgentClientError
-    >;
     readonly listOrders: (
       shop: string,
       input: Domain.ListOrdersInput,
@@ -237,10 +225,6 @@ export class ShopAgentClient extends Context.Service<
        */
       const workflowsListData = Schema.toType(Domain.WorkflowsListData);
       const runPageData = Schema.toType(Schema.NullOr(Domain.RunPageData));
-      const teamWorkflows = Schema.toType(Domain.TeamWorkflowsPage);
-      const teamWorkflowCounts = Schema.toType(
-        Schema.Array(Domain.TeamWorkflowCount),
-      );
       const ordersIndexData = Schema.toType(Domain.OrdersIndexData);
       const orderDetail = Schema.toType(Schema.NullOr(Domain.OrderPageData));
       const usage = Schema.toType(Domain.ShopUsage);
@@ -259,18 +243,6 @@ export class ShopAgentClient extends Context.Service<
           (shop: string, input: Domain.GetRunForMemberInput) =>
             call("memberGetRun", runPageData, shop, (stub) =>
               stub.memberGetRun(input),
-            ),
-        ),
-        listTeamWorkflows: Effect.fn("ShopAgentClient.listTeamWorkflows")(
-          (shop: string, input: Domain.TeamWorkflowsInput) =>
-            call("listTeamWorkflows", teamWorkflows, shop, (stub) =>
-              stub.listTeamWorkflows(input),
-            ),
-        ),
-        countTeamWorkflows: Effect.fn("ShopAgentClient.countTeamWorkflows")(
-          (shop: string) =>
-            call("countTeamWorkflows", teamWorkflowCounts, shop, (stub) =>
-              stub.countTeamWorkflows(),
             ),
         ),
         listOrders: Effect.fn("ShopAgentClient.listOrders")(
