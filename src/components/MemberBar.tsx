@@ -7,7 +7,7 @@ import { signOutFn } from "@/lib/memberSignOut";
 
 /**
  * The member area's one piece of chrome, above `s-page` on every
- * `/shop/$shop/*` screen: the Baton mark, the shop, and Sign out, laid out
+ * `/shop/$shop/*` screen: the Baton mark, the shop, Help, and Sign out, laid out
  * by {@link TopBar}. It answers "where am I and who am I signed in as" on a
  * phone page that scrolls its heading away at once.
  *
@@ -40,6 +40,8 @@ export function MemberBar({
       shop={shop}
       end={
         <>
+          {/* Same tab: the member area is not embedded, so Back returns. */}
+          <s-link href="/help/members">Help</s-link>
           {email !== undefined && <Token color="subdued">{email}</Token>}
           <s-button
             variant="tertiary"

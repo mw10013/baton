@@ -158,7 +158,7 @@ Effect.logError(`ShopAgent.getShopInfo: shop=${this.name}: ${message}`).pipe(
 
 ## Playwright CLI
 
-Routine E2E test execution is headless: use `npm run test:e2e --`. Use `npm run test:e2e:headed --` when a visible test browser is needed for debugging. Both commands run the embedded, admin, and member projects against local development.
+Routine E2E test execution is headless: use `npm run test:e2e --`. Use `npm run test:e2e:headed --` when a visible test browser is needed for debugging. Both commands run the embedded, admin, member and public projects against local development.
 
 The e2e seed replaces the dev shop's data (members, teams, workflows, orders). Run `pnpm seed` after any e2e run before using the dev store or taking screenshots; until then the seed's members (`lead@m.com`, ...) are gone.
 

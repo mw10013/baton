@@ -215,4 +215,126 @@ lapsed-page sentence on Signing in.
 
 ## Deviations and issues
 
-(none yet)
+Implemented 2026-10-06. `pnpm typecheck`, `pnpm lint`, `pnpm test` (763) green; e2e `public` (5),
+`home.spec.ts`, `member-area.member.spec.ts`, `orders.spec.ts` and `workflows.spec.ts` green; `pnpm seed` run.
+
+- **Row order.** The two new parts are listed (table and literals) after `text limit`, not after
+  `fixed words`, so the text-fit rows ("capped name to fixed words") stay together at the end.
+  `spec.test.ts` pins the literal order and the templates list in one message; both updated.
+- **`pnpm spec print` does not print the parts table.** It never did; `pnpm spec check` parses it
+  and passes with both new rows and the `help` template. Nothing changed in `spec print`.
+- **Phase 2 step 2 needed no code.** `copyFiles` (`scripts/lib/copy-files.ts`) already walks all
+  of `src/components/` and the `help.*` routes. Its JSDoc now says help is read. The throwaway body
+  with "tab" was refused by `pnpm lint`, then removed.
+- **"Syncing from Shopify" hit the `^syncing` pattern.** Held open for review; see
+  [Open question: the Syncing title](#open-question-the-syncing-title).
+- **Help list: title over its line.** The skeleton printed the description on the title's line;
+  the row says "a title link over a line". The part now breaks the line with `<br />` rather than
+  a `Lines` gap, because with the gap the description sat as close to the next title as to its own.
+- **Foot line uses `s-paragraph`, not `s-text`.** Same look; Polaris draws an inline link in a
+  sentence as underlined body text, not link-blue, in both.
+- **`public` project in `test:e2e`.** `test:e2e` and `test:e2e:headed` now include
+  `--project=public`, and AGENTS.md's Playwright paragraph says so. As written,
+  `npm run test:e2e -- --project=public` adds to the script's projects and runs the whole suite;
+  `pnpm exec playwright test --project=public` runs it alone.
+- **`docs/` citations removed.** The JSDoc on `help.tsx` and `help.$section.$page.tsx` cited
+  `docs/help-research.md`, against AGENTS.md; both now carry no citation.
+- **Kit entries come from the tree:** the last three pages of Workflows, the longest title among
+  them, the first marked current.
+- **Member bar:** `s-link` has no tertiary variant; Help is a plain link before the email.
+- **Flaky e2e test.** See [Issue: a flaky workflows test](#issue-a-flaky-workflows-test).
+
+## Open question: the Syncing title
+
+**What happened.** The new integration test "help copy is free of the retired words" runs `RETIRED`
+(`scripts/lib/rules-lint.ts`) over every title and description in `HELP_SECTIONS`. One title failed:
+"Syncing from Shopify" (Orders section, slug `syncing`), on the pattern `/^\s*syncing\b/iu`.
+
+**Why the pattern exists.** It is one row of the retired-words table in `scripts/lib/rules-lint.ts`:
+"Saved …, Saving …, Syncing … (a sentence that starts so)". A write in flight is `loading` on the
+pressed button, and a page's resting state is silent (the controls table on `Control`), so a status
+line such as "Syncing…" is refused. The pattern is anchored at the start of the copy because "stopped
+syncing" (a fact) and "Note saved" (the toast's form) stay. Three patterns in `RETIRED` are anchored
+this way: `^remove …?`, `^saved/saving`, `^syncing`. All three refuse a form of sentence, not a word.
+
+**Why the title is a gerund.** Decision 6: a task page's title is a gerund ("Creating a workflow",
+"Reading an order"); a hub, a concept or a reference page is a noun. "Syncing from Shopify" is the
+task page for when Baton reads orders and Sync from Shopify on an order. A heading is not a status
+line, so the pattern's reason does not apply to it.
+
+**What I did for now.** The test holds titles to the unanchored patterns only and descriptions to
+every pattern, with that reasoning in a JSDoc on the test. Nothing in `RETIRED` or the lint changed.
+The lint itself never sees the title: the tree lives under `src/lib/`, and routes print it from a
+variable.
+
+**Options.**
+
+1. **Keep the carve-out (current).** Titles skip all three anchored patterns. Cost: a title such
+   as "Remove a member?" passes, because the first test refuses a trailing period, not a trailing
+   "?".
+2. **Carve out `^syncing` and `^saving` only, keep `^remove …?`.** Names the two patterns a gerund
+   title can trip; a question title stays refused. Cost: the test lists pattern sources by hand, and
+   a new anchored pattern is held against titles until someone decides otherwise.
+3. **Rename the page, no carve-out.** "Sync from Shopify" (the button's label, which breaks decision 6
+   for one page) or "Keeping orders in sync with Shopify" (a gerund that does not start with
+   "Syncing"). Cost: either an exception to decision 6 or a longer title; and the next gerund that
+   starts with "Saving" or "Syncing" meets the same refusal.
+4. **Narrow the pattern itself:** make `^syncing` refuse only "Syncing" alone or followed by "…"
+   (the status-line form). Cost: changes a rule every screen is held to; a status line such as
+   "Syncing orders" would then pass on a merchant screen.
+
+**Recommendation.** Option 2. It keeps decision 6 whole, keeps every rule the screens are held to,
+and still refuses a question as a title. If you accept it, the change is in
+`test/integration/help-pages.test.ts`: replace the `startsWith("^")` filter with an explicit list of
+the two status-line patterns, and say why in the test's JSDoc.
+
+**Decision (2026-10-06):** Option 1, with its cost closed: the first test now refuses a title that
+ends in "?" as it refuses one that ends in ".". A heading is never a question or a status line, so
+the three anchored patterns are irrelevant to titles by construction, and the test lists no pattern
+sources by hand. Nothing in `RETIRED` or the lint changed.
+
+## Issue: a flaky workflows test
+
+**What failed.** `e2e/workflows.spec.ts:121`, "a fresh workflow turns on from the editor, then edits
+go through the draft", project `e2e`, once.
+
+**When.** The run started by `npm run test:e2e -- --project=public` during Phase 2 (which ran the
+whole suite, 90 tests, 7.2 minutes): 89 passed, this one failed. That run was before Phase 3, so the
+editor, the order page and the home page had no foot line yet; nothing this plan changed was on the
+failing path.
+
+**Where.** Line 146, the fourth step of the test:
+
+```ts
+await expect(frame.getByRole("link", { name: EXISTING })).toBeVisible();
+```
+
+The test seeds a workflow named "E2E Ring" (`seedMembers`), opens the app, clicks Workflows in the
+app nav and waits for `s-page[heading="Workflows"]` (line 145, which passed), then waits for the
+seeded workflow's link in the index table. The link did not appear within the 10 s expect timeout.
+
+**What is known.** The page heading rendered, so the app and the nav worked; the index rendered
+without the seeded row in time. Plausible causes, none confirmed: the index read reached the
+object before the seed's write was visible to it, or the read was slow through the Cloudflare quick
+tunnel (the reason `gotoApp` has its rescue window). The error context
+(`playwright/test-results/.../error-context.md`) was cleared by the later runs, so there is no
+snapshot of what the table showed.
+
+**After.** It passed in both later runs of `workflows.spec.ts`, including the run after Phase 3
+(27 passed, 4.1 minutes). One failure in three runs.
+
+**Reproduced 2026-10-06** with `--repeat-each=6 --trace retain-on-failure`: one failure in six, at
+a different step. The third `openEditor` (line 290, after `closeEditor`) timed out waiting for the
+editor window's hydration. The trace's network log has two loads of the editor document, for the
+first two opens, and none for the third: the native click on the hoisted Edit button was dropped.
+The editor iframe had been gone for 390 ms when the click fired, and the button was visible and
+read enabled. This is the mirror of the dead window `clickHoisted` documents after the editor
+opens: on close, App Bridge rebuilds the page's hoisted title bar, and a click that lands on the
+proxy before it is rewired is a silent no-op. The line-146 failure may be the same class (a dropped
+hoisted click on the nav link) but was not reproduced, and its snapshot is gone.
+
+**Fix made 2026-10-06.** `openEditor` asserts the effect and retries: click, wait up to 2 s for
+`iframe[src*="chrome=window"]` to attach, click again if it did not, under `expect(...).toPass()`.
+Its JSDoc says this is a workaround and what a real gate would be: a marker App Bridge sets when a
+hoisted control is live, or a post-close signal for `closeEditor` to wait on. App Bridge exposes
+neither today.

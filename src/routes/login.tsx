@@ -5,6 +5,7 @@ import { createServerFn, useServerFn } from "@tanstack/react-start";
 import { Config, Effect, Schema } from "effect";
 
 import { BatonMark } from "@/components/screen/BatonMark";
+import { FootLine } from "@/components/screen/FootLine";
 import { Inline } from "@/components/screen/Inline";
 import { Things } from "@/components/screen/Things";
 import { Auth, magicLinkKvKey } from "@/lib/Auth";
@@ -184,6 +185,12 @@ function RouteComponent() {
                 </Inline>
               </Things>
             </form>
+            {/* Not on "Check your email": that state's one job is the link
+                in the email. */}
+            <FootLine>
+              Learn more in{" "}
+              <s-link href="/help/members/signing-in">Signing in</s-link>.
+            </FootLine>
           </Things>
         </s-section>
       )}

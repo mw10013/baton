@@ -3,7 +3,9 @@
  * (the retired-word check) and `scripts/copy-audit.ts` (the inventory), so
  * the two read the same screens. The vocabulary's screen rule
  * (`src/lib/Domain.ts`) says which: the merchant's and the member's screens,
- * `src/components/`, and the modules that hold their copy. The operator
+ * `src/components/`, and the modules that hold their copy. The public help
+ * (`help.*`, and its bodies under `src/components/help/`) is read too: it
+ * speaks the screens' words to the same readers. The operator
  * console (`admin.*`), the API routes (`api.*`), the dev-only kit page
  * (`dev.*`), and the public home and
  * privacy pages (`index.tsx`, `privacy.tsx`) are not vocabulary screens, and

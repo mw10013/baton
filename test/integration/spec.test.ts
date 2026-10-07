@@ -556,7 +556,7 @@ describe("action table parser", () => {
           Screen.ScreenTemplate.literals,
         ),
       ).toEqual([
-        'Vocabulary: Screens: the members index has template "list"; expected one of: index, details, homepage, editor',
+        'Vocabulary: Screens: the members index has template "list"; expected one of: index, details, homepage, editor, help',
       ]);
     });
   });

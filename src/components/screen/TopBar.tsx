@@ -8,8 +8,9 @@ import { BETWEEN_LINES } from "./layout";
 /**
  * The member area's top bar (the top-bar row of the parts table on
  * `ScreenPart` in `src/lib/Screen.ts`): above `s-page` on every member
- * screen, the mark and the shop as one link home at the start, `end` (who is
- * signed in, Sign out) at the end, wrapping under it on a narrow phone.
+ * screen, the mark and the shop as one link home at the start, `end` (the
+ * session and the way to help: Help, who is signed in, Sign out) at the
+ * end, wrapping under it on a narrow phone.
  * Polaris `s-page` has no slot for chrome above the heading, so this is a
  * plain bordered `div` (`.member-bar` in `styles.css`). Hidden in print
  * (`.print-hide`): a printed workflow page is a job ticket, and the ticket

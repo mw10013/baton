@@ -70,7 +70,7 @@ import { Schema } from "effect";
  * | toast       | confirms a write, or says why a press did nothing                                               | the verb in past form, or "<noun> saved"; a fact in the present tense; no period unless it is two sentences  | the result is visible where the person is looking                      | Note saved                                  | an exclamation mark; a period on one phrase                    |
  * | error       | says what was refused and what to do                                                            | what to do ("Enter a name"), or what happened then the fix; a failed write starts "Couldn't"                 | (never)                                                                | Enter a name                                | "invalid"; "required"; a code; "something went wrong" alone    |
  * | confirm     | the body of a modal that asks: the consequence of the verb                                      | for a delete, "This can't be undone.", after a sentence naming the record when the heading cannot ("Delete <email>?"); for another verb, one or two sentences saying what happens and what survives | the verb is reversible on the same screen (then there is no modal)    | This can't be undone.                       | for a delete, explains what the product does; "Are you sure"; restating the heading |
- * | link        | takes the person to a named place                                                               | the target screen's heading, or "<Verb> in Shopify"                                                          | the act is on this screen                                              | Fulfill in Shopify                           | "here"; "click"; a sentence                                    |
+ * | link        | takes the person to a named place                                                               | the target screen's heading, or "<Verb> in Shopify"; at a foot line, "Learn more in <heading>."            | the act is on this screen                                              | Fulfill in Shopify                           | "here"; "click"; a sentence                                    |
  * | button      | names the act                                                                                   | the vocabulary's verb label, or verb + noun ("Clear search")                                                   | (never)                                                                | Clear search                                | an article ("Add a step"); a sentence                          |
  * | badge       | one state word                                                                                  | the vocabulary's screen word for the state                                                                     | (never)                                                                | No members                                  | a sentence                                                     |
  * | body        | a fact the screen has to say that no other slot carries                                         | one or two sentences                                                                                         | it restates a heading, badge, button or label; it explains the product beside content (the explanation is the empty state's) | Nobody is on this team, so its tasks wait until a member joins. | idioms; "we"; a code word; a sentence about the product above a list that has rows |
@@ -134,6 +134,7 @@ export type CopySlot = typeof CopySlot.Type;
  * | More actions with one entry | the entry as a secondary button in the title bar | a menu with one item |
  * | a verb in the title bar | the button names its noun: Turn off workflow, Create team, Add member, Delete member; Edit alone, because the noun is the page; a menu entry is the verb alone (Rename, Delete); a modal primary is the verb alone (Turn off, Delete), or Save when the modal edits a field | a verb-alone button in the title bar beside Edit; a noun on a menu entry or a modal primary |
  * | a merchant table with more rows than its page | `s-table paginate`, read from the server a page at a time, the page in the URL; 25 rows on an index, 10 on a details page; the controls only when there is another page; Previous is the browser's Back when that table's Next pushed the entry, else page one | Show more; loading every row and hiding some; a Back that moves another table's page |
+ * | the way from a screen to help | a foot line, "Learn more in <help page heading>.", one per screen, `target="_blank"` inside the embed | a banner; a nav item; a help icon |
  * | going back from a member page to the list that opened it                          | a back-arrow link named for the list on its own line above the heading; a history step back when the list opened the page, so its depth and scroll return | the app's mark as the only way back; a breadcrumb slot a phone folds into a menu |
  */
 export const Control = Schema.Literals([
@@ -175,12 +176,14 @@ export const ANY_OPTION_VALUE = "any";
  * | details  | Details          | one record: a heading that names it and cards of its facts                   |
  * | homepage | Homepage         | the app's landing page: what needs the merchant, and where to go             |
  * | editor   | Details, editing | one record being changed, with a save bar: the workflow editor               |
+ * | help     | (none)           | a page of prose that is read, not worked: breadcrumbs, a heading, sections, lists and images; the public help |
  */
 export const ScreenTemplate = Schema.Literals([
   "index",
   "details",
   "homepage",
   "editor",
+  "help",
 ]);
 export type ScreenTemplate = typeof ScreenTemplate.Type;
 
@@ -238,12 +241,14 @@ export type ScreenTemplate = typeof ScreenTemplate.Type;
  * | end            | content set at the end of its cell: a table's action column                          | `End`                               | the end edge                                                                                               | details                           | a column of buttons at ragged positions             |
  * | empty aside    | an aside with nothing in it, holding the page's aside column open                    | `EmptyAside`                        | the aside column's width while nothing is selected                                                         | editor                            | a card with nothing in it                           |
  * | back link      | the way back to the list a page was opened from, on its own line above the heading   | `BackLink`                          | lined up with the page's column, the arrow on its edge                                                     | details                           | a breadcrumb slot a phone folds into a menu         |
- * | top bar        | the member area's bar above the page: the mark and shop as the link home, the session at the end | `TopBar`  | the bar's border and padding; start and end, wrapping on a narrow phone                                    | index, details                    | anything that belongs to the screen below it        |
+ * | top bar        | the member area's bar above the page: the mark and shop as the link home, the session and the way to help at the end | `TopBar`  | the bar's border and padding; start and end, wrapping on a narrow phone                                    | index, details                    | anything that belongs to the screen below it        |
  * | mark           | the Baton mark                                                                       | `BatonMark`                         | a block that never shrinks in a row                                                                        | index, details                    | text beside it inside the svg                       |
  * | selectable card | a card that can be chosen: a task card in the workflow editor                       | `SelectableCard`                    | the card's padding; the chosen card filled with a strong border                                            | editor                            | a card that moves when it becomes choosable         |
  * | connector      | the arrow between two stops of a step flow                                           | `Connector`                         | centred on the column                                                                                      | details, editor                   | an arrow before the first stop                      |
  * | code block     | preformatted text in a subdued box: a stack trace                                    | `CodeBlock`                         | `base` padding; a long line scrolls inside the box                                                         | details                           | a line that widens the page                         |
  * | text limit     | the countdown and the submit error of a field with a cap                             | `TextLimit`                         | nothing; props only: `details` from `noteCountFrom`, the error "Up to N characters" | index, details, editor | `maxLength`; a counter on an empty field |
+ * | help list      | a hub's "In this section" and a page's foot list: a title link over a line          | `HelpList`                          | the list; the current entry unlinked and strong                                                            | help                              | a card per entry; a chevron row                     |
+ * | foot line      | one centred sentence of links at a page's foot: the way to help                      | `FootLine`                          | centred; one line                                                                                          | homepage, details, editor, index  | a second sentence; a banner                         |
  * | capped name    | a team, task or workflow name                                                        | `Name`                              | on a list: whole, wraps; on its home: whole, wraps; in a cutting control: allowed                         | index, details, homepage, editor  | an ellipsis on a list                               |
  * | Shopify text   | an item title, a variant, an item property                                           | `Clamp`                             | on a list: two lines and an ellipsis; on its home: whole, wraps; in a cutting control: never              | index, details, homepage, editor  | a badge, chip or select option                      |
  * | free text      | a block reason, a note, task instructions, an order note                             | `Clamp`, `Prose`, `ClampedProse`    | on a list: two lines; on its home: `Prose`, a block reason `ClampedProse`; in a cutting control: never   | index, details, homepage, editor  | collapsed line breaks                               |
@@ -294,6 +299,8 @@ export const ScreenPart = Schema.Literals([
   "connector",
   "code block",
   "text limit",
+  "help list",
+  "foot line",
   "capped name",
   "Shopify text",
   "free text",

@@ -89,6 +89,8 @@ const CREATED = "E2E Cake";
  * admin animates the window out, and an Edit pressed during that animation
  * opens nothing: the closing window takes the new one with it (seen
  * 2026-09-24, when an Edit straight after this click left no window at all).
+ * The iframe being gone is not the end of it: the admin rewires the page's
+ * hoisted title bar after that, so `openEditor` retries its click.
  */
 const closeEditor = async (page: Page) => {
   await clickHoisted(
@@ -104,9 +106,29 @@ const closeEditor = async (page: Page) => {
  * window's document is hydrated. A click before that lands in an inert body
  * and is dropped without an error (`awaitHydration`), so the first click in a
  * freshly opened editor needs this as much as a click on a fresh page does.
+ *
+ * The click is retried until the window's iframe appears, and that is a
+ * workaround, not a gate. After `closeEditor` the admin rebuilds the page's
+ * hoisted title bar, and the Edit proxy is visible and reads enabled before
+ * App Bridge has rewired it to the in-frame `s-button`; a native click in
+ * that window is a silent no-op. Traced 2026-10-06 (one run in six): the
+ * iframe had been gone for 390 ms, the click fired, and no editor document
+ * was ever requested. `hoistedEnabled` closes the matching window after an
+ * open, where the app's `disabled` state is the signal; after a close there
+ * is no signal of ours to wait on, because the proxy, its wiring and the
+ * close animation all belong to the admin document. Until one is found,
+ * asserting the effect and clicking again is the only honest check. A
+ * better fix would be a marker App Bridge sets when a hoisted control is
+ * live, or a `closeEditor` that waits for whatever the admin does last.
  */
 const openEditor = async (page: Page) => {
-  await clickHoisted(page.getByRole("button", { name: "Edit", exact: true }));
+  const edit = page.getByRole("button", { name: "Edit", exact: true });
+  await expect(async () => {
+    await clickHoisted(edit);
+    await expect(page.locator('iframe[src*="chrome=window"]')).toBeAttached({
+      timeout: 2000,
+    });
+  }).toPass({ timeout: 20_000 });
   await awaitHydration(editorFrame(page));
 };
 

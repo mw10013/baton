@@ -8,6 +8,8 @@ import { Clamp } from "@/components/screen/Clamp";
 import { ClampedProse } from "@/components/screen/ClampedProse";
 import { EmptyLine } from "@/components/screen/EmptyLine";
 import { FilterRow } from "@/components/screen/FilterRow";
+import { FootLine } from "@/components/screen/FootLine";
+import { HelpList } from "@/components/screen/HelpList";
 import { IndexSection } from "@/components/screen/IndexSection";
 import { Inline } from "@/components/screen/Inline";
 import { ListSearchField } from "@/components/screen/ListSearchField";
@@ -21,6 +23,7 @@ import { Strip } from "@/components/screen/Strip";
 import { Token } from "@/components/screen/Token";
 import { CloudflareEnv } from "@/lib/CloudflareEnv";
 import * as Domain from "@/lib/Domain";
+import { findHelpSection } from "@/lib/helpPages";
 import { STATE_LABEL, STATES } from "@/lib/workflowsListStates";
 
 /**
@@ -92,6 +95,12 @@ const TASKS_20 = Array.from({ length: 20 }, (_, index) =>
 
 /** A date whose "Last updated on" line is the longest: a two-digit day in September. */
 const UPDATED_AT = Date.UTC(2026, 8, 30, 23, 59);
+
+/**
+ * Three help entries from the Workflows section, its longest title ("Renaming,
+ * duplicating and deleting a workflow") among them.
+ */
+const HELP_ENTRIES = (findHelpSection("workflows")?.pages ?? []).slice(2);
 
 const ORDER_STRIP: readonly (keyof Domain.OrderCounts)[] = [
   "open",
@@ -360,6 +369,20 @@ function RouteComponent() {
             <s-text>Started by you · Step 2 of 3 · 12:51 PM</s-text>
           </s-paragraph>
         </s-section>
+        <s-section heading="In this section">
+          <HelpList
+            entries={HELP_ENTRIES}
+            hrefOf={() => href}
+            current={HELP_ENTRIES[0]?.slug}
+          />
+        </s-section>
+        <FootLine>
+          Learn more in{" "}
+          <s-link href={href} target="_blank">
+            Editing steps and tasks
+          </s-link>
+          .
+        </FootLine>
         <s-section heading="Line one's weight">
           <s-paragraph>
             <s-text type="strong">

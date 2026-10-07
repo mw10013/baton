@@ -72,6 +72,9 @@ test("a seeded member signs in by magic link, lands on their workflows list, and
   ).toBeVisible();
   await expect(page.getByText(config.shop, { exact: true })).toBeVisible();
   await expect(page.getByText(MEMBER_EMAIL, { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Help", exact: true }),
+  ).toHaveAttribute("href", "/help/members");
   /* Seeded with no team: membership is login, teams are work, so a member with
      neither is a normal state that has to render as an empty state rather than
      as an error or a blank section. */

@@ -5,6 +5,7 @@ import { Effect, Match, Schema } from "effect";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { ManagePlanButton } from "@/components/ManagePlanButton";
 import { QuotaBanners } from "@/components/QuotaBanners";
+import { FootLine } from "@/components/screen/FootLine";
 import { Inline } from "@/components/screen/Inline";
 import { MeterTile } from "@/components/screen/MeterTile";
 import { Things } from "@/components/screen/Things";
@@ -162,6 +163,13 @@ function RouteComponent() {
           </Inline>
         </Things>
       </s-section>
+      <FootLine>
+        Learn more in{" "}
+        <s-link href="/help" target="_blank">
+          Help
+        </s-link>
+        .
+      </FootLine>
     </s-page>
   );
 }

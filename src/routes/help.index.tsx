@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-import { HelpList } from "@/components/HelpList";
+import { HelpList } from "@/components/screen/HelpList";
 import { Things } from "@/components/screen/Things";
 import { HELP_SECTIONS, helpTabTitle } from "@/lib/helpPages";
 

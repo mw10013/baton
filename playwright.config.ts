@@ -35,7 +35,7 @@ try {
  *   `e2e/seed.ts`. `e2e/fixture.ts` is the shared shop for `pnpm seed` and
  *   manual exploration, not for specs.
  * - Projects: listed below, each with its reason. `pnpm test:e2e` runs e2e,
- *   member and admin headless; billing runs only through
+ *   member, admin and public headless; billing runs only through
  *   `pnpm test:e2e:billing`.
  */
 export default defineConfig({
@@ -67,6 +67,7 @@ export default defineConfig({
         "**/*.admin.spec.ts",
         "**/*.member.spec.ts",
         "**/*.billing.spec.ts",
+        "**/*.public.spec.ts",
       ],
       dependencies: ["setup"],
       use: {
@@ -105,6 +106,21 @@ export default defineConfig({
     {
       name: "admin",
       testMatch: ["**/*.admin.spec.ts"],
+      use: {
+        channel: "chrome",
+        baseURL: localUrl(),
+        storageState: { cookies: [], origins: [] },
+      },
+    },
+    /**
+     * The public help (`/help/*`) needs no session of any kind: served off
+     * `http://localhost:$PORT` like the member area, with empty storage state
+     * and no `setup` dependency, and it reads no shop data, so it seeds
+     * nothing.
+     */
+    {
+      name: "public",
+      testMatch: ["**/*.public.spec.ts"],
       use: {
         channel: "chrome",
         baseURL: localUrl(),

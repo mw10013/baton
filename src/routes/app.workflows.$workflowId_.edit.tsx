@@ -11,6 +11,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { Effect, Match, Schema } from "effect";
 
 import { EmptyAside } from "@/components/screen/EmptyAside";
+import { FootLine } from "@/components/screen/FootLine";
 import { Inline } from "@/components/screen/Inline";
 import { Lines } from "@/components/screen/Lines";
 import { Panel } from "@/components/screen/Panel";
@@ -902,6 +903,14 @@ function RouteComponent() {
           </Things>
         </s-section>
       )}
+
+      <FootLine>
+        Learn more in{" "}
+        <s-link href="/help/workflows/editing" target="_blank">
+          Editing steps and tasks
+        </s-link>
+        .
+      </FootLine>
 
       <s-modal id={APPLY_MODAL} heading={APPLY_HEADING}>
         <s-paragraph>{APPLY_BODY}</s-paragraph>

@@ -1,6 +1,7 @@
 import { createFileRoute, notFound } from "@tanstack/react-router";
 
-import { HelpList } from "@/components/HelpList";
+import { HELP_BODIES } from "@/components/help/bodies";
+import { HelpList } from "@/components/screen/HelpList";
 import { Things } from "@/components/screen/Things";
 import { findHelpPage, findHelpSection, helpTabTitle } from "@/lib/helpPages";
 
@@ -21,15 +22,15 @@ export const Route = createFileRoute("/help/$section/$page")({
 });
 
 /**
- * A page: breadcrumbs up to its section, the lead (the page's one line,
- * until it has a body), the body (none yet: the content phase adds one
- * component per page), and the foot list, "In <section>", the section's
+ * A page: breadcrumbs up to its section, the lead (the page's one line),
+ * the body when `HELP_BODIES` has one for the page, and the foot list, "In <section>", the section's
  * pages with this one unlinked. The foot list is the sideways device in
  * place of a sidebar, and on a phone, where `s-page` folds the breadcrumbs
- * into a "…" button, the visible way up (`docs/help-research.md`).
+ * into a "…" button, the visible way up.
  */
 function RouteComponent() {
   const { section, page } = Route.useLoaderData();
+  const Body = HELP_BODIES[`${section.slug}/${page.slug}`];
   return (
     <s-page heading={page.title} inlineSize="base">
       <s-link slot="breadcrumb-actions" href="/">
@@ -46,6 +47,7 @@ function RouteComponent() {
           <s-paragraph>{page.description}</s-paragraph>
         </Things>
       </s-section>
+      {Body === undefined ? null : <Body />}
       {/* The heading names the section as a link: on a phone, where the
           breadcrumbs have folded, it is the visible way up. */}
       <s-section accessibilityLabel={`In ${section.title}`}>

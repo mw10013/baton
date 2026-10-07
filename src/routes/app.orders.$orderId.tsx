@@ -18,6 +18,7 @@ import {
 import { RunSteps } from "@/components/RunSteps";
 import { BlockModal, RunNoteModal } from "@/components/RunTextModals";
 import { Clamp } from "@/components/screen/Clamp";
+import { FootLine } from "@/components/screen/FootLine";
 import { Inline } from "@/components/screen/Inline";
 import { Lines } from "@/components/screen/Lines";
 import { type Pair, Pairs } from "@/components/screen/Pairs";
@@ -1534,6 +1535,13 @@ function RouteComponent() {
           ]}
         />
       </s-section>
+      <FootLine>
+        Learn more in{" "}
+        <s-link href="/help/orders/order-page" target="_blank">
+          Reading an order
+        </s-link>
+        .
+      </FootLine>
     </s-page>
   );
 }
