@@ -112,16 +112,16 @@ deleted (question 4).
 
 ### Teams, members, workflows
 
-| team         | members                                                              |
-| ------------ | -------------------------------------------------------------------- |
-| Woodshop     | ben, dana                                                            |
-| Engraving    | ana, ben, carmen                                                     |
-| Leather      | carmen, eli                                                          |
-| Jewelry      | farah                                                                |
-| Textiles     | dana                                                                 |
-| Finishing    | ana, eli                                                             |
-| Packing      | gus (deleted by the script after the seed, which makes Needs a team) |
-| Weekend crew | nobody: the No members and Team has no members pictures              |
+| team         | members                                                                            |
+| ------------ | ---------------------------------------------------------------------------------- |
+| Woodshop     | `ben@example.com`, `dana@example.com`                                              |
+| Engraving    | `ana@example.com`, `ben@example.com`, `carmen@example.com`                         |
+| Leather      | `carmen@example.com`, `eli@example.com`                                            |
+| Jewelry      | `farah@example.com`                                                                |
+| Textiles     | `dana@example.com`                                                                 |
+| Finishing    | `ana@example.com`, `eli@example.com`                                               |
+| Packing      | `gus@example.com` (deleted by the script after the seed, which makes Needs a team) |
+| Weekend crew | nobody: the No members and Team has no members pictures                            |
 
 Members are `ana@example.com`, `ben@…`, `carmen@…`, `dana@…`, `eli@…`, `farah@…`, `gus@…`:
 seven, a domain reserved for examples (RFC 2606), first names because the screens show the email
@@ -147,21 +147,21 @@ deleting Packing turns every journal past Bind into a Needs a team issue.
 
 About 40 seeded open orders, `#1201` upward, and a handful closed:
 
-| kind                      | count | what it shows                                                       |
-| ------------------------- | ----- | ------------------------------------------------------------------- |
-| not started               | 8     | Ready rows for each team                                            |
-| making, started by ana    | 5     | Started by you                                                      |
-| making, started by others | 8     | Started by others; Step k of n across workflows                     |
-| making, between steps     | 6     | an item done at one step and ready at the next                      |
-| blocked                   | 2     | one by ana's team with a reason; one the merchant blocked           |
-| made                      | 4     | Made, "Fulfill in Shopify", Done by … in the last day               |
-| multi-match               | 1     | the gift set                                                        |
-| unmatched                 | 2     | a gift card alone; a gift card beside a board                       |
-| unpaid                    | 1     | the Unpaid badge                                                    |
-| multi-item with note      | 1     | three items, SKU, initials as properties, an order note, a run note |
-| closed                    | 4     | fulfilled, cancelled, an item removed, a resized item (`after`)     |
+| kind                                 | count | what it shows                                                           |
+| ------------------------------------ | ----- | ----------------------------------------------------------------------- |
+| not started                          | 8     | Ready rows for each team                                                |
+| making, started by `ana@example.com` | 5     | Started by you                                                          |
+| making, started by others            | 8     | Started by others; Step k of n across workflows                         |
+| making, between steps                | 6     | an item done at one step and ready at the next                          |
+| blocked                              | 2     | one by `ana@example.com`'s team with a reason; one the merchant blocked |
+| made                                 | 4     | Made, "Fulfill in Shopify", Done by … in the last day                   |
+| multi-match                          | 1     | the gift set                                                            |
+| unmatched                            | 2     | a gift card alone; a gift card beside a board                           |
+| unpaid                               | 1     | the Unpaid badge                                                        |
+| multi-item with note                 | 1     | three items, SKU, initials as properties, an order note, a run note     |
+| closed                               | 4     | fulfilled, cancelled, an item removed, a resized item (`after`)         |
 
-Over 25 open orders, so the index pages; over 25 rows for ana only when no team is chosen, so the
+Over 25 open orders, so the index pages; over 25 rows for `ana@example.com` only when no team is chosen, so the
 Show more picture uses the default list and the tidy pictures choose a team. Placed dates spread
 over the last ten days, newest first, so the index reads like a working week.
 
@@ -216,7 +216,7 @@ because some pictures change the state others need:
 5. Pictures that make state, in order: Create workflow and its editor; Create team ("Nobody on
    this team yet"); Add member ("Not on a team yet"); the Delete team? modal on Packing, then the
    delete, then the Needs a team pictures; the first-order walk on a real order.
-6. Member pictures, signed in as ana.
+6. Member pictures, signed in as `ana@example.com`.
 7. `pnpm seed`, so the store is back to the dev fixture.
 
 An e2e run replaces the shop's data, so it and a screenshot pass never overlap; the store is one per

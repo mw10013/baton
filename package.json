@@ -54,6 +54,7 @@
     "tts": "node scripts/tts.ts",
     "seed": "node --env-file=.env scripts/seed.ts",
     "showcase:store": "node --env-file=.env scripts/showcase-store.ts",
+    "help:screenshots": "node --env-file=.env scripts/help-screenshots.ts",
     "graphql-codegen": "graphql-codegen",
     "d1:migrate:list": "wrangler d1 migrations list baton-d1-local --local",
     "d1:migrations": "wrangler d1 execute baton-d1-local --local --command \"select * from d1_migrations order by id\"",

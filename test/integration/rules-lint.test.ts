@@ -194,6 +194,22 @@ describe("a retired word stays off every merchant and member screen", () => {
     expect(hits(source)).toEqual([1, 2, 4, 6, 8]);
   });
 
+  it("a semicolon joining two ideas is refused in screen copy, before or after an inline tag too, and an entity or a statement is not copy", () => {
+    const source = [
+      "<s-paragraph>",
+      "  The list shows 25 at a time; the <strong>Show more</strong> button",
+      "  loads the next 25. Choose a team; the strip counts its items.",
+      "  You can press <strong>Done</strong> without Start first;",
+      "  Baton records that you started it too.",
+      "</s-paragraph>",
+      "<EmptyLine>Loading&hellip;</EmptyLine>;",
+      "  return null;",
+      "  readonly count: number;",
+      'const a = "Note saved. The team reads it.";',
+    ].join("\n");
+    expect(hits(source)).toEqual([2, 3, 4]);
+  });
+
   it("names the line and its text", () => {
     expect(
       RulesLint.retiredCopyHits('x;\nconst t = "Keep run";', false),

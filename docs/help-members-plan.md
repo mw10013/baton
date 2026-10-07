@@ -5,6 +5,14 @@ The next stage on the roadmap in `docs/help-research.md`. Four parts: the two he
 four For members pages, and a look at the result. The member side goes first because it has no
 order positions on it, so it does not wait on `docs/order-not-started-research.md`.
 
+Checked 2026-10-07 against 3579fda (the order positions change, `docs/order-not-started-plan.md`):
+that commit touched the orders index, the order page, `Run.startedAt`, the seeds' comments and the
+merchant e2e, and nothing on the member side. The member routes, `WorkflowsListState`, `VERB_LABEL`,
+`MemberBar`'s Help link, `signIn` in `e2e/member.ts`, the showcase's `ana@example.com` on Engraving and
+Finishing and its blocked orders are as this plan reads them, so it runs as written. Two small
+consequences are folded in below: the Blocking page's one merchant sentence, and a sentence on
+Recording your work about what Start does to the order.
+
 Merchant pictures (the admin capture: title bar clip, overlays, modals in the frame) are not in this
 plan. The script is built so they slot in later: its entries carry a `kind`, and only `member` is
 implemented here.
@@ -60,15 +68,15 @@ implemented here.
 3. **The member pictures**, seven. Each names the screen state; the implementer picks the showcase
    item that gives it and says which in the entry's comment.
 
-| file                                | screen and state                                                                      |
-| ----------------------------------- | ------------------------------------------------------------------------------------- |
-| `members/finding-your-work-1.png`   | the list's default, Started by you, ana on Engraving and Finishing                    |
-| `members/finding-your-work-2.png`   | the list with the Team select set to Engraving, Ready chosen                          |
-| `members/recording-your-work-1.png` | an item's page with a Ready task on ana's team: Start, Done, instructions, properties |
-| `members/recording-your-work-2.png` | an item ana started: Done and Put back                                                |
-| `members/recording-your-work-3.png` | the same item after Done: the Undo                                                    |
-| `members/blocking-1.png`            | the Block modal, a reason typed                                                       |
-| `members/blocking-2.png`            | an item's page with the block banner (the showcase's board ana's team blocked)        |
+| file                                | screen and state                                                                                    |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `members/finding-your-work-1.png`   | the list's default, Started by you, `ana@example.com` on Engraving and Finishing                    |
+| `members/finding-your-work-2.png`   | the list with the Team select set to Engraving, Ready chosen                                        |
+| `members/recording-your-work-1.png` | an item's page with a Ready task on `ana@example.com`'s team: Start, Done, instructions, properties |
+| `members/recording-your-work-2.png` | an item `ana@example.com` started: Done and Put back                                                |
+| `members/recording-your-work-3.png` | the same item after Done: the Undo                                                                  |
+| `members/blocking-1.png`            | the Block modal, a reason typed                                                                     |
+| `members/blocking-2.png`            | an item's page with the block banner (the showcase's board `ana@example.com`'s team blocked)        |
 
 The third picture changes state (Done); it is shot last of the Recording pictures, and step 5's
 reseed puts it back. 4. **Commit the PNGs** with the change; they are what the pages show.
@@ -84,15 +92,20 @@ in bold, the screen's own words (the vocabulary's screen columns). The copy lint
    added; the link comes by email and signs you in; Your stores when you are on more than one
    shop; Sign out; the lapsed sentence (decision 15 in `docs/help-research.md`).
 2. **Finding your work** (`finding-your-work`): the list's states (Started by you, Started by
-   others, Ready, Blocked, and the done state) and what each holds; the Team select appears when
+   others, Ready, Blocked, and Done, whose rows are the recent window, not open runs:
+   `workflowsListStateIsDone`) and what each holds; the Team select appears when
    you are on more than one team; search; one sentence on Show more ("The list shows 25 at a time;
    **Show more** loads the next 25."). Pictures 1 and 2.
 3. **Recording your work** (`recording-your-work`): a numbered list for Start and Done; Put back; Undo, who
    may press it and for how long, as the item page's JSDoc on the verbs says; the instructions and
-   the properties on the task. Pictures 1 to 3.
+   the properties on the task; one sentence that pressing Start moves the order from Not started
+   to Making on the merchant's orders list, and Put back moves it back when nothing else on it was
+   started (`orderPosition`, decision 5 in `docs/order-not-started-research.md`). Pictures 1 to 3.
 4. **Blocking an item and leaving a note** (`blocking`): a numbered list for Block with a reason; Unblock;
-   Edit note; one sentence on what the merchant sees (decision 2) (the order shows in Issues as Blocked), linked
-   to Fixing an issue. Pictures 1 and 2.
+   Edit note; one sentence on what the merchant sees (decision 2): the order shows under Issues as
+   Blocked, and a block does not move its position (an untouched blocked item stays Not started:
+   decision 4 in `docs/order-not-started-research.md`), linked to Fixing an issue. Pictures 1
+   and 2.
 
 Every claim about behaviour is checked against the route or the domain symbol that enforces it, not
 written from the research.

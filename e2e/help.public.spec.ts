@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { HELP_SECTIONS } from "@/lib/helpPages";
+import { HELP_PICTURES, HELP_PICTURES_PATH } from "@/lib/helpPictures";
 
 import { gotoMember } from "./member";
 
@@ -83,4 +84,37 @@ test("the sign-in page links to Signing in", async ({ page }) => {
       hasText: "Signing in",
     }),
   ).toBeVisible();
+});
+
+/**
+ * Each For members page renders its body (a `HELP_BODIES` entry: sections
+ * with headings, which the lead and the foot list have none of) and every
+ * picture the inventory files under the page loads. `naturalWidth` is the
+ * browser's word that the file arrived and decoded; a missing file still
+ * draws an `s-image` box.
+ */
+test("each For members page renders its body and its pictures load", async ({
+  page,
+}) => {
+  const section = HELP_SECTIONS.find((each) => each.slug === "members");
+  if (section === undefined) throw new Error("no members section");
+  for (const entry of section.pages) {
+    await gotoMember(page, `/help/members/${entry.slug}`);
+    await expect(
+      page.locator(`s-page[heading="${entry.title}"]`),
+    ).toBeVisible();
+    await expect(page.locator("s-section[heading]").first()).toBeVisible();
+    const files = Object.values(HELP_PICTURES)
+      .map((picture) => picture.file)
+      .filter((file) => file.startsWith(`members/${entry.slug}-`));
+    for (const file of files) {
+      const image = page.locator(
+        `s-image[src="${HELP_PICTURES_PATH}/${file}"] img`,
+      );
+      await image.scrollIntoViewIfNeeded();
+      await expect
+        .poll(() => image.evaluate((img: HTMLImageElement) => img.naturalWidth))
+        .toBeGreaterThan(0);
+    }
+  }
 });

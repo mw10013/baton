@@ -41,6 +41,7 @@
  * | oops, sorry  | an error says what was refused and the fix, not a feeling              |
  * | click here   | a link's text is the screen it goes to                                 |
  * | are you sure | a modal that asks names the thing in its heading and says the consequence in its body (`Screen.ts`) |
+ * | ; (a semicolon joining two ideas) | one idea per sentence (the tone list on `CopySlot`); two ideas are two sentences. Shopify: "Avoid semicolons if possible" (`grammar-and-mechanics.md`, "Semicolons") |
  *
  * A placeholder on an `s-text-area` is refused outright
  * ({@link textAreaPlaceholderHits}): free text has a label that says what
@@ -98,6 +99,10 @@ export const RETIRED: readonly RegExp[] = [
   /\bsorry\b/iu,
   /\bclick here\b/iu,
   /\bare you sure\b/iu,
+  // A semicolon after a word, then a space and a lowercase letter or the
+  // end of the copy: two ideas joined. An entity (`&hellip;`) is not one.
+  // `return x;` is kept out of the copy by `copyOf`'s keyword check, not here.
+  /(?<!&\w*)\w;(?: [a-z]|$)/u,
 ];
 
 const LITERAL =
@@ -116,26 +121,41 @@ const literalsOf = (line: string): readonly string[] =>
     return [template.replaceAll(INTERPOLATION, " "), ...inner];
   });
 
+// A line of words and prose punctuation with no member access or key:
+// the middle of a JSX text block. The ASCII double quote is not prose
+// punctuation here: with its braces blanked, `import { X } from "y";`
+// would read as copy. Literals are read by `literalsOf` anyway.
+// A line that opens with a statement keyword (`return null;`) is code
+// that happens to pass as words.
+const prose = (candidate: string) =>
+  /^[A-Za-z][A-Za-z0-9 '’“”.,:;!?—–…()&%-]*$/u.test(candidate) &&
+  candidate.includes(" ") &&
+  !/\w\.\w|^\w+:/u.test(candidate) &&
+  !/^(?:readonly|return|export|import|const|let|var|throw|await|yield|new|case|break|continue|delete|typeof|void|if|else|for|while|do|switch|default|function|class|async)\b/u.test(
+    candidate,
+  );
+
 /** The copy on one line of code: its string literals, and in `.tsx` its JSX text. */
 export const copyOf = (line: string, tsx: boolean): readonly string[] => {
   const literals = literalsOf(line);
   if (!tsx) return literals;
   const blanked = line.replaceAll(JSX_EXPRESSION, " ");
   const text = blanked.trim();
+  if (!blanked.includes("<"))
+    return [...literals, ...(prose(text) ? [text] : [])];
+  // A line with tags: the text between two tags, and the prose before the
+  // first tag or after the last one (a JSX text block wrapped around an
+  // inline element: `team; press <strong>Clear search</strong> to go`).
+  const fragments = blanked.split(/<[^<>]*>/u);
+  const edges = [fragments.at(0) ?? "", fragments.at(-1) ?? ""]
+    .map((fragment) => fragment.trim())
+    .filter((fragment) => prose(fragment));
   return [
     ...literals,
     ...[...blanked.matchAll(/>(?<text>[^<>{}]+)</gu)].map(
       ({ groups }) => groups?.text ?? "",
     ),
-    // A line of words and prose punctuation with no member access or key:
-    // the middle of a JSX text block. The ASCII double quote is not prose
-    // punctuation here: with its braces blanked, `import { X } from "y";`
-    // would read as copy. Literals are read by `literalsOf` anyway.
-    ...(/^[A-Za-z][A-Za-z0-9 '’“”.,:;!?—–…()&%-]*$/u.test(text) &&
-    text.includes(" ") &&
-    !/\w\.\w|^\w+:/u.test(text)
-      ? [text]
-      : []),
+    ...edges,
   ];
 };
 

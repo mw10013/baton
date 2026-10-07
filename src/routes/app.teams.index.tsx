@@ -222,7 +222,7 @@ function RouteComponent() {
     if (unfiltered && teams.length === 0)
       return (
         <EmptyLine heading="No teams yet" action={createButton(false)}>
-          A team is who can work a task; assign one to each task in a workflow.
+          A team is who can work a task. Assign one to each task in a workflow.
         </EmptyLine>
       );
     if (q !== undefined && teams.length === 0)

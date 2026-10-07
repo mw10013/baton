@@ -67,7 +67,7 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
         slug: "orders-list",
         title: "Reading the orders list",
         description:
-          "Not started, Making and Made; No workflow and Unpaid; Open, Issues and All; the Team filter and search.",
+          "The strip's positions and Issues, the Show select, the Team select and search.",
       },
       {
         slug: "order-page",
@@ -134,7 +134,7 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
     slug: "teams-and-members",
     title: "Teams and members",
     description:
-      "A team holds tasks; a member is on one or more teams and works their tasks.",
+      "A team holds tasks. A member is on one or more teams and works their tasks.",
     pages: [
       {
         slug: "creating-a-team",
@@ -169,8 +169,7 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
       {
         slug: "finding-your-work",
         title: "Finding your work",
-        description:
-          "Started by you, Started by others, Ready and Blocked; the Team filter and search.",
+        description: "The strip's five states, the Team select and search.",
       },
       {
         slug: "recording-your-work",

@@ -10,10 +10,12 @@ import { EmptyLine } from "@/components/screen/EmptyLine";
 import { FilterRow } from "@/components/screen/FilterRow";
 import { FootLine } from "@/components/screen/FootLine";
 import { HelpList } from "@/components/screen/HelpList";
+import { HelpPicture } from "@/components/screen/HelpPicture";
 import { IndexSection } from "@/components/screen/IndexSection";
 import { Inline } from "@/components/screen/Inline";
 import { ListSearchField } from "@/components/screen/ListSearchField";
 import { Name } from "@/components/screen/Name";
+import { NumberedList } from "@/components/screen/NumberedList";
 import { PageNote } from "@/components/screen/PageNote";
 import { Prose } from "@/components/screen/Prose";
 import { ResourceRow, RowLine } from "@/components/screen/ResourceRow";
@@ -383,6 +385,23 @@ function RouteComponent() {
           </s-link>
           .
         </FootLine>
+        <s-section heading="Screenshot">
+          <HelpPicture name="recordingYourWork1" />
+        </s-section>
+        <s-section heading="Numbered list">
+          <NumberedList
+            items={[
+              <>
+                Press <strong>Start</strong>.
+              </>,
+              <>
+                {`When the work is finished, press `}
+                <strong>Done</strong>
+                {`. ${TASK_64}, the longest task name a workflow takes, wraps under its number rather than past the column.`}
+              </>,
+            ]}
+          />
+        </s-section>
         <s-section heading="Line one's weight">
           <s-paragraph>
             <s-text type="strong">

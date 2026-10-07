@@ -1,0 +1,76 @@
+import { HelpPicture } from "@/components/screen/HelpPicture";
+import { Things } from "@/components/screen/Things";
+
+/**
+ * Finding your work (`members/finding-your-work`): the Workflows list's five
+ * states, the Team select, search and Show more. Read against
+ * `src/routes/shop.$shop.workflows.index.tsx` and
+ * `src/lib/workflowsListStates.ts` (the labels and their order), and
+ * `Domain.listStateOf` (a block wins, then a task you started, then any
+ * started task, then Ready), `Domain.RecentItem` and
+ * `Domain.workflowsListStateIsDone` (Done or closed holds the last day,
+ * `DONE_WINDOW_MS`), `Domain.RunQuery` (a search ignores the state and the
+ * team) and `Domain.RUN_PAGE` (25).
+ */
+export function FindingYourWork() {
+  return (
+    <>
+      <s-section heading="Choose what to see">
+        <Things>
+          <s-paragraph>
+            The Workflows list shows the items with a task on your teams. The
+            strip at the top counts them by state. Press a state to list its
+            items.
+          </s-paragraph>
+          <s-unordered-list>
+            <s-list-item>
+              <strong>Started by you</strong>: items with a task you started.
+              The list opens here.
+            </s-list-item>
+            <s-list-item>
+              <strong>Started by others</strong>: someone else started the task.
+            </s-list-item>
+            <s-list-item>
+              <strong>Ready</strong>: the task is current and nobody has started
+              it. Anyone on its team can.
+            </s-list-item>
+            <s-list-item>
+              <strong>Blocked</strong>: someone stopped the work and said why. A
+              blocked item is listed here, not under Started or Ready.
+            </s-list-item>
+            <s-list-item>
+              <strong>Done or closed</strong>: tasks your teams did in the last
+              day, and items whose workflow ended in that time, with the reason.
+            </s-list-item>
+          </s-unordered-list>
+          <HelpPicture name="findingYourWork1" />
+          <s-paragraph>
+            Each row shows the order number and the item, then the current task
+            and its state, then the workflow and its step. Press a row to open
+            the item&apos;s page.
+          </s-paragraph>
+        </Things>
+      </s-section>
+      <s-section heading="Narrow the list">
+        <Things>
+          <s-paragraph>
+            If you are on more than one team, a <strong>Team</strong> select
+            sits under the search. Choose a team to see its work alone. The
+            strip counts that team&apos;s items.
+          </s-paragraph>
+          <HelpPicture name="findingYourWork2" />
+          <s-paragraph>
+            To find one item, search by its order number or by the item&apos;s
+            name, variant or SKU. A search looks across every state and every
+            team. Press <strong>Clear search</strong> to go back to the list you
+            had.
+          </s-paragraph>
+          <s-paragraph>
+            The list shows 25 at a time. The <strong>Show 25 more</strong>{" "}
+            button at its foot loads the next 25.
+          </s-paragraph>
+        </Things>
+      </s-section>
+    </>
+  );
+}

@@ -48,8 +48,11 @@ import { Schema } from "effect";
  *   confirmation ("Note saved").
  * - One idea per sentence. Two sentences is the ceiling for anything in a
  *   list or under a field; three for a banner or a modal body.
- * - Sentence case everywhere; "·" between facts on one line ("Brass hinge
- *   ×2 · Finishing"); no dash inside a sentence.
+ * - Sentence case everywhere. "·" between facts on one line ("Brass hinge
+ *   ×2 · Finishing"). No dash and no semicolon inside a sentence: two ideas
+ *   are two sentences (Shopify, `grammar-and-mechanics.md`, "Semicolons":
+ *   "Avoid semicolons if possible"); `scripts/rules-lint.ts` refuses one in
+ *   screen copy.
  * - A slot with nothing to say is empty. Filling it is the failure mode
  *   (Shopify, `voice-and-tone.md`, "Don't add extra text just to fill
  *   space").
@@ -249,6 +252,8 @@ export type ScreenTemplate = typeof ScreenTemplate.Type;
  * | text limit     | the countdown and the submit error of a field with a cap                             | `TextLimit`                         | nothing; props only: `details` from `noteCountFrom`, the error "Up to N characters" | index, details, editor | `maxLength`; a counter on an empty field |
  * | help list      | a hub's "In this section" and a page's foot list: a title link over a line          | `HelpList`                          | the list; the current entry unlinked and strong                                                            | help                              | a card per entry; a chevron row                     |
  * | foot line      | one centred sentence of links at a page's foot: the way to help                      | `FootLine`                          | centred; one line                                                                                          | homepage, details, editor, index  | a second sentence; a banner                         |
+ * | screenshot     | one picture in a help page                                                           | `HelpPicture`                       | placed by inventory name; the width by kind: a member picture 390px and centred; a merchant picture (not taken yet) the column's width | help | a caption, border or annotation; a picture the inventory lacks |
+ * | numbered list  | what to do, in order: one action per item, a control's label in bold                 | `NumberedList`                      | an ordered list; Polaris's numbers and spacing                                                             | help                              | two actions in one item; a workflow's steps         |
  * | capped name    | a team, task or workflow name                                                        | `Name`                              | on a list: whole, wraps; on its home: whole, wraps; in a cutting control: allowed                         | index, details, homepage, editor  | an ellipsis on a list                               |
  * | Shopify text   | an item title, a variant, an item property                                           | `Clamp`                             | on a list: two lines and an ellipsis; on its home: whole, wraps; in a cutting control: never              | index, details, homepage, editor  | a badge, chip or select option                      |
  * | free text      | a block reason, a note, task instructions, an order note                             | `Clamp`, `Prose`, `ClampedProse`    | on a list: two lines; on its home: `Prose`, a block reason `ClampedProse`; in a cutting control: never   | index, details, homepage, editor  | collapsed line breaks                               |
@@ -301,6 +306,8 @@ export const ScreenPart = Schema.Literals([
   "text limit",
   "help list",
   "foot line",
+  "screenshot",
+  "numbered list",
   "capped name",
   "Shopify text",
   "free text",

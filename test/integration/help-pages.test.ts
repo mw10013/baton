@@ -1,7 +1,15 @@
+import { createElement } from "react";
+
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { HELP_BODIES } from "@/components/help/bodies";
 import { findHelpPage, findHelpSection, HELP_SECTIONS } from "@/lib/helpPages";
+import {
+  HELP_PICTURES,
+  HELP_PICTURES_PATH,
+  helpPictureSrc,
+} from "@/lib/helpPictures";
 
 import { RETIRED } from "../../scripts/lib/rules-lint.ts";
 
@@ -66,6 +74,44 @@ describe("help pages", () => {
       expect(section, key).toBeDefined();
       if (section !== undefined)
         expect(findHelpPage(section, pageSlug), key).toBeDefined();
+    }
+  });
+
+  /**
+   * The inventory and the files agree both ways (`HELP_PICTURES` in
+   * `src/lib/helpPictures.ts`): a lazy glob lists the files without loading
+   * them, so a picture the script stopped writing, or a file left behind
+   * when an entry was cut, fails here rather than as a broken image.
+   */
+  it("every picture in the inventory is a file under public/assets/help, and every file there is in the inventory", () => {
+    const files = Object.keys(import.meta.glob("/public/assets/help/**/*")).map(
+      (file) => file.slice(`/public${HELP_PICTURES_PATH}/`.length),
+    );
+    const entries = Object.values(HELP_PICTURES).map((picture) => picture.file);
+    expect(files.toSorted()).toEqual(entries.toSorted());
+  });
+
+  /**
+   * Read off the bodies as they render, through the screenshot part, so a
+   * body that names a picture places it and nothing else counts.
+   */
+  it("every picture in the inventory is placed by a help page body", () => {
+    const markup = Object.values(HELP_BODIES)
+      .map((Body) => renderToStaticMarkup(createElement(Body)))
+      .join("");
+    const unplaced = Object.entries(HELP_PICTURES)
+      .filter(
+        ([, picture]) => !markup.includes(`src="${helpPictureSrc(picture)}"`),
+      )
+      .map(([name]) => name);
+    expect(unplaced).toEqual([]);
+  });
+
+  it("every picture's alt text is 30 to 60 words", () => {
+    for (const [name, picture] of Object.entries(HELP_PICTURES)) {
+      const words = picture.alt.split(/\s+/u).filter((word) => word !== "");
+      expect(words.length, name).toBeGreaterThanOrEqual(30);
+      expect(words.length, name).toBeLessThanOrEqual(60);
     }
   });
 });
