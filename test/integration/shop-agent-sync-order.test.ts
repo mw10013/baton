@@ -411,7 +411,7 @@ describe("ShopAgent one-order sync", () => {
         limit: 25,
         cursor: null,
         q: null,
-        show: null,
+        show: "open",
         team: null,
       });
       return page.orders.map(({ order }) => order.id).toSorted();

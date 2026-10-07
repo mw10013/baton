@@ -124,7 +124,9 @@ const runResultMessage = (
  * stored state cannot say, since a run is `open` from creation. Closed is
  * neutral, not red: the work ended and nothing waits on anyone
  * ({@link Domain.RunState}); red stays for a hold. The reason is the line
- * under it ({@link ClosedLine}), not a badge of its own.
+ * under it ({@link ClosedLine}), not a badge of its own. The item's Not
+ * started and the order's Not started ({@link Domain.OrderPosition}) mean the
+ * same thing: an order is Not started when every one of its runs is.
  */
 const RUN_STATE_BADGE = {
   open: { label: Domain.RUN_STATE_LABEL.open, tone: "info" },

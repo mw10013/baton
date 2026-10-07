@@ -67,7 +67,7 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
         slug: "orders-list",
         title: "Reading the orders list",
         description:
-          "Open, Issues and All; Not started, Making and Made; the Team filter and search.",
+          "Not started, Making and Made; No workflow and Unpaid; Open, Issues and All; the Team filter and search.",
       },
       {
         slug: "order-page",

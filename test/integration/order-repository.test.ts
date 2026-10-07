@@ -321,7 +321,7 @@ describe("OrderRepository.listOrders", () => {
           limit: 2,
           cursor: null,
           q: null,
-          show: null,
+          show: "open",
           team: null,
           teams: [],
         });
@@ -331,7 +331,7 @@ describe("OrderRepository.listOrders", () => {
             limit: 2,
             cursor: first.nextCursor,
             q: null,
-            show: null,
+            show: "open",
             team: null,
             teams: [],
           }),
@@ -354,10 +354,14 @@ describe("OrderRepository.listOrders", () => {
  * the fixture covers each branch, and each filter value must return exactly the
  * names the TypeScript functions give it. Runs are written directly because
  * `RunRepository` is not in this test's layer and the filters only read
- * state. `#1005`, `#1009`, `#1010` and `#1012` are open with no open and no
- * done run: `not_started`. `#1005` matched no workflow, which is Not started
- * with no issue. `#1010`'s only run is closed, which still reads not started
- * but decides the item, so it is no issue.
+ * state. A done run always carries `startedAt` (the schema refuses one
+ * without), and an open run carries it when the case says `started`.
+ * `#1005`, `#1010` and `#1012` are open and paid with no open and no done
+ * run: `no_workflow`; `#1009` is the same unpaid: `unpaid`. `#1005` matched
+ * no workflow, which is No workflow with no issue. `#1010`'s only run is
+ * closed, which reads no workflow too but decides the item, so it is no
+ * issue. `#1014`'s open run is untouched: `not_started`. `#1003`'s open run
+ * is untouched beside a done run and `#1004`'s is started: both `making`.
  *
  * `#1012` and `#1013` are the multi-match cases: their items carry the tags
  * of two on workflows, `w1` and `w2`, which the fixture writes directly.
@@ -387,27 +391,29 @@ const seedStates = Effect.gen(function* () {
     readonly states: readonly Domain.RunState[];
     /** The product tags of the order's own item; two on workflows' tags and no run on it is a multi-match. */
     readonly matched?: readonly string[];
+    /** The order's open runs carry `startedAt`: a task on them is started. */
+    readonly started?: boolean;
   }[] = [
     { n: 1, states: ["done"] }, // made
     { n: 2, states: ["done", "closed"] }, // made
-    { n: 3, states: ["done", "open"] }, // making
-    { n: 4, states: ["done", "open"] }, // making
-    { n: 5, states: [] }, // not started, no workflow
+    { n: 3, states: ["done", "open"] }, // making: a done run beside an untouched open one
+    { n: 4, states: ["done", "open"], started: true }, // making
+    { n: 5, states: [] }, // no workflow
     { n: 6, order: { cancelledAt: 5 }, states: ["done"] }, // cancelled
     { n: 7, order: { fulfillmentStatus: "FULFILLED" }, states: ["done"] }, // fulfilled
     { n: 8, states: ["done", "done"] }, // made
-    { n: 9, order: { fullyPaid: false }, states: [] }, // not started, unpaid: no issue
-    { n: 10, states: ["closed"] }, // not started, and decided: no issue
+    { n: 9, order: { fullyPaid: false }, states: [] }, // unpaid: no issue
+    { n: 10, states: ["closed"] }, // no workflow, and decided: no issue
     { n: 11, order: { fulfillmentStatus: "FULFILLED" }, states: [] }, // fulfilled, never started
-    { n: 12, states: [], matched: ["w1", "w2"] }, // not started, choose a workflow
-    { n: 13, states: ["open"], matched: ["w1", "w2"] }, // making, and choose a workflow
+    { n: 12, states: [], matched: ["w1", "w2"] }, // no workflow, choose a workflow
+    { n: 13, states: ["open"], matched: ["w1", "w2"], started: true }, // making, and choose a workflow
     // Unpaid: a multi-match is an issue all the same.
     {
       n: 14,
       order: { fullyPaid: false },
       states: ["open"],
       matched: ["w1", "w2"],
-    }, // making
+    }, // not started: its open run is untouched
   ];
   for (const id of ["w1", "w2"]) {
     yield* sql`
@@ -415,7 +421,7 @@ const seedStates = Effect.gen(function* () {
       values (${id}, ${id}, ${id}, 'active', 0, ${taskList(id, "team-cut")})
     `;
   }
-  for (const { n, order, states, matched } of cases) {
+  for (const { n, order, states, matched, started = false } of cases) {
     yield* upsert(
       repository,
       anOrder({
@@ -438,12 +444,14 @@ const seedStates = Effect.gen(function* () {
         insert into Run (
           id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
           lineItemId, lineItemTitle, variantTitle, sku, quantity, lineItemProperties,
-          state, closedAt, closedReason, createdAt, updatedAt
+          state, startedAt, closedAt, closedReason, createdAt, updatedAt
         ) values (
           ${`run-${String(n)}-${String(index)}`}, 'wf', 'Workflow',
           ${orderId(n)}, ${`#10${String(n).padStart(2, "0")}`}, 0,
           ${`${lineItemId(n)}-${String(index)}`}, 'Item', null, null, 1,
-          '[]', ${state}, ${state === "closed" ? 1 : null},
+          '[]', ${state},
+          ${state === "done" || (state === "open" && started) ? 1 : null},
+          ${state === "closed" ? 1 : null},
           ${state === "closed" ? "merchant_cancelled" : null}, 0, 0
         )
       `;
@@ -453,8 +461,8 @@ const seedStates = Effect.gen(function* () {
 
 /**
  * `seedStates` plus the issues it lacks, and a team to filter on: `#1003`'s
- * open run is blocked, `#1004`'s open run has a task on a team that has
- * was deleted (unassigned), and `#1015`, added here, is being made with
+ * open run is blocked, `#1004`'s open run has a task on a team that
+ * was deleted (unassigned), and `#1015`, added here, is not started, with
  * its current task on a team with no members, which is no order issue.
  * Ready tasks on Cut hang off `#1013` and `#1014`, both choosing.
  */
@@ -577,7 +585,7 @@ describe("OrderRepository.listOrders multi-match", () => {
           limit: 20,
           cursor: null,
           q: null,
-          show: null,
+          show: "open",
           team: null,
           teams,
         });
@@ -614,7 +622,7 @@ describe("OrderRepository.listOrders by tag", () => {
           limit: 20,
           cursor: null,
           q: null,
-          show: null,
+          show: "open",
           team: null,
           teams: [],
         });
@@ -729,7 +737,7 @@ describe("OrderRepository.listOrders query plans", () => {
 });
 
 describe("OrderRepository.listOrders filters", () => {
-  it("each position filter returns exactly the orders orderPosition gives that position, and an order whose only run is closed is not started", async () => {
+  it("each position filter returns exactly the orders orderPosition gives that position, and an order whose only run is closed is no workflow", async () => {
     const pages = await runInRepository(
       Effect.gen(function* () {
         const repository = yield* seedStates;
@@ -743,8 +751,11 @@ describe("OrderRepository.listOrders filters", () => {
             teams: [],
           });
         return {
-          open: yield* list(null),
+          default: yield* list(null),
+          open: yield* list("open"),
           all: yield* list("all"),
+          unpaid: yield* list("unpaid"),
+          no_workflow: yield* list("no_workflow"),
           not_started: yield* list("not_started"),
           making: yield* list("making"),
           made: yield* list("made"),
@@ -754,15 +765,15 @@ describe("OrderRepository.listOrders filters", () => {
       }),
     );
     strictEqual(pages.all.orders.length, 14);
-    deepStrictEqual(names(pages.not_started), [
-      "#1012",
-      "#1010",
-      "#1009",
-      "#1005",
-    ]);
+    deepStrictEqual(names(pages.unpaid), ["#1009"]);
+    deepStrictEqual(names(pages.no_workflow), ["#1012", "#1010", "#1005"]);
+    deepStrictEqual(names(pages.not_started), ["#1014"]);
     // `#1013`: one item being made beside one waiting on a choice. It is
-    // making, with the choice as an issue.
-    deepStrictEqual(names(pages.making), ["#1014", "#1013", "#1004", "#1003"]);
+    // making, with the choice as an issue. `#1003`: a done run beside an
+    // untouched open one is making.
+    deepStrictEqual(names(pages.making), ["#1013", "#1004", "#1003"]);
+    // Show left out is Making.
+    deepStrictEqual(names(pages.default), names(pages.making));
     deepStrictEqual(names(pages.made), ["#1008", "#1002", "#1001"]);
     deepStrictEqual(names(pages.fulfilled), ["#1011", "#1007"]);
     deepStrictEqual(names(pages.cancelled), ["#1006"]);
@@ -824,6 +835,9 @@ describe("OrderRepository.listOrders filters", () => {
         const { list } = yield* seedIssues;
         const filters = [
           null,
+          "open",
+          "unpaid",
+          "no_workflow",
           "issues",
           "not_started",
           "making",
@@ -833,11 +847,11 @@ describe("OrderRepository.listOrders filters", () => {
           "all",
         ] as const;
         const counted = {
-          open: null,
-          issues: "issues",
+          no_workflow: "no_workflow",
           not_started: "not_started",
           making: "making",
           made: "made",
+          issues: "issues",
         } as const satisfies Record<keyof Domain.OrderCounts, Filter>;
         const out: {
           readonly label: string;
@@ -860,6 +874,7 @@ describe("OrderRepository.listOrders filters", () => {
         }
         return {
           out,
+          openOrders: (yield* list(null)).openOrders,
           open: (yield* list(null)).counts,
           cut: (yield* list(null, aTeamId("team-cut"))).counts,
         };
@@ -867,20 +882,22 @@ describe("OrderRepository.listOrders filters", () => {
     );
     for (const { label, count, shown } of checks.out)
       strictEqual(count, shown, label);
+    // Every open order, unpaid `#1009` included, which no cell counts.
+    strictEqual(checks.openOrders, 12);
     deepStrictEqual(checks.open, {
-      open: 12,
-      issues: 5,
-      not_started: 4,
-      making: 5,
+      no_workflow: 3,
+      not_started: 2,
+      making: 3,
       made: 3,
+      issues: 5,
     });
-    // Cut holds `#1013` and `#1014`, both making and both choosing.
+    // Cut holds `#1013`, making, and `#1014`, not started, both choosing.
     deepStrictEqual(checks.cut, {
-      open: 2,
-      issues: 2,
-      not_started: 0,
-      making: 2,
+      no_workflow: 0,
+      not_started: 1,
+      making: 1,
       made: 0,
+      issues: 2,
     });
   });
 
@@ -926,12 +943,13 @@ describe("OrderRepository.listOrders filters", () => {
       Effect.gen(function* () {
         const { list } = yield* seedIssues;
         return {
-          open: yield* list(null),
+          open: yield* list("open"),
           issues: yield* list("issues"),
         };
       }),
     );
-    // Making `#1014`, `#1013`, `#1004` and `#1003`, and not started `#1012`.
+    // Not started `#1014`, making `#1013`, `#1004` and `#1003`, and no
+    // workflow `#1012`.
     deepStrictEqual(
       names(pages.issues),
       names(pages.open).filter((name) =>
@@ -940,7 +958,7 @@ describe("OrderRepository.listOrders filters", () => {
     );
     deepStrictEqual(
       new Set(pages.issues.orders.map((row) => Domain.orderPosition(row))),
-      new Set(["making", "not_started"]),
+      new Set(["making", "not_started", "no_workflow"]),
     );
   });
 
@@ -988,7 +1006,7 @@ describe("OrderRepository.listOrders filters", () => {
             limit: 20,
             cursor: null,
             q: null,
-            show: null,
+            show: "open",
             team: null,
             teams: [],
           }),
@@ -1001,16 +1019,25 @@ describe("OrderRepository.listOrders filters", () => {
       open: 1,
       done: 1,
       blocked: 1,
+      started: 0,
+    });
+    deepStrictEqual(runsOf("#1004"), {
+      open: 1,
+      done: 1,
+      blocked: 0,
+      started: 1,
     });
     deepStrictEqual(runsOf("#1001"), {
       open: 0,
       done: 1,
       blocked: 0,
+      started: 0,
     });
     deepStrictEqual(runsOf("#1002"), {
       open: 0,
       done: 1,
       blocked: 0,
+      started: 0,
     });
   });
 });
@@ -1135,7 +1162,7 @@ describe("OrderRepository.listOrders team issues", () => {
             limit: 20,
             cursor: null,
             q: null,
-            show: issues ? "issues" : null,
+            show: issues ? "issues" : "open",
             team: null,
             teams,
           });
@@ -1229,7 +1256,7 @@ describe("OrderRepository.listOrders team", () => {
     /* #1004: current on Cut, with a later step on Anodize that is not current. */
     yield* task("s4a", "run-4-1", 1, "team-cut");
     yield* task("s4b", "run-4-1", 2, "team-polish");
-    const list = (team: Domain.TeamId | null = null, filter: Filter = null) =>
+    const list = (team: Domain.TeamId | null = null, filter: Filter = "open") =>
       repository.listOrders({
         limit: 20,
         cursor: null,
@@ -1311,15 +1338,15 @@ describe("OrderRepository.listOrders team", () => {
     deepStrictEqual(names(polish), []);
     deepStrictEqual(names(unknown), []);
     const none = {
-      open: 0,
-      issues: 0,
+      no_workflow: 0,
       not_started: 0,
       making: 0,
       made: 0,
+      issues: 0,
     };
-    deepStrictEqual(cut.counts, { ...none, open: 2, making: 2 });
+    deepStrictEqual(cut.counts, { ...none, making: 2 });
     deepStrictEqual(unknown.counts, none);
-    strictEqual(all.counts.making, 4);
+    strictEqual(all.counts.making, 3);
   });
 });
 

@@ -225,6 +225,7 @@ const detailOf = (
     quantity: 1,
     lineItemProperties: [],
     state,
+    startedAt: state === "done" ? 1 : null,
     blockedAt: null,
     blockReason: null,
     blockedBy: null,
@@ -671,15 +672,6 @@ const reset = (
         item?.currentQuantity ?? 1,
         LINE_ITEM_ID,
       );
-      sql.exec(
-        "update Run set state = ?, blockedAt = ?, blockedBy = ?, blockReason = null, closedAt = ?, closedReason = ? where id = ?",
-        target.state,
-        target.blockedAt,
-        target.blockedAt === null ? null : JSON.stringify(MERCHANT),
-        closed ? 1 : null,
-        closed ? "merchant_cancelled" : null,
-        live.runId,
-      );
       for (const [id, progress] of [
         [live.cut, tasks.cut],
         [live.polish, tasks.polish],
@@ -698,6 +690,20 @@ const reset = (
           id,
         );
       }
+      // After the tasks: `startedAt` is recomputed from them, as every task
+      // write does. A "task any" cell can pair a done run with tasks nobody
+      // started, which no write produces; the run still carries a start,
+      // since the schema refuses a done run without one.
+      sql.exec(
+        "update Run set state = ?, startedAt = coalesce((select min(startedAt) from RunTask s where s.runId = Run.id), case when ? = 'done' then 0 end), blockedAt = ?, blockedBy = ?, blockReason = null, closedAt = ?, closedReason = ? where id = ?",
+        target.state,
+        target.state,
+        target.blockedAt,
+        target.blockedAt === null ? null : JSON.stringify(MERCHANT),
+        closed ? 1 : null,
+        closed ? "merchant_cancelled" : null,
+        live.runId,
+      );
     },
   );
 

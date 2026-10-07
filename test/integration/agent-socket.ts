@@ -283,7 +283,7 @@ export const openTwoScreens = async (
     limit: 50,
     cursor: null,
     q: null,
-    show: null,
+    show: "open",
     team: null,
   });
   const member = await openMemberSocket(shop, {

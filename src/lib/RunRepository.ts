@@ -848,7 +848,9 @@ export class RunRepository extends Context.Service<
        * `state` is a function of the tasks; recomputing it in SQL from the
        * same rows the task write just touched is what keeps the two in one
        * transaction with nothing to drift. Two states are derived: `done`
-       * when every task is done, `open` otherwise.
+       * when every task is done, `open` otherwise. `startedAt`
+       * ({@link Domain.Run}) is recomputed in the same statement, the
+       * earliest task start, so the run-level checks see both at once.
        *
        * Only ever called on an open run: every caller gates on
        * {@link Domain.runIsOpen}, or on not {@link Domain.runIsClosed} for
@@ -865,6 +867,7 @@ export class RunRepository extends Context.Service<
               end
               from RunTask s where s.runId = Run.id
             ),
+            startedAt = (select min(startedAt) from RunTask s where s.runId = Run.id),
             updatedAt = ${now}
           where id = ${runId}
         `.pipe(Effect.asVoid);

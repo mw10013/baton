@@ -381,7 +381,7 @@ describe("data model", () => {
         strictEqual(blockClosed._tag, "SqlError");
         yield* sql`delete from Run where id = ${runId}`;
         yield* insertRun("done");
-        yield* sql`update Run set state = 'done' where id = 'done'`;
+        yield* sql`update Run set state = 'done', startedAt = 1 where id = 'done'`;
         const blockDone = yield* Effect.flip(sql`
           update Run set blockedAt = 1, blockedBy = '{"role":"merchant"}'
           where id = 'done'
@@ -532,6 +532,44 @@ describe("data model", () => {
         // Closed is not read off the tasks: a pass over the order leaves it.
         yield* resync([lineItem], 1);
         strictEqual(yield* state(), "closed");
+      }),
+    ));
+
+  it("a run's startedAt is the earliest task start, recomputed with its state by every task write, null when no task is started", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const runs = yield* RunRepository;
+        const { runId } = yield* seedRun;
+        const runTaskId = yield* taskOf(runId);
+        const startedAt = () =>
+          sql<{
+            readonly startedAt: number | null;
+          }>`select startedAt from Run where id = ${runId}`.pipe(
+            Effect.map(([row]) => row?.startedAt),
+          );
+        const taskStartedAt = () =>
+          actorRow(runTaskId).pipe(Effect.map((row) => row?.startedAt));
+        strictEqual(yield* startedAt(), null);
+        yield* runs.startTask({ runTaskId, actor: MEMBER });
+        const started = yield* taskStartedAt();
+        strictEqual(typeof started, "number");
+        strictEqual(yield* startedAt(), started);
+        yield* runs.putBackTask({ runTaskId, actor: MERCHANT });
+        strictEqual(yield* startedAt(), null);
+        yield* runs.markTaskDone({ runTaskId, actor: MERCHANT });
+        const backfilled = yield* taskStartedAt();
+        strictEqual(typeof backfilled, "number");
+        strictEqual(yield* startedAt(), backfilled);
+        yield* runs.reopenTask({ runTaskId, actor: MERCHANT });
+        strictEqual(yield* startedAt(), null);
+        // A done run without a start is refused by the schema.
+        yield* sql`delete from Run where id = ${runId}`;
+        yield* insertRun("done");
+        const doneUnstarted = yield* Effect.flip(
+          sql`update Run set state = 'done' where id = 'done'`,
+        );
+        strictEqual(doneUnstarted._tag, "SqlError");
       }),
     ));
 

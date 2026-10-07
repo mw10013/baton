@@ -74,6 +74,7 @@ test("orders screen syncs open orders and lists them", async ({ page }) => {
     .poll(() => hoistedEnabled(sync), { timeout: 120_000 })
     .toBe(true);
 
+  await showOpen(frame);
   const rows = frame.locator("s-table-row");
   await expect(rows.first()).toBeVisible({ timeout: 30_000 });
 
@@ -125,6 +126,7 @@ test("the orders index links each order to Shopify", async ({ page }) => {
 
   const frame = await gotoApp(page);
   await clickHoisted(appNavLink(page, "Orders"));
+  await showOpen(frame);
 
   await expect(
     frame
@@ -166,6 +168,13 @@ const stripCount = async (frame: FrameLocator, label: string) =>
 const showSelect = (frame: FrameLocator) =>
   frame.getByRole("combobox", { name: "Show" });
 
+/**
+ * Show: Open, every open order. The default is Making, which leaves out an
+ * order nobody has started, and most tests here open such an order.
+ */
+const showOpen = (frame: FrameLocator) =>
+  showSelect(frame).selectOption({ label: "Open" });
+
 /** The search field both lists share (`ListSearchField`). */
 const searchField = (frame: FrameLocator) =>
   frame.getByRole("searchbox", { name: "Search" });
@@ -199,10 +208,12 @@ test("the orders index searches by order number and clears back to the list", as
     [
       {
         n: 9301,
+        started: true,
         lineItems: [{ title: "E2E Band", quantity: 1, tags: ["e2e-ring"] }],
       },
       {
         n: 9302,
+        started: true,
         lineItems: [{ title: "E2E Band", quantity: 1, tags: ["e2e-ring"] }],
       },
     ],
@@ -216,14 +227,14 @@ test("the orders index searches by order number and clears back to the list", as
 
   /* Under Made, where neither making order is listed. The chosen cell says
      so in its accessible name, since `aria-current` never reaches the
-     native button. */
-  await expect(stripChosen(frame, "Open")).toBeVisible();
+     native button. Making is the default. */
+  await expect(stripChosen(frame, "Making")).toBeVisible();
   await stripCell(frame, "Made").click();
   await expect(
     frame.getByRole("link", { name: "#9302", exact: true }),
   ).toHaveCount(0);
   await expect(stripChosen(frame, "Made")).toBeVisible();
-  await expect(stripChosen(frame, "Open")).toHaveCount(0);
+  await expect(stripChosen(frame, "Making")).toHaveCount(0);
 
   /* The digits alone: `Domain.searchTerm` supplies the `#`. Enter submits;
      the field does not debounce. The search reads every stored order, so a
@@ -253,7 +264,8 @@ test("the orders index searches by order number and clears back to the list", as
     frame.getByRole("link", { name: "#9302", exact: true }),
   ).toHaveCount(0);
 
-  await stripCell(frame, "Open").click();
+  /* Back to the default by the Making cell. */
+  await stripCell(frame, "Making").click();
   await expect(
     frame.getByRole("link", { name: "#9302", exact: true }),
   ).toBeVisible();
@@ -268,7 +280,7 @@ test("the orders index searches by order number and clears back to the list", as
     frame.getByRole("link", { name: "#9302", exact: true }),
   ).toBeVisible();
   await searchField(frame).fill("");
-  await expect(stripCell(frame, "Open")).toBeVisible();
+  await expect(stripCell(frame, "Making")).toBeVisible();
 
   const search2 = searchField(frame);
   await search2.fill("9301");
@@ -354,6 +366,7 @@ test("the merchant marks a task done, reopens it, and blocks the run", async ({
 
   const frame = await gotoApp(page);
   await clickHoisted(appNavLink(page, "Orders"));
+  await showOpen(frame);
   await frame.getByRole("link", { name: "#9301", exact: true }).click();
   await expect(frame.locator('s-page[heading="#9301"]')).toBeVisible();
 
@@ -457,6 +470,7 @@ test("the merchant puts back a task a member started", async ({ page }) => {
 
   const frame = await gotoApp(page);
   await clickHoisted(appNavLink(page, "Orders"));
+  await showOpen(frame);
   await frame.getByRole("link", { name: "#9304", exact: true }).click();
   await frame.getByRole("button", { name: "Manage" }).click();
 
@@ -512,6 +526,7 @@ test("the merchant cannot reopen a task whose next step is done", async ({
 
   const frame = await gotoApp(page);
   await clickHoisted(appNavLink(page, "Orders"));
+  await showOpen(frame);
   await frame.getByRole("link", { name: "#9302", exact: true }).click();
   await frame.getByRole("button", { name: "Manage" }).click();
 
@@ -562,6 +577,7 @@ test("the merchant blocks a run with a reason, notes the run, and unblocks it", 
 
   const frame = await gotoApp(page);
   await clickHoisted(appNavLink(page, "Orders"));
+  await showOpen(frame);
   await frame.getByRole("link", { name: "#9303", exact: true }).click();
   await frame.getByRole("button", { name: "Manage" }).click();
   /* No reason field on the card: the only one is in the closed modal. */
@@ -670,6 +686,7 @@ test("the order card puts the run's badges on the title line, Manage above its d
 
   const frame = await gotoApp(page);
   await clickHoisted(appNavLink(page, "Orders"));
+  await showOpen(frame);
   await frame.getByRole("link", { name: "#9311", exact: true }).click();
   const item = frame.locator("s-section").filter({
     has: frame.getByRole("heading", { name: "E2E Board", exact: true }),
@@ -786,6 +803,7 @@ test("an item matching two workflows waits for the merchant to choose, then chan
 
   const frame = await gotoApp(page);
   await clickHoisted(appNavLink(page, "Orders"));
+  await showOpen(frame);
 
   /* The row's Issues cell says what it is waiting on, and the Issues filter
      holds it. */
@@ -920,6 +938,7 @@ test("an item matching two workflows waits for the merchant to choose, then chan
 
   /* And the order has left the issue: one live run, nothing left to choose. */
   await clickHoisted(appNavLink(page, "Orders"));
+  await showOpen(frame);
   await expect(
     frame
       .locator("s-table-row", { hasText: "#9401" })
@@ -1110,9 +1129,9 @@ test("each order-page state draws the controls its action set allows", async ({
  * rows choosing it shows, under the team select. The counts ignore the
  * search, so the team is what keeps this test to its own orders on a shop
  * that also holds the sandbox's real ones: `#9501` and `#9502` wait on a
- * fresh team, and `#9501` also has an item matching two workflows, which is
- * an issue. `#9503` matches nothing, so it waits on no team and only the
- * unnarrowed counts see it.
+ * fresh team, nobody has started either, and `#9501` also has an item
+ * matching two workflows, which is an issue. `#9503` matches nothing, so it
+ * is No workflow, waits on no team and only the unnarrowed counts see it.
  */
 test("each count is what choosing it shows, given the team", async ({
   page,
@@ -1164,19 +1183,20 @@ test("each count is what choosing it shows, given the team", async ({
   await clickHoisted(appNavLink(page, "Orders"));
   await expect(frame.locator('s-page[heading="Orders"]')).toBeVisible();
 
-  /* Every open order, `#9503` included, before the team narrows them. Read
-     off the accessible name, which is the cell's `accessibilityLabel`. */
-  await expect.poll(() => stripCount(frame, "Open")).toBeGreaterThan(2);
+  /* `#9503` is counted under No workflow before the team narrows the
+     counts. Read off the accessible name, which is the cell's
+     `accessibilityLabel`. */
+  await expect.poll(() => stripCount(frame, "No workflow")).toBeGreaterThan(0);
 
   await frame
     .getByRole("combobox", { name: "Team" })
     .selectOption({ label: TEAM });
   const counted = [
-    ["Open", 2],
-    ["Issues", 1],
-    ["Not started", 0],
-    ["Making", 2],
+    ["No workflow", 0],
+    ["Not started", 2],
+    ["Making", 0],
     ["Made", 0],
+    ["Issues", 1],
   ] as const;
   for (const [label, n] of counted)
     await expect(
@@ -1200,6 +1220,13 @@ test("each count is what choosing it shows, given the team", async ({
   await expect(
     frame.getByRole("link", { name: "#9503", exact: true }),
   ).toBeVisible();
+  /* A No workflow order says so in Status and has nothing in Issues
+     (`Domain.OrderIssue`): its badges are Payment's and Status's only. */
+  const unrouted = frame.locator("s-table-row", { hasText: "#9503" });
+  await expect(
+    unrouted.locator("s-badge", { hasText: "No workflow" }),
+  ).toBeVisible();
+  await expect(unrouted.locator("s-badge")).toHaveCount(2);
   await frame.getByRole("button", { name: "Clear search" }).click();
   for (const [label, n] of counted)
     await expect(
@@ -1212,7 +1239,8 @@ test("each count is what choosing it shows, given the team", async ({
  * both set it: Making then Issues is Issues alone, every open order with an
  * issue, with only the Issues cell chosen. A value with no cell, Fulfilled,
  * leaves no cell chosen. `#9701` is making with a Multiple workflows match;
- * `#9702` is making with none. The team keeps the test to its own orders.
+ * `#9702` is making with none; both have a started task, so both are listed
+ * under Making, the default. The team keeps the test to its own orders.
  */
 test("the strip and the Show select hold one value", async ({ page }) => {
   test.setTimeout(120_000);
@@ -1238,6 +1266,7 @@ test("the strip and the Show select hold one value", async ({ page }) => {
     [
       {
         n: 9701,
+        started: true,
         lineItems: [
           { title: "E2E Cuff", quantity: 1, tags: ["e2e-combine"] },
           {
@@ -1249,6 +1278,7 @@ test("the strip and the Show select hold one value", async ({ page }) => {
       },
       {
         n: 9702,
+        started: true,
         lineItems: [{ title: "E2E Cuff", quantity: 1, tags: ["e2e-combine"] }],
       },
     ],
@@ -1281,12 +1311,19 @@ test("the strip and the Show select hold one value", async ({ page }) => {
   await expect
     .poll(() => new URL(page.url()).searchParams.get("show"))
     .toBe("fulfilled");
-  for (const label of ["Open", "Not started", "Making", "Made", "Issues"])
+  for (const label of [
+    "No workflow",
+    "Not started",
+    "Making",
+    "Made",
+    "Issues",
+  ])
     await expect(stripChosen(frame, label)).toHaveCount(0);
 });
 
 /**
- * Thirty orders all waiting on one fresh team, so the team filter keeps the
+ * Thirty orders all waiting on one fresh team, each with its task started
+ * so all thirty are Making, so the team filter keeps the
  * list to this test's orders on a shop that also holds the sandbox's real
  * ones, and 30 is a full first page (`ORDERS_PAGE_SIZE`, 25) plus a second
  * of five.
@@ -1306,6 +1343,7 @@ const seedTwoPages = async (team: string) => {
     ],
     Array.from({ length: 30 }, (_, index) => ({
       n: 9601 + index,
+      started: true,
       lineItems: [
         { title: "E2E Pages Band", quantity: 1, tags: ["e2e-pages"] },
       ],
@@ -1349,7 +1387,8 @@ test("the orders index keeps its filters and page across the order page", async 
   await expect(rows).toHaveCount(5);
   await expect.poll(() => listContext(page).after).not.toBeNull();
   const expected = listContext(page);
-  expect(expected.show).toBe("making");
+  /* The Making cell is the default, `?show=` left out. */
+  expect(expected.show).toBeNull();
   expect(expected.team).not.toBeNull();
 
   /* The row's real href carries them, so open-in-new-tab does too. */
@@ -1448,8 +1487,8 @@ test("a bad filter value reads as no filter", async ({ page }) => {
     "app/orders?show=nonsense&position=made&issues=1&view=issues&after=nonsense",
   );
   await expect(frame.locator('s-page[heading="Orders"]')).toBeVisible();
-  await expect(showSelect(frame)).toHaveValue("open");
-  await expect(stripChosen(frame, "Open")).toBeVisible();
+  await expect(showSelect(frame)).toHaveValue("making");
+  await expect(stripChosen(frame, "Making")).toBeVisible();
   /* `after=nonsense` is not shaped like a cursor (`Domain.OrdersCursor`), so
      it is dropped too: this is page one and there is no previous page. */
   await expect(

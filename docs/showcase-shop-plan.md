@@ -133,33 +133,18 @@ literals; otherwise validate each operation once through the Shopify dev MCP's `
 
 ## Status
 
-Implemented 2026-10-07 by a Sonnet agent and reviewed; uncommitted. All four phases done.
+**Done, closed 2026-10-07.** Implemented in 1064e13; the second review's decisions in 21be8c2.
+Where the help work goes next is the roadmap in `docs/help-research.md`.
 
-- `pnpm typecheck`, `pnpm lint` (no warnings) and `pnpm test` (37 files, 767 tests) pass;
-  `node --test scripts/lib/showcase-store.test.ts` passes (4). The e2e suite was not run.
 - The dev store `sandbox-shop-00` holds the eight showcase products, the six leftovers archived,
-  #1001 and the duplicates #1005 to #1007 cancelled, and three open real orders #1002 to #1004
-  tagged `showcase`. `pnpm showcase:store` is a no-op on it.
-- `pnpm seed --showcase` seeds 7 members, 8 teams, 8 workflows and 42 orders from #1201; the shop
-  is back on the dev fixture (`pnpm seed`). Phase 4's screenshots, for reference only, are in the
-  session scratchpad, not the repo.
+  #1001 cancelled, and three open real orders #1002 to #1004 tagged `showcase`.
+  `pnpm showcase:store` is a no-op on it.
+- `pnpm seed --showcase` seeds 7 members, 8 teams, 8 workflows and 42 orders from #1201;
+  `pnpm seed` puts the dev fixture back.
 
-Open for the next session:
-
-1. **Show more has no list.** ana's longest state is 17 rows against a page of 25. Either add about
-   ten Ready orders on Engraving and Finishing to the fixture, or let Finding your work describe
-   Show more in prose. Recommend prose: a picture of a button at the end of a list adds nothing,
-   and 10 more orders thicken every other picture.
-2. **"Making" before anyone starts.** By `orderPosition`, an order with any open run reads Making,
-   so an order whose items have workflows but no started task is Making, and Not started means only
-   "no workflow on any item". The showcase shows Not started 4, Making 39. The research's order
-   table counted 8 "not started" by the task meaning. This is the app's rule, not the seed's; the
-   help's Reading the orders list page has to say it exactly, or the rule is worth a look first.
-3. **A `by` member's id.** The seed records a `by` member's email under the seed member's id
-   (`memberActorOf` in `seedOrders`). Only the email is stored (`RunTask` has no member id), so
-   nothing reads wrong; resolving the real id is a small change if it ever matters.
-4. **Next in the help work:** the screenshot script (`scripts/help-screenshots.ts`), the screenshot
-   and steps parts with their rows and kit entries, then the help hub and the For members pages.
+The first review's four open items, as they ended: Show more is prose (decision 2 below); "Making"
+before anyone starts is `docs/order-not-started-research.md` (decision 3); the `by` member's id is
+stored (decision 1); the next help work is on the roadmap.
 
 ## Review (2026-10-07, second pass)
 
@@ -248,7 +233,11 @@ is removed and the five helpers only it used are no longer exported.
 
 ### Found on the way
 
-- **A cancellation webhook that never arrives leaves the order open in Baton forever.** Sync open
-  orders reads open orders only, so it cannot close an order it stored earlier. In production the
-  webhook is the path and Shopify retries it; locally it did not arrive. Not this plan's; worth a
-  line in the sync research if it recurs.
+- **A closing webhook that never arrives leaves the order open in Baton.** Sync open orders reads
+  open orders only, so it cannot close an order it stored earlier. Accepted as a risk on 2026-10-07,
+  no sync change. In production it needs eight failed deliveries over four hours while the order
+  closes. The merchant's recourse is Sync from Shopify on the order page, which stores the order
+  whole and closes it; any later webhook for the same order heals it too. An order deleted in
+  Shopify answers Gone there and keeps its row until retention. The help's Syncing from Shopify
+  page says when to press it. Why the local webhooks were missed is unknown: `logs/local-worker.log`
+  is rewritten on every server start, so it held nothing from the night before.

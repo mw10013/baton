@@ -334,8 +334,8 @@ describe("action table parser", () => {
 
     it("a spaced word finds its snake-case literal key", () => {
       const doctored = shopWorkSource.replace(
-        "| not started | open, no open run and no done run | Not started |",
-        "| not started | open, no open run and no done run | To make     |",
+        "| not started | open, an open run, no done run, no task on any open run started    | Not started |",
+        "| not started | open, an open run, no done run, no task on any open run started    | To make     |",
       );
       expect(doctored).not.toBe(shopWorkSource);
       expect(ActionTable.checkScreenColumns(doctored, labels)).toEqual([

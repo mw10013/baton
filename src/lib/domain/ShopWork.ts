@@ -103,13 +103,15 @@
  * Order positions, shop work: one per order, derived, never stored, by
  * {@link orderPosition}:
  *
- * | word        | meaning                           | screen      |
- * | ----------- | --------------------------------- | ----------- |
- * | not started | open, no open run and no done run | Not started |
- * | making      | open, an open run                 | Making      |
- * | made        | open, done runs and no open run   | Made        |
- * | fulfilled   | Shopify says `FULFILLED`          | Fulfilled   |
- * | cancelled   | Shopify says `cancelledAt`        | Cancelled   |
+ * | word        | meaning                                                            | screen      |
+ * | ----------- | ------------------------------------------------------------------ | ----------- |
+ * | unpaid      | open, no run on any item, not fully paid                           | Unpaid      |
+ * | no workflow | open, no run on any item, fully paid                               | No workflow |
+ * | not started | open, an open run, no done run, no task on any open run started    | Not started |
+ * | making      | open, an open run, and a done run or a started task on an open run | Making      |
+ * | made        | open, done runs and no open run                                    | Made        |
+ * | fulfilled   | Shopify says `FULFILLED`                                           | Fulfilled   |
+ * | cancelled   | Shopify says `cancelledAt`                                         | Cancelled   |
  *
  * Order issues, shop work: zero or more per open order, derived, never
  * stored, by {@link orderIssues}:
@@ -295,7 +297,7 @@ export const WORKFLOW_STATE_LABEL = {
  * two workflow states ({@link workflowIsActive}, labelled by
  * {@link WORKFLOW_STATE_LABEL}). Keyed `?state=` because each value is a
  * workflow state. All is the default and is not a value: it is the key left
- * out, as Open is `?show=` left out on the orders index
+ * out, as Making is `?show=` left out on the orders index
  * ({@link OrdersShow}).
  */
 export const WorkflowsIndexState = Schema.Literals(["active", "inactive"]);
@@ -306,9 +308,13 @@ export type WorkflowsIndexState = typeof WorkflowsIndexState.Type;
  * badge and the position values of its Show filter ({@link OrdersShow}). "Not started" is also
  * {@link RUN_UNSTARTED_LABEL}, the merchant's word for an open run nobody has
  * touched: it is the same fact one level down, and the two never render on
- * one row (the orders index shows positions, the order page shows runs).
+ * one row (the orders index shows positions, the order page shows runs). The
+ * two mean the same thing: an order is Not started when it has an open run
+ * and every one of its runs is Not started.
  */
 export const ORDER_POSITION_LABEL = {
+  unpaid: "Unpaid",
+  no_workflow: "No workflow",
   not_started: "Not started",
   making: "Making",
   made: "Made",
@@ -343,21 +349,23 @@ export const ORDER_ISSUE_LABEL = {
 
 /**
  * The labels of the orders index's Show filter ({@link OrdersShow}), in the
- * select's order: Open, the open positions of {@link ORDER_POSITION_LABEL},
- * Issues, the closed positions, All. Not a vocabulary table: Open, Issues and
- * All carry no rule of their own, and the two vocabulary tables cover the
- * words. `open` keys the default, which is `?show=` left out.
+ * select's order: the strip's five, then Open, Unpaid, the closed positions
+ * and All. Not a vocabulary table: Open, Issues and All carry no rule of
+ * their own, and the two vocabulary tables cover the words. The default,
+ * `?show=` left out, is Making.
  */
 export const ORDERS_SHOW_LABEL = {
-  open: "Open",
+  no_workflow: ORDER_POSITION_LABEL.no_workflow,
   not_started: ORDER_POSITION_LABEL.not_started,
   making: ORDER_POSITION_LABEL.making,
   made: ORDER_POSITION_LABEL.made,
   issues: "Issues",
+  open: "Open",
+  unpaid: ORDER_POSITION_LABEL.unpaid,
   fulfilled: ORDER_POSITION_LABEL.fulfilled,
   cancelled: ORDER_POSITION_LABEL.cancelled,
   all: "All",
-} as const satisfies Record<OrdersShow | "open", string>;
+} as const satisfies Record<OrdersShow, string>;
 
 /**
  * The vocabulary's verbs, as the action structs name them ({@link RunActions},
@@ -711,7 +719,7 @@ export const TAG_MAX_LENGTH = 255;
  * as typed and Flow compares tags exactly; only the admin's search folds
  * case, and a search box is not a match rule. Baton mints the tag and the
  * merchant copies it onto products, so a case typo on the product is the same
- * failure as any other typo: the order shows under Not started with the
+ * failure as any other typo: the order shows under No workflow with the
  * workflow in the Workflow select. Trimmed because a value Baton stores is
  * clean when stored. {@link TAG_MAX_LENGTH} is Shopify's tag length limit; Baton adds no
  * character rules of its own beyond what Shopify allows in a tag.
@@ -761,7 +769,7 @@ export type WorkflowState = typeof WorkflowState.Type;
  *   its tag;
  * - on an item that no workflow's tag **matches**, the order page says no
  *   workflow can start and offers the Workflow select; the orders index shows the
- *   order under Not started with nothing in Issues;
+ *   order under No workflow (or Unpaid) with nothing in Issues;
  * - the order page says a workflow **started for** N items.
  *
  * In identifiers: `match` is the tag test, and a workflow **creates** a run
@@ -1442,7 +1450,7 @@ export const SeedOrdersInput = Schema.Struct({
       /** Numeric suffix: the id becomes `SEED_ORDER_ID_PREFIX + n` and the name `#<n>`. */
       n: Schema.Number.check(Schema.isInt(), Schema.isGreaterThan(0)),
       fulfillmentStatus: Schema.optionalKey(Schema.String),
-      /** `PENDING`, `fullyPaid: false`: no runs are created, and the row reads as unpaid, with nothing in Issues. */
+      /** `PENDING`, `fullyPaid: false`: no runs are created, and the row's position is Unpaid, with nothing in Issues. */
       unpaid: Schema.optionalKey(Schema.Boolean),
       /** See {@link SeedPlacedDaysAgo}. */
       placedDaysAgo: Schema.optionalKey(SeedPlacedDaysAgo),
@@ -1489,26 +1497,35 @@ export const SeedOrdersInput = Schema.Struct({
 export type SeedOrdersInput = typeof SeedOrdersInput.Type;
 
 /**
- * An order's lifecycle position, the ladder: **Not started ·
- * Making · Made · Fulfilled**, and **Cancelled** beside it. One per order,
+ * An order's lifecycle position, the ladder: **Unpaid · No workflow · Not
+ * started · Making · Made · Fulfilled**, and **Cancelled** beside it. One per order,
  * derived from the order row and its run counts on every read and never
  * stored. Issues are not positions: an order being made can also be
  * blocked or waiting on a workflow choice, so those live on {@link OrderIssue}
  * and an order carries any number of them beside its one position.
  *
- * The first three rungs are Baton's: nothing has started, the bench has
- * it, every run is done and the order waits for the merchant to fulfil it.
- * The last two are Shopify's and use Shopify's own words, because they are
+ * The ladder is the bench. The first five rungs are Baton's: no run yet
+ * (unpaid, or paid with no workflow on any item), runs nobody has touched,
+ * the bench has it, every run is done and the order waits for the merchant
+ * to fulfil it. The last two are Shopify's and use Shopify's own words, because they are
  * facts Shopify records (`FULFILLED`, `cancelledAt`) and the merchant reads
  * the same words in the admin. No "shipped": the admin never says it, and it
  * is wrong for pickup and digital orders.
  *
- * The first rung is "Not started", not "To make". It holds every open order
- * with no open and no done run, which includes an unpaid order, an order
- * whose items matched no workflow, an order whose only run the merchant
- * cancelled, and an order whose only item Shopify removed. In the last three
- * the bench will make nothing, so "to make" was a promise the app could not
- * keep; "not started" is true of all four.
+ * The first bench rung, Not started, holds only orders a member can Start:
+ * an open run exists and nobody has touched any run. Unpaid and No workflow
+ * are the two no-run cases, split by Shopify's one payment fact
+ * (`fullyPaid`) so neither word is ever false: an unpaid order whose item
+ * would match is not "No workflow", and the merchant does not go looking for
+ * a tag. No workflow covers an untagged item, a run the merchant cancelled
+ * and an item Shopify removed, since the item has no workflow on it now,
+ * whatever the history. No workflow is a position and not an issue
+ * ({@link OrderIssue}) because an issue is an alarm, and a ready-made order
+ * would alarm forever.
+ *
+ * To make was retired when the rung held unpaid and untagged orders, and is
+ * not revived because Not started agrees with the item badge on the order
+ * page ({@link RUN_UNSTARTED_LABEL}), which now means the same thing.
  *
  * Never stored is what makes the packer's round trip automatic — fulfil in
  * Shopify, `orders/fulfilled` stores `FULFILLED`, the next read says
@@ -1522,6 +1539,8 @@ export type SeedOrdersInput = typeof SeedOrdersInput.Type;
  * comparing it inline. The labels are {@link ORDER_POSITION_LABEL}.
  */
 export const OrderPosition = Schema.Literals([
+  "unpaid",
+  "no_workflow",
   "not_started",
   "making",
   "made",
@@ -1532,7 +1551,8 @@ export type OrderPosition = typeof OrderPosition.Type;
 
 /**
  * The orders index's main filter, labelled Show: which orders the list holds.
- * `null` is Open, the default, {@link orderIsOpen}; a position
+ * `null` is the default and is **Making**, `?show=` left out; `"open"` is
+ * every open order ({@link orderIsOpen}); a position
  * ({@link orderPosition}) is itself; `"issues"` is every open order with at
  * least one {@link orderIssues} element; `"all"` is every stored order,
  * cancelled included, and the only value that reads both open and closed
@@ -1547,15 +1567,16 @@ export type OrderPosition = typeof OrderPosition.Type;
  * Issues as two filters could only add empty lists. Team does combine
  * ({@link ListOrdersInput} `team`); a search ignores both.
  *
- * Open is the default because retention keeps a year of orders
- * (`ShopLimits.orderRetentionDays` in Platform) and a merchant opening Orders
- * is looking at the bench, not at the year. `"issues"` and `"all"` are not
+ * Making is the default because a merchant opening Orders wants what the
+ * bench is doing now, the analog of the member's Started by you. Open is a
+ * Show value and not a strip cell because its count is Shopify's and the
+ * merchant already has it there. `"open"`, `"issues"` and `"all"` are not
  * an `OrderPosition`: nothing derives them from an order's runs alone.
  * The labels are {@link ORDERS_SHOW_LABEL}.
  */
 export const OrdersShow = Schema.Union([
   OrderPosition,
-  Schema.Literals(["issues", "all"]),
+  Schema.Literals(["open", "issues", "all"]),
 ]);
 export type OrdersShow = typeof OrdersShow.Type;
 
@@ -1599,8 +1620,9 @@ export type OrdersShow = typeof OrdersShow.Type;
  * it on every order for a ready-made product, such as a keychain taken off
  * the shelf, would be a permanent false alarm that teaches the merchant to
  * ignore the count. The accepted risk: a made-to-order product nobody
- * tagged sits in Not started, where the merchant sees it, and its order
- * page offers the Workflow select on the item.
+ * tagged sits in No workflow ({@link OrderPosition}), where the merchant
+ * sees it better than in an alarm they learn to ignore, and its order page
+ * offers the Workflow select on the item.
  *
  * Unpaid is not an issue: it is a Shopify fact the Payment column already
  * shows, not something the merchant fixes in Baton.
@@ -1758,7 +1780,7 @@ export const ListOrdersInput = Schema.Struct({
    */
   q: Schema.NullOr(ListSearch),
   /**
-   * {@link OrdersShow}: `null` is Open, `"all"` is every order. A position
+   * {@link OrdersShow}: `null` is Making, `"all"` is every order. A position
    * and `"issues"` each have a SQL form in `OrderRepository.listOrders` that
    * restates `orderPosition` or `orderIssues`. Always send the key, for the
    * same reason as `team`.
@@ -1794,14 +1816,16 @@ export type ListOrdersInput = typeof ListOrdersInput.Type;
  * the done ones. Closed runs are not counted: nothing derives from their
  * number. A closed run still holds its item ({@link RunState}), which
  * {@link multiMatchItems} reads off the run rows, and an order whose only
- * runs were closed reads as not started ({@link orderPosition}) with no
- * issue ({@link orderIssues}).
+ * runs were closed reads as no workflow or unpaid ({@link orderPosition})
+ * with no issue ({@link orderIssues}).
  */
 export const RunCounts = Schema.Struct({
   open: Schema.Number,
   done: Schema.Number,
   /** Open runs a worker or the merchant blocked ({@link runIsBlocked}). */
   blocked: Schema.Number,
+  /** Open runs with a started task ({@link runIsStarted}). */
+  started: Schema.Number,
 });
 export type RunCounts = typeof RunCounts.Type;
 
@@ -1843,10 +1867,15 @@ export type OrderRow = typeof OrderRow.Type;
  * with no runs at all — every historical order the open-orders sync pulls in —
  * reads as fulfilled (and one fulfilled with runs open cannot exist past the
  * next reconcile, which closes them). The open positions then follow the run
- * counts alone: no open and no done run is `not_started`, any open run is
- * `making`, only done runs is `made`. An order whose runs are all closed
- * reads not started, which is right, because nothing has started and the
- * items may take a new workflow from the Workflow select. Whether that is an issue is
+ * counts and one payment fact. No open and no done run is `no_workflow` when
+ * the order is fully paid and `unpaid` when it is not: no run exists, and
+ * payment says whether one could. An open run with no started task and no
+ * done run beside it is `not_started`: runs exist and nobody has touched
+ * them. An open run beside a done run, or with a started task, is
+ * `making`: the bench has touched the order. Only done runs is `made`. An
+ * order whose runs are all closed reads no workflow (or unpaid), which is
+ * right, because no item has a workflow on it now and the items may take a
+ * new one from the Workflow select. Whether that is an issue is
  * {@link orderIssues}' question, and the answer is no: a closed run is a
  * decided item. The SQL forms
  * in `OrderRepository.listOrders` restate these branches and must move with
@@ -1865,12 +1894,16 @@ export const orderPosition = ({
     fulfilled: orderIsFulfilled(order),
     none: runs.open === 0 && runs.done === 0,
     open: runs.open > 0,
+    touched: runs.done > 0 || runs.started > 0,
   }).pipe(
     Match.withReturnType<OrderPosition>(),
     Match.when({ cancelled: true }, () => "cancelled"),
     Match.when({ fulfilled: true }, () => "fulfilled"),
-    Match.when({ none: true }, () => "not_started"),
-    Match.when({ open: true }, () => "making"),
+    Match.when({ none: true }, () =>
+      order.fullyPaid ? "no_workflow" : "unpaid",
+    ),
+    Match.when({ open: true, touched: true }, () => "making"),
+    Match.when({ open: true }, () => "not_started"),
     Match.orElse(() => "made"),
   );
 
@@ -1938,26 +1971,28 @@ export const runCounts = (runs: readonly Run[]): RunCounts =>
       open: counts.open + (runIsOpen(run) ? 1 : 0),
       done: counts.done + (runIsDone(run) ? 1 : 0),
       blocked: counts.blocked + (runIsOpen(run) && runIsBlocked(run) ? 1 : 0),
+      started: counts.started + (runIsOpen(run) && runIsStarted(run) ? 1 : 0),
     }),
-    { open: 0, done: 0, blocked: 0 },
+    { open: 0, done: 0, blocked: 0, started: 0 },
   );
 
 /**
- * The counts on the orders index's strip, one per {@link OrdersShow} value
- * that reads open orders only: `open` is Open, `issues` is Issues, and the
- * three open positions are theirs.
+ * The counts on the orders index's strip, one per strip cell, in strip
+ * order: the four bench positions No workflow, Not started, Making and Made,
+ * then Issues.
  *
  * **A count is what choosing that value would show, given the team.** Counts
  * honour the team select and nothing else: not the search, because the
  * search ignores the filters ({@link ListOrdersInput} `q`); and not the Show
  * filter, because a count describes the list the merchant can switch to. So
  * the numbers move only when the team changes, which is what a merchant
- * expects a team select to do. `open` is the sum of the three positions.
+ * expects a team select to do.
  *
  * All are computed over open orders only. They are read through the partial
  * index over unfulfilled, uncancelled orders, so a count costs one row per
  * open order, not one per order ever stored. So Fulfilled, Cancelled and All carry no
- * count: on a shop with years of history that would be a full-table read on
+ * count, and neither do Open and Unpaid, which are not strip cells
+ * ({@link OrdersShow}): on a shop with years of history that would be a full-table read on
  * every refresh of a live screen.
  *
  * Refreshes are bounded by the live screen's invalidation throttle,
@@ -1965,11 +2000,11 @@ export const runCounts = (runs: readonly Run[]): RunCounts =>
  * here.
  */
 export const OrderCounts = Schema.Struct({
-  open: Schema.Number,
-  issues: Schema.Number,
+  no_workflow: Schema.Number,
   not_started: Schema.Number,
   making: Schema.Number,
   made: Schema.Number,
+  issues: Schema.Number,
 });
 export type OrderCounts = typeof OrderCounts.Type;
 
@@ -1978,6 +2013,14 @@ export const OrdersPage = Schema.Struct({
   limit: Schema.Number,
   nextCursor: Schema.NullOr(OrdersCursor),
   counts: OrderCounts,
+  /**
+   * How many open orders the team leaves, read in the counts statement. Not
+   * a count ({@link OrderCounts}): Open has no strip cell
+   * ({@link OrdersShow}). The orders index reads it only to tell a shop with
+   * no open orders, which gets the first-run empty state, from an empty
+   * Making list, the default, which does not.
+   */
+  openOrders: Schema.Number,
   /**
    * How many stored orders the search finds, over every page; `null` without
    * a search. Not a count ({@link OrderCounts}): it is the search's answer,
@@ -2252,6 +2295,15 @@ export const runIsUnstarted = (
 ) => tasks.every((task) => task.startedAt === null && task.doneAt === null);
 
 /**
+ * The run row says a task of it is started: the row-side twin of
+ * `!runIsUnstarted(tasks)` ({@link runIsUnstarted}), read off the
+ * denormalized `Run.startedAt`. The orders index and {@link runCounts} read
+ * it; the order page keeps reading the tasks.
+ */
+export const runIsStarted = (run: { readonly startedAt: number | null }) =>
+  run.startedAt !== null;
+
+/**
  * The run carries a record a replacement would lose: a task started or
  * done, a block, or a note. Change workflow inserts the new run fresh from
  * its definition, so all four go with the old row, and its modal names
@@ -2341,6 +2393,14 @@ export const Run = Schema.Struct({
    */
   lineItemProperties: Schema.fromJsonString(Schema.Array(LineItemProperty)),
   state: RunState,
+  /**
+   * The earliest `startedAt` of the run's tasks, denormalized like `state`
+   * and recomputed with it by every task write; null is an untouched run
+   * ({@link runIsUnstarted} over the tasks says the same thing; this column
+   * says it on the run row, for the orders index's per-order facts). Read it
+   * through {@link runIsStarted}.
+   */
+  startedAt: Schema.NullOr(Schema.Number),
   /** When the run was blocked; null is not blocked ({@link runIsBlocked}). */
   blockedAt: Schema.NullOr(Schema.Number),
   blockReason: Schema.NullOr(BlockReason),

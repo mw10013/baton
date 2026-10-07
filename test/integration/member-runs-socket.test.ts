@@ -264,7 +264,7 @@ describe("member workflows list socket", () => {
       limit: 50,
       cursor: null,
       q: null,
-      show: null,
+      show: "open",
       team: null,
     });
     const otherOrder = await openMerchantSocket(shop);

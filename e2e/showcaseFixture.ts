@@ -542,9 +542,11 @@ const made: readonly OrderSpec[] = [
 ];
 
 const oddOnes: readonly OrderSpec[] = [
-  // two workflows match: the Multiple workflows match card
+  // two workflows match: the Multiple workflows match card, No workflow on
+  // the index
   { lineItems: [line(GIFT_SET, "Black", 1)] },
-  // nothing to attach: a gift card alone, and beside a board
+  // nothing to attach: a gift card alone (No workflow), and beside a board
+  // (Not started, by the board's run)
   { lineItems: [line(GIFT_CARD, "$50", 1)] },
   {
     lineItems: [
@@ -552,7 +554,7 @@ const oddOnes: readonly OrderSpec[] = [
       line(BOARD, "Maple", 1, { [ENGRAVING_TEXT]: "Merry Christmas" }),
     ],
   },
-  // unpaid: no runs are made until it is paid
+  // unpaid: no runs are made until it is paid, so Unpaid on the index
   {
     unpaid: true,
     lineItems: [line(BOARD, "Walnut", 1, { [ENGRAVING_TEXT]: "Thank you" })],

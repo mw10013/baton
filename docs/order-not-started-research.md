@@ -1,7 +1,8 @@
 # What "Not started" means on the orders index
 
 Written 2026-10-07, while reviewing the showcase shop (`docs/showcase-shop-plan.md`, question 3 of
-its second review). Parked for later; nothing here is decided. The question: should the orders
+its second review); checked against the code the same day. Decided 2026-10-07 (see Decisions); no
+question remains open. The plan is `docs/order-not-started-plan.md`. The question: should the orders
 index's Not started position mean "no item has a workflow" (today) or "nobody has touched it"? The
 help's Reading the orders list page (`/help/orders/orders-list`) waits on the answer, because it
 has to say exactly what each strip value holds.
@@ -34,11 +35,16 @@ member has seen it.
 The rule is stated three times and the three must move together:
 
 - `Domain.orderPosition` (the definition), and its JSDoc on `OrderPosition`.
-- `OrderRepository.listOrders`: the Show filter's SQL per position (`showFilter`, the `Match.when`
-  branches near `"not_started"`) and the strip's counts (`COUNT_FACT`: `not_started` is
-  `openRuns = 0 and doneRuns = 0`, `making` is `openRuns > 0`, `made` is `doneRuns > 0 and openRuns = 0`).
+- `OrderRepository.listOrders`: the Show filter's SQL per position (`showFilter`: `not_started` is
+  `OPEN` and no `OPEN_RUN` and no `DONE_RUN`, correlated subqueries on `Run`) and the strip's counts
+  (`COUNT_FACT`: `not_started` is `openRuns = 0 and doneRuns = 0`, `making` is `openRuns > 0`,
+  `made` is `doneRuns > 0 and openRuns = 0`). Both are served by `Run_orderId_state_idx (orderId,
+state)`; neither statement reads `RunTask`.
 - `Domain.RunCounts` (`open`, `done`, `blocked` per order): the only per-order run facts the index
   reads. There is no "touched" fact.
+
+The order page computes the same position for its facts line from its own runs (`orderPosition`
+takes `Pick<OrderRow, "order" | "runs">` for that reason), so a fourth site follows the three.
 
 The vocabulary row (top of `src/lib/domain/ShopWork.ts`, "Order positions"): `not started | open, no
 open run and no done run | Not started`. The label is `ORDER_POSITION_LABEL.not_started`.
@@ -69,6 +75,13 @@ So a merchant who opens a Making order from the index can find every item on it 
 The index says the bench has it; the order page says nobody has started. Both are true under their
 own definitions, and the screens never say which.
 
+The badge ignores blocks and notes: `runStateBadge` shows Not started whenever the run is open and
+`runIsUnstarted`, so a run the merchant blocked before anyone started reads Not started with
+Blocked beside it (the e2e fixture's order 1033 is written to show exactly that). The other
+predicate, `Domain.runHasRecord` (a task started or done, a block, or a note), is what Change
+workflow's confirm and `changeWarning.ts` read. Any "touched" rule for the order position has to
+pick one of the two; the order page has already picked `runIsUnstarted`.
+
 `docs/reconcile-research.md` (the scenario table under the B option) also uses "a run at Not started"
 in the run sense.
 
@@ -92,9 +105,10 @@ screens one click apart, and the strip's Not started count is near zero on a wor
 
 **B. Not started means nobody has touched it.** Not started: open, and no task on any of its runs
 started or done (orders with no runs at all stay here too). Making: some task started or done on an
-open run. Made: unchanged. This matches `runIsUnstarted`, so the two screens agree, and the strip
-answers "how much is waiting". Untagged orders still land in Not started, mixed with untouched
-routed orders; the safety net becomes harder to see.
+open run. Made: unchanged. This matches `runIsUnstarted` (blocks and notes do not count), so the
+two screens agree, and the strip answers "how much is waiting". Untagged orders still land in Not
+started, mixed with untouched routed orders; the safety net becomes harder to see. A blocked
+untouched order reads Not started with Blocked in Issues, as its order page already does.
 
 **C. B, plus a separate place for what Baton is not making.** As B, and the orders Baton will not
 make (no run on any item, not unpaid) get their own filter or an issue again. 7e1e88f argued against
@@ -105,6 +119,74 @@ issue, would avoid the alarm. More screen.
 like "No workflow" (the word 7e1e88f retired) or "Not in Baton". Then Making covers untouched routed
 orders honestly only if "Making" can mean "queued". It cannot, quite: nobody is making it.
 
+**E. The ladder is the bench; orders with no run leave it.** Three honest facts about an open
+order differ in who can act next:
+
+| fact                  | who can act next                           | today       | B           | E                     |
+| --------------------- | ------------------------------------------ | ----------- | ----------- | --------------------- |
+| no run on any item    | nobody, or the merchant (pay, tag, attach) | Not started | Not started | Unpaid or No workflow |
+| runs, no task started | a member can Start                         | Making      | Not started | Not started           |
+| a task started        | the bench is on it                         | Making      | Making      | Making                |
+
+Today merges the second and third rows and overstates; B merges the first and second, so Not
+started still promises a Start that is not there, for fewer orders. E makes every word exactly
+true. Concretely:
+
+_The positions._ `OrderPosition` grows from five to seven values. One per order, derived, never
+stored, as now. The order of the checks: cancelled, fulfilled, then the run counts, then payment.
+
+| position    | rule                                                  | Status badge | who acts                               |
+| ----------- | ----------------------------------------------------- | ------------ | -------------------------------------- |
+| unpaid      | open, no run on any item, Shopify says not fully paid | Unpaid       | the customer, in Shopify               |
+| no workflow | open, no run on any item, fully paid                  | No workflow  | the merchant: tag, attach, or leave it |
+| not started | open, a run, no task on any run started or done       | Not started  | a member can Start                     |
+| making      | open, a task on an open run started or done           | Making       | the bench                              |
+| made        | open, done runs and no open run                       | Made         | the merchant fulfils                   |
+| fulfilled   | Shopify says `FULFILLED`                              | Fulfilled    |                                        |
+| cancelled   | Shopify says `cancelledAt`                            | Cancelled    |                                        |
+
+Unpaid and No workflow split today's Not started by one Shopify fact, so neither word is ever
+false: an unpaid order whose item would match is not "No workflow", and the merchant does not go
+looking for a tag. No workflow covers the rest of the no-run cases (untagged, a cancelled run, an
+item Shopify removed): the item has no workflow on it now, whatever the history. These two are
+positions with a badge, in the Status column of every row, like Fulfilled and Cancelled.
+
+_The strip._ Unchanged: Open, Not started, Making, Made, Issues. Not started and Making change
+meaning, nothing is added. Unpaid and No workflow join the Show select after Issues, with no
+count, as Fulfilled and Cancelled do. Open's count still includes them; the three bench cells no
+longer sum to Open, which the merchant never read off the strip anyway. The alternative is seven
+cells (Open, Unpaid, No workflow, Not started, Making, Made, Issues), which answers "how many
+untagged orders" at a glance at the cost of a wider strip.
+
+_What the merchant sees._ The showcase shop today: Not started 4, Making 39. Under E: Not started
+holds the untouched routed orders (the eight the seed meant as "not started"), Making the ones a
+member has started, and the Open list shows the two gift-card orders badged No workflow and the
+unpaid one badged Unpaid, with nothing in Issues. The untagged made-to-order product the safety
+net exists for is now badged No workflow in the Open list, which is more visible than today's
+Not started, not less.
+
+_The order page._ Its facts line reads the same `orderPosition`. The item badge Not started
+(`RUN_UNSTARTED_LABEL`) is unchanged and now means the same thing as the order's Not started.
+
+_The member side._ Nothing changes. A member's Workflows list reads runs and tasks (states
+Started by you, Started by others, Ready, Blocked, Done); an order with no run never reaches a
+member, under any option. The merchant's Not started under E is the same set of orders the
+member's Ready shows, in the merchant's word.
+
+_"To make" instead of "Not started"._ To make was retired because the rung held unpaid and
+untagged orders the bench would never make. Under E the rung holds only orders a member can
+Start, so that objection is gone and the choice is which word reads better. Not started agrees
+with the item badge on the order page, which would have to rename with it, and the three-rung
+ladder reads as a timeline (Not started, Making, Made). To make reads as a to-do and sits beside
+the member's Ready. Either works; the vocabulary rule is one word, one meaning, so whichever
+word the rung takes, the item badge takes too.
+
+_No workflow as a position does not reopen 7e1e88f._ That commit retired No workflow as an
+_issue_, because an issue is an alarm and a ready-made order would alarm forever. A position is a
+count and a neutral badge, not an alarm, and it is true. Cost of E: two vocabulary rows, the
+`OrderPosition` and SQL changes B needs plus two more branches, the Show select, the help, the
+seeds and their e2e assertions.
+
 ## What B would touch
 
 - Vocabulary row for `not started` and `making` (the "Order positions" table), in the same change.
@@ -112,31 +194,60 @@ orders honestly only if "Making" can mean "queued". It cannot, quite: nobody is 
 - `RunCounts` or `OrderRow`: a per-order "touched" fact. Two ways:
   - read it from `RunTask` (`startedAt`, `doneAt`) in the list query: a join or an `exists` per
     order. `docs/index-counts-performance-research.md` measured the count statement; a `RunTask`
-    subquery is new cost on every live refresh and needs measuring.
+    subquery is new cost on every live refresh and needs measuring. The only `RunTask` index today
+    is `RunTask_teamId_idx (teamId, doneAt)`; a per-run `exists` would want one on `(runId,
+startedAt)` or a scan of the run's tasks.
   - denormalize it onto `Run`, as `state` already is (`RunRepository`'s `recomputeState`): a
-    `touchedAt` or `startedAt` column on `Run`, written by start, done, put back and undo. Then
-    `COUNT_FACT` stays on `Run` rows and the `(orderId, state)` index. A data-model row in the table
-    on `initializeSchema` (`src/lib/ShopAgentSchema.ts`), with its pinned test.
+    `startedAt` column on `Run` holding the earliest task start, set by Start and by a Done without
+    Start, recomputed by Put back and Reopen (both clear a task's `startedAt`, so the run's column
+    clears only when every task's does). Then `COUNT_FACT` stays on `Run` rows and the `(orderId,
+state)` index. A data-model row in the table on `initializeSchema` (`src/lib/ShopAgentSchema.ts`),
+    with its pinned test, and the `holds by` column says schema+app.
 - `OrderRepository.listOrders`: `showFilter` and `COUNT_FACT` for `not_started` and `making`.
-- Tests: `orderPosition`'s, the listOrders filter and count tests, and the vocabulary check.
-- Seeds: the dev fixture's and the showcase's position counts change; the e2e assertions on strip
-  counts move.
-- The help's Reading the orders list.
+- The order page's facts line: it rebuilds `RunCounts` from its runs and would also need the fact.
+- Tests: `orderPosition`'s table in `test/integration/domain.test.ts` ("no open and no done run is
+  not started"), the listOrders filter and count tests, and the vocabulary row check in
+  `test/integration/spec.test.ts`.
+- Seeds: the dev fixture's comments (`e2e/fixture.ts`, orders 1009, 1010, 1033) and the showcase's
+  position counts change; the strip assertions in `e2e/orders.spec.ts` move.
+- The help's Reading the orders list (`helpPages.ts`, slug `orders-list`; its description already
+  names Not started, Making and Made).
 
-## Open questions
+## Decisions
 
-These stay open until the topic is taken up.
+Taken 2026-10-07 in review. Option E is the design; the help's Reading the orders list writes to it.
 
-1. Does Put back (a member un-starting a task) make an order Not started again, if nothing else on
-   it was started or done? Under B as written, yes. Recommend yes: the order page's badge already
-   reads that way.
-2. Does a block count as touching? A merchant can block a run nobody started. Recommend yes: a block
-   is a record someone made, and a blocked order is in Issues either way.
-3. Does a run note count? Recommend no: a note is not work.
-4. An order with one item done and another untouched: Making under B. Recommend yes: the bench has
-   begun the order.
-5. Where does an order with no run on any item go under B: Not started (as now), or its own place
-   (option C)? This is the safety-net question and the main one.
+1. **Option E.** The ladder is the bench. `OrderPosition` grows to seven values: unpaid, no
+   workflow, not started, making, made, fulfilled, cancelled, with the rules in the table under
+   option E. Not started means a member can Start; Making means a task started or done.
+2. **The first bench rung is Not started**, not To make. The order page's item badge keeps its word
+   and now means the same thing as the order's position.
+3. **A cancelled run and a removed item are No workflow.** No run on any item, paid, is No workflow
+   whatever the history; no third word.
+4. **A block or a note does not count as touching.** The position follows `runIsUnstarted`, as the
+   order page's badge does; `runHasRecord` stays Change workflow's question.
+5. **Put back returns an order to Not started** when nothing else on it was started or done.
+6. **The touched fact is a denormalized column on `Run`**, recomputed with `state` on Start, Done,
+   Put back and Reopen, with a data-model row and its pinned test. `COUNT_FACT` and `showFilter`
+   stay on the `(orderId, state)` index.
+7. **Taken up before the help page is written.** One pass over the help.
+8. **No workflow is not an issue.** Confirmed in review: an issue is an alarm, a ready-made order
+   would alarm forever, and the merchant could not clear it. 7e1e88f stands.
+9. **The strip drops Open and adds No workflow.** Five cells. Open is Shopify's two facts, not a
+   position; its count is "orders I still owe customers", which Shopify's own Orders page already
+   shows, and its only job on the strip was the way back to the default. It stays in the Show
+   select. Unpaid is a badge and a Show value with no count: the customer acts on it in Shopify,
+   not the merchant in Baton.
+10. **The default is Making, and the strip is in the order an order moves.** No workflow · Not
+    started · Making · Made · Issues, Making pressed with `?show=` left out. The member's default
+    is Started by you, what you are doing now; the merchant's analog is what the bench is doing
+    now. One rule orders the cells, the order an order moves, so the help can say it in one
+    sentence; Issues is last because it cuts across the four, and the alarm reads best at the
+    end, where the member strip puts Blocked. "Default first" (the member strip's rule) was
+    considered and rejected: it breaks the timeline for a cosmetic gain, and its "you first"
+    reason does not apply to a merchant.
+
+An order with one item done and another untouched is Making: the bench has begun the order.
 
 ## Sources
 
@@ -144,8 +255,14 @@ These stay open until the topic is taken up.
   `OrderCounts`, `ORDER_POSITION_LABEL`, `RUN_UNSTARTED_LABEL`, `runIsUnstarted`, the "Order
   positions" vocabulary table.
 - `src/lib/OrderRepository.ts`: `OPEN`, `COUNT_FACT`, the `showFilter` branches in `listOrders`.
+- `src/lib/domain/ShopWork.ts`: `runHasRecord`, the other touched predicate; `src/lib/changeWarning.ts`
+  and `src/lib/RunRepository.ts` read `runIsUnstarted` too.
 - `src/routes/app.orders.$orderId.tsx`: `RUN_STATE_BADGE`, `NOT_STARTED_BADGE`, `runStateBadge`.
-- `src/lib/ShopAgentSchema.ts`: the `Run` DDL (`state` is denormalized from the tasks).
+- `src/lib/ShopAgentSchema.ts`: the `Run` DDL (`state` is denormalized from the tasks), the `RunTask`
+  DDL and `RunTask_teamId_idx`.
+- `e2e/fixture.ts` (orders 1009, 1010, 1033), `e2e/orders.spec.ts` (strip counts),
+  `test/integration/domain.test.ts` (`orderPosition`'s table).
+- `src/lib/helpPages.ts`: the `orders-list` page entry.
 - Commit 7e1e88f (`git show 7e1e88f -- docs/view-row-press-button-plan.md`): No workflow leaves Issues.
 - `docs/list-filter-search-research.md`: what the strip is for.
 - `docs/showcase-shop-research.md`, `docs/showcase-shop-plan.md`: where it surfaced.

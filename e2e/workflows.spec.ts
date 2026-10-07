@@ -347,7 +347,10 @@ test("a fresh workflow turns on from the editor, then edits go through the draft
     }),
   );
   await expect(
-    frame.getByText("Items already on it keep going.", { exact: false }),
+    frame.getByText(
+      "New orders won't start this workflow. Items already on it keep going.",
+      { exact: true },
+    ),
   ).toBeVisible();
   await frame.getByRole("button", { name: "Turn off", exact: true }).click();
   await expect(
@@ -412,6 +415,10 @@ test("turning on a workflow creates runs on the open orders already stored", asy
      because another item's Workflow select on the same page lists every workflow by
      name. */
   await clickHoisted(appNavLink(page, "Orders"));
+  /* Show: Open: the default, Making, leaves out an order nobody has started. */
+  await frame
+    .getByRole("combobox", { name: "Show" })
+    .selectOption({ label: "Open" });
   await frame.getByRole("link", { name: "#9101", exact: true }).click();
   await expect(frame.locator('s-page[heading="#9101"]')).toBeVisible();
   const band = frame.locator("s-section").filter({

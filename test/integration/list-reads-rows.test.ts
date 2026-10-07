@@ -137,7 +137,7 @@ describe("list reads, rows read", () => {
             limit: 25,
             cursor: null,
             q: null,
-            show: null,
+            show: "open",
             team: null,
             teams: TEAMS,
           }),

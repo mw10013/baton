@@ -131,7 +131,7 @@ const json = (value: unknown) => JSON.stringify(value);
  * (`Domain.RunState`): it is in `RUN_FOR_ITEM`, so an item whose run closed
  * is not "Multiple workflows match" (a closed run is a decided item), and it is in
  * no position fragment
- * but `not_started`'s, which asks for no open and no done run.
+ * but `unpaid`'s and `no_workflow`'s, which ask for no open and no done run.
  */
 const OPEN = "fulfillmentStatus <> 'FULFILLED' and cancelledAt is null";
 /**
@@ -145,6 +145,14 @@ const OPEN_RUN = `select 1 from Run r
   where r.orderId = ShopOrder.id and r.state = 'open'`;
 const DONE_RUN = `select 1 from Run r
   where r.orderId = ShopOrder.id and r.state = 'done'`;
+/**
+ * An open run with a started task (`Domain.runIsStarted`), read off the
+ * denormalized `Run.startedAt`. Served by `Run_orderId_state_idx` on both
+ * terms, with `startedAt` as a residual.
+ */
+const STARTED_RUN = `select 1 from Run r
+  where r.orderId = ShopOrder.id and r.state = 'open'
+    and r.startedAt is not null`;
 /** The `blocked` {@link Domain.OrderIssue}: an open run a worker or the merchant blocked. */
 const BLOCKED_RUN = `select 1 from Run r
   where r.orderId = ShopOrder.id and r.state = 'open'
@@ -199,15 +207,15 @@ const MULTI_MATCH = `exists (${MULTI_MATCH_ITEM})`;
  * Each counted filter value's predicate over the `facts` rows of the count
  * statement in `listOrders`: `showFilter` restated over per-order facts
  * instead of correlated subqueries, and moving with it. `OPEN` is the
- * statement's own `where`, so `open` is every row. `issues` is the three
- * `Domain.orderIssues` elements or'd.
+ * statement's own `where`. `issues` is the three `Domain.orderIssues`
+ * elements or'd.
  */
 const COUNT_FACT = {
-  open: "1",
-  issues: "multiMatch or unassigned or blockedRuns > 0",
-  not_started: "openRuns = 0 and doneRuns = 0",
-  making: "openRuns > 0",
+  no_workflow: "openRuns = 0 and doneRuns = 0 and fullyPaid",
+  not_started: "openRuns > 0 and doneRuns = 0 and startedRuns = 0",
+  making: "openRuns > 0 and (doneRuns > 0 or startedRuns > 0)",
   made: "doneRuns > 0 and openRuns = 0",
+  issues: "multiMatch or unassigned or blockedRuns > 0",
 } as const satisfies Record<keyof Domain.OrderCounts, string>;
 
 const bit = (value: boolean) => (value ? 1 : 0);
@@ -1062,21 +1070,40 @@ export class OrderRepository extends Context.Service<
                     and ${sql.literal(CurrentWhere.currentWhere("s"))}
                 )`;
           /**
-           * The open positions partition the open orders by run state alone:
-           * no open and no done run is `not_started`, any open run is
-           * `making`, only done runs is `made`, as `Domain.orderPosition`
-           * says. Issues is `OPEN` and the three `Domain.orderIssues`
-           * elements or'd, each the fragment above that restates it.
+           * The open positions partition the open orders by run state and
+           * payment, as `Domain.orderPosition` says: no open and no done run
+           * is `unpaid` or `no_workflow` by `fullyPaid`; an open run with no
+           * done run and no started open run is `not_started`; an open run
+           * beside a done run or a started open run is `making`; only done
+           * runs is `made`. Issues is `OPEN` and the three
+           * `Domain.orderIssues` elements or'd, each the fragment above that
+           * restates it.
            */
+          const noRun = (fullyPaid: 0 | 1) =>
+            sql.and([
+              OPEN,
+              `fullyPaid = ${String(fullyPaid)}`,
+              `not exists (${OPEN_RUN})`,
+              `not exists (${DONE_RUN})`,
+            ]);
+          const making = () =>
+            sql.and([
+              OPEN,
+              `exists (${OPEN_RUN})`,
+              `(exists (${DONE_RUN}) or exists (${STARTED_RUN}))`,
+            ]);
           const showFilter = Match.value(show).pipe(
+            Match.when("unpaid", () => noRun(0)),
+            Match.when("no_workflow", () => noRun(1)),
             Match.when("not_started", () =>
               sql.and([
                 OPEN,
-                `not exists (${OPEN_RUN})`,
+                `exists (${OPEN_RUN})`,
                 `not exists (${DONE_RUN})`,
+                `not exists (${STARTED_RUN})`,
               ]),
             ),
-            Match.when("making", () => sql.and([OPEN, `exists (${OPEN_RUN})`])),
+            Match.when("making", making),
             Match.when("made", () =>
               sql.and([
                 OPEN,
@@ -1104,13 +1131,14 @@ export class OrderRepository extends Context.Service<
               ]),
             ),
             /**
-             * `null` is Open, the default, and it is open work, not
-             * everything: the negation of the `fulfilled` and `cancelled`
-             * branches above, spelled as `OPEN` so the partial index serves
-             * it. `"all"`, `"fulfilled"` and `"cancelled"` are the only values
-             * that read a shop's history ({@link Domain.OrdersShow}).
+             * `null` is Making, the default ({@link Domain.OrdersShow}).
+             * `"open"` is open work, not everything: the negation of the
+             * `fulfilled` and `cancelled` branches above, spelled as `OPEN`
+             * so the partial index serves it. `"all"`, `"fulfilled"` and
+             * `"cancelled"` are the only values that read a shop's history.
              */
-            Match.when(null, () => sql.literal(OPEN)),
+            Match.when(null, making),
+            Match.when("open", () => sql.literal(OPEN)),
             Match.when("all", () => sql.literal("1 = 1")),
             Match.exhaustive,
           );
@@ -1194,7 +1222,8 @@ export class OrderRepository extends Context.Service<
                     orderId,
                     sum(state = 'open') as open,
                     sum(state = 'done') as done,
-                    sum(blockedAt is not null and state = 'open') as blocked
+                    sum(blockedAt is not null and state = 'open') as blocked,
+                    sum(startedAt is not null and state = 'open') as started
                   from Run
                   where ${sql.in("orderId", ids)}
                   group by orderId
@@ -1239,6 +1268,7 @@ export class OrderRepository extends Context.Service<
                 open: Number(row[1] ?? 0),
                 done: Number(row[2] ?? 0),
                 blocked: Number(row[3] ?? 0),
+                started: Number(row[4] ?? 0),
               } satisfies Domain.RunCounts,
             ]),
           );
@@ -1269,7 +1299,8 @@ export class OrderRepository extends Context.Service<
                 select r.orderId,
                   sum(r.state = 'open') as openRuns,
                   sum(r.state = 'done') as doneRuns,
-                  sum(r.state = 'open' and r.blockedAt is not null) as blockedRuns
+                  sum(r.state = 'open' and r.blockedAt is not null) as blockedRuns,
+                  sum(r.state = 'open' and r.startedAt is not null) as startedRuns
                 from ShopOrder o
                 cross join Run r on r.orderId = o.id
                 where ${sql.literal(openAs("o"))}
@@ -1280,6 +1311,8 @@ export class OrderRepository extends Context.Service<
                   coalesce(rs.openRuns, 0) as openRuns,
                   coalesce(rs.doneRuns, 0) as doneRuns,
                   coalesce(rs.blockedRuns, 0) as blockedRuns,
+                  coalesce(rs.startedRuns, 0) as startedRuns,
+                  ShopOrder.fullyPaid as fullyPaid,
                   (${sql.literal(MULTI_MATCH)}) as multiMatch,
                   ${unassignedRun} as unassigned
                 from ShopOrder
@@ -1288,18 +1321,20 @@ export class OrderRepository extends Context.Service<
               )
               select
                 count(*),
-                sum(${sql.literal(COUNT_FACT.issues)}),
+                sum(${sql.literal(COUNT_FACT.no_workflow)}),
                 sum(${sql.literal(COUNT_FACT.not_started)}),
                 sum(${sql.literal(COUNT_FACT.making)}),
-                sum(${sql.literal(COUNT_FACT.made)})
+                sum(${sql.literal(COUNT_FACT.made)}),
+                sum(${sql.literal(COUNT_FACT.issues)})
               from facts
             `.values;
+          const openOrders = Number(countRow?.[0] ?? 0);
           const counts = {
-            open: Number(countRow?.[0] ?? 0),
-            issues: Number(countRow?.[1] ?? 0),
+            no_workflow: Number(countRow?.[1] ?? 0),
             not_started: Number(countRow?.[2] ?? 0),
             making: Number(countRow?.[3] ?? 0),
             made: Number(countRow?.[4] ?? 0),
+            issues: Number(countRow?.[5] ?? 0),
           } satisfies Domain.OrderCounts;
           /**
            * `Domain.OrdersPage.matches`: read only under a search, over every
@@ -1322,7 +1357,7 @@ export class OrderRepository extends Context.Service<
                 open: 0,
                 done: 0,
                 blocked: 0,
-                closed: 0,
+                started: 0,
               },
               unassigned: unassignedIds.has(order.id),
               multiMatchItems: multiMatch.get(order.id) ?? 0,
@@ -1333,6 +1368,7 @@ export class OrderRepository extends Context.Service<
                 ? encodeCursor(last)
                 : null,
             counts,
+            openOrders,
             matches,
           } satisfies Domain.OrdersPage;
         }),

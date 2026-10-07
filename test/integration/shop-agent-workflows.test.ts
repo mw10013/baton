@@ -1558,7 +1558,7 @@ const ordersPage = async (
     limit: 50,
     cursor: null,
     q: null,
-    show: null,
+    show: "open",
     team: null,
   });
   return data.page.orders;
@@ -1692,7 +1692,7 @@ describe("ShopAgent seed callables", () => {
     const [chosen] = await ordersPage(agent);
     strictEqual(
       chosen === undefined ? null : Domain.orderPosition(chosen),
-      "making",
+      "not_started",
     );
     strictEqual(
       chosen === undefined

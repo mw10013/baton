@@ -46,15 +46,16 @@ const ordersQueryKey = (
 ) => ["orders", shop, q, show, team, after] as const;
 
 /**
- * The strip, left to right: Open (the default, `?show=` left out), the
- * three open positions in the order an order moves, then Issues. These are
- * the five Show values `Domain.OrderCounts` counts; each cell is the value's
- * name over its count, and choosing it sets the Show filter. Fulfilled,
- * Cancelled and All carry no count and live only in the Show select.
- * Labels are `Domain.ORDERS_SHOW_LABEL`.
+ * The strip, left to right: the four positions No workflow, Not started,
+ * Making and Made in the order an order moves, then Issues, which cuts
+ * across them. These are the five values `Domain.OrderCounts` counts; each
+ * cell is the value's name over its count, and choosing it sets the Show
+ * filter. Making is the default, `?show=` left out, and is the chosen cell
+ * then. Open, Unpaid, Fulfilled, Cancelled and All carry no count and live
+ * in the Show select. Labels are `Domain.ORDERS_SHOW_LABEL`.
  */
 const STRIP: readonly (keyof Domain.OrderCounts)[] = [
-  "open",
+  "no_workflow",
   "not_started",
   "making",
   "made",
@@ -62,16 +63,19 @@ const STRIP: readonly (keyof Domain.OrderCounts)[] = [
 ];
 
 /**
- * The Show select's values, in its order: the strip's five, then the closed
- * positions and All. Open's option value is `"open"`, not `""`: an
- * `s-option` with an empty value takes its label as the value.
+ * The Show select's values, in its order: the strip's five, then Open,
+ * Unpaid, the closed positions and All; `null` is Making, the default.
+ * Making's option value is `"making"`, not `""`: an `s-option` with an
+ * empty value takes its label as the value.
  */
 const SHOW: readonly (Domain.OrdersShow | null)[] = [
-  null,
+  "no_workflow",
   "not_started",
-  "making",
+  null,
   "made",
   "issues",
+  "open",
+  "unpaid",
   "fulfilled",
   "cancelled",
   "all",
@@ -108,17 +112,18 @@ const orderLocation = ({ legacyId }: Domain.ShopOrder) =>
 /**
  * The Status cell: the ladder badge, from `Domain.orderPosition` over the
  * row, one for every order, labelled by `Domain.ORDER_POSITION_LABEL`.
- * The Issues cell says when a not-started order waits on the merchant; an
- * order whose items matched no workflow is Not started and shows nothing
- * there, on purpose ({@link Domain.OrderIssue} says why). Made is
- * derived, never stored: it becomes Fulfilled on its own once Shopify
- * reports the fulfilment.
+ * The Issues cell is empty for a No workflow order on purpose
+ * ({@link Domain.OrderIssue} says why), and this badge is the place the
+ * merchant sees it. Made is derived, never stored: it becomes Fulfilled on
+ * its own once Shopify reports the fulfilment.
  */
 const positionBadge = (row: Domain.OrderRow) => {
   const state = Domain.orderPosition(row);
   return (
     <s-badge
       tone={Match.value(state).pipe(
+        Match.when("unpaid", () => "neutral" as const),
+        Match.when("no_workflow", () => "neutral" as const),
         Match.when("not_started", () => "neutral" as const),
         Match.when("making", () => "info" as const),
         Match.when("made", () => "success" as const),
@@ -155,7 +160,13 @@ const emptyText = (
 ) =>
   team === null
     ? Match.value(show).pipe(
-        Match.when(null, () => "No open orders."),
+        Match.when(null, () => "Nothing is being made."),
+        Match.when("open", () => "No open orders."),
+        Match.when("unpaid", () => "No open orders are waiting on payment."),
+        Match.when(
+          "no_workflow",
+          () => "Every paid open order has a workflow.",
+        ),
         Match.when("not_started", () => "No open orders are waiting to start."),
         Match.when("making", () => "Nothing is being made."),
         Match.when(
@@ -364,12 +375,13 @@ function RouteComponent() {
   const orders = data?.page.orders ?? [];
   const filtered = q !== null || show !== null || team !== null;
   /**
-   * Nothing stored and nothing filtered: the shop has never had orders here,
-   * so the card is the empty state alone. Declared beside `orders` rather than
-   * next to its first use because the section body, the filter box and
-   * `renderOrders` all branch on it.
+   * No open order stored and nothing filtered: the card is the empty state
+   * alone. Read off `Domain.OrdersPage.openOrders`, not the list: the
+   * default list is Making, and an empty one is not an empty shop. Declared
+   * beside `orders` rather than next to its first use because the section
+   * body, the filter box and `renderOrders` all branch on it.
    */
-  const neverStored = orders.length === 0 && !filtered;
+  const neverStored = (data?.page.openOrders ?? 0) === 0 && !filtered;
   /** The team filter's select names the team its id points at. */
   const teamName = new Map(
     (data?.teams ?? []).map(({ id, name }) => [id, name]),
@@ -452,7 +464,7 @@ function RouteComponent() {
         <s-select
           label="Show"
           labelAccessibilityVisibility="exclusive"
-          value={show ?? "open"}
+          value={show ?? "making"}
           disabled={q !== null}
           onChange={(event) => {
             const value = event.currentTarget.value;
@@ -462,8 +474,8 @@ function RouteComponent() {
           }}
         >
           {SHOW.map((each) => (
-            <s-option key={each ?? "open"} value={each ?? "open"}>
-              {Domain.ORDERS_SHOW_LABEL[each ?? "open"]}
+            <s-option key={each ?? "making"} value={each ?? "making"}>
+              {Domain.ORDERS_SHOW_LABEL[each ?? "making"]}
             </s-option>
           ))}
         </s-select>
@@ -517,14 +529,15 @@ function RouteComponent() {
      */
     if (ordersQuery.isError) return null;
     /**
-     * An empty filtered list or a search that missed: one sentence in the
+     * An empty list under a filter, the default Making included, or a
+     * search that missed: one sentence in the
      * list's place ({@link EmptyLine}). The search names what it did not
      * find, because what the merchant typed is the whole question they
      * asked, and offers Clear search (the controls table's rule for a search
      * with nothing matching); the filter copy answers a different question
      * and would read as a non sequitur under a search that missed.
      */
-    if (orders.length === 0 && filtered)
+    if (orders.length === 0 && !neverStored)
       return term === null ? (
         <EmptyLine>{emptyText(show, team)}</EmptyLine>
       ) : (
@@ -618,7 +631,7 @@ function RouteComponent() {
   const strip = (
     <Strip
       cells={STRIP.map((key) => {
-        const value = key === "open" ? null : key;
+        const value = key === "making" ? null : key;
         return {
           key,
           label: Domain.ORDERS_SHOW_LABEL[key],

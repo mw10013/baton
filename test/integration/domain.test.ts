@@ -38,15 +38,44 @@ const NONE = {
   open: 0,
   done: 0,
   blocked: 0,
+  started: 0,
 } satisfies Domain.RunCounts;
 
 describe("Domain.orderPosition", () => {
   const cases: readonly [string, Domain.OrderRow, Domain.OrderPosition][] = [
-    ["no open and no done run is not started", row(NONE), "not_started"],
-    ["any open run is making", row({ open: 1, done: 1 }), "making"],
+    [
+      "no run on any item, not fully paid, is unpaid",
+      row(NONE, { fullyPaid: false }),
+      "unpaid",
+    ],
+    [
+      "no run on any item, fully paid, is no workflow",
+      row(NONE),
+      "no_workflow",
+    ],
+    [
+      "an open run with no started task and no done run is not started",
+      row({ open: 2 }),
+      "not_started",
+    ],
+    [
+      "an open run with a started task is making",
+      row({ open: 2, started: 1 }),
+      "making",
+    ],
+    [
+      "an open run beside a done run is making, whatever the open run's tasks say",
+      row({ open: 1, done: 1 }),
+      "making",
+    ],
+    [
+      "a blocked untouched run is not started",
+      row({ open: 1, started: 0, blocked: 1 }),
+      "not_started",
+    ],
     [
       "a multi-match item does not move the position: one item chosen, another waiting",
-      row({ open: 1 }, {}, 1),
+      row({ open: 1, started: 1 }, {}, 1),
       "making",
     ],
     ["only done runs is made", row({ done: 2 }), "made"],
@@ -80,14 +109,6 @@ describe("Domain.orderPosition", () => {
     it(label, () => {
       strictEqual(Domain.orderPosition(input), expected);
     });
-
-  it("an open order with no runs is not started whether or not it is paid", () => {
-    strictEqual(
-      Domain.orderPosition(row(NONE, { fullyPaid: false })),
-      "not_started",
-    );
-    strictEqual(Domain.orderPosition(row(NONE, {}, 1)), "not_started");
-  });
 });
 
 describe("Domain.orderIssues", () => {
@@ -151,7 +172,11 @@ describe("Domain.orderIssues", () => {
   });
 });
 
-const run = (state: Domain.RunState, blocked = false): Domain.Run => ({
+const run = (
+  state: Domain.RunState,
+  blocked = false,
+  startedAt: number | null = null,
+): Domain.Run => ({
   id: Schema.decodeUnknownSync(Domain.RunId)("r"),
   workflowId: Schema.decodeUnknownSync(Domain.WorkflowId)("w"),
   workflowName: Schema.decodeUnknownSync(Domain.WorkflowName)("W"),
@@ -165,6 +190,7 @@ const run = (state: Domain.RunState, blocked = false): Domain.Run => ({
   quantity: 1,
   lineItemProperties: [],
   state,
+  startedAt,
   blockedAt: blocked ? 1 : null,
   blockReason: null,
   blockedBy: null,
@@ -176,17 +202,17 @@ const run = (state: Domain.RunState, blocked = false): Domain.Run => ({
 });
 
 describe("Domain.runCounts", () => {
-  it("counts open, done and blocked-open the way the index SQL does, and closed runs not at all", () => {
+  it("counts open, done, blocked-open and started-open the way the index SQL does, and closed runs not at all", () => {
     deepStrictEqual(
       Domain.runCounts([
         run("open"),
         run("open", true),
-        run("open"),
-        run("done"),
-        run("closed"),
+        run("open", false, 1),
+        run("done", false, 1),
+        run("closed", false, 1),
         run("closed"),
       ]),
-      { open: 3, done: 1, blocked: 1 },
+      { open: 3, done: 1, blocked: 1, started: 1 },
     );
   });
 });

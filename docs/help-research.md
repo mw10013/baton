@@ -439,13 +439,29 @@ now and will be gone into in a later session. The plan is `docs/help-plan.md`.
 16. **The entry points go in now**, before the content, so the skeleton shows the structure end to
     end; decision 10's "after the content exists" is withdrawn. Taken 2026-10-06 on review.
 
-## Later phases
+## Roadmap
 
-1. Decisions on the questions above; adjust the tree.
-2. The `help` template row and the three parts (help list, steps, screenshot), each with a row and a
-   kit entry.
-3. Content, one section at a time, Getting started first, For members second; each page's body as a
-   component; the e2e walk and the heading test.
-4. Screenshots by script against the seed.
-5. Entry points from the app.
-6. The vocabulary check on the reference pages.
+Where the help work stands, one line per stage, and the doc that carries it. This research stays
+the umbrella; each stage's detail lives in its own research or plan. Updated 2026-10-07.
+
+| stage                                          | status                                     | doc                                  |
+| ---------------------------------------------- | ------------------------------------------ | ------------------------------------ |
+| Approach, tree, anatomy, tone, screenshot spec | decided 2026-10-06                         | this research                        |
+| Skeleton: template row, help list, foot lines  | done 2026-10-06; the Syncing title is open | `docs/help-plan.md`                  |
+| Showcase data: fixture, products, real orders  | done, closed 2026-10-07                    | `docs/showcase-shop-plan.md`         |
+| Screenshot script, screenshot and steps parts  | next                                       | `docs/help-members-plan.md`          |
+| For members content (four pages)               | next, with the stage above                 | `docs/help-members-plan.md`          |
+| Order positions: what Not started means        | in progress, separately                    | `docs/order-not-started-research.md` |
+| Getting started content                        | later                                      | a plan of its own                    |
+| Orders content                                 | later; waits on order positions            | a plan of its own                    |
+| Workflows, Teams and members content           | later                                      | a plan per section                   |
+| Reference pages and their vocabulary check     | later (decision 14)                        | a plan of its own                    |
+| Home page pictures                             | deferred until Home is redesigned          | none yet                             |
+
+Carried into the content stages, decided elsewhere:
+
+- Signing in has no pictures; the page is prose (`docs/showcase-shop-research.md`).
+- Finding your work describes Show more in a sentence, no picture (`docs/showcase-shop-plan.md`,
+  second review, decision 2).
+- Syncing from Shopify says when to press Sync from Shopify on an order: when Shopify shows the
+  order closed and Baton shows it open (`docs/showcase-shop-plan.md`, "Found on the way").

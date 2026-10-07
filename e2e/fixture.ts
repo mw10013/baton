@@ -427,7 +427,8 @@ const LONG_BLOCK_REASON =
  */
 const floorOrders: readonly SeedOrder[] = [
   {
-    // fresh: nothing started; Woodshop's list has its first card
+    // fresh: nothing started, so Not started on the index; Woodshop's list
+    // has its first card
     n: 1001,
     lineItems: [
       item("Engraved cutting board", TAG.board, 1, {
@@ -532,13 +533,13 @@ const floorOrders: readonly SeedOrder[] = [
   },
   {
     // unpaid: nothing routes, and an unpaid order with no runs has no issue:
-    // Not started with an empty Issues cell
+    // Unpaid with an empty Issues cell
     n: 1009,
     unpaid: true,
     lineItems: [item("Leather journal", TAG.journal, 1, { Initials: "S.P." })],
   },
   {
-    // no workflow matches: Not started, with an empty cell in the orders
+    // no workflow matches: No workflow, with an empty cell in the orders
     // index's Issues column
     n: 1010,
     lineItems: [item("Gift card", null, 1)],
@@ -556,8 +557,9 @@ const floorOrders: readonly SeedOrder[] = [
     ],
   },
   {
-    // one multi-match item beside one that started fine: Making in the Status
-    // column, "Multiple workflows match" in the Issues column
+    // one multi-match item beside one whose run was created and nobody has
+    // touched: Not started in the Status column, "Multiple workflows match"
+    // in the Issues column
     n: 1012,
     lineItems: [
       item("Engraved cutting board", [TAG.board, TAG.rush], 1, {

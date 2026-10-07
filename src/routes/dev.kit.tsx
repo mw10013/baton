@@ -103,7 +103,7 @@ const UPDATED_AT = Date.UTC(2026, 8, 30, 23, 59);
 const HELP_ENTRIES = (findHelpSection("workflows")?.pages ?? []).slice(2);
 
 const ORDER_STRIP: readonly (keyof Domain.OrderCounts)[] = [
-  "open",
+  "no_workflow",
   "not_started",
   "making",
   "made",
@@ -280,12 +280,12 @@ function RouteComponent() {
                   key,
                   label: Domain.ORDERS_SHOW_LABEL[key],
                   count: 1000 + index * 120,
-                  chosen: index === 0,
+                  chosen: key === "making",
                   onSelect: noop,
                 }))}
               />
               <FilterRow
-                main={select("Show", "Open")}
+                main={select("Show", "Making")}
                 search={search}
                 secondary={select("Team", "Any team")}
               />

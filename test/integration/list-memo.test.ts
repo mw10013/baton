@@ -46,7 +46,7 @@ const ORDERS_INPUT = {
   limit: 25,
   cursor: null,
   q: null,
-  show: null,
+  show: "open",
   team: null,
 } satisfies Domain.ListOrdersInput;
 const READY_QUERY = {
