@@ -70,8 +70,7 @@ void test("help is available without text or credentials through --help and -h",
     }
     assert.match(result.stdout, /pnpm tts gen/u);
     assert.ok(result.stdout.includes("<YYYYMMDD>-<NN>-<excerpt>"));
-    assert.match(result.stdout, /aura-1 \(default\)/u);
-    assert.match(result.stdout, /aura-2 \(English\)/u);
+    assert.match(result.stdout, /aura-1 or aura-2 \(English, default\)/u);
     assert.match(result.stdout, /default: luna/u);
     assert.match(result.stdout, /aura-1: asteria, athena, hera, luna, stella/u);
     assert.match(result.stdout, /aura-2: amalthea, andromeda/u);
@@ -234,12 +233,12 @@ void test("the original text is preserved in the preview and its estimates", () 
   const preview = parsePreview(result.stdout);
   assert.equal(preview.text, text);
   assert.equal(preview.characters, text.length);
-  assert.equal(preview.model, "@cf/deepgram/aura-1");
+  assert.equal(preview.model, "@cf/deepgram/aura-2-en");
   assert.equal(preview.speaker, "luna");
-  assert.equal(preview.estimatedOverageUsd, text.length * 0.000015);
+  assert.equal(preview.estimatedOverageUsd, text.length * 0.00003);
   assert.equal(
     preview.estimatedNeurons,
-    Math.round(text.length * 1.36364 * 100) / 100,
+    Math.round(text.length * 2.72727 * 100) / 100,
   );
 });
 
@@ -250,7 +249,7 @@ void test("count Unicode code points, not UTF-16 units, for validation and estim
   const preview = parsePreview(result.stdout);
   assert.equal(preview.text, text);
   assert.equal(preview.characters, 500);
-  assert.equal(preview.estimatedOverageUsd, 500 * 0.000015);
+  assert.equal(preview.estimatedOverageUsd, 500 * 0.00003);
   const oversized = invoke("--text", `${text}😀`, "--dry-run");
   assert.notEqual(oversized.status, 0);
   assert.match(oversized.stdout + oversized.stderr, /Text must contain/u);

@@ -346,10 +346,8 @@ const gen = Command.make(
   "gen",
   {
     model: Flag.choice("model", ["aura-1", "aura-2"]).pipe(
-      Flag.withDescription(
-        "Speech model: aura-1 (default) or aura-2 (English)",
-      ),
-      Flag.withDefault("aura-1"),
+      Flag.withDescription("Speech model: aura-1 or aura-2 (English, default)"),
+      Flag.withDefault("aura-2"),
     ),
     voice: Flag.choice("voice", VOICES).pipe(
       Flag.withDescription(`Female voice (default: luna). ${VOICE_HELP}`),
@@ -469,7 +467,7 @@ const gen = Command.make(
   }),
 ).pipe(
   Command.withDescription(
-    "Generate one MP3. Defaults to Aura-1 and luna. Example: pnpm tts gen 'Hello from Baton!' --model aura-2 --voice athena. No retries. Text is stored in metadata and may appear in shell history and process listings.",
+    "Generate one MP3. Defaults to Aura-2 (English) and luna. Example: pnpm tts gen 'Hello from Baton!' --model aura-2 --voice athena. No retries. Text is stored in metadata and may appear in shell history and process listings.",
   ),
 );
 
