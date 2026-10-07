@@ -71,7 +71,7 @@ pictures. About 45 pictures in all; a page has zero to three.
 | Creating a team              | teams index with a No members row; a team page with members                                                | a team with no members                                                                        |
 | Adding a member              | Add member modal; a new member's page, "Not on a team yet"; Add to teams modal                             | a member created by the script                                                                |
 | Removing and deleting        | a team page's Remove buttons; Delete team? modal; the Needs a team row that follows                        | the team the script deletes                                                                   |
-| Signing in                   | Sign in; Check your email; Your stores; the lapsed page                                                    | the sign-in page with `DEMO_MODE` off; the member on the shop                                 |
+| Signing in                   | none: one field and an email link; the page is prose (decided 2026-10-07)                                  | nothing                                                                                       |
 | Finding your work            | the list's default (Started by you); the Team select; Show more                                            | the shot member on two teams; items they started, items others started, Ready and Blocked     |
 | Recording your work          | a Ready task with Start, Done, instructions and properties; a started task with Done, Put back and an Undo | items on the shot member's teams in each state                                                |
 | Blocking an item…            | Block modal; the block banner; the merchant's blocked card                                                 | a blocked item on the shot member's team                                                      |
@@ -222,13 +222,12 @@ because some pictures change the state others need:
 An e2e run replaces the shop's data, so it and a screenshot pass never overlap; the store is one per
 worktree.
 
-### Signing in with demo mode off
+### Signing in
 
-The sign-in pictures need `DEMO_MODE` off, or the page reads "Demo mode: no emails are sent…".
-Locally the magic link does not need demo mode: better-auth caches it in KV before the request
-returns, and wrangler writes every email to `.wrangler/tmp/email/`. So the script can submit the
-form and read the link back with demo mode off. `.env` has `DEMO_MODE=true` today, and the server
-reads it at start (question 5).
+No pictures (decided 2026-10-07). The sign-in page is one email field and a button, and what a
+member needs to know (no password, the link comes by email, Your stores, the lapsed sentence) is
+prose. So the screenshot pass never needs `DEMO_MODE` off, and the member pictures sign in through
+the demo-mode link as `e2e/member.ts` does.
 
 ## Capture
 
@@ -255,82 +254,17 @@ storage state:
 - The workflow editor is an `s-app-window`, a full-window frame of its own (`chrome=window`); it is
   shot as the whole window.
 
-## Questions
+## Decisions
 
-:::question
-What should the second fixture be called?
+Reviewed 2026-10-07 in Plannotator. Every recommendation was accepted.
 
-The command is `pnpm seed --<name>`; the fixture file is `e2e/<name>Fixture.ts`. `showcase` says what the data is for and collides with nothing. `sample` and `example` read as a small sample of the dev fixture. "help" reads as help on the seed, and "demo" already names `DEMO_MODE`.
-
-- [ ] showcase
-- [ ] sample
-- [ ] example
-
-Recommended: showcase
-:::
-
-:::question
-Should the showcase products be real products in the dev store?
-
-Open in Baton, Sync from Shopify and the first-order walk need real orders on real products. A reader who follows "put this tag on the products" lands on Shopify's product page, which should match the pictures.
-
-- [ ] Real, written by script — `scripts/showcase-store.ts` through the CLI's store auth
-- [ ] Seeded only — skip the Shopify-facing pictures
-
-Recommended: Real, written by script — `scripts/showcase-store.ts` through the CLI's store auth
-:::
-
-:::question
-Add `by`, `note` and `placedDaysAgo` to the seed shapes?
-
-Each is one field on an existing shape. The alternative is the screenshot script signing in as five members and pressing through dozens of items on every pass, and every Placed date would still be today.
-
-- [ ] Add the three seed fields
-- [ ] Work around them in the screenshot script
-
-Recommended: Add the three seed fields
-:::
-
-:::question
-What happens to the six leftover products and order #1001?
-
-Left in place, #1001 and its "30 Coin Contribution" item appear on the orders index pictures. Archiving is reversible. The three showcase orders keep the e2e suite's one real-order test supplied.
-
-- [ ] Archive the products and close #1001
-- [ ] Leave them beside the showcase
-
-Recommended: Archive the products and close #1001
-:::
-
-:::question
-How do the two sign-in pictures get demo mode off?
-
-The sign-in page reads "Demo mode: no emails are sent…" while `DEMO_MODE` is on. The e2e member helper (`e2e/member.ts`) and an agent's own admin sign-in both press the on-page "Open your magic link", so both need demo mode today. Two pictures do not justify moving both onto a new endpoint. Revisit if a third picture needs demo mode off.
-
-- [ ] Keep demo mode; the script restarts the server with it off around the two pictures
-- [ ] Add a local-only `/api/dev/magic-link`, turn `DEMO_MODE` off in `.env`, move the e2e helper, the agent sign-in and the script onto it
-
-Recommended: Keep demo mode; the script restarts the server with it off around the two pictures
-:::
-
-:::question
-Do the pictures show members by email?
-
-The screens show a member only by email, so the pictures show `ana@example.com`. Display names would be a product change with a schema, an edit screen and copy. The help describes the app as it is and is retaken if that changes.
-
-- [ ] Keep emails
-- [ ] Decide on display names first
-
-Recommended: Keep emails
-:::
-
-:::question
-Change any limits for this phase?
-
-Nothing in the showcase reaches a limit: 7 of 12 members, 9 of 50 teams, about 43 of 2,500 open orders. The included allowances show only on Home, which is deferred, and must equal the Partner Dashboard's $0.00 bands. If a later picture needs more members, raise `maxMembers` then; it is plan-independent and touches nothing in the Partner Dashboard.
-
-- [ ] No change
-- [ ] Raise `maxMembers` 12 → 25 now for headroom
-
-Recommended: No change
-:::
+1. **The fixture is `showcase`**: `pnpm seed --showcase`, `e2e/showcaseFixture.ts`.
+2. **Real products, written by script**: `scripts/showcase-store.ts` through the CLI's store auth.
+3. **Three seed fields**: `by`, `note` and `placedDaysAgo`.
+4. **Archive the six leftover products and close #1001.**
+5. **Demo mode stays on.** Settled further on review: Signing in has no pictures, so nothing needs
+   demo mode off.
+6. **Members are shown by email**, as the app shows them.
+7. **Delete on an active workflow stays allowed**; the modal says items already on it keep going.
+   Done in 8c2a6d7.
+8. **No limit changes.**

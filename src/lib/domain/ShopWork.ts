@@ -224,6 +224,7 @@ import {
   Email,
   formatNumber,
   Shop,
+  ShopLimits,
   WorkflowLimits,
 } from "./Platform.ts";
 
@@ -1332,6 +1333,16 @@ const SeedProgressFields = {
   blocked: Schema.optionalKey(BlockReason),
   /** Last, Cancel workflow as the merchant: the run closes, reason `merchant_cancelled` ({@link ClosedReason}). */
   cancelled: Schema.optionalKey(Schema.Boolean),
+  /**
+   * The email of the member who starts, does or blocks, in place of the seed
+   * member. `byMerchant` still wins for Done and Block, and a Start is the
+   * member's either way. The member need not be on the task's team: the
+   * seed's actor carries the task's own team, so any member can be recorded
+   * as having done any task, which lets one fixture show "Started by you" and
+   * "Started by others" to the same member. The caller resolves the email to
+   * a seeded member; the object only records it.
+   */
+  by: Schema.optionalKey(Email),
 } as const;
 
 /**
@@ -1350,9 +1361,16 @@ const doneAndAdvanceExclusive = Schema.makeFilter(
     "done and advance are exclusive",
 );
 
-export const SeedProgress = Schema.Struct(SeedProgressFields).check(
-  doneAndAdvanceExclusive,
-);
+/**
+ * One item's progress: {@link SeedProgressFields} and the run's `note`,
+ * written last, after the progress, through `setRunNote` (a note records no
+ * actor, so `by` and `byMerchant` do not change it). Only an item has it:
+ * an order's own `note` is the order note.
+ */
+export const SeedProgress = Schema.Struct({
+  ...SeedProgressFields,
+  note: Schema.optionalKey(RunNote),
+}).check(doneAndAdvanceExclusive);
 export type SeedProgress = typeof SeedProgress.Type;
 
 /**
@@ -1378,6 +1396,18 @@ export const SeedOrderChange = Schema.Struct({
 export type SeedOrderChange = typeof SeedOrderChange.Type;
 
 /**
+ * Whole days before now that a seeded order was placed (`processedAt`), on top
+ * of the one-millisecond-per-order offset that keeps the index order stable.
+ * Left out is today. Under the retention age ({@link ShopLimits.orderRetentionDays}),
+ * so a fixture cannot seed an order the next sweep deletes.
+ */
+export const SeedPlacedDaysAgo = Schema.Number.check(
+  Schema.isInt(),
+  Schema.isGreaterThanOrEqualTo(0),
+  Schema.isLessThan(ShopLimits.orderRetentionDays),
+);
+
+/**
  * Local-only order fixture, written through the ordinary upsert-and-reconcile
  * path so runs start exactly as they would for a webhook. `currentQuantity`
  * defaults to `quantity`; lowering it seeds an edit or a refund.
@@ -1398,6 +1428,8 @@ export const SeedOrdersInput = Schema.Struct({
       fulfillmentStatus: Schema.optionalKey(Schema.String),
       /** `PENDING`, `fullyPaid: false`: no runs are created, and the row reads as unpaid, with nothing in Issues. */
       unpaid: Schema.optionalKey(Schema.Boolean),
+      /** See {@link SeedPlacedDaysAgo}. */
+      placedDaysAgo: Schema.optionalKey(SeedPlacedDaysAgo),
       /** The progress every run of this order takes unless its own item overrides it. */
       ...SeedProgressFields,
       note: Schema.optionalKey(Schema.String),

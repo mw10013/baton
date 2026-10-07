@@ -50,6 +50,14 @@ export interface SeedProgress {
   readonly started?: boolean;
   readonly blocked?: string;
   readonly byMerchant?: boolean;
+  /**
+   * The email of the seeded member who starts, does or blocks, in place of the
+   * first member; refused (400) for an email the fixture did not seed. The
+   * member need not be on the task's team.
+   */
+  readonly by?: string;
+  /** The run's note, written last (a note records no author). Only on an item's `progress`: an order's own `note` is the order note. */
+  readonly note?: string;
   /** Last, Cancel workflow as the merchant: the run closes (`merchant_cancelled`), keeps its tasks, and nothing starts on the item. */
   readonly cancelled?: boolean;
 }
@@ -100,10 +108,12 @@ export interface SeedOrderChange {
  * every run on it that its item does not override with a `progress` of
  * its own, which is how one order's items end up in different states.
  */
-export interface SeedOrder extends SeedProgress {
+export interface SeedOrder extends Omit<SeedProgress, "note"> {
   readonly n: number;
   readonly fulfillmentStatus?: string;
   readonly unpaid?: boolean;
+  /** Whole days before now that the order was placed; left out is today, and it stays under the retention age. */
+  readonly placedDaysAgo?: number;
   readonly note?: string;
   readonly lineItems: readonly SeedLineItem[];
   readonly after?: SeedOrderChange;

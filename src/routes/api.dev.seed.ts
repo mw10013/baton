@@ -27,6 +27,7 @@ const SeedOrderByWorkflowName = Schema.Struct({
   unpaid: Schema.optionalKey(Schema.Boolean),
   ...Domain.SeedProgress.fields,
   note: Schema.optionalKey(Schema.String),
+  placedDaysAgo: Schema.optionalKey(Domain.SeedPlacedDaysAgo),
   lineItems: Schema.Array(
     Schema.Struct({
       title: Schema.String,
@@ -283,6 +284,17 @@ export const Route = createFileRoute("/api/dev/seed")({
               const workflowIds = new Map(
                 seededWorkflows.map(({ name, id }) => [name, id]),
               );
+              for (const order of orders ?? []) {
+                const unseeded = [
+                  order.by,
+                  ...order.lineItems.map((item) => item.progress?.by),
+                ].find((by) => by !== undefined && !memberIds.has(by));
+                if (unseeded !== undefined)
+                  return new Response(
+                    `order ${String(order.n)} references unseeded member ${unseeded}`,
+                    { status: 400 },
+                  );
+              }
               type SeedOrder =
                 (typeof Domain.SeedOrdersInput.Encoded)["orders"][number];
               const seedOrders: SeedOrder[] = [];

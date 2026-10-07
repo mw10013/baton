@@ -1873,18 +1873,29 @@ const make = Effect.gen(function* () {
               details.filter(({ run }) => Domain.runIsOpen(run)),
             ),
           );
-      const memberActor = {
-        role: "member",
-        memberId,
-        email: memberEmail,
-      } satisfies Domain.MemberActor;
-      const actor = (task: Domain.RunTask) => ({
+      /**
+       * The member a run's progress is recorded as: `by` when the fixture
+       * names one, else the seed member. Only the email reaches storage
+       * (`RunTask` keeps it, not an id), and the actor's `teamIds` below are
+       * the task's own team whoever `by` is, so `by` need not belong to that
+       * team: the fixture may have anyone start or do anything.
+       */
+      const memberActorOf = (by: Domain.Email | undefined) =>
+        ({
+          role: "member",
+          memberId,
+          email: by ?? memberEmail,
+        }) satisfies Domain.MemberActor;
+      const actor = (task: Domain.RunTask, by: Domain.Email | undefined) => ({
         runTaskId: task.id,
-        actor: memberActor,
+        actor: memberActorOf(by),
         teamIds: task.teamId === null ? [] : [task.teamId],
       });
-      const taskCommand = (task: Domain.RunTask, merchant: boolean) =>
-        merchant ? merchantTaskCommand(task) : actor(task);
+      const taskCommand = (
+        task: Domain.RunTask,
+        merchant: boolean,
+        by: Domain.Email | undefined,
+      ) => (merchant ? merchantTaskCommand(task) : actor(task, by));
       // Reloaded before every phase rather than carried: each phase
       // marks tasks done, which changes what the next one may touch.
       const openRun = (runId: string) =>
@@ -1897,13 +1908,17 @@ const make = Effect.gen(function* () {
                 : null,
             ),
           );
-      const markRunDone = (runId: string, merchant: boolean) =>
+      const markRunDone = (
+        runId: string,
+        merchant: boolean,
+        by: Domain.Email | undefined,
+      ) =>
         Effect.gen(function* () {
           const detail = yield* openRun(runId);
           if (detail === null) return;
           yield* Effect.forEach(
             detail.tasks,
-            (task) => runs.markTaskDone(taskCommand(task, merchant)),
+            (task) => runs.markTaskDone(taskCommand(task, merchant, by)),
             { discard: true },
           );
           yield* Effect.logInfo(
@@ -1911,17 +1926,21 @@ const make = Effect.gen(function* () {
           ).pipe(Effect.annotateLogs({ orderId: detail.run.orderId, runId }));
         });
       /** One round: every task current at the start of the round gets done; what that makes current waits for the next. */
-      const advanceRun = (runId: string, merchant: boolean) =>
+      const advanceRun = (
+        runId: string,
+        merchant: boolean,
+        by: Domain.Email | undefined,
+      ) =>
         Effect.gen(function* () {
           const detail = yield* openRun(runId);
           if (detail === null) return;
           yield* Effect.forEach(
             seedReadyTasks([detail]),
-            (task) => runs.markTaskDone(taskCommand(task, merchant)),
+            (task) => runs.markTaskDone(taskCommand(task, merchant, by)),
             { discard: true },
           );
         });
-      const startRun = (runId: string) =>
+      const startRun = (runId: string, by: Domain.Email | undefined) =>
         Effect.gen(function* () {
           const detail = yield* openRun(runId);
           if (detail === null) return;
@@ -1929,7 +1948,7 @@ const make = Effect.gen(function* () {
             detail.tasks.filter((task) => task.doneAt === null),
             (task) =>
               runs
-                .startTask(actor(task))
+                .startTask(actor(task, by))
                 .pipe(Effect.catchTag("TaskNotReadyError", () => Effect.void)),
             { discard: true },
           );
@@ -1938,6 +1957,7 @@ const make = Effect.gen(function* () {
         runId: string,
         reason: Domain.BlockReason,
         merchant: boolean,
+        by: Domain.Email | undefined,
       ) =>
         Effect.gen(function* () {
           const detail = yield* openRun(runId);
@@ -1948,7 +1968,7 @@ const make = Effect.gen(function* () {
               ...(merchant
                 ? { actor: { role: "merchant" as const } }
                 : {
-                    actor: memberActor,
+                    actor: memberActorOf(by),
                     teamIds: detail.tasks.flatMap((task) =>
                       task.teamId === null ? [] : [task.teamId],
                     ),
@@ -1960,12 +1980,15 @@ const make = Effect.gen(function* () {
       const applyProgress = (runId: string, progress: Domain.SeedProgress) =>
         Effect.gen(function* () {
           const merchant = progress.byMerchant === true;
-          if (progress.done === true) yield* markRunDone(runId, merchant);
+          const { by } = progress;
+          if (progress.done === true) yield* markRunDone(runId, merchant, by);
           for (let round = 0; round < (progress.advance ?? 0); round += 1)
-            yield* advanceRun(runId, merchant);
-          if (progress.started === true) yield* startRun(runId);
+            yield* advanceRun(runId, merchant, by);
+          if (progress.started === true) yield* startRun(runId, by);
           if (progress.blocked !== undefined)
-            yield* blockOneRun(runId, progress.blocked, merchant);
+            yield* blockOneRun(runId, progress.blocked, merchant, by);
+          if (progress.note !== undefined)
+            yield* runs.setRunNote({ runId, note: progress.note });
           if (progress.cancelled === true)
             yield* runs.cancelRun({ runId }).pipe(
               Effect.catchTags({
@@ -2024,7 +2047,8 @@ const make = Effect.gen(function* () {
         // `orders` order, newest last, while the tail of the fixture stays
         // within a blink of `now`: a wider gap dates the last rows into the
         // future, a shop that cannot exist.
-        const processedAt = now + index;
+        const processedAt =
+          now - (seed.placedDaysAgo ?? 0) * 86_400_000 + index;
         const order: Domain.ShopOrder = {
           id,
           legacyId: `seed-${String(seed.n)}`,
@@ -2079,7 +2103,11 @@ const make = Effect.gen(function* () {
           const position = Number(run.lineItemId.slice(`${id}/line-`.length));
           yield* applyProgress(
             run.id,
-            seed.lineItems[position - 1]?.progress ?? seed,
+            seed.lineItems[position - 1]?.progress ?? {
+              ...seed,
+              // The order's own `note` is the order note, not a run's.
+              note: undefined,
+            },
           );
         }
         if (seed.after !== undefined) {

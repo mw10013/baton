@@ -1739,6 +1739,114 @@ describe("ShopAgent seed callables", () => {
     strictEqual(resized?.quantity, 1);
   });
 
+  it("a seeded run records its `by` member as the starter and the doer", async () => {
+    const shop = "seed-by.myshopify.com";
+    const team = await seedTeam(shop, "Bench");
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    await agent.seedWorkflows({
+      workflows: [twoTask("Board", "board", team.id)],
+    });
+    await agent.seedOrders({
+      ...seedMember,
+      orders: [
+        {
+          n: 1,
+          lineItems: [
+            {
+              title: "Board",
+              quantity: 1,
+              tags: ["board"],
+              progress: { advance: 1, started: true, by: "ana@example.com" },
+            },
+            {
+              title: "Board",
+              quantity: 1,
+              tags: ["board"],
+              progress: { advance: 1, started: true },
+            },
+          ],
+        },
+      ],
+    });
+    const runs = await agent.merchantListRunsForOrder({
+      orderId: seedOrderId(1),
+    });
+    const people = runs.map(({ tasks }) =>
+      tasks.map((task) => [task.doneByEmail, task.startedByEmail]),
+    );
+    expect(people).toEqual([
+      [
+        ["ana@example.com", "ana@example.com"],
+        [null, "ana@example.com"],
+      ],
+      [
+        ["lead@m.com", "lead@m.com"],
+        [null, "lead@m.com"],
+      ],
+    ]);
+  });
+
+  it("a seeded run's note is written after its progress", async () => {
+    const shop = "seed-note.myshopify.com";
+    const team = await seedTeam(shop, "Bench");
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    await agent.seedWorkflows({
+      workflows: [twoTask("Board", "board", team.id)],
+    });
+    await agent.seedOrders({
+      ...seedMember,
+      orders: [
+        {
+          n: 1,
+          note: "Gift for Sam",
+          lineItems: [
+            {
+              title: "Board",
+              quantity: 1,
+              tags: ["board"],
+              progress: { done: true, note: "Customer asked for walnut" },
+            },
+            { title: "Board", quantity: 1, tags: ["board"] },
+          ],
+        },
+      ],
+    });
+    const runs = await agent.merchantListRunsForOrder({
+      orderId: seedOrderId(1),
+    });
+    expect(
+      runs
+        .map(({ run }) => run.note ?? "")
+        .toSorted((a, b) => a.localeCompare(b)),
+    ).toEqual(["", "Customer asked for walnut"]);
+  });
+
+  it("a seeded order is placed placedDaysAgo days before now, in the order given", async () => {
+    const shop = "seed-placed.myshopify.com";
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    await agent.seedOrders({
+      ...seedMember,
+      orders: [
+        { n: 1, placedDaysAgo: 3, lineItems: [] },
+        { n: 2, lineItems: [] },
+      ],
+    });
+    const placed = await runInDurableObject(
+      env.SHOP_AGENT.getByName(shop),
+      (instance) =>
+        (instance as unknown as { ctx: DurableObjectState }).ctx.storage.sql
+          .exec("select id, processedAt from ShopOrder order by id")
+          .toArray()
+          .map((row) => Number(row.processedAt)),
+    );
+    const [threeDaysAgo, today] = placed;
+    const day = 86_400_000;
+    expect(Math.abs((today ?? 0) - (threeDaysAgo ?? 0) - 3 * day)).toBeLessThan(
+      1000,
+    );
+    expect(Math.abs(Date.now() - (today ?? 0))).toBeLessThan(60_000);
+  });
+
   it("reseeding leaves the usage counter unchanged", async () => {
     const shop = "seed-usage.myshopify.com";
     const team = await seedTeam(shop, "Bench");

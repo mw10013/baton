@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
  * `pnpm seed`: posts the development fixture to the running dev server
- * ({@link seed} in `scripts/lib/seed.ts` has the rules). The shop is this
- * checkout's `SHOPIFY_DEV_STORE`, unless `SEED_SHOP` names another.
+ * ({@link seed} in `scripts/lib/seed.ts` has the rules); `pnpm seed --showcase`
+ * posts the showcase fixture instead. The shop is this checkout's
+ * `SHOPIFY_DEV_STORE`, unless `SEED_SHOP` names another.
  */
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import { Console, Effect } from "effect";
@@ -24,6 +25,10 @@ NodeRuntime.runMain(
             "pnpm seed requires PORT and SHOPIFY_DEV_STORE in .env (run via `pnpm seed`).",
         }),
       )
-    : seed({ port, shop })
+    : seed({
+        port,
+        shop,
+        fixture: process.argv.includes("--showcase") ? "showcase" : "dev",
+      })
   ).pipe(Effect.flatMap(Console.log)),
 );

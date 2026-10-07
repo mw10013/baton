@@ -92,7 +92,7 @@ npm run test:e2e --     # Full local E2E suite, headless; pass Playwright args a
 npm run test:e2e:headed -- # Same suite with visible browsers for debugging
 pnpm graphql-codegen    # Validate #graphql template literal strings against the Shopify Admin schema
 pnpm tail               # Tail deployed remote logs (raw logs/default-worker.log, compact logs/default-worker.compact.log)
-pnpm seed               # Seed local dev data (members, teams, workflows) via /api/dev/seed
+pnpm seed               # Seed local dev data (members, teams, workflows) via /api/dev/seed (--showcase for the help's showcase shop)
 pnpm d1:reset           # Recreate local D1 from migrations (wipes .wrangler)
 pnpm refs:check         # Report refs/ that drifted from package.json pins
 pnpm refs fetch <name>  # Refetch a ref (see scripts/refs.ts; refs:all for everything but opt-ins)

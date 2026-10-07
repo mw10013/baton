@@ -958,6 +958,20 @@ describe("Domain.SeedOrdersInput", () => {
   });
 });
 
+describe("Domain.SeedOrdersInput placedDaysAgo", () => {
+  const decode = Schema.decodeUnknownOption(Domain.SeedOrdersInput);
+  it("a seeded order's placedDaysAgo stays under the retention age", () => {
+    const limit = Domain.ShopLimits.orderRetentionDays;
+    strictEqual(decode(seedOrdersInput({ placedDaysAgo: 0 }))._tag, "Some");
+    strictEqual(
+      decode(seedOrdersInput({ placedDaysAgo: limit - 1 }))._tag,
+      "Some",
+    );
+    strictEqual(decode(seedOrdersInput({ placedDaysAgo: limit }))._tag, "None");
+    strictEqual(decode(seedOrdersInput({ placedDaysAgo: -1 }))._tag, "None");
+  });
+});
+
 describe("Domain.runIsOpen / Domain.runIsDone / Domain.runIsClosed", () => {
   it("open is stored as open; done is the last task's Done; closed is ended by something else", () => {
     deepStrictEqual(
