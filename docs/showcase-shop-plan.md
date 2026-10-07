@@ -160,3 +160,95 @@ Open for the next session:
    nothing reads wrong; resolving the real id is a small change if it ever matters.
 4. **Next in the help work:** the screenshot script (`scripts/help-screenshots.ts`), the screenshot
    and steps parts with their rows and kit entries, then the help hub and the For members pages.
+
+## Review (2026-10-07, second pass)
+
+Read the commit (1064e13) against the research and this plan. `pnpm typecheck`, `pnpm lint` and
+`node --test scripts/lib/showcase-store.test.ts` pass. The seven GraphQL operations were run through
+the Shopify dev MCP's `validate` (Admin, 2026-10): all valid.
+
+What holds: the three seed fields are as the plan says, each has a test titled with its rule, the
+route refuses an unseeded `by` with 400 like its team and workflow references (none of the three
+refusals has a test), `placedDaysAgo` is bounded by `ShopLimits.orderRetentionDays` in the schema,
+and `pnpm seed` with no flag posts the dev fixture unchanged. The fixture matches the research's
+tables: 8 teams, 7 members, 8 workflows with instructions, 38 open orders in the research's kinds
+and counts, 4 closed, numbered from #1201, placed over ten days. Items share the product table with
+the store script. The store script reads before it writes and refuses a store with over 100
+products or orders rather than paging.
+
+### Fixes that need no decision
+
+1. **The auth hint names the wrong scopes.** `authHint` in `scripts/lib/showcase-store.ts` says
+   `read_products,write_products,read_orders,write_orders`; the script now also needs
+   `read_draft_orders,write_draft_orders`. Add them.
+2. **`draftOrderComplete(paymentPending: false)` is deprecated.** `false` is the default; drop the
+   argument.
+3. **The research's store-script section still says `orderCreate` and test orders.** Leave the
+   research as written; the Deviations section above records the change.
+
+### Findings
+
+- **`by` shows a member doing another team's step, on screen.** `RunSteps` prints each done task as
+  `<team> · <email> · <time>`, so the board "started by ana" at Engrave reads
+  "Woodshop · ana@example.com" on its Cut and sand step, and ana is not on Woodshop. The made board
+  `by: ELI` reads "Woodshop · eli@example.com". The How Baton works picture (an item at Step 2 of 3)
+  is exactly this card. See decision 1.
+- **Show more cannot appear** (open item 1 above). Checked: the default list is Started by you, six
+  rows for ana; the research's line "over 25 rows for ana only when no team is chosen" was wrong
+  about which list is the default. See decision 2.
+- **Not started means "no workflow on any item"** (open item 2 above). Checked: `orderPosition`
+  returns `not_started` only when the order has no open run and no done run, and a paid order with a
+  matching workflow gets runs at once. So an order nobody has touched reads Making, and the Not
+  started count is the gift cards, the multi-match and similar. See decision 3.
+- **The store holds four cancelled orders**: #1001 (decision 4) and the duplicates #1005 to #1007.
+  The seed deletes only seeded orders (`deleteSeedOrders`), and Baton turned out to hold all four
+  as open orders (see Done, below). See decision 4.
+- **Real orders, not test orders.** Forced: `orderCreate` refused the CLI's online token. On a dev
+  store nothing is charged, and no Baton screen reads the test flag. See decision 5.
+- **`scripts/lib/showcase-store.test.ts` runs outside `pnpm test`**: the first `node --test` file in
+  the repo. See decision 6.
+
+### Decisions
+
+Reviewed 2026-10-07 in Plannotator.
+
+1. **A seeded Done goes to a member of the task's team.** `by` when `by` is on the task's team, else
+   the team's first seeded member, else `by`; Start and Block stay `by`. The route sends the seeded
+   members with their ids and teams (`SeedOrdersInput.members`), so the real member id is stored
+   too (open item 3). Without a `by`, the seed member does everything, as before, so the dev
+   fixture is unchanged.
+2. **Show more is prose** in Finding your work; no picture, no extra orders.
+3. **Not started is its own topic**, parked in `docs/order-not-started-research.md` with the
+   context and five open questions. It also found that the order page already uses "Not started"
+   for an untouched run (`RUN_UNSTARTED_LABEL`), so a Making order can show every item Not started.
+4. **Delete #1005 to #1007** from the dev store.
+5. **Real orders accepted.**
+6. **Cut `scripts/lib/showcase-store.test.ts`** and un-export what only it used.
+
+### Done (2026-10-07)
+
+- Fixes 1 and 2 above: the auth hint names the draft-order scopes; `paymentPending` is gone.
+- Decision 1: `Domain.SeedOrdersInput.members`, the rule on `SeedProgress.by`, `memberActorOf` in
+  `seedOrders`, the route's `memberTeamIds`; test "a seeded Done on a team `by` is not on is
+  recorded as that team's first member". The fixture header's caveat is gone. Checked on
+  `pnpm seed --showcase`: every Done and Start in the shop is by a member of that task's team.
+- Decision 3: `docs/order-not-started-research.md`.
+- Baton's side of decision 4: Baton held #1001 and #1005 to #1007 as **open** orders. Sync open
+  orders read them while they were open, the cancellations never arrived (the worker log has no
+  `/webhooks/orders` request), and Sync reads only open orders, so nothing closed them.
+  `pnpm dev:reset` cleared them; the shop is back on the dev fixture. The next Sync brings only
+  #1002 to #1004.
+- `pnpm typecheck`, `pnpm lint`, `pnpm test` (37 files, 768 tests) pass.
+
+### Store cleanup
+
+Decision 4 done by the user on 2026-10-07: #1005 to #1007 are deleted. The store holds #1001
+(cancelled) and the three open showcase orders, #1002 to #1004. Decision 6 is done: the test file
+is removed and the five helpers only it used are no longer exported.
+
+### Found on the way
+
+- **A cancellation webhook that never arrives leaves the order open in Baton forever.** Sync open
+  orders reads open orders only, so it cannot close an order it stored earlier. In production the
+  webhook is the path and Shopify retries it; locally it did not arrive. Not this plan's; worth a
+  line in the sync research if it recurs.

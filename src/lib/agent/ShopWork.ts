@@ -1845,6 +1845,7 @@ const make = Effect.gen(function* () {
   const seedOrders = ({
     memberId,
     memberEmail,
+    members,
     orders,
   }: typeof Domain.SeedOrdersInput.Type) => {
     const environment = env.ENVIRONMENT;
@@ -1873,29 +1874,44 @@ const make = Effect.gen(function* () {
               details.filter(({ run }) => Domain.runIsOpen(run)),
             ),
           );
+      const seeded = members ?? [];
       /**
-       * The member a run's progress is recorded as: `by` when the fixture
-       * names one, else the seed member. Only the email reaches storage
-       * (`RunTask` keeps it, not an id), and the actor's `teamIds` below are
-       * the task's own team whoever `by` is, so `by` need not belong to that
-       * team: the fixture may have anyone start or do anything.
+       * The member a step is recorded as ({@link Domain.SeedProgress}'s
+       * `by` has the rule): the seed member when the fixture names nobody;
+       * else `by`, unless this is a Done on a team `by` is not on, which
+       * goes to that team's first seeded member. The actor's `teamIds` below
+       * are the task's own team whoever is picked.
        */
-      const memberActorOf = (by: Domain.Email | undefined) =>
-        ({
-          role: "member",
-          memberId,
-          email: by ?? memberEmail,
-        }) satisfies Domain.MemberActor;
-      const actor = (task: Domain.RunTask, by: Domain.Email | undefined) => ({
+      const memberActorOf = (
+        by: Domain.Email | undefined,
+        doneOnTeam: Domain.TeamId | null = null,
+      ): Domain.MemberActor => {
+        if (by === undefined)
+          return { role: "member", memberId, email: memberEmail };
+        const named = seeded.find(({ email }) => email === by);
+        const picked =
+          doneOnTeam === null || named?.teamIds.includes(doneOnTeam) === true
+            ? named
+            : (seeded.find(({ teamIds }) => teamIds.includes(doneOnTeam)) ??
+              named);
+        return picked === undefined
+          ? { role: "member", memberId, email: by }
+          : { role: "member", memberId: picked.memberId, email: picked.email };
+      };
+      const actor = (
+        task: Domain.RunTask,
+        by: Domain.Email | undefined,
+        done = false,
+      ) => ({
         runTaskId: task.id,
-        actor: memberActorOf(by),
+        actor: memberActorOf(by, done ? task.teamId : null),
         teamIds: task.teamId === null ? [] : [task.teamId],
       });
       const taskCommand = (
         task: Domain.RunTask,
         merchant: boolean,
         by: Domain.Email | undefined,
-      ) => (merchant ? merchantTaskCommand(task) : actor(task, by));
+      ) => (merchant ? merchantTaskCommand(task) : actor(task, by, true));
       // Reloaded before every phase rather than carried: each phase
       // marks tasks done, which changes what the next one may touch.
       const openRun = (runId: string) =>

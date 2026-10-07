@@ -1786,6 +1786,57 @@ describe("ShopAgent seed callables", () => {
     ]);
   });
 
+  it("a seeded Done on a team `by` is not on is recorded as that team's first member", async () => {
+    const shop = "seed-by-team.myshopify.com";
+    const cut = await seedTeam(shop, "Woodshop");
+    const engrave = await seedTeam(shop, "Engraving");
+    const agent = await getAgentByName(env.SHOP_AGENT, shop);
+    await agent.seedWorkflows({
+      workflows: [
+        {
+          name: "Board",
+          tag: "board",
+          tasks: [
+            { name: "Cut", teamId: cut.id },
+            { name: "Engrave", teamId: engrave.id },
+          ],
+        },
+      ],
+    });
+    await agent.seedOrders({
+      ...seedMember,
+      members: [
+        { memberId: "m-ana", email: "ana@example.com", teamIds: [engrave.id] },
+        { memberId: "m-ben", email: "ben@example.com", teamIds: [cut.id] },
+      ],
+      orders: [
+        {
+          n: 1,
+          lineItems: [
+            {
+              title: "Board",
+              quantity: 1,
+              tags: ["board"],
+              progress: { advance: 1, started: true, by: "ana@example.com" },
+            },
+          ],
+        },
+      ],
+    });
+    const runs = await agent.merchantListRunsForOrder({
+      orderId: seedOrderId(1),
+    });
+    const people = runs.map(({ tasks }) =>
+      tasks.map((task) => [task.doneByEmail, task.startedByEmail]),
+    );
+    expect(people).toEqual([
+      [
+        ["ben@example.com", "ben@example.com"],
+        [null, "ana@example.com"],
+      ],
+    ]);
+  });
+
   it("a seeded run's note is written after its progress", async () => {
     const shop = "seed-note.myshopify.com";
     const team = await seedTeam(shop, "Bench");

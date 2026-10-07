@@ -196,6 +196,8 @@ export const Route = createFileRoute("/api/dev/seed")({
                 ]),
               );
               const teamIds = new Map<Domain.TeamName, Domain.TeamId>();
+              /** Member email → the teams it was put on, for the seed's `by` ({@link Domain.SeedProgress}). */
+              const memberTeamIds = new Map<string, Domain.TeamId[]>();
               for (const team of teams ?? []) {
                 const { id: teamId } = yield* repository.createTeam({
                   shop,
@@ -215,6 +217,10 @@ export const Route = createFileRoute("/api/dev/seed")({
                     memberId,
                     inTeam: true,
                   });
+                  memberTeamIds.set(email, [
+                    ...(memberTeamIds.get(email) ?? []),
+                    teamId,
+                  ]);
                 }
               }
               type SeedTask =
@@ -333,6 +339,18 @@ export const Route = createFileRoute("/api/dev/seed")({
                   env.SHOP_AGENT.getByName(shop).seedOrders({
                     memberId: seedMemberId,
                     memberEmail: seedMemberEmail,
+                    members: members.flatMap((email) => {
+                      const id = memberIds.get(email);
+                      return id === undefined
+                        ? []
+                        : [
+                            {
+                              memberId: id,
+                              email,
+                              teamIds: memberTeamIds.get(email) ?? [],
+                            },
+                          ];
+                    }),
                     orders: seedOrders,
                   }),
                 );

@@ -16,7 +16,7 @@ export class ShowcaseStoreError extends Data.TaggedError("ShowcaseStoreError")<{
 const API_VERSION = "2026-10";
 
 /** The tag that marks the open orders this script created, so a second run finds them. */
-export const SHOWCASE_ORDER_TAG = "showcase";
+const SHOWCASE_ORDER_TAG = "showcase";
 
 /**
  * The three real orders the script keeps open, each recognised by its own tag
@@ -25,7 +25,7 @@ export const SHOWCASE_ORDER_TAG = "showcase";
  * order Shopify knows; every other order the help shows is seeded. Items name a
  * showcase product, a variant and the properties a customer would have typed.
  */
-export const SHOWCASE_ORDERS: readonly {
+const SHOWCASE_ORDERS: readonly {
   readonly tag: string;
   readonly lines: readonly {
     readonly handle: string;
@@ -117,7 +117,7 @@ const sameSet = (a: readonly string[], b: readonly string[]) =>
   a.length === b.length && a.every((entry) => b.includes(entry));
 
 /** True when the store's product already says what the table says; a price compares as a number, since the store writes `68.0` for `68.00`. */
-export const productMatches = (
+const productMatches = (
   stored: StoredProduct,
   wanted: ShowcaseProduct,
 ): boolean => {
@@ -148,7 +148,7 @@ export const productMatches = (
 };
 
 /** The `productSet` input for a table row. */
-export const productSetInput = (wanted: ShowcaseProduct) => ({
+const productSetInput = (wanted: ShowcaseProduct) => ({
   title: wanted.title,
   handle: wanted.handle,
   status: "ACTIVE",
@@ -170,7 +170,7 @@ export const productSetInput = (wanted: ShowcaseProduct) => ({
 });
 
 /** The showcase orders that have no open order carrying their tag. */
-export const missingOrders = (orders: readonly StoredOrder[]) =>
+const missingOrders = (orders: readonly StoredOrder[]) =>
   SHOWCASE_ORDERS.filter(
     (wanted) =>
       !orders.some(
@@ -289,7 +289,7 @@ const DRAFT_ORDER_CREATE = /* GraphQL */ `
 
 const DRAFT_ORDER_COMPLETE = /* GraphQL */ `
   mutation ShowcaseDraftOrderComplete($id: ID!) {
-    draftOrderComplete(id: $id, paymentPending: false) {
+    draftOrderComplete(id: $id) {
       draftOrder {
         order {
           id
@@ -304,7 +304,7 @@ const DRAFT_ORDER_COMPLETE = /* GraphQL */ `
 `;
 
 const authHint =
-  "If the store auth is missing or expired, run `shopify store auth` for this store with the scopes read_products,write_products,read_orders,write_orders.";
+  "If the store auth is missing or expired, run `shopify store auth` for this store with the scopes read_products,write_products,read_orders,write_orders,read_draft_orders,write_draft_orders.";
 
 /**
  * Runs one operation through `shopify store execute` on the CLI's own store

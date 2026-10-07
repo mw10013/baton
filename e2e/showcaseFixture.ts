@@ -40,10 +40,6 @@ import {
  * workflow, `Weekend engraving`, is the one with a "Team has no members"
  * fault. `Packing` has one member and is the team a screenshot pass deletes to
  * make "Needs a team": `Stamp and bind`'s last step is on it.
- *
- * An item's progress is recorded as one member for all of its Dones and its
- * Start (`SeedProgress.by`), so an item "started by ben" also shows its
- * earlier steps done by ben, whatever team he is on.
  */
 
 const ANA = "ana@example.com";

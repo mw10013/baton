@@ -1334,13 +1334,15 @@ const SeedProgressFields = {
   /** Last, Cancel workflow as the merchant: the run closes, reason `merchant_cancelled` ({@link ClosedReason}). */
   cancelled: Schema.optionalKey(Schema.Boolean),
   /**
-   * The email of the member who starts, does or blocks, in place of the seed
-   * member. `byMerchant` still wins for Done and Block, and a Start is the
-   * member's either way. The member need not be on the task's team: the
-   * seed's actor carries the task's own team, so any member can be recorded
-   * as having done any task, which lets one fixture show "Started by you" and
-   * "Started by others" to the same member. The caller resolves the email to
-   * a seeded member; the object only records it.
+   * The email of the member who starts and blocks, in place of the seed
+   * member, and who does the Dones on their own teams. A Done on a task whose
+   * team `by` is not on is recorded as that team's first seeded member
+   * ({@link SeedOrdersInput}'s `members`), so an order page never shows a
+   * member finishing another team's step; with no member on that team it is
+   * `by`. `byMerchant` still wins for Done and Block, and a Start is the
+   * member's either way. The caller resolves the email to a seeded member;
+   * the seed's actor carries the task's own team, so the object records
+   * whoever it picks.
    */
   by: Schema.optionalKey(Email),
 } as const;
@@ -1421,6 +1423,20 @@ export const SeedPlacedDaysAgo = Schema.Number.check(
 export const SeedOrdersInput = Schema.Struct({
   memberId: MemberId,
   memberEmail: Email,
+  /**
+   * The seeded members, in fixture order, with their teams: who a `by`
+   * resolves to ({@link SeedProgress}). Left out, every `by` is recorded as
+   * given, under the seed member's id.
+   */
+  members: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        memberId: MemberId,
+        email: Email,
+        teamIds: Schema.Array(TeamId),
+      }),
+    ),
+  ),
   orders: Schema.Array(
     Schema.Struct({
       /** Numeric suffix: the id becomes `SEED_ORDER_ID_PREFIX + n` and the name `#<n>`. */
