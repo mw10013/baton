@@ -38,11 +38,12 @@ export const deleteTeamResultMessage = Match.typeTags<
 });
 
 /**
- * Every delete dialog's body, the `confirm` slot (`CopySlot` in `Screen.ts`):
- * the teams, workflows and members delete with the one sentence, and it
- * never explains what the product does, so it never goes stale. The heading
- * names what is deleted; a member's dialog, whose heading cannot carry an
- * email, puts the email in a first sentence before this one.
+ * Every delete dialog's body ends with this, the `confirm` slot (`CopySlot`
+ * in `Screen.ts`), and it never explains how the product works, so it never
+ * goes stale. The heading names what is deleted; a member's dialog, whose
+ * heading cannot carry an email, puts the email in a first sentence before
+ * this one, and a workflow's names what it leaves going
+ * (`DELETE_WORKFLOW_BODY` in `workflowShared.ts`).
  */
 export const DELETE_CONFIRM = "This can't be undone.";
 

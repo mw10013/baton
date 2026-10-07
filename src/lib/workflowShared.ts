@@ -1,6 +1,7 @@
 import { Match } from "effect";
 
 import * as Domain from "@/lib/Domain";
+import { DELETE_CONFIRM } from "@/lib/teams";
 
 /**
  * The Duplicate dialog's prefilled name: `<name> copy`, with the base trimmed
@@ -80,6 +81,17 @@ export const DISCARD_BODY = "Your unsaved changes will be lost.";
 export const TURN_OFF_HEADING = "Turn off workflow?";
 export const TURN_OFF_BODY =
   "New orders won't start this workflow. Items already on it keep going.";
+/**
+ * The Delete workflow dialog's body, the same whether the workflow is active
+ * or inactive. A delete removes the definition and no run (the data-model
+ * row on `initializeSchema`), so the one consequence a merchant cannot guess
+ * is that the items already on it carry on; an inactive workflow can have
+ * them too, since Turn off leaves them going. It reuses Turn off's wording
+ * for the same fact. Deleting an active workflow is not refused: unlike a
+ * Shopify Flow workflow, whose turn-off cancels its runs, a Baton run is a
+ * copy and outlives its workflow, so turning off first would guard nothing.
+ */
+export const DELETE_WORKFLOW_BODY = `Items already on it keep going. ${DELETE_CONFIRM}`;
 export const RENAME_HEADING = "Rename workflow";
 export const RENAME_FIELD_LABEL = "New name";
 export const RENAMED_TOAST = "Workflow renamed";

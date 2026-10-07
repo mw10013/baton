@@ -964,7 +964,7 @@ describe("ShopAgent workflow run callables", () => {
     expect(runs.map((d) => d.run.workflowId)).toEqual([keeper.id]);
   });
 
-  it("deleting a workflow leaves its runs to carry on", async () => {
+  it("an active workflow deletes, and its runs carry on", async () => {
     const shop = "wf-delete-own-runs.myshopify.com";
     const team = await seedTeam(shop, "Engraving");
     const agent = await getAgentByName(env.SHOP_AGENT, shop);

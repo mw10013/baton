@@ -26,10 +26,11 @@ import { ShopAgentClient } from "@/lib/ShopAgentClient";
 import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { SocketBanner } from "@/lib/SocketBanner";
-import { DELETE_CONFIRM, DELETED_TOAST } from "@/lib/teams";
+import { DELETED_TOAST } from "@/lib/teams";
 import { useWorkflowEditorWindow } from "@/lib/workflowEditorWindow";
 import {
   copyName,
+  DELETE_WORKFLOW_BODY,
   deleteWorkflowResultMessage,
   itemTriggerLine,
   neverApplied,
@@ -502,7 +503,7 @@ function RouteComponent() {
       </s-modal>
 
       <s-modal id={DELETE_MODAL} heading={`Delete ${workflow.name}?`}>
-        <s-paragraph>{DELETE_CONFIRM}</s-paragraph>
+        <s-paragraph>{DELETE_WORKFLOW_BODY}</s-paragraph>
         <s-button
           slot="secondary-actions"
           commandFor={DELETE_MODAL}

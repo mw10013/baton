@@ -204,7 +204,7 @@ explanation lives. Each page may:
 
 - define a word the vocabulary has, in the vocabulary's screen word ("An item's workflow is the
   steps its team follows…"), never the code word;
-- say why ("Only inactive workflows can be deleted, so turn it off first");
+- say why ("Turning a workflow off stops new orders starting it, and you can turn it back on");
 - say what a badge, a count or an issue means, with the badge's exact label in bold;
 - show a screenshot of the screen it describes.
 
@@ -238,8 +238,8 @@ phase.
 | `/help/workflows/creating`                      | Creating a workflow                           | task      | merchant | Create workflow; name; tag; the new workflow is inactive                                                    |
 | `/help/workflows/editing`                       | Editing steps and tasks                       | task      | merchant | Edit; add a step, add a task, instructions, assign a team; Apply changes, Discard changes; the draft        |
 | `/help/workflows/matching`                      | Matching items by product tag                 | concept   | merchant | one tag per workflow; exact match; units to make; when two workflows match                                  |
-| `/help/workflows/turning-on-and-off`            | Turning a workflow on or off                  | task      | merchant | Active and Inactive; what Turn off does to items already on it; only inactive workflows can be deleted      |
-| `/help/workflows/managing`                      | Renaming, duplicating and deleting a workflow | task      | merchant | More actions: Rename, Duplicate, Delete                                                                     |
+| `/help/workflows/turning-on-and-off`            | Turning a workflow on or off                  | task      | merchant | Active and Inactive; what Turn off does to items already on it                                              |
+| `/help/workflows/managing`                      | Renaming, duplicating and deleting a workflow | task      | merchant | More actions: Rename, Duplicate, Delete; Delete leaves items already on it going, active or inactive        |
 | `/help/teams-and-members`                       | Teams and members                             | hub       | merchant | a team holds tasks; a member is on teams; Needs a team and No members                                       |
 | `/help/teams-and-members/creating-a-team`       | Creating a team                               | task      | merchant | Create team; Add members; Rename                                                                            |
 | `/help/teams-and-members/adding-a-member`       | Adding a member                               | task      | merchant | Add member by email; no Shopify account needed; Add to teams; what the member sees                          |
@@ -366,27 +366,36 @@ them. Measured 2026-10-06 in Chrome at a 1280 × 800 window, device scale factor
 | a member page (`inlineSize="small"`, phone)                  | 390, the screen                       | 780   |
 
 So a whole merchant page shot at 1280 is the help column's width and shows at 1:1; a crop of the
-main column's card is about 640 CSS px and shows at its natural width, never upscaled. The frame is
-cross-origin to the admin, so a script captures it through Playwright's frame locator, not from the
-admin document.
+main column's card is about 640 CSS px and shows at its natural width, never upscaled.
 
-| rule         | merchant screens                                                                                                                                                                 | member screens                                                       |
-| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| what is shot | Baton's page inside the admin, captured as the element `s-page` in the app frame, without the admin chrome                                                                       | the whole phone screen, top bar included                             |
-| window       | 1280 × 800, device scale factor 2                                                                                                                                                | 390 × 844, device scale factor 2                                     |
-| crop         | the whole page for a "Reading…" page; the one card, drawer or modal for a step                                                                                                   | the whole screen; a modal when the step is the modal                 |
-| shown at     | column width (`s-image inlineSize="fill"`, `objectFit="contain"`, `aspectRatio` from the file)                                                                                   | 390 CSS px wide, centred, by the screenshot part; never column width |
-| file         | PNG, 2x, `public/assets/help/<section>/<page>-<n>.png`, `<n>` the picture's order on the page                                                                                    | the same                                                             |
-| data         | the seed (`pnpm seed`): its teams, members, workflows and orders are the help's examples, so a name in the prose is a name in the picture                                        | the same, signed in as the seed's lead member                        |
-| state        | the screen as the step leaves it: after Create team, the team page; a modal open for the step that fills it                                                                      | the same                                                             |
-| annotation   | none. A crop says where to look; a highlight box, arrow or blur is a second thing to keep current                                                                                | none                                                                 |
-| alt text     | 30 to 60 words saying what the picture shows and which control or badge matters, in the screen's words; no caption                                                               | the same                                                             |
-| exceptions   | Shopify's own screens (the App Store listing, the plan page, Open in Baton on an order) are shot as the whole 1280 window with the admin chrome, because the chrome is the point | none                                                                 |
-| browser      | Chrome through `pnpm playwright-cli`, headless, light theme; the e2e setup's storage state for the admin                                                                         | the same, a member session from the magic link                       |
-| when retaken | by the script, after any change to a screen the picture shows; a picture is never edited by hand                                                                                 | the same                                                             |
+Revised 2026-10-07 after a capture test against the dev server (`docs/showcase-shop-research.md`,
+"Capture"). The first version of this spec shot the element `s-page` inside the app frame. That
+cannot work: the admin draws the page's heading, its primary action and its More actions menu in its
+own title bar, outside the frame, and `s-page` has no box to capture. The title bar (54 CSS px)
+sits directly above the frame, so a merchant page is a clip of the window from the title bar's top
+to the frame's bottom, across the frame's width (1056 CSS px, 2112 at 2x). A modal's panel is drawn
+inside the frame while the admin dims around it, so a modal is a clip to the panel. The workflow
+editor is a full-window frame of its own and is shot as the window.
 
-Why the element and not the admin: the admin's chrome changes without Baton and would stale every
-picture; Baton's page is what the prose describes. Why 2x and not 1x: Polaris text at 1x in a
+| rule         | merchant screens                                                                                                                                                                                                            | member screens                                                       |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| what is shot | Baton's page as the merchant sees it: the admin's title bar and the app frame below it, clipped to the frame's width; no admin sidebar, search bar or overlays                                                              | the whole phone screen, top bar included                             |
+| window       | 1280 × 800, device scale factor 2; grown to the frame's top plus the frame body's `scrollHeight` for a page taller than the window                                                                                          | 390 × 844, device scale factor 2                                     |
+| crop         | the whole page for a "Reading…" page; the one card, drawer or modal panel for a step; the whole window for the workflow editor                                                                                              | the whole screen; a modal when the step is the modal                 |
+| overlays     | the Dev Console closed; the dev mini console and the Sidekick composer hidden by a style rule; the shot refused if anything fixed-position still overlaps the clip                                                          | none                                                                 |
+| shown at     | column width (`s-image inlineSize="fill"`, `objectFit="contain"`, `aspectRatio` from the file)                                                                                                                              | 390 CSS px wide, centred, by the screenshot part; never column width |
+| file         | PNG, 2x, `public/assets/help/<section>/<page>-<n>.png`, `<n>` the picture's order on the page                                                                                                                               | the same                                                             |
+| data         | the showcase shop (`pnpm seed --showcase` and its store script, `docs/showcase-shop-research.md`): its names are the help's examples, so a name in the prose is a name in the picture                                       | the same, signed in as the showcase's member `ana`                   |
+| state        | the screen as the step leaves it: after Create team, the team page; a modal open for the step that fills it                                                                                                                 | the same                                                             |
+| annotation   | none. A crop says where to look; a highlight box, arrow or blur is a second thing to keep current                                                                                                                           | none                                                                 |
+| alt text     | 30 to 60 words saying what the picture shows and which control or badge matters, in the screen's words; no caption                                                                                                          | the same                                                             |
+| exceptions   | Shopify's own screens (the App Store listing, the plan page, Open in Baton on an order) are shot as the whole 1280 window with the admin chrome, because the chrome is the point. No Home pictures until Home is redesigned | none                                                                 |
+| browser      | Chrome through Playwright's API in the script (not `playwright-cli`), headless, light theme; the e2e setup's storage state for the admin                                                                                    | the same, a member session from the magic link read back locally     |
+| when retaken | by the script, after any change to a screen the picture shows; a picture is never edited by hand                                                                                                                            | the same                                                             |
+
+Why the title bar and the frame and not the whole admin: the admin's sidebar and search change
+without Baton and would stale every picture, while the title bar carries Baton's heading and the
+buttons the steps name. Why 2x and not 1x: Polaris text at 1x in a
 downscaled picture is unreadable. Why no annotation: Flow's highlight boxes are what its screenshots
 are most often out of date on. Why the phone is shot whole: a member's screen is the top bar, the
 heading and the list, and a crop would lose the way back the prose names.

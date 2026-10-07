@@ -95,8 +95,8 @@
  * The switch's words are Shopify Flow's, verb and state alike (Turn on,
  * Turn off; Active, Inactive; `refs/flow-manual/manage/manage.md`,
  * "Deactivate a workflow"), because the state word has to serve as an
- * adjective and a filter label ("an active workflow", "only inactive
- * workflows can be deleted"), which On and Off cannot. One execution is
+ * adjective and a filter label ("an active workflow", "show inactive
+ * workflows"), which On and Off cannot. One execution is
  * never called a run on a screen, because a run in Baton is a member's
  * work.
  *
@@ -2624,7 +2624,7 @@ const NOTHING: ReconcileAction = { _tag: "nothing" };
  * | Attach, Change workflow           | none          | always: the merchant's choice                                                                      | manual attach is refused on a cancelled or fulfilled order and allowed on an unpaid one             |
  * | a product retagged in Shopify     | none          | always: an item's tags are a snapshot taken at sync; the next sync of its order sees them          | a product retagged in Shopify changes nothing until its order syncs again                           |
  * | the retention sweep               | none          | always: it deletes the order and its runs, open ones included, and records no close                | the retention sweep deletes an order with its open runs and records no close                        |
- * | Delete workflow, for its own runs | none          | always: a run copies its definition and carries on; only an item it left multi-match is reconciled | deleting a workflow leaves its runs to carry on                                                     |
+ * | Delete workflow, for its own runs | none          | always: a run copies its definition and carries on; only an item it left multi-match is reconciled | an active workflow deletes, and its runs carry on                                                   |
  *
  * What it does to one item. Each row is a fixture set, each cell one input;
  * `any` covers every value of its column, and `pnpm spec check` refuses a
