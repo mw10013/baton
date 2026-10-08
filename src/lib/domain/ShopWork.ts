@@ -59,7 +59,7 @@
  *
  * | word    | meaning                                           | stored          | screen                                                  |
  * | ------- | ------------------------------------------------- | --------------- | ------------------------------------------------------- |
- * | open    | work can be recorded                              | `open`          | In progress (merchant: Not started until a task starts) |
+ * | open    | work can be recorded                              | `open`          | Making (merchant: Not started until a task starts)      |
  * | blocked | open, and a person holds it                       | `blockedAt` set | Blocked                                                 |
  * | done    | a person marked the last task done                | `done`          | Done                                                    |
  * | closed  | something else ended it; `closedReason` says what | `closed`        | Closed · <reason>                                       |
@@ -79,9 +79,13 @@
  * | started | a person has it                    | `startedAt` set                              | Started |
  * | done    | a person marked it done            | `doneAt` set                                 | Done    |
  *
- * "In progress" is the run's screen word and only the run's: a started
- * task reads Started so the merchant never reads one word for two facts
- * on one card. "waiting" is a code word; the team filter's "waiting on"
+ * Making is the run's screen word and only the run's: a started task
+ * reads Started so the merchant never reads one word for two facts on one
+ * card. It is also the order's position word ({@link OrderPosition}):
+ * an item's badge reads Making from the fact that puts its order under
+ * Making, a started or done task on an open run, so the order page and the
+ * Orders page say one word for one fact, and help can name the badge
+ * ("In progress", the badge's old word, is retired). "waiting" is a code word; the team filter's "waiting on"
  * ({@link ListOrdersInput} `team`) means a team holding a current task, a
  * fact about orders, and the two never render together.
  *
@@ -271,13 +275,14 @@ export const TASK_STATE_LABEL = {
 } as const satisfies Record<TaskState, string | null>;
 
 /**
- * The vocabulary's run-states screen column. `open` is the member's word for
- * an open run and the merchant's once a task has started; the merchant's
- * word before that is {@link RUN_UNSTARTED_LABEL} ({@link runIsUnstarted}).
+ * The vocabulary's run-states screen column. `open` is the merchant's word
+ * for an open run once a task has started (the order page's badge; no
+ * member screen prints it); the merchant's word before that is
+ * {@link RUN_UNSTARTED_LABEL} ({@link runIsUnstarted}).
  * `closed` is the prefix of `Closed · <reason>` ({@link ClosedReason}).
  */
 export const RUN_STATE_LABEL = {
-  open: "In progress",
+  open: "Making",
   blocked: "Blocked",
   done: "Done",
   closed: "Closed",
@@ -3004,7 +3009,7 @@ export const workflowNamesItem = (run: {
  * - started by the reader: `Started by you`, null under Started by you;
  * - started by someone else: `Started by <who>` ({@link actorLabel}),
  *   always, because who is the news even under Started by others;
- * - started with no known starter: `Started`. Not the run's `In progress`,
+ * - started with no known starter: `Started`. Not the run's `Making`,
  *   which is the run's word ({@link RUN_STATE_LABEL});
  * - ready: `Ready`, null under Ready.
  *

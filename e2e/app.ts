@@ -138,6 +138,15 @@ export async function openApp(
  * Playwright's occlusion check cannot see this, because it runs in the frame
  * and the occluder is in the parent document.
  *
+ * A second way to lose a click the same silent way, with no occluder at all:
+ * once `page.setViewportSize` has resized the embedded page, the frame's
+ * foot (under about 716 CSS px of an 800 high window) receives no pointer
+ * or mouse event until a full reload, though the admin document receives
+ * them all on the iframe (traced 2026-10-08 for the help-screenshot script,
+ * see `openModalBy` in `scripts/help-screenshots.ts`). This suite never
+ * resizes an admin page, so it never meets it; a spec that starts to must
+ * reload after the resize or press with a native `click()`.
+ *
  * Whether it is expanded comes from the admin session the storage state was
  * exported from, so it varies between machines and runs — which is exactly why
  * it is closed here rather than left to whoever opened it last. Collapsed it

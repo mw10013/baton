@@ -13,7 +13,7 @@
  * | line item                  | the screen word is item                                                                                   |
  * | mark done, marked done     | the verb's label is Done                                                                                  |
  * | finish, finished           | done (a task), or done or closed (a run)                                                                  |
- * | in progress                | the run's label, read from `Domain.RUN_STATE_LABEL`                                                       |
+ * | in progress                | retired 2026-10-08; the run's label is Making, read from `Domain.RUN_STATE_LABEL`                         |
  * | unclaimed                  | no such state; a task waits for a member                                                                  |
  * | tab, tabs                  | a list's button is a filter value (`Domain.WorkflowsListState`)                                           |
  * | view, views                | retired; a filter, a search, or the member's list state; "View in Shopify", the verb on a link out, stays |

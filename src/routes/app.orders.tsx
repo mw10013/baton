@@ -32,7 +32,7 @@ declare module "@tanstack/react-router" {
  *
  * `?show=` is the main filter (`Domain.OrdersShow`; `made` is the packer's
  * queue, `issues` the merchant's, `all` the whole history), and an absent
- * `show` is Open. `?q=` is the search (`Domain.searchTerm`): it searches every
+ * `show` is Making. `?q=` is the search (`Domain.searchTerm`): it searches every
  * stored order and the filters are then ignored (`Domain.ListOrdersInput.q`),
  * though they stay in the URL so Clear search returns to them. `?team=` keeps
  * only orders waiting on that team. An old `?view=`, `?position=` or `?issues=` is not a key and is

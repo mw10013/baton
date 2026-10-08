@@ -104,7 +104,7 @@ export const HELP_PICTURES = {
     file: "getting-started/how-baton-works-1.png",
     kind: "merchant",
     aspectRatio: "1056/374",
-    alt: "The order page for order 1206, with Sync from Shopify and View in Shopify in the title bar. Its one item, an engraved cutting board in maple with the engraving text Grandma Rose, carries a blue status badge and reads Step 2 of 3, Engrave. Edit note and Manage sit under it. Order details shows it paid and unfulfilled.",
+    alt: "The order page for order 1206, with Sync from Shopify and View in Shopify in the title bar. Its one item, an engraved cutting board in maple with the engraving text Grandma Rose, carries a Making badge and reads Step 2 of 3, Engrave. Edit note and Manage sit under it. Order details shows it paid and unfulfilled.",
   },
   /** The Create workflow modal with Name typed and the Tag typed over its filled value. Shape: modal. */
   firstWorkflow1: {
@@ -273,6 +273,69 @@ export const HELP_PICTURES = {
     kind: "merchant",
     aspectRatio: "620/158",
     alt: "The modal that opens from Delete under More actions on the page for the team Packing. Its heading asks Delete Packing?, and its one sentence says this can't be undone. At the foot are Cancel and a red Delete button.",
+  },
+  /** The Orders page as it opens on the showcase: Making chosen, its 24 orders on one page, no pager. Shape: page. */
+  ordersList1: {
+    file: "orders/orders-list-1.png",
+    kind: "merchant",
+    aspectRatio: "1056/1356",
+    alt: "The Orders page with Sync open orders in the title bar. The strip counts No workflow, Not started, Making, Made and Issues, with Making chosen. Below it sit the Show select, the search field and the Team select. Each row shows the order number, date placed, Paid and Making badges, any issue, the item count and a Shopify icon.",
+  },
+  /** Order #1235: a started walnut board with a note, a done journal, a wall clock not started, and the Order note and Order details asides. Shape: page. */
+  orderPage1: {
+    file: "orders/order-page-1.png",
+    kind: "merchant",
+    aspectRatio: "1056/876",
+    alt: "The page for order 1235, with Sync from Shopify and View in Shopify in the title bar. Three item cards, each with properties, Edit note and Manage: a walnut cutting board marked Making, with its step and a note, a leather journal marked Done, and a wall clock marked Not started. Order note and Order details sit beside them.",
+  },
+  /** #1235 with Manage open on the walnut board: the workflow's three steps and the drawer's buttons. Shape: page. */
+  orderPage2: {
+    file: "orders/order-page-2.png",
+    kind: "merchant",
+    aspectRatio: "1056/1365",
+    alt: "The same order page with Manage open under the walnut cutting board. The drawer is headed Cut, engrave and oil workflow and lists each step: Cut and sand Done by ben@example.com, Engrave Started by ana@example.com with Done, Put back and Assign team, and Oil and inspect waiting. At its foot are Block, Cancel workflow and Change workflow.",
+  },
+  /** Order #1218, a gift card no workflow matches: the Workflow select at rest. Shape: page. */
+  attachingAWorkflow1: {
+    file: "orders/attaching-a-workflow-1.png",
+    kind: "merchant",
+    aspectRatio: "1056/266",
+    alt: "The page for order 1218. Its one item, a $50 gift card, has no workflow and no badge. Under it the Workflow select reads Choose workflow, with a greyed Attach button beside it until a workflow is chosen. Order details shows the date placed, a Paid badge and Unfulfilled.",
+  },
+  /** The Change workflow modal on #1206 (Grandma Rose) with Clock assembly chosen, the warning shown. Shape: modal. */
+  attachingAWorkflow2: {
+    file: "orders/attaching-a-workflow-2.png",
+    kind: "merchant",
+    aspectRatio: "620/250",
+    alt: "The modal that opens from Change workflow under Manage. Its heading asks Change workflow?, the Workflow select reads Clock assembly, and the sentence under it says Cut, engrave and oil has 1 of 3 steps done and that work will not carry over. At the foot are Cancel and a red Change workflow button.",
+  },
+  /** The Cancel workflow modal on #1206. Shape: modal. */
+  attachingAWorkflow3: {
+    file: "orders/attaching-a-workflow-3.png",
+    kind: "merchant",
+    aspectRatio: "620/204",
+    alt: "The modal that opens from Cancel workflow under Manage. Its heading asks Cancel Cut, engrave and oil?, the line under it names the item, and the sentence says work on it stops, steps already done stay on record and another workflow can be attached afterwards. At the foot are Keep workflow and a red Cancel workflow button.",
+  },
+  /** The Orders page with Show set to Issues after Packing is deleted: eight Needs a team, two Blocked; Multiple workflows match is gone (the delete leaves Stamp and bind ineligible). Shape: page. */
+  fixingIssues1: {
+    file: "orders/fixing-issues-1.png",
+    kind: "merchant",
+    aspectRatio: "1056/730",
+    alt: "The Orders page with Issues chosen on the strip and in the Show select. Each row's Issues cell carries a red badge: Needs a team on the eight leather journal orders whose Pack task lost its team, and Blocked on two orders. The Status column still reads Making or Not started.",
+  },
+  /** Order #1209: the Blocked badge, and the banner with ana@example.com's reason and Unblock. Shape: page. */
+  fixingIssues2: {
+    file: "orders/fixing-issues-2.png",
+    kind: "merchant",
+    aspectRatio: "1056/506",
+    alt: "The page for order 1209. Its walnut cutting board carries a Making badge and a red Blocked badge. A red banner headed Blocked holds the reason, that the board has a crack along the grain and a new blank was asked for, then ana@example.com and when, and an Unblock button. The step line reads Step 2 of 3, Engrave.",
+  },
+  /** Order #1234 after Packing is deleted: the Pack task needs a team. Shape: page. */
+  fixingIssues3: {
+    file: "orders/fixing-issues-3.png",
+    kind: "merchant",
+    aspectRatio: "1056/438",
+    alt: "The page for order 1234. Its black leather journal carries a Making badge and reads Step 4 of 4, Pack. Under Edit note a line says Pack: assign a team, with an Assign team select and a greyed Assign button until a team is chosen. There is no Needs a team badge on this page.",
   },
 } as const satisfies Readonly<Record<string, HelpPicture>>;
 

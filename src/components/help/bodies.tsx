@@ -9,6 +9,11 @@ import { Blocking } from "@/components/help/members/blocking";
 import { FindingYourWork } from "@/components/help/members/finding-your-work";
 import { RecordingYourWork } from "@/components/help/members/recording-your-work";
 import { SigningIn } from "@/components/help/members/signing-in";
+import { AttachingAWorkflow } from "@/components/help/orders/attaching-a-workflow";
+import { FixingIssues } from "@/components/help/orders/fixing-issues";
+import { OrderPage } from "@/components/help/orders/order-page";
+import { OrdersList } from "@/components/help/orders/orders-list";
+import { Syncing } from "@/components/help/orders/syncing";
 import { AddingAMember } from "@/components/help/teams-and-members/adding-a-member";
 import { CreatingATeam } from "@/components/help/teams-and-members/creating-a-team";
 import { RemovingAndDeleting } from "@/components/help/teams-and-members/removing-and-deleting";
@@ -34,6 +39,11 @@ export const HELP_BODIES: Readonly<Record<string, () => React.JSX.Element>> = {
   "getting-started/first-workflow": FirstWorkflow,
   "getting-started/first-team": FirstTeam,
   "getting-started/first-order": FirstOrder,
+  "orders/orders-list": OrdersList,
+  "orders/order-page": OrderPage,
+  "orders/attaching-a-workflow": AttachingAWorkflow,
+  "orders/fixing-issues": FixingIssues,
+  "orders/syncing": Syncing,
   "workflows/creating": Creating,
   "workflows/editing": Editing,
   "workflows/matching": Matching,

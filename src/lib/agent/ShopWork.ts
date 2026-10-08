@@ -1830,7 +1830,7 @@ const make = Effect.gen(function* () {
    * `markTaskDone` with the task's own team so the check of which tasks
    * are current is exercised the way it is on the floor. `advance`, `started`, and
    * `blocked` go through the same actions for the same reason: a seeded
-   * card reading "Step 2 of 3" with In progress and Blocked badges is
+   * card reading "Step 2 of 3" with Making and Blocked badges is
    * indistinguishable from one a
    * worker produced. Only rows under `SEED_ORDER_ID_PREFIX` are replaced;
    * synced orders are left alone.

@@ -691,6 +691,9 @@ const openOrder = async (page: Page, orderName: string) => {
   await awaitNavigated(frame);
 };
 
+/** The order Reading an order pictures: three items in three states, a note, an order note. */
+const ORDER_PAGE = orderWith("Sam and Priya, 14 October");
+
 const WORKFLOW = "Engraved pen";
 const TEAM = "Assembly";
 
@@ -730,11 +733,69 @@ const openRow = async (page: Page, name: string) => {
   await parkPointer(page);
 };
 
-/** Cancel in the open modal of a frame, returning once no modal is open. */
-const cancelModal = async (frame: FrameLocator) => {
-  await frame.getByRole("button", { name: "Cancel", exact: true }).click();
+/**
+ * The named dismiss of the open modal in a frame, returning once no modal is
+ * open. Most modals' dismiss is Cancel ({@link cancelModal}); the Cancel
+ * workflow modal's is Keep workflow.
+ */
+const dismissModal = async (frame: FrameLocator, name: string) => {
+  await frame.getByRole("button", { name, exact: true }).click();
   await expect(frame.locator("s-modal dialog[open]")).toHaveCount(0);
 };
+
+/** Cancel in the open modal of a frame ({@link dismissModal}). */
+const cancelModal = (frame: FrameLocator) => dismissModal(frame, "Cancel");
+
+/** Cancels the open modal in the app frame, if one is open: a block's guard against the last block's open modal. */
+const cancelOpenModal = async (page: Page) => {
+  const frame = appFrame(page);
+  if ((await frame.locator("s-modal dialog[open]").count()) > 0)
+    await cancelModal(frame);
+};
+
+/** An item's card on the order page, by its heading: the item's title and variant, "Wall clock — Oak". */
+const itemCard = (frame: FrameLocator, title: string) =>
+  frame.locator("s-section").filter({
+    has: frame.getByRole("heading", { name: title, exact: true }),
+  });
+
+/**
+ * Presses a button that opens a modal with a native click, again until the
+ * modal's dialog is open. Change workflow and Cancel workflow sit in the
+ * Manage drawer near the window's foot, and Playwright's click on them
+ * opens nothing once the page has been through a viewport resize (the page
+ * shape grows the window for a tall picture and restores it): from then on
+ * the admin document receives the pointer and mouse events on the iframe
+ * and the frame document receives none of them, for every point under
+ * about 716 CSS px of the 800 high window, until a full reload. Traced
+ * 2026-10-08 with capture-phase listeners in both documents and a scan of
+ * `page.mouse` down and up by row; the DOM is identical before and after,
+ * `elementsFromPoint` finds the frame on top in both, and no app code is
+ * involved, so a merchant's browser, which never emulates a viewport, is not
+ * affected. A native `click()` on the element does not go through the hit
+ * test and opens the modal first time.
+ */
+const openModalBy = async (control: Locator, modal: Locator) => {
+  await expect(async () => {
+    await control.evaluate((element) => {
+      (element as HTMLElement).click();
+    });
+    await expect(modal.locator("dialog[open]")).toBeVisible({ timeout: 2000 });
+  }).toPass({ timeout: 20_000 });
+};
+
+/** A button in the frame, waited for until it accepts clicks. */
+const awaitFrameButton = (scope: FrameLocator | Locator, name: string) =>
+  expect(
+    scope.getByRole("button", { name, exact: true }).first(),
+  ).toBeEnabled();
+
+/**
+ * Puts the showcase back as seeded, mid-run: the Orders block deletes the
+ * team Packing for its Needs a team pictures, and no later picture may see
+ * that. The command the run starts with.
+ */
+const reseedShowcase = runCommand("pnpm", ["seed", "--showcase"]);
 
 /**
  * The editor window's Close, the X the admin draws in the window's title
@@ -764,6 +825,8 @@ const MERCHANT_SHOTS: readonly {
   readonly name: HelpPictureName;
   readonly shape: keyof typeof MERCHANT_SHAPES;
   readonly take: (page: Page) => Promise<void>;
+  /** Run once the shape has written the file: a write the next block must not see is undone here. */
+  readonly after?: typeof reseedShowcase;
 }[] = [
   {
     name: "howBatonWorks1",
@@ -1006,14 +1069,182 @@ const MERCHANT_SHOTS: readonly {
     },
   },
   {
+    name: "ordersList1",
+    shape: "page",
+    take: async (page) => {
+      // The Teams and members block ends on its Delete modal, open.
+      await cancelOpenModal(page);
+      await openScreen(page, "Orders");
+      await expect
+        .poll(() =>
+          hoistedEnabled(
+            page.getByRole("button", { name: "Sync open orders", exact: true }),
+          ),
+        )
+        .toBe(true);
+      await appFrame(page)
+        .getByRole("link", { name: "#1203", exact: true })
+        .waitFor();
+      await parkPointer(page);
+    },
+  },
+  {
+    name: "orderPage1",
+    shape: "page",
+    take: async (page) => {
+      await openRow(page, ORDER_PAGE);
+      await appFrame(page)
+        .getByRole("heading", { name: "Order note", exact: true })
+        .waitFor();
+      await expect
+        .poll(() =>
+          hoistedEnabled(
+            page.getByRole("button", {
+              name: "Sync from Shopify",
+              exact: true,
+            }),
+          ),
+        )
+        .toBe(true);
+    },
+  },
+  {
+    name: "orderPage2",
+    shape: "page",
+    take: async (page) => {
+      const frame = appFrame(page);
+      const card = itemCard(frame, "Engraved cutting board — Walnut");
+      await card.getByRole("button", { name: "Manage", exact: true }).click();
+      await card
+        .getByText("Cut, engrave and oil workflow", { exact: true })
+        .waitFor();
+      // The verbs are disabled until the socket identifies.
+      await awaitFrameButton(card, "Done");
+      await parkPointer(page);
+    },
+  },
+  {
+    name: "attachingAWorkflow1",
+    shape: "page",
+    take: async (page) => {
+      await openOrder(page, orderOf("Gift card", "$50"));
+      await parkPointer(page);
+      await itemCard(appFrame(page), "Gift card — $50")
+        .getByRole("combobox", { name: "Workflow" })
+        .waitFor();
+      await expect
+        .poll(() =>
+          hoistedEnabled(
+            page.getByRole("button", {
+              name: "Sync from Shopify",
+              exact: true,
+            }),
+          ),
+        )
+        .toBe(true);
+    },
+  },
+  {
+    name: "attachingAWorkflow2",
+    shape: "modal",
+    take: async (page) => {
+      await openOrder(page, orderWith("Grandma Rose"));
+      await parkPointer(page);
+      const frame = appFrame(page);
+      const card = itemCard(frame, "Engraved cutting board — Maple");
+      await card.getByRole("button", { name: "Manage", exact: true }).click();
+      await awaitFrameButton(card, "Change workflow");
+      const modal = frame.locator("s-modal#change-workflow");
+      await openModalBy(
+        card.getByRole("button", { name: "Change workflow", exact: true }),
+        modal,
+      );
+      await modal
+        .getByRole("combobox", { name: "Workflow" })
+        .selectOption({ label: "Clock assembly" });
+      await modal.getByText("anyway?", { exact: false }).waitFor();
+      await awaitFrameButton(modal, "Change workflow");
+    },
+  },
+  {
+    name: "attachingAWorkflow3",
+    shape: "modal",
+    take: async (page) => {
+      const frame = appFrame(page);
+      await cancelModal(frame);
+      const modal = frame.locator("s-modal#cancel-run");
+      const cancelWorkflow = itemCard(
+        frame,
+        "Engraved cutting board — Maple",
+      ).getByRole("button", { name: "Cancel workflow", exact: true });
+      await openModalBy(cancelWorkflow, modal);
+      await modal
+        .getByText("Steps already done stay on record.", { exact: false })
+        .waitFor();
+      await awaitFrameButton(modal, "Cancel workflow");
+    },
+  },
+  {
+    name: "fixingIssues1",
+    shape: "page",
+    take: async (page) => {
+      const frame = appFrame(page);
+      await dismissModal(frame, "Keep workflow");
+      // The only way an order reads Needs a team: its task's team is deleted.
+      await openScreen(page, "Teams");
+      await openRow(page, "Packing");
+      await clickMenuItemIn(frame, "team-actions", "Delete");
+      const modal = frame.locator("s-modal#delete-team");
+      await awaitFrameButton(modal, "Delete");
+      await modal.getByRole("button", { name: "Delete", exact: true }).click();
+      await frame.locator('s-page[heading="Teams"]').waitFor();
+      await awaitNavigated(frame);
+      await openScreen(page, "Orders");
+      await frame
+        .getByRole("combobox", { name: "Show" })
+        .selectOption({ label: "Issues" });
+      await expect(page).toHaveURL(/show=issues/u);
+      await awaitNavigated(frame);
+      // Not #1211: the delete leaves Stamp and bind with a task on no team,
+      // so it is no longer eligible, the gift set matches one workflow and
+      // Multiple workflows match leaves the list (`ITEM_MATCHES`).
+      await frame
+        .getByRole("link", { name: orderWith("Smith family"), exact: true })
+        .waitFor();
+      await frame.getByText("Needs a team", { exact: true }).first().waitFor();
+      await parkPointer(page);
+    },
+  },
+  {
+    name: "fixingIssues2",
+    shape: "page",
+    take: async (page) => {
+      await openRow(page, orderWith("Smith family"));
+      const banner = appFrame(page).locator('s-banner[heading="Blocked"]');
+      await banner.waitFor();
+      await awaitFrameButton(banner, "Unblock");
+    },
+  },
+  {
+    name: "fixingIssues3",
+    shape: "page",
+    take: async (page) => {
+      await openOrder(page, orderWith("C.O."));
+      await parkPointer(page);
+      const frame = appFrame(page);
+      await frame.getByText("Pack: assign a team.", { exact: true }).waitFor();
+      await frame.getByRole("combobox", { name: "Assign team" }).waitFor();
+    },
+    after: reseedShowcase,
+  },
+  {
     name: "firstWorkflow1",
     shape: "modal",
     take: async (page) => {
-      // The Teams and members block ends on its Delete modal, open: a shot
-      // is taken after its `take`, so the Cancel falls to the next one.
+      // The block before may end on an open modal: a shot is taken after its
+      // `take`, so the Cancel falls to the next one.
+      await cancelOpenModal(page);
       const frame = appFrame(page);
-      if ((await frame.locator("s-modal dialog[open]").count()) > 0)
-        await cancelModal(frame);
       await openScreen(page, "Workflows");
       await clickHoisted(page.getByRole("button", { name: "Create workflow" }));
       const tag = frame.getByRole("textbox", { name: "Tag", exact: true });
@@ -1158,6 +1389,7 @@ const shootMerchant = (browser: Browser) =>
         file,
         aspectRatio: `${String(Math.round(clip.width))}/${String(Math.round(clip.height))}`,
       });
+      if (shot.after !== undefined) yield* shot.after;
     }
     return written;
   });

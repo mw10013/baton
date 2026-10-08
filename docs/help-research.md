@@ -409,7 +409,15 @@ its inventory name. The inventory is held to the files and to the bodies by the 
 tests. `pnpm help:screenshots --section <slug>` shoots one section's pictures alone (by file
 prefix); a section's shots are a block that starts from a bare screen and leaves nothing open.
 The overlay stems the check has met are tabled in the Deviations of
-`docs/help-getting-started-plan.md` and `docs/help-workflows-plan.md`.
+`docs/help-getting-started-plan.md` and `docs/help-workflows-plan.md`. A block that must write
+to the store (the Orders block deletes the team Packing, the only way an order reads Needs a
+team) carries `pnpm seed --showcase` as an `after` hook on its last shot, so no later block or
+member shot sees the write; the closing `pnpm seed` still runs. A button at the foot of the
+window in a merchant shot is pressed with a native `click()` (`openModalBy`): once the page
+shape has resized the viewport for a tall picture, the frame's foot receives no pointer or
+mouse event until a full reload, though the admin document receives them all on the iframe.
+Traced 2026-10-08 (`docs/help-orders-plan.md`, "The drawer click"); not the app, and nothing a
+merchant's browser does.
 
 ## Decisions
 
@@ -448,23 +456,23 @@ now and will be gone into in a later session. The plan is `docs/help-plan.md`.
 ## Roadmap
 
 Where the help work stands, one line per stage, and the doc that carries it. This research stays
-the umbrella; each stage's detail lives in its own research or plan. Updated 2026-10-08, after the Workflows cycle: the skeleton, For members, the merchant kind and Getting started are committed, Workflows and Teams and members are done and uncommitted; 9 of 33 pages have no body (Orders, Reference, and the six hubs, which have none by design).
+the umbrella; each stage's detail lives in its own research or plan. Updated 2026-10-08, after the Orders cycle closed: everything up to Teams and members is committed, Orders is done with nothing open and uncommitted; 4 of 33 pages have no body (Reference, and the six hubs, which have none by design).
 
-| stage                                                                                                                  | status                                                                   | doc                                   |
-| ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------- |
-| Approach, tree, anatomy, tone, screenshot spec                                                                         | decided 2026-10-06                                                       | this research                         |
-| Skeleton: template row, help list, foot lines                                                                          | done 2026-10-06 (072010d, 7bd7529); the Syncing title decided 2026-10-06 | `docs/help-plan.md`                   |
-| Showcase data: fixture, products, real orders                                                                          | done, closed 2026-10-07                                                  | `docs/showcase-shop-plan.md`          |
-| Screenshot script, screenshot and numbered list parts, member pictures                                                 | done 2026-10-07 (1d7400e), reviewed, nothing open                        | `docs/help-members-plan.md`           |
-| For members content (four pages)                                                                                       | done 2026-10-07 (1d7400e)                                                | `docs/help-members-plan.md`           |
-| Order positions: what Not started means                                                                                | done 2026-10-07 (3579fda)                                                | `docs/order-not-started-research.md`  |
-| Merchant pictures: the `merchant` picture kind in the script (page, modal, editor window, editor modal; overlap check) | done 2026-10-07, reviewed, uncommitted                                   | `docs/help-getting-started-plan.md`   |
-| Getting started content (5 pages)                                                                                      | done 2026-10-07, reviewed, uncommitted                                   | `docs/help-getting-started-plan.md`   |
-| Workflows content (6 pages), `--section` flag on the script                                                            | done 2026-10-08, reviewed, follow-ups in, uncommitted                    | `docs/help-workflows-plan.md`         |
-| Teams and members content (3 pages, 8 pictures)                                                                        | done 2026-10-08, reviewed, follow-ups in, uncommitted                    | `docs/help-teams-and-members-plan.md` |
-| Orders content (6 pages)                                                                                               | later; order positions are settled                                       | a plan of its own                     |
-| Reference pages and their vocabulary check                                                                             | later (decision 14); needs no pictures, so it can run at any point       | a plan of its own                     |
-| Home page pictures                                                                                                     | deferred until Home is redesigned                                        | none yet                              |
+| stage                                                                                                                  | status                                                                                         | doc                                   |
+| ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------- |
+| Approach, tree, anatomy, tone, screenshot spec                                                                         | decided 2026-10-06                                                                             | this research                         |
+| Skeleton: template row, help list, foot lines                                                                          | done 2026-10-06 (072010d, 7bd7529); the Syncing title decided 2026-10-06                       | `docs/help-plan.md`                   |
+| Showcase data: fixture, products, real orders                                                                          | done, closed 2026-10-07                                                                        | `docs/showcase-shop-plan.md`          |
+| Screenshot script, screenshot and numbered list parts, member pictures                                                 | done 2026-10-07 (1d7400e), reviewed, nothing open                                              | `docs/help-members-plan.md`           |
+| For members content (four pages)                                                                                       | done 2026-10-07 (1d7400e)                                                                      | `docs/help-members-plan.md`           |
+| Order positions: what Not started means                                                                                | done 2026-10-07 (3579fda)                                                                      | `docs/order-not-started-research.md`  |
+| Merchant pictures: the `merchant` picture kind in the script (page, modal, editor window, editor modal; overlap check) | done 2026-10-07, reviewed, uncommitted                                                         | `docs/help-getting-started-plan.md`   |
+| Getting started content (5 pages)                                                                                      | done 2026-10-07, reviewed, uncommitted                                                         | `docs/help-getting-started-plan.md`   |
+| Workflows content (6 pages), `--section` flag on the script                                                            | done 2026-10-08, reviewed, follow-ups in, uncommitted                                          | `docs/help-workflows-plan.md`         |
+| Teams and members content (3 pages, 8 pictures)                                                                        | done 2026-10-08, reviewed, follow-ups in, uncommitted                                          | `docs/help-teams-and-members-plan.md` |
+| Orders content (5 pages, 9 pictures, Packing deleted and reseeded mid-run)                                             | done 2026-10-08, reviewed, follow-ups in, badge renamed Making (Review 3), closed, uncommitted | `docs/help-orders-plan.md`            |
+| Reference pages and their vocabulary check                                                                             | later (decision 14); needs no pictures, so it can run at any point                             | a plan of its own                     |
+| Home page pictures                                                                                                     | deferred until Home is redesigned                                                              | none yet                              |
 
 Carried into the content stages, decided elsewhere:
 
@@ -481,7 +489,17 @@ Carried into the content stages, decided elsewhere:
   Show values with no count; No workflow is a position, not an issue, so its Issues cell is empty
   and the badge is where the merchant sees it. Fixing an issue stays at three issues (Multiple
   workflows match, Needs a team, Blocked). Reading an order says the item's Not started badge and
-  the order's Not started position now mean the same thing.
+  the order's Not started position now mean the same thing. Found in the Orders cycle: a
+  multi-match order is No workflow with a Multiple workflows match badge, so the Issues cell is
+  empty only for the untagged, cancelled and removed cases; and deleting a team that one of two
+  matching workflows uses makes that workflow ineligible, so the other starts and the multi-match
+  ends (the Delete team row of the triggers table), which is why no showcase state shows all three
+  issue badges at once.
+- The item badge for a started workflow reads **Making** (`RUN_STATE_LABEL.open`) since
+  2026-10-08, the order's word for the fact that puts it under Making. It read "In progress", a
+  word the copy lint retires, so bodies and alt texts said "a blue badge" until the Orders review
+  (finding 3) had it renamed by the vocabulary runbook; they now name it, and Reading an order says
+  an item's Not started and Making mean the order's.
 - A member is spelled as their email on every screen (`actorLabel`); a member has no name. Help
   prose and these docs write the email (`ana@example.com`), never a bare lowercase "ana", which
   is nothing a screen shows.

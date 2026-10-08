@@ -19,8 +19,8 @@ import {
  * (`scripts/seed.ts`): the data the help's pictures are taken against. It is
  * the same fictional made-to-order gift workshop as the development fixture
  * (`e2e/fixture.ts`), with every name one a merchant would type: no team that
- * carries its own diagnosis, `ana@example.com` rather than `lead@m.com`, 38
- * open orders and four closed ones placed over the last ten days, newest
+ * carries its own diagnosis, `ana@example.com` rather than `lead@m.com`, 40
+ * open orders and two closed ones placed over the last ten days, newest
  * first, so the orders index reads like a working week.
  *
  * The development fixture stays the default of `pnpm seed`, and this one is

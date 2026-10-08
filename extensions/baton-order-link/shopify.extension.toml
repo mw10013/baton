@@ -15,7 +15,7 @@
 
 [[extensions]]
 name = "Open in Baton"
-description = "Open this order's production runs in Baton"
+description = "Open this order's work in Baton"
 handle = "baton-order-link"
 type = "admin_link"
 uid = "445a9561-6758-c8d6-c5e1-edbe263840a9403af10f"
