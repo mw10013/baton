@@ -218,6 +218,62 @@ export const HELP_PICTURES = {
     aspectRatio: "620/158",
     alt: "The modal that opens from Delete under More actions on the page for Cut, engrave and oil. Its heading asks Delete Cut, engrave and oil?, and its two sentences say items already on it keep going and this can't be undone. At the foot are Cancel and a red Delete button.",
   },
+  /** The Teams page with the showcase's eight teams in name order and their member counts: Weekend crew reads No members and 0. Shape: page. */
+  creatingATeam1: {
+    file: "teams-and-members/creating-a-team-1.png",
+    kind: "merchant",
+    aspectRatio: "1056/490",
+    alt: "The Teams page with Create team in its title bar and a Search by name field. The table has the columns Team and Members and lists eight teams, from Engraving with 3 members to Woodshop with 2. Weekend crew has 0 members and a No members badge beside its name.",
+  },
+  /** Engraving's team page: ana, ben and carmen with Remove on each row, More actions and Add members in the title bar, the Details aside. Shape: page. */
+  creatingATeam2: {
+    file: "teams-and-members/creating-a-team-2.png",
+    kind: "merchant",
+    aspectRatio: "1056/355",
+    alt: "The page for the team Engraving, with More actions and Add members in its title bar. The Members table lists ana@example.com, ben@example.com and carmen@example.com, each with a Remove button at the end of its row. Beside it, Details shows Members 3 and the date the team was created.",
+  },
+  /** The Members page with the showcase's seven members by email and how many teams each is on. Shape: page. */
+  addingAMember1: {
+    file: "teams-and-members/adding-a-member-1.png",
+    kind: "merchant",
+    aspectRatio: "1056/453",
+    alt: "The Members page with Add member in its title bar and a Search by email field. The table has the columns Email and Teams and lists seven members, from ana@example.com to gus@example.com. Five are on 2 teams and two are on 1, so no row reads No teams.",
+  },
+  /** The Add member modal: the Email field empty, its line about signing in, Cancel and Add. Shape: modal. */
+  addingAMember2: {
+    file: "teams-and-members/adding-a-member-2.png",
+    kind: "merchant",
+    aspectRatio: "620/214",
+    alt: "The Add member modal. Its one field is Email, marked required and empty, and under it the line reads They sign in with this email. No Shopify account needed. At the foot are Cancel and the Add button.",
+  },
+  /** The Add to teams modal on ana@example.com's page: the Search by name field and the six teams she is not on, none ticked, Add greyed. Shape: modal. */
+  addingAMember3: {
+    file: "teams-and-members/adding-a-member-3.png",
+    kind: "merchant",
+    aspectRatio: "620/358",
+    alt: "The Add to teams modal on the page for ana@example.com. A Search by name field sits above a checkbox for each of the six teams she is not on: Jewelry, Leather, Packing, Textiles, Weekend crew and Woodshop, none ticked. At the foot are Cancel and the Add button, greyed.",
+  },
+  /** ana@example.com's member page: Engraving and Finishing with Remove on each row, Delete member and Add to teams in the title bar, the Details aside. Shape: page. */
+  addingAMember4: {
+    file: "teams-and-members/adding-a-member-4.png",
+    kind: "merchant",
+    aspectRatio: "1056/310",
+    alt: "The page for the member ana@example.com, with Delete member and Add to teams in its title bar. The Teams table lists Engraving and Finishing, each with a Remove button at the end of its row. Beside it, Details shows her email and the date she was added.",
+  },
+  /** The Delete member modal on ana@example.com's page: the sentence names the email. Shape: modal. */
+  removingAndDeleting1: {
+    file: "teams-and-members/removing-and-deleting-1.png",
+    kind: "merchant",
+    aspectRatio: "620/158",
+    alt: "The modal that opens from Delete member on the page for ana@example.com. Its heading asks Delete member?, and its sentence asks Delete ana@example.com? and says this can't be undone. At the foot are Cancel and a red Delete button.",
+  },
+  /** The Delete modal from More actions on Packing's page, its Delete enabled once the socket identified. Shape: modal. */
+  removingAndDeleting2: {
+    file: "teams-and-members/removing-and-deleting-2.png",
+    kind: "merchant",
+    aspectRatio: "620/158",
+    alt: "The modal that opens from Delete under More actions on the page for the team Packing. Its heading asks Delete Packing?, and its one sentence says this can't be undone. At the foot are Cancel and a red Delete button.",
+  },
 } as const satisfies Readonly<Record<string, HelpPicture>>;
 
 export type HelpPictureName = keyof typeof HELP_PICTURES;

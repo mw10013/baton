@@ -1674,7 +1674,7 @@ const make = Effect.gen(function* () {
    * use are read before the shop's teams, so a team created between the
    * two reads, and a task pointed at it, is not among the candidates and
    * is never nulled. Nothing is refused for being in use: the confirm
-   * dialog states the counts and the merchant decides.
+   * dialog says only that it can't be undone, and the merchant decides.
    *
    * Reconciles every stored order afterwards ({@link reconcileAllNow}): a
    * workflow whose task lost its team stops being eligible, and an item it

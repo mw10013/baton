@@ -171,7 +171,9 @@ that is on every page at every width:
 | related         | links in the prose, by the target page's title                  | the lead and the body                            |
 | back to the app | the "Baton" breadcrumb, which is the public landing page        | every page                                       |
 
-One caution on the breadcrumb slot: under about 500px Polaris folds it into a "…" button beside the
+One caution on the breadcrumb slot: at every width Polaris shortens a long middle crumb ("Teams a…"
+for Teams and members), and the foot list carries the section's full name; under about 500px it
+folds the slot into a "…" button beside the
 heading (the member's workflow page chose a visible back link over it for that reason, see the JSDoc
 in `src/routes/shop.$shop.workflows.$runId.tsx`). The Help Center's breadcrumb collapses the same
 way on a phone, and its answer is the Contents menu, which is one tap at every width. Baton's
@@ -446,23 +448,23 @@ now and will be gone into in a later session. The plan is `docs/help-plan.md`.
 ## Roadmap
 
 Where the help work stands, one line per stage, and the doc that carries it. This research stays
-the umbrella; each stage's detail lives in its own research or plan. Updated 2026-10-08, after the Workflows cycle: the skeleton, For members, the merchant kind and Getting started are committed, Workflows is done and uncommitted; 12 of 33 pages have no body (Orders, Teams and members, Reference, and the six hubs, which have none by design).
+the umbrella; each stage's detail lives in its own research or plan. Updated 2026-10-08, after the Workflows cycle: the skeleton, For members, the merchant kind and Getting started are committed, Workflows and Teams and members are done and uncommitted; 9 of 33 pages have no body (Orders, Reference, and the six hubs, which have none by design).
 
-| stage                                                                                                                  | status                                                                   | doc                                  |
-| ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------ |
-| Approach, tree, anatomy, tone, screenshot spec                                                                         | decided 2026-10-06                                                       | this research                        |
-| Skeleton: template row, help list, foot lines                                                                          | done 2026-10-06 (072010d, 7bd7529); the Syncing title decided 2026-10-06 | `docs/help-plan.md`                  |
-| Showcase data: fixture, products, real orders                                                                          | done, closed 2026-10-07                                                  | `docs/showcase-shop-plan.md`         |
-| Screenshot script, screenshot and numbered list parts, member pictures                                                 | done 2026-10-07 (1d7400e), reviewed, nothing open                        | `docs/help-members-plan.md`          |
-| For members content (four pages)                                                                                       | done 2026-10-07 (1d7400e)                                                | `docs/help-members-plan.md`          |
-| Order positions: what Not started means                                                                                | done 2026-10-07 (3579fda)                                                | `docs/order-not-started-research.md` |
-| Merchant pictures: the `merchant` picture kind in the script (page, modal, editor window, editor modal; overlap check) | done 2026-10-07, reviewed, uncommitted                                   | `docs/help-getting-started-plan.md`  |
-| Getting started content (5 pages)                                                                                      | done 2026-10-07, reviewed, uncommitted                                   | `docs/help-getting-started-plan.md`  |
-| Workflows content (6 pages), `--section` flag on the script                                                            | done 2026-10-08, reviewed, follow-ups in, uncommitted                    | `docs/help-workflows-plan.md`        |
-| Teams and members content (4 pages)                                                                                    | later                                                                    | a plan of its own                    |
-| Orders content (6 pages)                                                                                               | later; order positions are settled                                       | a plan of its own                    |
-| Reference pages and their vocabulary check                                                                             | later (decision 14); needs no pictures, so it can run at any point       | a plan of its own                    |
-| Home page pictures                                                                                                     | deferred until Home is redesigned                                        | none yet                             |
+| stage                                                                                                                  | status                                                                   | doc                                   |
+| ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------- |
+| Approach, tree, anatomy, tone, screenshot spec                                                                         | decided 2026-10-06                                                       | this research                         |
+| Skeleton: template row, help list, foot lines                                                                          | done 2026-10-06 (072010d, 7bd7529); the Syncing title decided 2026-10-06 | `docs/help-plan.md`                   |
+| Showcase data: fixture, products, real orders                                                                          | done, closed 2026-10-07                                                  | `docs/showcase-shop-plan.md`          |
+| Screenshot script, screenshot and numbered list parts, member pictures                                                 | done 2026-10-07 (1d7400e), reviewed, nothing open                        | `docs/help-members-plan.md`           |
+| For members content (four pages)                                                                                       | done 2026-10-07 (1d7400e)                                                | `docs/help-members-plan.md`           |
+| Order positions: what Not started means                                                                                | done 2026-10-07 (3579fda)                                                | `docs/order-not-started-research.md`  |
+| Merchant pictures: the `merchant` picture kind in the script (page, modal, editor window, editor modal; overlap check) | done 2026-10-07, reviewed, uncommitted                                   | `docs/help-getting-started-plan.md`   |
+| Getting started content (5 pages)                                                                                      | done 2026-10-07, reviewed, uncommitted                                   | `docs/help-getting-started-plan.md`   |
+| Workflows content (6 pages), `--section` flag on the script                                                            | done 2026-10-08, reviewed, follow-ups in, uncommitted                    | `docs/help-workflows-plan.md`         |
+| Teams and members content (3 pages, 8 pictures)                                                                        | done 2026-10-08, reviewed, follow-ups in, uncommitted                    | `docs/help-teams-and-members-plan.md` |
+| Orders content (6 pages)                                                                                               | later; order positions are settled                                       | a plan of its own                     |
+| Reference pages and their vocabulary check                                                                             | later (decision 14); needs no pictures, so it can run at any point       | a plan of its own                     |
+| Home page pictures                                                                                                     | deferred until Home is redesigned                                        | none yet                              |
 
 Carried into the content stages, decided elsewhere:
 

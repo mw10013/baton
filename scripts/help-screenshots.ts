@@ -695,16 +695,40 @@ const WORKFLOW = "Engraved pen";
 const TEAM = "Assembly";
 
 /**
- * A More actions item on the workflow page, copied from
- * `e2e/workflows.spec.ts`: the hoisted menu is unreachable, so the hidden
- * in-frame `s-menu#workflow-actions` button is clicked natively.
+ * A More actions item, copied from `e2e/workflows.spec.ts` and
+ * `e2e/teams.spec.ts`: the hoisted menu is unreachable, so the hidden in-frame
+ * `s-menu#<menu>` button is clicked natively. The workflow page's menu is
+ * `workflow-actions`, the team page's `team-actions`.
  */
+const clickMenuItemIn = (frame: FrameLocator, menu: string, name: string) =>
+  frame.locator(`s-menu#${menu} s-button`, { hasText: name }).evaluate((el) => {
+    (el as HTMLElement).click();
+  });
+
+/** A More actions item on the workflow page ({@link clickMenuItemIn}). */
 const clickMenuItem = (frame: FrameLocator, name: string) =>
-  frame
-    .locator("s-menu#workflow-actions s-button", { hasText: name })
-    .evaluate((el) => {
-      (el as HTMLElement).click();
-    });
+  clickMenuItemIn(frame, "workflow-actions", name);
+
+/**
+ * Moves the pointer to the app frame's top left corner, inside the frame and
+ * on no control. A row link's click leaves the pointer where it pressed, and
+ * the next index that puts a row there shows that link hovered (underlined).
+ * Moving it out of the frame, to the admin's corner, does not clear the
+ * frame's hover; a move inside the frame does.
+ */
+const parkPointer = async (page: Page) => {
+  const frame = await box(page.locator(APP_IFRAME), "the app frame");
+  await page.mouse.move(frame.x + 4, frame.y + 4);
+};
+
+/** A row link in the frame's index table, then its page, by the page's heading, the pointer parked after. */
+const openRow = async (page: Page, name: string) => {
+  const frame = appFrame(page);
+  await frame.getByRole("link", { name, exact: true }).click();
+  await frame.locator(`s-page[heading="${name}"]`).waitFor();
+  await awaitNavigated(frame);
+  await parkPointer(page);
+};
 
 /** Cancel in the open modal of a frame, returning once no modal is open. */
 const cancelModal = async (frame: FrameLocator) => {
@@ -879,12 +903,119 @@ const MERCHANT_SHOTS: readonly {
       openOrder(page, orderOf("Journal and pen gift set", "Black")),
   },
   {
+    name: "creatingATeam1",
+    shape: "page",
+    take: async (page) => {
+      await openScreen(page, "Teams");
+      await appFrame(page)
+        .getByRole("link", { name: "Woodshop", exact: true })
+        .waitFor();
+    },
+  },
+  {
+    name: "creatingATeam2",
+    shape: "page",
+    take: async (page) => {
+      await openRow(page, "Engraving");
+      await appFrame(page)
+        .getByText("carmen@example.com", { exact: true })
+        .first()
+        .waitFor();
+    },
+  },
+  {
+    name: "addingAMember1",
+    shape: "page",
+    take: async (page) => {
+      await openScreen(page, "Members");
+      await appFrame(page)
+        .getByRole("link", { name: "gus@example.com", exact: true })
+        .waitFor();
+    },
+  },
+  {
+    name: "addingAMember2",
+    shape: "modal",
+    take: async (page) => {
+      await clickHoisted(
+        page.getByRole("button", { name: "Add member", exact: true }),
+      );
+      await appFrame(page)
+        .locator("s-modal#add-member")
+        .getByRole("textbox", { name: "Email", exact: true })
+        .waitFor();
+    },
+  },
+  {
+    name: "addingAMember4",
+    shape: "page",
+    take: async (page) => {
+      const frame = appFrame(page);
+      await cancelModal(frame);
+      await openRow(page, MEMBER);
+      await frame
+        .locator("s-table-cell")
+        .getByRole("link", { name: "Finishing", exact: true })
+        .waitFor();
+    },
+  },
+  {
+    name: "addingAMember3",
+    shape: "modal",
+    take: async (page) => {
+      await clickHoisted(
+        page.getByRole("button", { name: "Add to teams", exact: true }),
+      );
+      await appFrame(page)
+        .locator("s-modal#add-member-teams")
+        .getByRole("searchbox", { name: "Search teams by name" })
+        .waitFor();
+    },
+  },
+  {
+    name: "removingAndDeleting1",
+    shape: "modal",
+    take: async (page) => {
+      await cancelModal(appFrame(page));
+      await clickHoisted(
+        page.getByRole("button", { name: "Delete member", exact: true }),
+      );
+      await appFrame(page)
+        .locator("s-modal#delete-member")
+        .getByText("This can't be undone.", { exact: false })
+        .waitFor();
+    },
+  },
+  {
+    name: "removingAndDeleting2",
+    shape: "modal",
+    take: async (page) => {
+      const frame = appFrame(page);
+      await cancelModal(frame);
+      await openScreen(page, "Teams");
+      await openRow(page, "Packing");
+      await clickMenuItemIn(frame, "team-actions", "Delete");
+      const modal = frame.locator("s-modal#delete-team");
+      await modal
+        .getByText("This can't be undone.", { exact: false })
+        .waitFor();
+      // Delete waits on the socket (`identified` on the team page).
+      await expect(
+        modal.getByRole("button", { name: "Delete", exact: true }),
+      ).toBeEnabled();
+    },
+  },
+  {
     name: "firstWorkflow1",
     shape: "modal",
     take: async (page) => {
+      // The Teams and members block ends on its Delete modal, open: a shot
+      // is taken after its `take`, so the Cancel falls to the next one.
+      const frame = appFrame(page);
+      if ((await frame.locator("s-modal dialog[open]").count()) > 0)
+        await cancelModal(frame);
       await openScreen(page, "Workflows");
       await clickHoisted(page.getByRole("button", { name: "Create workflow" }));
-      const frame = appFrame(page);
       const tag = frame.getByRole("textbox", { name: "Tag", exact: true });
       await frame
         .getByRole("textbox", { name: "Name", exact: true })

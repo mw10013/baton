@@ -9,6 +9,9 @@ import { Blocking } from "@/components/help/members/blocking";
 import { FindingYourWork } from "@/components/help/members/finding-your-work";
 import { RecordingYourWork } from "@/components/help/members/recording-your-work";
 import { SigningIn } from "@/components/help/members/signing-in";
+import { AddingAMember } from "@/components/help/teams-and-members/adding-a-member";
+import { CreatingATeam } from "@/components/help/teams-and-members/creating-a-team";
+import { RemovingAndDeleting } from "@/components/help/teams-and-members/removing-and-deleting";
 import { Creating } from "@/components/help/workflows/creating";
 import { Editing } from "@/components/help/workflows/editing";
 import { Managing } from "@/components/help/workflows/managing";
@@ -36,6 +39,9 @@ export const HELP_BODIES: Readonly<Record<string, () => React.JSX.Element>> = {
   "workflows/matching": Matching,
   "workflows/turning-on-and-off": TurningOnAndOff,
   "workflows/managing": Managing,
+  "teams-and-members/creating-a-team": CreatingATeam,
+  "teams-and-members/adding-a-member": AddingAMember,
+  "teams-and-members/removing-and-deleting": RemovingAndDeleting,
   "members/signing-in": SigningIn,
   "members/finding-your-work": FindingYourWork,
   "members/recording-your-work": RecordingYourWork,
