@@ -15,7 +15,12 @@ export default defineConfig({
     tsconfigPaths({
       projects: [path.join(rootDir, "tsconfig.json")],
     }),
-    tanstackStart(),
+    /**
+     * `error`, as in `vite.config.ts`: this project imports hooks and parts,
+     * never a route, so a part that reaches `Auth` or `Repository` is a real
+     * leak and must fail the test, not be swapped for a Proxy and logged once.
+     */
+    tanstackStart({ importProtection: { behavior: "error" } }),
     viteReact({
       babel: {
         plugins: [

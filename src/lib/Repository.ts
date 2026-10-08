@@ -1,3 +1,5 @@
+// Server-only marker: a client-environment import of this file is denied with a trace from the route entry.
+import "@tanstack/react-start/server-only";
 import type { SqlError } from "effect/unstable/sql";
 
 import { Clock, Context, Effect, Layer, Option, Schema } from "effect";

@@ -269,39 +269,37 @@ all, as part of the member work, not for speed.
 
 ## Expected result
 
-| after                 | member project | whole run (today 4.3 min)                 |
-| --------------------- | -------------- | ----------------------------------------- |
-| lever 1 (the leak)    | about 65 s     | about 3.6 min, and shorter embedded boots |
-| levers 1 and 2        | about 50 s     | about 3.4 min                             |
-| plus the browser move | about 45 s     | about 3.3 min                             |
+| after                 | member project                | whole run (today 4.3 min) |
+| --------------------- | ----------------------------- | ------------------------- |
+| lever 1 (the leak)    | 70 s measured (60.6 s summed) | 3.3 min measured (201 s)  |
+| levers 1 and 2        | about 50 s                    | about 3.4 min             |
+| plus the browser move | about 45 s                    | about 3.3 min             |
 
-The lever 1 row rests on the measured 0.65 s per document load; the other rows are estimates.
-The plan's first step is to run the member project after lever 1 and replace the row.
+The lever 1 row is measured (2026-10-07, after the split and the pin); the other rows are
+estimates made before it, against a 4.3 min whole run.
 
 ## Decisions (2026-10-07)
+
+Taken in Plannotator on 2026-10-07; all four recommendations accepted as written.
 
 1. **The leak fix (lever 1) is part of this work**, not a plan of its own: the plan that comes
    out of this research starts with it, measures the document load after it, and takes the
    rest from there.
+2. **Lever 2 is parked.** After the leak fix a document load is about 0.4 s, so one page per
+   member per spec saves about 15 s for a 2,000-line rewrite of `member-runs.member.spec.ts`
+   that also changes how most of its tests reach their state. If the suite's length matters
+   again, the first research's "parallel workers and a second store" is the next lever and
+   costs no rewrite.
+3. **The browser move is not now.** The quality argument stands (a row-shape rule fails on
+   the part, under `pnpm test`, with no seed), but it adds a CDN fetch to a project that has
+   none and saves 8 s. Do it the next time a row-shape rule changes, as part of that change,
+   with the five tests and the countdown listed above as the scope.
+4. **The pin is import protection**, in the same change as the split: `behavior: "error"`
+   in dev and build, the `better-auth` and `kysely` specifiers denied on the client, and the
+   `server-only` marker on `Auth.ts` and `Repository.ts`. The default `mock` in dev would
+   hide the next leak behind a log line nobody reads.
+5. **The new module is `AdminAccess.ts`** beside `MemberAccess.ts`, holding `requireAdmin`
+   with its JSDoc moved whole, so the two files mirror each other as the member one's JSDoc
+   already describes. Lever 3 (sign in less) stays parked.
 
-## Questions
-
-1. **Lever 2 after lever 1.** The measured number is in: after the leak fix a document load
-   is about 0.4 s, so lever 2 saves about 15 s for a 2,000-line rewrite of
-   `member-runs.member.spec.ts` that also changes how most of its tests reach their state.
-   Recommendation: no. Park it; the first research's "parallel workers and a second store"
-   is the next lever if the suite's length matters again, and it costs no rewrite.
-2. **The browser move.** Recommendation: not now. The quality argument stands (a row-shape
-   rule fails on the part, under `pnpm test`, with no seed), but the move adds a CDN fetch to a
-   project that has none and saves 8 s. Do it the next time a row-shape rule changes, as part
-   of that change, with the five tests and the countdown listed above as the scope.
-3. **The pin.** Import protection with `behavior: "error"` in dev and build, the two package
-   specifiers, and the `server-only` marker on `Auth.ts` and `Repository.ts`, as described
-   under lever 1. Recommendation: yes, all three, in the same change as the split. The
-   alternative (default `mock` in dev) hides the next leak behind a log line nobody reads.
-   Is `Repository.ts` the right second file to mark, or should the marker go on every module
-   that reads a Cloudflare binding (`KV.ts`, `Email.ts`, `CloudflareEnv.ts`)?
-4. **The new module's name.** `AdminAccess.ts` beside `MemberAccess.ts`, holding
-   `requireAdmin` with its JSDoc moved whole. Recommendation: yes; the two files then mirror
-   each other, which the member one's JSDoc already describes. Sign-in less (lever 3) stays
-   parked.
+The plan is `docs/member-project-speed-plan.md`.

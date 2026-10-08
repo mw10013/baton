@@ -1,3 +1,5 @@
+// Server-only marker: a client-environment import of this file is denied with a trace from the route entry.
+import "@tanstack/react-start/server-only";
 import { betterAuth } from "better-auth";
 import { admin, magicLink } from "better-auth/plugins";
 import { tanstackStartCookies } from "better-auth/tanstack-start";

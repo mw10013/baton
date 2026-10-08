@@ -99,7 +99,34 @@ const config = defineConfig({
     viteTsConfigPaths({
       projects: ["./tsconfig.json"],
     }),
-    tanstackStart(),
+    tanstackStart({
+      /**
+       * No server package reaches the client environment. TanStack Start
+       * checks every import under `src/` in dev at request time and in build
+       * after tree-shaking; `Auth.ts` and `Repository.ts` carry the
+       * `server-only` marker, and the `better-auth` and `kysely` specifiers
+       * are denied outright. `error` rather than the default `mock` in dev,
+       * because a mocked module and a one-line warning are invisible to an
+       * agent while the app keeps working on a Proxy. Even so, in dev the
+       * document still serves with 200: the failure is the client module
+       * request, so the page never hydrates and the log carries the trace.
+       * The leak this pins was
+       * a module-level guard beside a route's middleware that kept `Auth`
+       * alive in the client build: 730 extra script modules and about 0.65 s
+       * per document load in dev, and better-auth with Kysely in the
+       * production bundle (see `requireAdmin`).
+       *
+       * No Vitest test pins this rule: the build tool checks it itself on
+       * every dev request and every `pnpm build`, and a test that ran a Vite
+       * build would cost more than it pins.
+       *
+       * See refs/tan-start/docs/start/framework/react/guide/import-protection.md.
+       */
+      importProtection: {
+        behavior: "error",
+        client: { specifiers: [/^better-auth(?:\/|$)/u, /^kysely(?:\/|$)/u] },
+      },
+    }),
     viteReact({
       babel: {
         plugins: [

@@ -1,7 +1,7 @@
 import { Outlet, createFileRoute } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 
-import { requireAdmin } from "@/lib/AdminServerFnMiddleware";
+import { requireAdmin } from "@/lib/AdminAccess";
 
 const authenticateAdminRoute = createServerFn({ method: "GET" }).handler(
   ({ context: { runEffect } }) => runEffect(requireAdmin),
