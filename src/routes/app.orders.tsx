@@ -1,12 +1,12 @@
-import {
-  createFileRoute,
-  Outlet,
-  retainSearchParams,
-} from "@tanstack/react-router";
+import { createFileRoute, Outlet } from "@tanstack/react-router";
 import { Schema } from "effect";
 
 import * as Domain from "@/lib/Domain";
-import { lenientSearchKey, ListSearchParam } from "@/lib/searchParams";
+import {
+  lenientSearchKey,
+  ListSearchParam,
+  retainSearchParamsUnder,
+} from "@/lib/searchParams";
 
 declare module "@tanstack/react-router" {
   interface HistoryState {
@@ -77,7 +77,9 @@ const OrdersSearch = Schema.Struct({
 export const Route = createFileRoute("/app/orders")({
   validateSearch: Schema.toStandardSchemaV1(OrdersSearch),
   search: {
-    middlewares: [retainSearchParams(["q", "show", "team", "after"])],
+    middlewares: [
+      retainSearchParamsUnder("/app/orders", ["q", "show", "team", "after"]),
+    ],
   },
   component: () => <Outlet />,
 });

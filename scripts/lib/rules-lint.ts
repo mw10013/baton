@@ -26,7 +26,7 @@
  * | picker, pickers            | retired; the control is a select, named by its label (the Workflow select, the Assign team select)        |
  * | Edit teams, Edit members, Edit workflows | retired; a set is edited with Add and a Remove per row, and Edit is a workflow's tasks only (the Record verbs table) |
  * | Remove …? (a heading that asks) | Remove takes a thing out of a set and has no modal; a verb that asks is Delete (the controls table on `Control`) |
- * | Saved …, Saving …, Syncing … (a sentence that starts so) | a write in flight is `loading` on the pressed button, and a page's resting state is silent (the controls table on `Control`); "Note saved", the toast's form, and "stopped syncing", a fact, stay |
+ * | Saved …, Saving …, Syncing … (a sentence that starts so) | a write in flight is `loading` on the pressed button, and a page's resting state is silent (the controls table on `Control`); "Note saved", the toast's form, "stopped syncing", a fact, and a help link's text, a page title, stay |
  *
  * And the copy words that are wrong in every slot, whatever the noun: copy
  * states facts and names the act, so it never pleads, apologises, exclaims
@@ -159,14 +159,30 @@ export const copyOf = (line: string, tsx: boolean): readonly string[] => {
   ];
 };
 
-/** The lines of `source` whose copy holds a retired word, 1-based, with their trimmed text. Comments are skipped. */
+/** The patterns that match anywhere in the copy: the ones not anchored at its start. */
+const UNANCHORED = RETIRED.filter((pattern) => !pattern.source.startsWith("^"));
+
+/**
+ * The lines of `source` whose copy holds a retired word, 1-based, with their
+ * trimmed text. Comments are skipped. The text of an `s-link` to a help page
+ * (`href="/help/…"`) is that page's title, a heading rather than a status
+ * sentence, so it is held to the patterns that match anywhere and not to the
+ * ones anchored at the start ("Syncing from Shopify" is a title; "Syncing …"
+ * as a line is a write in flight). The same exemption the help tree's test
+ * makes for a title.
+ */
 export const retiredCopyHits = (
   source: string,
   tsx: boolean,
 ): readonly { readonly line: number; readonly text: string }[] => {
   let inComment = false;
+  let inHelpLink = false;
   return source.split("\n").flatMap((line, index) => {
     const text = line.trim();
+    const opensHelpLink = /<s-link\b[^>]*href="\/help\//u.test(text);
+    const patterns = inHelpLink || opensHelpLink ? UNANCHORED : RETIRED;
+    if (opensHelpLink) inHelpLink = true;
+    if (text.includes("</s-link>")) inHelpLink = false;
     const wasInComment = inComment;
     const opens = text.lastIndexOf("/*");
     const closes = text.lastIndexOf("*/");
@@ -181,7 +197,7 @@ export const retiredCopyHits = (
     )
       return [];
     return copyOf(line, tsx).some((copy) =>
-      RETIRED.some((pattern) => pattern.test(copy)),
+      patterns.some((pattern) => pattern.test(copy)),
     )
       ? [{ line: index + 1, text }]
       : [];

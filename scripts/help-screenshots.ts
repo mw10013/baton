@@ -29,6 +29,14 @@
  * A rerun shoots the same frames but not the same bytes: the seed stamps the
  * clock, so every item page shows the time it ran ("Oct 7, 6:58 PM"). Rerun
  * when a screen changes, not to refresh.
+ *
+ * `--section <slug>` shoots only the pictures whose `file` starts with
+ * `<slug>/`, merchant and member alike, in their array order; without it
+ * every picture is shot. The gates, the showcase seed and the closing reseed
+ * run either way, and a slug no picture has is refused. Since a section may
+ * run alone, the shots for one section are a block that starts from a bare
+ * screen (`openScreen` gets there from anywhere) and ends with every modal
+ * cancelled and the editor window closed, so the next block starts clean.
  */
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -82,6 +90,18 @@ const MEMBER = "ana@example.com";
 const port = process.env.PORT;
 const store = process.env.SHOPIFY_DEV_STORE;
 
+/** The `--section <slug>` argument, or `undefined` for every picture. */
+const sectionArgument = (args: readonly string[]): string | undefined => {
+  const at = args.indexOf("--section");
+  return at === -1 ? undefined : (args[at + 1] ?? "");
+};
+
+const section = sectionArgument(process.argv.slice(2));
+
+/** Whether a picture is in this run: in the `--section`, or every one without it. */
+const inSection = (name: HelpPictureName) =>
+  section === undefined || HELP_PICTURES[name].file.startsWith(`${section}/`);
+
 const attempt = <A>(message: string, run: () => Promise<A>) =>
   Effect.tryPromise({
     try: run,
@@ -101,6 +121,18 @@ const orderWith = (value: string): string => {
   );
   if (order === undefined)
     throw new Error(`no showcase order has an item with "${value}"`);
+  return `#${String(order.n)}`;
+};
+
+/** The showcase order with an item of this product in this variant, by its number. */
+const orderOf = (title: string, variantTitle: string): string => {
+  const order = orders.find((each) =>
+    each.lineItems.some(
+      (item) => item.title === title && item.variantTitle === variantTitle,
+    ),
+  );
+  if (order === undefined)
+    throw new Error(`no showcase order has a ${title} in ${variantTitle}`);
   return `#${String(order.n)}`;
 };
 
@@ -662,6 +694,47 @@ const openOrder = async (page: Page, orderName: string) => {
 const WORKFLOW = "Engraved pen";
 const TEAM = "Assembly";
 
+/**
+ * A More actions item on the workflow page, copied from
+ * `e2e/workflows.spec.ts`: the hoisted menu is unreachable, so the hidden
+ * in-frame `s-menu#workflow-actions` button is clicked natively.
+ */
+const clickMenuItem = (frame: FrameLocator, name: string) =>
+  frame
+    .locator("s-menu#workflow-actions s-button", { hasText: name })
+    .evaluate((el) => {
+      (el as HTMLElement).click();
+    });
+
+/** Cancel in the open modal of a frame, returning once no modal is open. */
+const cancelModal = async (frame: FrameLocator) => {
+  await frame.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(frame.locator("s-modal dialog[open]")).toHaveCount(0);
+};
+
+/**
+ * The editor window's Close, the X the admin draws in the window's title
+ * bar, returning once the window's frame is gone (`closeEditor` in
+ * `e2e/workflows.spec.ts`).
+ */
+const closeEditor = async (page: Page) => {
+  await clickHoisted(
+    page
+      .getByRole("dialog")
+      .getByRole("button", { name: "Close", exact: true }),
+  );
+  await expect(page.locator(EDITOR_IFRAME)).toHaveCount(0);
+};
+
+/** A workflow's page from the Workflows list, by its name. */
+const openWorkflow = async (page: Page, name: string) => {
+  await openScreen(page, "Workflows");
+  const frame = appFrame(page);
+  await frame.getByRole("link", { name, exact: true }).click();
+  await frame.locator(`s-page[heading="${name}"]`).waitFor();
+  await awaitNavigated(frame);
+};
+
 /** Each merchant picture's state and shape, as a function of the admin page. Run in this order. */
 const MERCHANT_SHOTS: readonly {
   readonly name: HelpPictureName;
@@ -677,6 +750,133 @@ const MERCHANT_SHOTS: readonly {
     name: "firstOrder1",
     shape: "page",
     take: (page) => openOrder(page, orderWith("Fresh bread")),
+  },
+  {
+    name: "creating1",
+    shape: "page",
+    take: async (page) => {
+      await openScreen(page, "Workflows");
+      await appFrame(page)
+        .getByRole("link", { name: "Weekend engraving", exact: true })
+        .waitFor();
+    },
+  },
+  {
+    name: "editing1",
+    shape: "window",
+    take: async (page) => {
+      const frame = appFrame(page);
+      await frame
+        .getByRole("link", { name: "Embroider and fold", exact: true })
+        .click();
+      await frame.locator('s-page[heading="Embroider and fold"]').waitFor();
+      await awaitNavigated(frame);
+      // The click is retried until the window opens, as `openEditor` in
+      // `e2e/workflows.spec.ts` does: the hoisted Edit can read enabled
+      // before App Bridge has wired it.
+      const edit = page.getByRole("button", { name: "Edit", exact: true });
+      await expect(async () => {
+        await clickHoisted(edit);
+        await expect(page.locator(EDITOR_IFRAME)).toBeAttached({
+          timeout: 2000,
+        });
+      }).toPass({ timeout: 20_000 });
+      const editor = editorFrame(page);
+      await editor.locator("s-page[heading]").waitFor();
+      await awaitHydration(editor);
+      await editor
+        .getByText("Sew in care label", { exact: true })
+        .first()
+        .waitFor();
+    },
+  },
+  {
+    name: "editing2",
+    shape: "window",
+    take: async (page) => {
+      const editor = editorFrame(page);
+      await editor
+        .getByRole("button", { name: "Edit Sew in care label", exact: true })
+        .click();
+      await editor.getByRole("button", { name: "Move earlier" }).waitFor();
+    },
+  },
+  {
+    name: "editing3",
+    shape: "editor modal",
+    take: async (page) => {
+      await clickHoisted(page.getByRole("button", { name: "Apply changes" }));
+      await editorFrame(page)
+        .getByText("take effect now", { exact: false })
+        .waitFor();
+    },
+  },
+  {
+    name: "matching2",
+    shape: "modal",
+    take: async (page) => {
+      await cancelModal(editorFrame(page));
+      await closeEditor(page);
+      const frame = appFrame(page);
+      await frame
+        .getByRole("button", { name: "Edit tag", exact: true })
+        .click();
+      await frame
+        .getByText("stop matching until you retag them", { exact: false })
+        .waitFor();
+    },
+  },
+  {
+    name: "turningOnAndOff1",
+    shape: "modal",
+    take: async (page) => {
+      await cancelModal(appFrame(page));
+      await openWorkflow(page, "Cut, engrave and oil");
+      await clickHoisted(
+        page.getByRole("button", { name: "Turn off workflow", exact: true }),
+      );
+      await appFrame(page)
+        .getByText("New orders won't start this workflow.", { exact: false })
+        .waitFor();
+    },
+  },
+  {
+    name: "managing1",
+    shape: "modal",
+    take: async (page) => {
+      const frame = appFrame(page);
+      await cancelModal(frame);
+      await clickMenuItem(frame, "Duplicate");
+      await expect(
+        frame.getByRole("textbox", { name: "Name", exact: true }),
+      ).toHaveValue("Cut, engrave and oil copy");
+    },
+  },
+  {
+    name: "managing2",
+    shape: "modal",
+    take: async (page) => {
+      const frame = appFrame(page);
+      await cancelModal(frame);
+      await clickMenuItem(frame, "Delete");
+      await frame
+        .getByText("This can't be undone.", { exact: false })
+        .waitFor();
+    },
+  },
+  {
+    name: "turningOnAndOff2",
+    shape: "page",
+    take: async (page) => {
+      await cancelModal(appFrame(page));
+      await openWorkflow(page, "Frame and glaze");
+    },
+  },
+  {
+    name: "matching1",
+    shape: "page",
+    take: (page) =>
+      openOrder(page, orderOf("Journal and pen gift set", "Black")),
   },
   {
     name: "firstWorkflow1",
@@ -747,14 +947,10 @@ const MERCHANT_SHOTS: readonly {
     name: "firstTeam1",
     shape: "page",
     take: async (page) => {
-      const editor = editorFrame(page);
-      await editor.getByRole("button", { name: "Cancel", exact: true }).click();
-      await clickHoisted(
-        page
-          .getByRole("dialog")
-          .getByRole("button", { name: "Close", exact: true }),
-      );
-      await expect(page.locator(EDITOR_IFRAME)).toHaveCount(0);
+      await editorFrame(page)
+        .getByRole("button", { name: "Cancel", exact: true })
+        .click();
+      await closeEditor(page);
       await openScreen(page, "Teams");
       await clickHoisted(page.getByRole("button", { name: "Create team" }));
       const frame = appFrame(page);
@@ -790,8 +986,12 @@ interface Written {
   readonly aspectRatio?: string;
 }
 
+const merchantShots = MERCHANT_SHOTS.filter((shot) => inSection(shot.name));
+const memberShots = MEMBER_SHOTS.filter((shot) => inSection(shot.name));
+
 const shootMerchant = (browser: Browser) =>
   Effect.gen(function* () {
+    if (merchantShots.length === 0) return [];
     const context = yield* attempt("Could not open an admin page", () =>
       browser.newContext({
         storageState: storageStatePath,
@@ -816,7 +1016,7 @@ const shootMerchant = (browser: Browser) =>
       await page.addStyleTag({ content: HIDE_OVERLAYS });
     });
     const written: Written[] = [];
-    for (const shot of MERCHANT_SHOTS) {
+    for (const shot of merchantShots) {
       const file = fileOf(shot.name);
       const clip = yield* attempt(`Could not shoot ${shot.name}`, async () => {
         await shot.take(page);
@@ -833,6 +1033,7 @@ const shootMerchant = (browser: Browser) =>
 
 const shootMember = (browser: Browser, shop: string, baseURL: string) =>
   Effect.gen(function* () {
+    if (memberShots.length === 0) return [];
     const context = yield* attempt("Could not open a page", () =>
       browser.newContext({
         baseURL,
@@ -857,7 +1058,7 @@ const shootMember = (browser: Browser, shop: string, baseURL: string) =>
       await awaitHydration(page);
     });
     const written: Written[] = [];
-    for (const shot of MEMBER_SHOTS) {
+    for (const shot of memberShots) {
       const file = fileOf(shot.name);
       yield* attempt(`Could not shoot ${shot.name}`, async () => {
         await shot.take(page, shop);
@@ -922,6 +1123,10 @@ const helpScreenshots = (port: string, store: string) =>
           cause,
         }),
     });
+    if (merchantShots.length === 0 && memberShots.length === 0)
+      yield* new HelpScreenshotsError({
+        message: `No picture's file starts with "${String(section)}/" (--section takes a folder under ${HELP_PICTURES_PATH}).`,
+      });
     if (healthy !== true)
       yield* new HelpScreenshotsError({
         message:

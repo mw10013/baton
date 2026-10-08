@@ -9,6 +9,11 @@ import { Blocking } from "@/components/help/members/blocking";
 import { FindingYourWork } from "@/components/help/members/finding-your-work";
 import { RecordingYourWork } from "@/components/help/members/recording-your-work";
 import { SigningIn } from "@/components/help/members/signing-in";
+import { Creating } from "@/components/help/workflows/creating";
+import { Editing } from "@/components/help/workflows/editing";
+import { Managing } from "@/components/help/workflows/managing";
+import { Matching } from "@/components/help/workflows/matching";
+import { TurningOnAndOff } from "@/components/help/workflows/turning-on-and-off";
 
 /**
  * The help pages' bodies, keyed `"<section>/<page>"` by the slugs in
@@ -26,6 +31,11 @@ export const HELP_BODIES: Readonly<Record<string, () => React.JSX.Element>> = {
   "getting-started/first-workflow": FirstWorkflow,
   "getting-started/first-team": FirstTeam,
   "getting-started/first-order": FirstOrder,
+  "workflows/creating": Creating,
+  "workflows/editing": Editing,
+  "workflows/matching": Matching,
+  "workflows/turning-on-and-off": TurningOnAndOff,
+  "workflows/managing": Managing,
   "members/signing-in": SigningIn,
   "members/finding-your-work": FindingYourWork,
   "members/recording-your-work": RecordingYourWork,

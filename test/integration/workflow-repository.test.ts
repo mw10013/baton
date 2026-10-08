@@ -77,6 +77,15 @@ describe("Domain workflow schemas", () => {
     strictEqual(tag("  Engraving "), "Engraving");
   });
 
+  it("WorkflowTag refuses a comma, which Shopify's tag field splits on", () => {
+    strictEqual(
+      Option.isNone(
+        Schema.decodeUnknownOption(Domain.WorkflowTag)("cut, engrave"),
+      ),
+      true,
+    );
+  });
+
   it("WorkflowTag rejects blank and over-long values", () => {
     strictEqual(
       Option.isNone(Schema.decodeUnknownOption(Domain.WorkflowTag)("   ")),

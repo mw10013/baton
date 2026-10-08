@@ -37,7 +37,9 @@ import {
   RENAME_FIELD_LABEL,
   RENAME_HEADING,
   RENAMED_TOAST,
+  suggestedTag,
   TAG_HELP,
+  tagCommaError,
   turnOnBody,
   workflowResultMessage,
 } from "@/lib/workflowShared";
@@ -109,7 +111,7 @@ export const Route = createFileRoute("/app/workflows/$workflowId")({
  */
 const suggestedCopy = (detail: Domain.WorkflowPageData | null) => {
   const suggested = copyName(detail?.workflow.name ?? "");
-  return { name: suggested, tag: suggested.trim().toLowerCase(), dirty: false };
+  return { name: suggested, tag: suggestedTag(suggested), dirty: false };
 };
 
 function RouteComponent() {
@@ -455,7 +457,7 @@ function RouteComponent() {
               setCopy((current) => ({
                 ...current,
                 name: next,
-                ...(current.dirty ? {} : { tag: next.trim().toLowerCase() }),
+                ...(current.dirty ? {} : { tag: suggestedTag(next) }),
               }));
               setCopyNameError(null);
               if (!copy.dirty) setCopyTagError(null);
@@ -491,7 +493,9 @@ function RouteComponent() {
           }
           onClick={() => {
             const nameLimit = textLimitError(copy.name, Domain.NAME_MAX_LENGTH);
-            const tagLimit = textLimitError(copy.tag, Domain.TAG_MAX_LENGTH);
+            const tagLimit =
+              textLimitError(copy.tag, Domain.TAG_MAX_LENGTH) ??
+              tagCommaError(copy.tag);
             if (nameLimit !== null) setCopyNameError(nameLimit);
             if (tagLimit !== null) setCopyTagError(tagLimit);
             if (nameLimit !== null || tagLimit !== null) return;

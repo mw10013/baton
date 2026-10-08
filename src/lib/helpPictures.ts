@@ -148,6 +148,76 @@ export const HELP_PICTURES = {
     aspectRatio: "1056/442",
     alt: "The order page for order 1210. A banner with a green check says every item is done, with a Fulfill in Shopify link. The one item, an engraved cutting board in maple with the engraving text Fresh bread, carries a Done badge and reads Done, 3 steps. Order details shows it paid and unfulfilled.",
   },
+  /** The Workflows page with the showcase's eight workflows: Frame and glaze reads Inactive, Weekend engraving reads Active and Team has no members. Shape: page. */
+  creating1: {
+    file: "workflows/creating-1.png",
+    kind: "merchant",
+    aspectRatio: "1056/518",
+    alt: "The Workflows page with Create workflow in its title bar. All, Active and Inactive sit beside a search field by name. The table lists eight workflows with their Status, Tag, Steps and Updated. Every one reads Active but Frame and glaze, which reads Inactive, and Weekend engraving also reads Team has no members.",
+  },
+  /** The editor on Embroider and fold, which has a draft: Draft, More actions, Discard changes and Apply changes in the title bar, three steps on the canvas, nothing selected. Shape: window. */
+  editing1: {
+    file: "workflows/editing-1.png",
+    kind: "merchant",
+    aspectRatio: "1212/680",
+    alt: "The workflow editor for Embroider and fold, a window of its own with a Draft badge and More actions, Discard changes and Apply changes in its title bar. Three steps run in order: Embroider name and Sew in care label on Textiles, then Fold and wrap on Finishing, each with its instructions. Add step sits under them.",
+  },
+  /** The editor with Sew in care label selected: the Step panel beside the canvas, with Join the previous step since the task is alone in its step. Shape: window. */
+  editing2: {
+    file: "workflows/editing-2.png",
+    kind: "merchant",
+    aspectRatio: "1212/714",
+    alt: "The same editor with Sew in care label selected, its card shaded and Add task under it. The Step panel beside the canvas shows Name, Team set to Textiles and Instructions, then Move earlier, Move later and Join the previous step, and Delete and Save at its foot.",
+  },
+  /** The Apply changes modal in the editor of an active workflow. Shape: editor modal. */
+  editing3: {
+    file: "workflows/editing-3.png",
+    kind: "merchant",
+    aspectRatio: "620/178",
+    alt: "The modal that opens from Apply changes in the editor. Its heading is Apply changes?, and its sentence says the workflow is active, so the changes take effect now, and items already on it keep the tasks they started with. At the foot are Cancel and the Apply button.",
+  },
+  /** #1211, the Black gift set order that two workflows match: the sentence and the Workflow select, closed. Shape: page. */
+  matching1: {
+    file: "workflows/matching-1.png",
+    kind: "merchant",
+    aspectRatio: "1056/292",
+    alt: "The order page for order 1211. Its one item, a journal and pen gift set in black, has a sentence saying more than one workflow matches this item, so none was started. Under it the Workflow select reads Choose workflow, with a greyed Attach button beside it. Order details shows it paid and unfulfilled.",
+  },
+  /** The Edit tag modal on Embroider and fold's page, the tag as it is. Shape: modal. */
+  matching2: {
+    file: "workflows/matching-2.png",
+    kind: "merchant",
+    aspectRatio: "620/250",
+    alt: "The Edit tag modal. Its paragraph says to put this tag, in Shopify, on the products the workflow should build, and that products that still have the old tag stop matching until you retag them. The Tag field holds embroidered-blanket. At the foot are Cancel and a greyed Save, since nothing has changed.",
+  },
+  /** The Turn off workflow modal on Cut, engrave and oil's page. Shape: modal. */
+  turningOnAndOff1: {
+    file: "workflows/turning-on-and-off-1.png",
+    kind: "merchant",
+    aspectRatio: "620/158",
+    alt: "The modal that opens from Turn off workflow on a workflow's page. Its heading is Turn off workflow?, and its sentence says new orders won't start this workflow and items already on it keep going. At the foot are Cancel and the Turn off button, which turns the workflow off.",
+  },
+  /** The page for Frame and glaze, the showcase's inactive workflow. Shape: page. */
+  turningOnAndOff2: {
+    file: "workflows/turning-on-and-off-2.png",
+    kind: "merchant",
+    aspectRatio: "1056/632",
+    alt: "The workflow page for Frame and glaze, with an Inactive badge beside its name and Edit, More actions and Turn on workflow in the title bar. The Tag card says it starts when an order contains a product tagged photo-frame, with Edit tag. Two steps follow: Cut mat on Woodshop, then Glaze and fit on Finishing.",
+  },
+  /** The Duplicate workflow modal on Cut, engrave and oil's page, the Name and the Tag as they fill. Shape: modal. */
+  managing1: {
+    file: "workflows/managing-1.png",
+    kind: "merchant",
+    aspectRatio: "620/286",
+    alt: "The Duplicate workflow modal. The Name field holds Cut, engrave and oil copy, and the Tag field holds the same words in lowercase with the comma dropped, with the line under it saying to put this tag, in Shopify, on the products the workflow should build. At the foot are Cancel and the Duplicate button.",
+  },
+  /** The Delete modal on Cut, engrave and oil's page. Shape: modal. */
+  managing2: {
+    file: "workflows/managing-2.png",
+    kind: "merchant",
+    aspectRatio: "620/158",
+    alt: "The modal that opens from Delete under More actions on the page for Cut, engrave and oil. Its heading asks Delete Cut, engrave and oil?, and its two sentences say items already on it keep going and this can't be undone. At the foot are Cancel and a red Delete button.",
+  },
 } as const satisfies Readonly<Record<string, HelpPicture>>;
 
 export type HelpPictureName = keyof typeof HELP_PICTURES;

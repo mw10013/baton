@@ -1,12 +1,12 @@
-import {
-  createFileRoute,
-  Outlet,
-  retainSearchParams,
-} from "@tanstack/react-router";
+import { createFileRoute, Outlet } from "@tanstack/react-router";
 import { Schema } from "effect";
 
 import * as Domain from "@/lib/Domain";
-import { lenientSearchKey, ListSearchParam } from "@/lib/searchParams";
+import {
+  lenientSearchKey,
+  ListSearchParam,
+  retainSearchParamsUnder,
+} from "@/lib/searchParams";
 
 declare module "@tanstack/react-router" {
   interface HistoryState {
@@ -62,7 +62,9 @@ const WorkflowsSearch = Schema.Struct({
 export const Route = createFileRoute("/app/workflows")({
   validateSearch: Schema.toStandardSchemaV1(WorkflowsSearch),
   search: {
-    middlewares: [retainSearchParams(["state", "q", "after"])],
+    middlewares: [
+      retainSearchParamsUnder("/app/workflows", ["state", "q", "after"]),
+    ],
   },
   component: () => <Outlet />,
 });

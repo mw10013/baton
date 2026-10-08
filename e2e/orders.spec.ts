@@ -321,6 +321,21 @@ test("the orders index searches by order number and clears back to the list", as
     frame.getByRole("link", { name: "#9302", exact: true }),
   ).toBeVisible();
 
+  /* The search stays in the orders section (`retainSearchParamsUnder` in
+     `searchParams.ts`): opened from the search, the order page keeps `q`,
+     and the Workflows nav link from there lands on the whole workflows
+     list, not one filtered to the order's number. */
+  await searchField(frame).fill("9301");
+  await searchField(frame).press("Enter");
+  await frame.getByRole("link", { name: "#9301", exact: true }).click();
+  await expect(frame.locator('s-page[heading="#9301"]')).toBeVisible();
+  await openScreen(page, "Workflows");
+  await expect(
+    frame.getByRole("link", { name: "E2E Ring", exact: true }),
+  ).toBeVisible();
+  await openScreen(page, "Orders");
+  await expect(searchField(frame)).toHaveValue("");
+
   /* A bare order number typed into the URL is the search (`ListSearchParam`
      in `searchParams.ts`): the router parses `q=9301` as a number, and it
      reads as the digits rather than being dropped as an unreadable key.

@@ -47,20 +47,23 @@ test("a section hub lists its pages and a page's foot lists its siblings", async
     await expect(
       page.locator(`s-link[slot="breadcrumb-actions"][href="${sectionHref}"]`),
     ).toBeAttached();
+    /* The foot list is the page's last section: a body may link a sibling
+       too, so the sibling links are looked for in the foot alone. */
+    const foot = page.locator("s-section").last();
     await expect(
-      page.locator(`s-heading s-link[href="${sectionHref}"]`),
+      foot.locator(`s-heading s-link[href="${sectionHref}"]`),
     ).toBeVisible();
     await expect(
-      page.locator('s-list-item s-text[type="strong"]', {
+      foot.locator('s-list-item s-text[type="strong"]', {
         hasText: first.title,
       }),
     ).toBeVisible();
     await expect(
-      page.locator(`s-link[href="${sectionHref}/${first.slug}"]`),
+      foot.locator(`s-link[href="${sectionHref}/${first.slug}"]`),
     ).toHaveCount(0);
     for (const sibling of siblings)
       await expect(
-        page.locator(`s-link[href="${sectionHref}/${sibling.slug}"]`),
+        foot.locator(`s-link[href="${sectionHref}/${sibling.slug}"]`),
       ).toBeVisible();
   }
 });

@@ -1,3 +1,4 @@
+import { retainSearchParams } from "@tanstack/react-router";
 import { Effect, Schema, SchemaGetter } from "effect";
 
 import * as Domain from "@/lib/Domain";
@@ -45,3 +46,27 @@ export const ListSearchParam = Schema.Union([
     encode: SchemaGetter.transform((q) => q),
   }),
 );
+
+/**
+ * **A section's filters stay in the section.** `retainSearchParams` copies
+ * the listed keys from the current search into every navigation under the
+ * layout, whatever page the navigation comes from, and the orders and the
+ * workflows layouts share the keys `q` and `after`: a merchant who searched
+ * an order by number, opened it and pressed Workflows in the nav found the
+ * workflows list filtered to that number ("No workflow matches 1210"). The
+ * router's middleware sees the searches, not the pages, so this reads the
+ * page the navigation leaves from the browser (`window.location`, still the
+ * old location while the next one is built) and retains only when it is
+ * under `path`. On the server there is no navigation to retain into: the
+ * first render reads the URL as it is.
+ */
+export const retainSearchParamsUnder = <TSearchSchema extends object>(
+  path: string,
+  keys: readonly (keyof TSearchSchema)[],
+) => {
+  const retain = retainSearchParams<TSearchSchema>([...keys]);
+  return (context: Parameters<typeof retain>[0]) =>
+    typeof window !== "undefined" && window.location.pathname.startsWith(path)
+      ? retain(context)
+      : context.next(context.search);
+};

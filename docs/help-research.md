@@ -400,10 +400,14 @@ downscaled picture is unreadable. Why no annotation: Flow's highlight boxes are 
 are most often out of date on. Why the phone is shot whole: a member's screen is the top bar, the
 heading and the list, and a crop would lose the way back the prose names.
 
-The screenshot script (`scripts/help-screenshots.ts`, the content plan) reads a list of
-`{ file, url, element?, width, actions? }` entries, drives the seeded dev store, and writes the
-files; a page's body names its pictures by file. The script's list is the inventory of pictures,
-so a picture nobody references is found by a check and a reference to no file fails the build.
+The screenshot script (`scripts/help-screenshots.ts`) reads the inventory in
+`src/lib/helpPictures.ts` and a shot list per picture (its shape and a `take` that drives the
+admin page there), drives the seeded dev store, and writes the files; a body places a picture by
+its inventory name. The inventory is held to the files and to the bodies by the integration
+tests. `pnpm help:screenshots --section <slug>` shoots one section's pictures alone (by file
+prefix); a section's shots are a block that starts from a bare screen and leaves nothing open.
+The overlay stems the check has met are tabled in the Deviations of
+`docs/help-getting-started-plan.md` and `docs/help-workflows-plan.md`.
 
 ## Decisions
 
@@ -442,7 +446,7 @@ now and will be gone into in a later session. The plan is `docs/help-plan.md`.
 ## Roadmap
 
 Where the help work stands, one line per stage, and the doc that carries it. This research stays
-the umbrella; each stage's detail lives in its own research or plan. Updated 2026-10-07, after the Getting started cycle: the skeleton and the For members stage are committed, the merchant kind and Getting started are done and uncommitted; 17 of 33 pages have no body.
+the umbrella; each stage's detail lives in its own research or plan. Updated 2026-10-08, after the Workflows cycle: the skeleton, For members, the merchant kind and Getting started are committed, Workflows is done and uncommitted; 12 of 33 pages have no body (Orders, Teams and members, Reference, and the six hubs, which have none by design).
 
 | stage                                                                                                                  | status                                                                   | doc                                  |
 | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------ |
@@ -454,7 +458,7 @@ the umbrella; each stage's detail lives in its own research or plan. Updated 202
 | Order positions: what Not started means                                                                                | done 2026-10-07 (3579fda)                                                | `docs/order-not-started-research.md` |
 | Merchant pictures: the `merchant` picture kind in the script (page, modal, editor window, editor modal; overlap check) | done 2026-10-07, reviewed, uncommitted                                   | `docs/help-getting-started-plan.md`  |
 | Getting started content (5 pages)                                                                                      | done 2026-10-07, reviewed, uncommitted                                   | `docs/help-getting-started-plan.md`  |
-| Workflows content (6 pages)                                                                                            | later                                                                    | a plan of its own                    |
+| Workflows content (6 pages), `--section` flag on the script                                                            | done 2026-10-08, reviewed, follow-ups in, uncommitted                    | `docs/help-workflows-plan.md`        |
 | Teams and members content (4 pages)                                                                                    | later                                                                    | a plan of its own                    |
 | Orders content (6 pages)                                                                                               | later; order positions are settled                                       | a plan of its own                    |
 | Reference pages and their vocabulary check                                                                             | later (decision 14); needs no pictures, so it can run at any point       | a plan of its own                    |

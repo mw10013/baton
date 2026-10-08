@@ -9,6 +9,21 @@ import { DELETE_CONFIRM } from "@/lib/teams";
  * free one; if a second copy collides, `NameTaken` lands under the name field
  * and the merchant picks another.
  */
+/**
+ * The tag a name suggests, in the Create and Duplicate dialogs: trimmed and
+ * lowercased, with commas dropped, since a tag has no comma
+ * (`Domain.WorkflowTag`). A suggestion and not a rule: the merchant may type
+ * over it, and what they type is stored as typed. Lowercase because it is the
+ * easiest to type onto products the same way every time; spaces stay because
+ * Shopify tags allow them.
+ */
+export const suggestedTag = (name: string): string =>
+  name.replaceAll(",", "").trim().toLowerCase();
+
+/** The tag fields' submit error for a comma, or `null` (`Domain.WorkflowTag`). */
+export const tagCommaError = (tag: string): string | null =>
+  tag.includes(",") ? "A tag can't have a comma." : null;
+
 export const copyName = (name: string): string => {
   const suffix = " copy";
   return `${name.slice(0, Domain.NAME_MAX_LENGTH - suffix.length).trimEnd()}${suffix}`;

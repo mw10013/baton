@@ -7,7 +7,11 @@ import { Inline } from "@/components/screen/Inline";
 import { textLimitError } from "@/components/screen/TextLimit";
 import * as Domain from "@/lib/Domain";
 import * as PolarisModal from "@/lib/polarisModal";
-import { TAG_HELP, workflowResultMessage } from "@/lib/workflowShared";
+import {
+  TAG_HELP,
+  tagCommaError,
+  workflowResultMessage,
+} from "@/lib/workflowShared";
 
 const MODAL = "workflow-tag";
 
@@ -42,7 +46,8 @@ export function WorkflowTag({
   PolarisModal.useModalBackdropDismissGuard(MODAL);
 
   const value = working ?? tag;
-  const folded = value.trim().toLowerCase();
+  // Trimmed and kept as typed, the one rule for every tag field (`Domain.WorkflowTag`).
+  const folded = value.trim();
   const busy = disabled || saving;
   const changed = folded !== tag;
 
@@ -53,7 +58,8 @@ export function WorkflowTag({
 
   const save = async () => {
     if (busy || folded === "" || !changed) return;
-    const limit = textLimitError(folded, Domain.TAG_MAX_LENGTH);
+    const limit =
+      textLimitError(folded, Domain.TAG_MAX_LENGTH) ?? tagCommaError(folded);
     if (limit !== null) {
       setError(limit);
       return;

@@ -27,7 +27,12 @@ import { useShopAgent, withSocketRecovery } from "@/lib/ShopAgentContext";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { SocketBanner } from "@/lib/SocketBanner";
 import { useWorkflowEditorWindow } from "@/lib/workflowEditorWindow";
-import { TAG_HELP, workflowResultMessage } from "@/lib/workflowShared";
+import {
+  suggestedTag,
+  TAG_HELP,
+  tagCommaError,
+  workflowResultMessage,
+} from "@/lib/workflowShared";
 
 const CREATE_MODAL = "create-workflow";
 const WORKFLOWS_PAGE_SIZE = 50;
@@ -200,19 +205,17 @@ function RouteComponent() {
   /**
    * The tag mirrors the name until the merchant's first keystroke in the tag
    * field, then stops for good (until the modal reopens). The mirror is
-   * `trim().toLowerCase()`, a suggestion and not a rule: `Domain.WorkflowTag`
+   * {@link suggestedTag}, a suggestion and not a rule: `Domain.WorkflowTag`
    * stores the tag as the field shows it, trimmed, and matches it exactly, so
-   * what the merchant sees is what will be stored. A lowercase string is the
-   * easiest to type onto products the same way every time. No slug logic,
-   * and spaces stay because Shopify tags allow them. Only the
-   * create dialog mirrors: a later rename never touches the tag, because
-   * products already carry the old string.
+   * what the merchant sees is what will be stored. Only the create dialog
+   * mirrors: a later rename never touches the tag, because products already
+   * carry the old string.
    */
   const onNameInput = (next: string) => {
     setName(next);
     setNameError(null);
     if (!tagDirty) {
-      setTag(next.trim().toLowerCase());
+      setTag(suggestedTag(next));
       setTagError(null);
     }
   };
@@ -477,7 +480,8 @@ function RouteComponent() {
           }
           onClick={() => {
             const nameLimit = textLimitError(name, Domain.NAME_MAX_LENGTH);
-            const tagLimit = textLimitError(tag, Domain.TAG_MAX_LENGTH);
+            const tagLimit =
+              textLimitError(tag, Domain.TAG_MAX_LENGTH) ?? tagCommaError(tag);
             if (nameLimit !== null) setNameError(nameLimit);
             if (tagLimit !== null) setTagError(tagLimit);
             if (nameLimit !== null || tagLimit !== null) return;

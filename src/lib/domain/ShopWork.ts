@@ -721,14 +721,20 @@ export const TAG_MAX_LENGTH = 255;
  * merchant copies it onto products, so a case typo on the product is the same
  * failure as any other typo: the order shows under No workflow with the
  * workflow in the Workflow select. Trimmed because a value Baton stores is
- * clean when stored. {@link TAG_MAX_LENGTH} is Shopify's tag length limit; Baton adds no
- * character rules of its own beyond what Shopify allows in a tag.
+ * clean when stored. {@link TAG_MAX_LENGTH} is Shopify's tag length limit.
+ * **A tag has no comma**: Shopify's product tag field splits what is typed
+ * on commas, so a tag with one can never sit on a product whole and the
+ * workflow would match nothing. The tag fields refuse it before the write
+ * (`tagCommaError` in `src/lib/workflowShared.ts`) and the prefill from a
+ * name drops it (`suggestedTag`). Baton adds no other character rule
+ * beyond what Shopify allows in a tag.
  */
 export const WorkflowTag = Schema.String.pipe(
   Schema.decodeTo(
-    Schema.NonEmptyString.check(Schema.isMaxLength(TAG_MAX_LENGTH)).pipe(
-      Schema.brand("WorkflowTag"),
-    ),
+    Schema.NonEmptyString.check(
+      Schema.isMaxLength(TAG_MAX_LENGTH),
+      Schema.isPattern(/^[^,]*$/u),
+    ).pipe(Schema.brand("WorkflowTag")),
     {
       decode: SchemaGetter.transform((s) => s.trim()),
       encode: SchemaGetter.transform((s) => s),

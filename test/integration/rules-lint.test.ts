@@ -91,6 +91,24 @@ describe("a retired word stays off every merchant and member screen", () => {
     expect(hits(source)).toEqual([2, 3, 4]);
   });
 
+  it("a help link's text is held to the patterns that match anywhere, not the anchored ones", () => {
+    const link = [
+      '<s-link href="/help/orders/syncing">',
+      "  Syncing from Shopify",
+      "</s-link>",
+    ].join("\n");
+    expect(hits(link)).toEqual([]);
+    expect(
+      hits(
+        '<s-link href="/help/orders/syncing">Syncing from Shopify</s-link>.',
+      ),
+    ).toEqual([]);
+    expect(hits(link.replace("from Shopify", "the run"))).toHaveLength(1);
+    expect(
+      hits("<s-paragraph>\n  Syncing orders\n</s-paragraph>"),
+    ).toHaveLength(1);
+  });
+
   it("skips comments, identifiers, paths and query keys", () => {
     const source = [
       "// Cancel run",
