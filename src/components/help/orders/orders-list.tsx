@@ -42,7 +42,7 @@ export function OrdersList() {
           </s-paragraph>
           <HelpPicture name="ordersList1" />
           <s-paragraph>
-            The page opens on <strong>Making</strong>, the orders the bench is
+            The page opens on <strong>Making</strong>, the orders members are
             working on now. The <strong>Show</strong> select under the strip
             holds the same five values and five more: <strong>Open</strong>,
             every open order, <strong>Unpaid</strong>,{" "}
@@ -82,8 +82,9 @@ export function OrdersList() {
               item&apos;s workflow is done while another&apos;s is still open.
             </s-list-item>
             <s-list-item>
-              <strong>Made</strong>: every workflow on the order is done, and
-              the order waits for you to fulfill it in Shopify.
+              <strong>Made</strong>: no item&apos;s workflow is open and at
+              least one is done, and the order waits for you to fulfill it in
+              Shopify.
             </s-list-item>
             <s-list-item>
               <strong>Fulfilled</strong>: Shopify says the order is fulfilled. A

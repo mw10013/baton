@@ -10,12 +10,13 @@ import { Things } from "@/components/screen/Things";
  * `renderLineItem`: the title and variant, the units line with "to make"
  * against "ordered", SKU, the Removed badge, Properties; `runBadges` and
  * `RUN_STATE_BADGE`: Not started, the `RUN_STATE_LABEL.open` badge (Making),
- * Done, Closed, and Blocked beside any of them; `nowLine`: Step k of n with
+ * Done, Closed, and Blocked beside Not started or Making; `nowLine`: Step k of n with
  * the task's name or a count of tasks, "since" a time once a task is
  * started, Done with its step count; `RunNote` and Edit note; Manage and
  * `manageRows`: the workflow's name, `RunSteps`, Done, Put back, Reopen and
  * Assign team per task, then Block, Cancel workflow and Change workflow;
- * the Made banner with Fulfill in Shopify; the Order note and Order details
+ * the Made banner with Fulfill in Shopify, shown on the `made` position of
+ * `orderPosition`; the Order note and Order details
  * asides), `RunSteps` in `src/components/RunSteps.tsx` (the task badges
  * Ready, Started and Done; the line team, who, when; a waiting task has no
  * badge), `ClosedLine` and `closedReasonText` in
@@ -69,9 +70,10 @@ export function OrderPage() {
             then <strong>Making</strong> while the work goes on, then{" "}
             <strong>Done</strong>. <strong>Closed</strong> means something else
             ended it, and a line under the card says what. A red{" "}
-            <strong>Blocked</strong> badge shows beside any of them while the
-            item is blocked. An item&apos;s Not started and Making mean what the
-            order&apos;s Not started and Making mean on the Orders page.
+            <strong>Blocked</strong> badge shows beside Not started or Making
+            while the item is blocked. An item&apos;s Not started and Making
+            mean what the order&apos;s Not started and Making mean on the Orders
+            page.
           </s-paragraph>
           <s-paragraph>
             A line under the badges says where the work is: the step out of how
@@ -102,8 +104,8 @@ export function OrderPage() {
             Each task has the buttons it allows: <strong>Done</strong> and{" "}
             <strong>Put back</strong>, as a member has, and{" "}
             <strong>Reopen</strong>, which is the member&apos;s Undo. Use them
-            when the bench cannot, such as for a member who is away. Who can
-            press what is in{" "}
+            when a member cannot, such as when they are away. Who can press what
+            is in{" "}
             <s-link href="/help/reference/who-can-do-what">
               Who can do what
             </s-link>
@@ -132,13 +134,15 @@ export function OrderPage() {
             was cancelled, when.
           </s-paragraph>
           <s-paragraph>
-            When every item&apos;s workflow is done, a banner at the top says
-            so, with a <strong>Fulfill in Shopify</strong> link. Once you
-            fulfill the order, Baton reads it as Fulfilled.
+            When the order reads <strong>Made</strong>, with no item&apos;s
+            workflow still open and at least one done, a banner at the top says
+            every item is done, with a <strong>Fulfill in Shopify</strong> link.
+            Once you fulfill the order, Baton reads it as{" "}
+            <strong>Fulfilled</strong>.
           </s-paragraph>
           <s-paragraph>
-            When Shopify closes the order while an item&apos;s workflow is still
-            open, or you cancel a workflow, the item reads{" "}
+            When Shopify closes the order or removes the item while its workflow
+            is still open, or you cancel a workflow, the item reads{" "}
             <strong>Closed</strong> and the line under it says why: fulfilled in
             Shopify, order cancelled in Shopify, item removed or refunded in
             Shopify, or cancelled by you. Its tasks stay in Manage as the

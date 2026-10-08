@@ -15,10 +15,10 @@ import { Things } from "@/components/screen/Things";
  * `SyncOrderResult`, `OrdersSyncResult`, the triggers and actions tables on
  * `reconcileItem` in `src/lib/domain/ShopWork.ts` (paid creates; cancelled
  * and fulfilled close every open workflow; an edited quantity resizes or, at
- * zero, closes as removed; a partial fulfilment, an archive and a refund
+ * zero, closes as removed; a partial fulfillment, an archive and a refund
  * that leaves the quantity are not stops; a product retagged in Shopify
  * changes nothing until its order syncs again), `unitsToMake`,
- * `src/routes/app.orders.index.tsx` (Sync open orders greyed while a sync
+ * `src/routes/app.orders.index.tsx` (Sync open orders disabled while a sync
  * runs, the toast on a second press, the sync's error banner, the empty
  * state's sentence), `src/routes/app.orders.$orderId.tsx` (Sync from
  * Shopify and its Gone toast), `QuotaBanners` in
@@ -58,7 +58,7 @@ export function Syncing() {
           <s-paragraph>What Baton does not follow:</s-paragraph>
           <s-unordered-list>
             <s-list-item>
-              A partial fulfilment. The work goes on until the whole order is
+              A partial fulfillment. The work goes on until the whole order is
               fulfilled.
             </s-list-item>
             <s-list-item>An order archived in Shopify.</s-list-item>
@@ -92,10 +92,10 @@ export function Syncing() {
           </s-paragraph>
           <s-paragraph>
             Press it after installing Baton, and when a banner says new orders
-            stopped syncing. One sync goes at a time: the button is greyed while
-            it works, and the list fills as orders arrive. If a sync fails, a
-            red banner at the top of the list says what went wrong until the
-            next sync starts.
+            stopped syncing. One sync goes at a time: the button is disabled
+            while it works, and the list fills as orders arrive. If a sync
+            fails, a red banner at the top of the list says what went wrong
+            until the next sync starts.
           </s-paragraph>
         </Things>
       </s-section>

@@ -190,6 +190,8 @@ function RouteComponent() {
   } | null>(null);
   const [name, setName] = React.useState(detail?.workflow.name ?? "");
   const [nameError, setNameError] = React.useState<string | null>(null);
+  /** The Name field's submit error, on either form; one at a time is open. */
+  const [taskNameError, setTaskNameError] = React.useState<string | null>(null);
   /** The Instructions field's submit error, on either form; one at a time is open. */
   const [instructionsError, setInstructionsError] = React.useState<
     string | null
@@ -514,8 +516,10 @@ function RouteComponent() {
           placeholder="e.g. Engrave"
           value={adding?.name ?? ""}
           disabled={busy}
+          {...(taskNameError === null ? {} : { error: taskNameError })}
           onInput={(event) => {
             const value = event.currentTarget.value;
+            setTaskNameError(null);
             setAdding((current) =>
               current === null ? current : { ...current, name: value },
             );
@@ -555,14 +559,17 @@ function RouteComponent() {
             }
             onClick={() => {
               if (adding === null) return;
+              const nameLimit = textLimitError(
+                adding.name,
+                Domain.NAME_MAX_LENGTH,
+              );
               const limit = textLimitError(
                 adding.instructions,
                 Domain.TASK_INSTRUCTIONS_MAX_LENGTH,
               );
-              if (limit !== null) {
-                setInstructionsError(limit);
-                return;
-              }
+              if (nameLimit !== null) setTaskNameError(nameLimit);
+              if (limit !== null) setInstructionsError(limit);
+              if (nameLimit !== null || limit !== null) return;
               addStepMutation.mutate({
                 step: adding.step,
                 name: adding.name,
@@ -768,7 +775,9 @@ function RouteComponent() {
               label="Name"
               value={edit.name}
               disabled={busy}
+              {...(taskNameError === null ? {} : { error: taskNameError })}
               onInput={(event) => {
+                setTaskNameError(null);
                 setEdit({ ...edit, name: event.currentTarget.value });
               }}
             />
@@ -882,14 +891,17 @@ function RouteComponent() {
                   edit.teamId === ""
                 }
                 onClick={() => {
+                  const nameLimit = textLimitError(
+                    edit.name,
+                    Domain.NAME_MAX_LENGTH,
+                  );
                   const limit = textLimitError(
                     edit.instructions,
                     Domain.TASK_INSTRUCTIONS_MAX_LENGTH,
                   );
-                  if (limit !== null) {
-                    setInstructionsError(limit);
-                    return;
-                  }
+                  if (nameLimit !== null) setTaskNameError(nameLimit);
+                  if (limit !== null) setInstructionsError(limit);
+                  if (nameLimit !== null || limit !== null) return;
                   updateTaskMutation.mutate({
                     taskId: selected.id,
                     name: edit.name,

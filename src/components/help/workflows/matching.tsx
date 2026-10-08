@@ -11,8 +11,9 @@ import { Things } from "@/components/screen/Things";
  * workflow with a task and every task on a team, a team with no members
  * not blocking), the JSDoc and the triggers and actions tables on
  * `reconcileItem` (the paid creation gate; a run in any state holds its
- * item; two matches create nothing; Turn on, Turn off, Delete workflow and
- * the tag edit of an active workflow reconcile every stored open paid order,
+ * item; two matches create nothing; Turn on, Turn off, Delete workflow,
+ * Delete team and the tag edit of an active workflow reconcile every stored
+ * open paid order,
  * however old; a product retagged in Shopify changes nothing until its order
  * syncs again), `ORDER_POSITION_LABEL` and `ORDER_ISSUE_LABEL`,
  * `lineItemState` (the Workflow select lists the matches first),
@@ -37,13 +38,14 @@ export function Matching() {
           <s-paragraph>
             A product whose tag differs by one letter matches nothing. If
             nothing else on the order matches, the order reads{" "}
-            <strong>No workflow</strong> on the Orders page. You can still
-            choose the workflow for the item on the order page. How is in{" "}
+            <strong>No workflow</strong> on the Orders page, or{" "}
+            <strong>Unpaid</strong> if it is not paid. You can still choose the
+            workflow for the item on the order page. How is in{" "}
             <s-link href="/help/orders/attaching-a-workflow">
               Attaching or changing a workflow
             </s-link>
             . If you retag a product in Shopify, nothing changes for an order
-            already in Baton until that order syncs again. When that is, is in{" "}
+            already in Baton until that order syncs again. When it syncs is in{" "}
             <s-link href="/help/orders/syncing">Syncing from Shopify</s-link>.
           </s-paragraph>
         </Things>
@@ -82,13 +84,14 @@ export function Matching() {
       <s-section heading="When two workflows match">
         <Things>
           <s-paragraph>
-            If an item carries the tags of two workflows, neither starts. The
-            order shows <strong>Multiple workflows match</strong> on the Orders
-            page. On the order page, the item says more than one workflow
+            If an item carries the tags of two active workflows, neither starts.
+            The order shows <strong>Multiple workflows match</strong> on the
+            Orders page. On the order page, the item says more than one workflow
             matches it, and the <strong>Workflow</strong> select lists the
             matching workflows first. Choose one and press{" "}
-            <strong>Attach</strong>. If you turn one of the two off or delete
-            it, the other starts on the item.
+            <strong>Attach</strong>. If you turn one of the two off, delete it,
+            or delete a team one of its tasks is on, the other starts on the
+            item.
           </s-paragraph>
           <HelpPicture name="matching1" />
         </Things>

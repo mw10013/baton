@@ -11,6 +11,7 @@ import { FilterRow } from "@/components/screen/FilterRow";
 import { FootLine } from "@/components/screen/FootLine";
 import { HelpList } from "@/components/screen/HelpList";
 import { HelpPicture } from "@/components/screen/HelpPicture";
+import { HelpTable } from "@/components/screen/HelpTable";
 import { IndexSection } from "@/components/screen/IndexSection";
 import { Inline } from "@/components/screen/Inline";
 import { ListSearchField } from "@/components/screen/ListSearchField";
@@ -388,6 +389,23 @@ function RouteComponent() {
         <s-section heading="Screenshot">
           <HelpPicture name="recordingYourWork1" />
           <HelpPicture name="firstOrder1" />
+        </s-section>
+        <s-section heading="Help table">
+          <HelpTable
+            columns={["Badge", "Where", "Meaning"]}
+            rows={[
+              [
+                <strong key="b">Multiple workflows match</strong>,
+                "The Orders page, in the Issues column",
+                `Two or more active workflows match the item, so none started. ${TASK_64} is the longest task name a cell holds.`,
+              ],
+              [
+                <strong key="b">Team has no members</strong>,
+                "The Workflows page",
+                "A task is on a team with nobody on it. The workflow still starts, and the task waits.",
+              ],
+            ]}
+          />
         </s-section>
         <s-section heading="Numbered list">
           <NumberedList

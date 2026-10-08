@@ -25,7 +25,7 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
     slug: "getting-started",
     title: "Getting started",
     description:
-      "Install Baton, create a workflow and a team, and follow the first order through.",
+      "Install Baton, create a team and a workflow, and follow the first order through.",
     pages: [
       {
         slug: "how-baton-works",
@@ -36,18 +36,18 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
       {
         slug: "installing",
         title: "Installing Baton and choosing a plan",
-        description: "From the App Store to the plan page and the trial.",
+        description: "From the App Store to the pricing page and the trial.",
+      },
+      {
+        slug: "first-team",
+        title: "Creating a team and adding members",
+        description: "A team for the tasks, and the people who do them.",
       },
       {
         slug: "first-workflow",
         title: "Creating your first workflow",
         description:
           "Name it, give it a tag, add a step and a task, assign a team, turn it on.",
-      },
-      {
-        slug: "first-team",
-        title: "Creating a team and adding members",
-        description: "A team for the tasks, and the people who do them.",
       },
       {
         slug: "first-order",
@@ -91,7 +91,7 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
         slug: "syncing",
         title: "Syncing from Shopify",
         description:
-          "When Baton reads orders, Sync from Shopify on an order, and the open-order limit.",
+          "When Baton reads orders, Sync open orders, Sync from Shopify on an order, and the open-order limit.",
       },
     ],
   },
@@ -169,7 +169,7 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
       {
         slug: "finding-your-work",
         title: "Finding your work",
-        description: "The strip's five states, the Team select and search.",
+        description: "The strip's five filters, the Team select and search.",
       },
       {
         slug: "recording-your-work",
@@ -204,13 +204,13 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
         slug: "limits",
         title: "Limits",
         description:
-          "Names, notes, instructions, members on a team, workflows and open orders.",
+          "Names, notes, instructions, members, teams, workflows and open orders.",
       },
       {
         slug: "plans-and-billing",
         title: "Plans and billing",
         description:
-          "The billing cycle, counted orders, members, included allowances and Manage plan.",
+          "The billing cycle, counted orders, members, what your plan includes and Manage plan.",
       },
     ],
   },

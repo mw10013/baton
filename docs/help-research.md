@@ -263,12 +263,12 @@ them equal.
 
 ### Page anatomy, by type
 
-| type      | above the heading | lead                                    | body                                                                                                                 | foot                                                          |
-| --------- | ----------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| hub       | breadcrumbs       | one to three sentences linking children | nothing, or one table                                                                                                | "In this section": each child's title as a link, its one line |
-| task      | breadcrumbs       | what the page covers, one sentence      | one `s-section` per task, heading imperative; an ordered list of steps; a screenshot where the screen is not obvious | the section's page list, current page unlinked                |
-| concept   | breadcrumbs       | the definition                          | `s-section`s by sub-topic; a screenshot of the screen described                                                      | same                                                          |
-| reference | breadcrumbs       | one sentence                            | one `s-table` per table, headings the vocabulary's                                                                   | same                                                          |
+| type      | above the heading | lead                                    | body                                                                                                                                                                                                                                              | foot                                                          |
+| --------- | ----------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| hub       | breadcrumbs       | one to three sentences linking children | nothing, or one table                                                                                                                                                                                                                             | "In this section": each child's title as a link, its one line |
+| task      | breadcrumbs       | what the page covers, one sentence      | one `s-section` per task or per thing the tasks need, heading a noun ("The Workflows page", "What an issue is", "Needs a team") or the task's own words ("Create a team"); an ordered list of steps; a screenshot where the screen is not obvious | the section's page list, current page unlinked                |
+| concept   | breadcrumbs       | the definition                          | `s-section`s by sub-topic; a screenshot of the screen described                                                                                                                                                                                   | same                                                          |
+| reference | breadcrumbs       | one sentence                            | one `s-table` per table, headings the vocabulary's                                                                                                                                                                                                | same                                                          |
 
 A step says the control's label in bold, exactly as the screen prints it: "Press **Create
 workflow**." Flow says "Click"; Baton's reader on a phone taps, so the verb is "press", which is
@@ -298,6 +298,9 @@ all three.
 
 - The copy table's tone list, as written. The reader is "you"; a member page says "the merchant"; a
   merchant page says "a member", "the team".
+- The copy table's contraction rule is for screens, where space is short. Help prose may write
+  "does not", "cannot" and "is not" in full, and a page may mix them (the read-through's decision
+  29, 2026-10-08: no contraction sweep).
 - Help may define and explain. One definition per page, in the lead. A reason where it changes what
   the reader does.
 - Steps are an ordered list of short imperatives. Step one names the screen, not the admin path:
@@ -447,8 +450,12 @@ now and will be gone into in a later session. The plan is `docs/help-plan.md`.
     member pages. Accepted for now; the mechanics get their own session.
 12. **No search.** Revisit at a hundred pages.
 13. **Three levels**, held by the data shape.
-14. **Reference pages held to the vocabulary** by a `pnpm spec check` rule, in the content phase,
-    for States and badges and Who can do what; Limits reads the constants.
+14. **Reference pages held to the vocabulary.** States and badges and Who can do what read every
+    label from its constant through `src/lib/helpReference.ts`, whose row sets are `satisfies
+Record<State, …>`, so typecheck holds the sets and the existing screen-column rule of
+    `pnpm spec check` holds the labels; `test/integration/help-reference.test.ts` pins that every
+    label renders. Limits reads the constants. No text rule in `scripts/lib/spec.ts`: it would be
+    weaker than the type (decided 2026-10-08, `docs/help-reference-plan.md`, review 10).
 15. **The lapsed page is one sentence on Signing in**, not a page.
 16. **The entry points go in now**, before the content, so the skeleton shows the structure end to
     end; decision 10's "after the content exists" is withdrawn. Taken 2026-10-06 on review.
@@ -456,23 +463,23 @@ now and will be gone into in a later session. The plan is `docs/help-plan.md`.
 ## Roadmap
 
 Where the help work stands, one line per stage, and the doc that carries it. This research stays
-the umbrella; each stage's detail lives in its own research or plan. Updated 2026-10-08, after the Orders cycle closed: everything up to Teams and members is committed, Orders is done with nothing open and uncommitted; 4 of 33 pages have no body (Reference, and the six hubs, which have none by design).
+the umbrella; each stage's detail lives in its own research or plan. Updated 2026-10-08, after the Reference cycle closed: everything up to Orders is committed, Reference is done and uncommitted; every page but the six hubs, which have none by design, has a body. The read-through, the last phase, closed 2026-10-08; every phase is done. What is open is a follow-up, listed after the roadmap.
 
-| stage                                                                                                                  | status                                                                                         | doc                                   |
-| ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------- |
-| Approach, tree, anatomy, tone, screenshot spec                                                                         | decided 2026-10-06                                                                             | this research                         |
-| Skeleton: template row, help list, foot lines                                                                          | done 2026-10-06 (072010d, 7bd7529); the Syncing title decided 2026-10-06                       | `docs/help-plan.md`                   |
-| Showcase data: fixture, products, real orders                                                                          | done, closed 2026-10-07                                                                        | `docs/showcase-shop-plan.md`          |
-| Screenshot script, screenshot and numbered list parts, member pictures                                                 | done 2026-10-07 (1d7400e), reviewed, nothing open                                              | `docs/help-members-plan.md`           |
-| For members content (four pages)                                                                                       | done 2026-10-07 (1d7400e)                                                                      | `docs/help-members-plan.md`           |
-| Order positions: what Not started means                                                                                | done 2026-10-07 (3579fda)                                                                      | `docs/order-not-started-research.md`  |
-| Merchant pictures: the `merchant` picture kind in the script (page, modal, editor window, editor modal; overlap check) | done 2026-10-07, reviewed, uncommitted                                                         | `docs/help-getting-started-plan.md`   |
-| Getting started content (5 pages)                                                                                      | done 2026-10-07, reviewed, uncommitted                                                         | `docs/help-getting-started-plan.md`   |
-| Workflows content (6 pages), `--section` flag on the script                                                            | done 2026-10-08, reviewed, follow-ups in, uncommitted                                          | `docs/help-workflows-plan.md`         |
-| Teams and members content (3 pages, 8 pictures)                                                                        | done 2026-10-08, reviewed, follow-ups in, uncommitted                                          | `docs/help-teams-and-members-plan.md` |
-| Orders content (5 pages, 9 pictures, Packing deleted and reseeded mid-run)                                             | done 2026-10-08, reviewed, follow-ups in, badge renamed Making (Review 3), closed, uncommitted | `docs/help-orders-plan.md`            |
-| Reference pages and their vocabulary check                                                                             | later (decision 14); needs no pictures, so it can run at any point                             | a plan of its own                     |
-| Home page pictures                                                                                                     | deferred until Home is redesigned                                                              | none yet                              |
+| stage                                                                                                                  | status                                                                                                          | doc                                   |
+| ---------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| Approach, tree, anatomy, tone, screenshot spec                                                                         | decided 2026-10-06                                                                                              | this research                         |
+| Skeleton: template row, help list, foot lines                                                                          | done 2026-10-06 (072010d, 7bd7529); the Syncing title decided 2026-10-06                                        | `docs/help-plan.md`                   |
+| Showcase data: fixture, products, real orders                                                                          | done, closed 2026-10-07                                                                                         | `docs/showcase-shop-plan.md`          |
+| Screenshot script, screenshot and numbered list parts, member pictures                                                 | done 2026-10-07 (1d7400e), reviewed, nothing open                                                               | `docs/help-members-plan.md`           |
+| For members content (four pages)                                                                                       | done 2026-10-07 (1d7400e)                                                                                       | `docs/help-members-plan.md`           |
+| Order positions: what Not started means                                                                                | done 2026-10-07 (3579fda)                                                                                       | `docs/order-not-started-research.md`  |
+| Merchant pictures: the `merchant` picture kind in the script (page, modal, editor window, editor modal; overlap check) | done 2026-10-07, reviewed, uncommitted                                                                          | `docs/help-getting-started-plan.md`   |
+| Getting started content (5 pages)                                                                                      | done 2026-10-07, reviewed, uncommitted                                                                          | `docs/help-getting-started-plan.md`   |
+| Workflows content (6 pages), `--section` flag on the script                                                            | done 2026-10-08, reviewed, follow-ups in, uncommitted                                                           | `docs/help-workflows-plan.md`         |
+| Teams and members content (3 pages, 8 pictures)                                                                        | done 2026-10-08, reviewed, follow-ups in, uncommitted                                                           | `docs/help-teams-and-members-plan.md` |
+| Orders content (5 pages, 9 pictures, Packing deleted and reseeded mid-run)                                             | done 2026-10-08, reviewed, follow-ups in, badge renamed Making (Review 3), closed, uncommitted                  | `docs/help-orders-plan.md`            |
+| Reference pages (4 pages, no pictures), the `HelpTable` part, the vocabulary hold by type                              | done 2026-10-08, reviewed, follow-ups in (the editor's task name gets its text limit), uncommitted              | `docs/help-reference-plan.md`         |
+| Read-through of the whole tree as a reader, in order, for cross-page consistency                                       | done 2026-10-08: 34 items, all accepted and in (8 wrong facts, team page now before workflow page), uncommitted | `docs/help-read-through-plan.md`      |
 
 Carried into the content stages, decided elsewhere:
 
@@ -505,6 +512,21 @@ Carried into the content stages, decided elsewhere:
   is nothing a screen shows.
 - The For members pages are unaffected: 3579fda changed no member screen, no member label and no
   member fixture data (checked 2026-10-07, `docs/help-members-plan.md`).
+
+## Follow-ups after the phases (2026-10-08)
+
+Not phases of this work. Each waits on something outside the help and is the user's call:
+
+- **Home page pictures**, after Home is redesigned. Installing describes the home page in prose,
+  so no reader lacks anything now.
+- **Limits prints the ceilings, and every ceiling is provisional** (`ShopLimits`, `WorkflowLimits`:
+  "working proposals, nothing measured"). The page reads the constants, so it never lies, but a
+  merchant may read a working proposal as a promise. Whether Limits should print numbers at all,
+  print only the text limits the fields already print, or go, is to be decided once the limits
+  are settled. The plan listing already avoids a number and says "at no extra charge".
+- **Plans and billing may not be wanted as a page**: it prints no number by rule, so it is prose
+  about the home page's two tiles and Shopify's pricing page, which Installing already covers in
+  short. Keep or cut when the plans are final.
 
 ## How a content cycle runs
 

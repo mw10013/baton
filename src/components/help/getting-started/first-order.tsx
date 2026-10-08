@@ -34,26 +34,26 @@ export function FirstOrder() {
       <s-section heading="A member does the work">
         <Things>
           <s-paragraph>
-            The first step&apos;s tasks show on the Workflows list of every
-            member on their teams, and read <strong>Ready</strong>.
+            Each task whose step is current shows on the Workflows list of every
+            member on its team, and reads <strong>Ready</strong>.
           </s-paragraph>
           <HelpPicture name="findingYourWork2" />
           <s-paragraph>
             When a member presses <strong>Start</strong> on a task, the order
             reads <strong>Making</strong>. When they press <strong>Done</strong>
             , and every task in the step is done, the next step&apos;s tasks
-            read Ready. The order page shows the step each item is on, such as
-            Step 2 of 3 and the task&apos;s name.
+            read <strong>Ready</strong>. The order page shows the step each item
+            is on, such as Step 2 of 3 and the task&apos;s name.
           </s-paragraph>
         </Things>
       </s-section>
       <s-section heading="Made and fulfilled">
         <Things>
           <s-paragraph>
-            When the last task of every item&apos;s workflow is done, the order
-            reads <strong>Made</strong>. Its page says every item is done, with
-            a <strong>Fulfill in Shopify</strong> link. Each item shows a{" "}
-            <strong>Done</strong> badge.
+            When no item&apos;s workflow is still open and at least one is done,
+            the order reads <strong>Made</strong>. Its page says every item is
+            done, with a <strong>Fulfill in Shopify</strong> link. Each item
+            shows a <strong>Done</strong> badge.
           </s-paragraph>
           <HelpPicture name="firstOrder1" />
           <s-paragraph>

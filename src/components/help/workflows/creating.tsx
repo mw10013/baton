@@ -34,7 +34,7 @@ export function Creating() {
             number of steps and when it was last updated. The badge reads{" "}
             <strong>Active</strong> for a workflow that starts on new items, or{" "}
             <strong>Inactive</strong> for one that starts nothing. A second
-            badge shows when something stops it:
+            badge shows when something stops it or is missing:
           </s-paragraph>
           <s-unordered-list>
             <s-list-item>

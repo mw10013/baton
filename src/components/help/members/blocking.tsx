@@ -44,8 +44,8 @@ export function Blocking() {
             While the item is blocked, its tasks cannot be started, done or put
             back. The merchant sees the order under <strong>Issues</strong> as{" "}
             <strong>Blocked</strong>. The block does not move the order&apos;s
-            position, so an order nobody has started stays Not started. What the
-            merchant does next is in{" "}
+            position, so an order nobody has started stays{" "}
+            <strong>Not started</strong>. What the merchant does next is in{" "}
             <s-link href="/help/orders/fixing-issues">Fixing an issue</s-link>.
           </s-paragraph>
         </Things>

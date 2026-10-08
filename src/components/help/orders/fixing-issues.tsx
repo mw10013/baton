@@ -11,7 +11,7 @@ import { Things } from "@/components/screen/Things";
  * `OrderRow.unassigned` (an open task on any step whose team is gone),
  * `WORKFLOW_FAULT_LABEL`, `runActions` (Block on an open item, Unblock
  * while blocked, both cleared by Cancel workflow and Change workflow),
- * `taskActions` (Done and Put back stop under a block; Assign team does
+ * `taskActions` (Start, Done and Put back stop under a block; Assign team does
  * not; a done task keeps its team) and the triggers table on
  * `reconcileItem` (Turn off and Delete workflow create the other match's
  * workflow; Apply changes creates nothing on items already on a workflow,
@@ -31,9 +31,9 @@ export function FixingIssues() {
         <Things>
           <s-paragraph>
             An issue is an item on an open order that will not move until you
-            act. On the Orders page, show <strong>Issues</strong> to list every
-            order that has one. Each row carries one red badge per issue:{" "}
-            <strong>Multiple workflows match</strong>,{" "}
+            act. On the Orders page, press <strong>Issues</strong> on the strip
+            to list every open order that has one. Each row carries one red
+            badge per issue: <strong>Multiple workflows match</strong>,{" "}
             <strong>Needs a team</strong> or <strong>Blocked</strong>. An order
             can have several.
           </s-paragraph>
@@ -113,7 +113,9 @@ export function FixingIssues() {
             A member on the team of the current task, or you, blocked the item.
             Its card shows <strong>Blocked</strong> beside its other badge, and
             a red banner with the reason, who blocked it and when. Nobody can
-            press Done on it until the block is lifted. How members block is in{" "}
+            press <strong>Start</strong>, <strong>Done</strong> or{" "}
+            <strong>Put back</strong> on its tasks until the block is lifted.
+            How members block is in{" "}
             <s-link href="/help/members/blocking">
               Blocking an item and leaving a note
             </s-link>

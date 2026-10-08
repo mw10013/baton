@@ -46,8 +46,9 @@ export function SigningIn() {
             separately.
           </s-paragraph>
           <s-paragraph>
-            If a store&apos;s Baton subscription is not active, its workflows
-            are unavailable until the merchant renews it.
+            If a store&apos;s Baton subscription is not active, the store reads{" "}
+            <strong>Subscription inactive</strong> and its workflows are
+            unavailable until the merchant renews it.
           </s-paragraph>
         </Things>
       </s-section>

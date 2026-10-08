@@ -14,6 +14,10 @@ import { FixingIssues } from "@/components/help/orders/fixing-issues";
 import { OrderPage } from "@/components/help/orders/order-page";
 import { OrdersList } from "@/components/help/orders/orders-list";
 import { Syncing } from "@/components/help/orders/syncing";
+import { Limits } from "@/components/help/reference/limits";
+import { PlansAndBilling } from "@/components/help/reference/plans-and-billing";
+import { StatesAndBadges } from "@/components/help/reference/states-and-badges";
+import { WhoCanDoWhat } from "@/components/help/reference/who-can-do-what";
 import { AddingAMember } from "@/components/help/teams-and-members/adding-a-member";
 import { CreatingATeam } from "@/components/help/teams-and-members/creating-a-team";
 import { RemovingAndDeleting } from "@/components/help/teams-and-members/removing-and-deleting";
@@ -36,8 +40,8 @@ import { TurningOnAndOff } from "@/components/help/workflows/turning-on-and-off"
 export const HELP_BODIES: Readonly<Record<string, () => React.JSX.Element>> = {
   "getting-started/how-baton-works": HowBatonWorks,
   "getting-started/installing": Installing,
-  "getting-started/first-workflow": FirstWorkflow,
   "getting-started/first-team": FirstTeam,
+  "getting-started/first-workflow": FirstWorkflow,
   "getting-started/first-order": FirstOrder,
   "orders/orders-list": OrdersList,
   "orders/order-page": OrderPage,
@@ -56,4 +60,8 @@ export const HELP_BODIES: Readonly<Record<string, () => React.JSX.Element>> = {
   "members/finding-your-work": FindingYourWork,
   "members/recording-your-work": RecordingYourWork,
   "members/blocking": Blocking,
+  "reference/states-and-badges": StatesAndBadges,
+  "reference/who-can-do-what": WhoCanDoWhat,
+  "reference/limits": Limits,
+  "reference/plans-and-billing": PlansAndBilling,
 };

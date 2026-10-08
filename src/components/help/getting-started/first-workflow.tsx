@@ -51,13 +51,12 @@ export function FirstWorkflow() {
       <s-section heading="Add a step">
         <Things>
           <s-paragraph>
-            Every task goes to a team, so create a team first. Until the shop
-            has one, the editor says to create a team before adding steps. How
-            is in{" "}
+            Every task goes to a team, which is why{" "}
             <s-link href="/help/getting-started/first-team">
               Creating a team and adding members
-            </s-link>
-            .
+            </s-link>{" "}
+            comes before this page. Until the shop has a team, the editor says
+            to create one before adding steps.
           </s-paragraph>
           <NumberedList
             items={[
@@ -107,8 +106,9 @@ export function FirstWorkflow() {
           <s-paragraph>
             <strong>Turn on workflow</strong> stays disabled until the workflow
             has a step and every task has a team. Once it is on, the workflow
-            reads <strong>Active</strong> on the Workflows page. Each paid order
-            with an item that carries the tag starts it, open orders included.
+            reads <strong>Active</strong> on the Workflows page. Every open paid
+            order with an item that carries the tag starts it, however old the
+            order is.
           </s-paragraph>
         </Things>
       </s-section>

@@ -254,6 +254,7 @@ export type ScreenTemplate = typeof ScreenTemplate.Type;
  * | foot line      | one centred sentence of links at a page's foot: the way to help                      | `FootLine`                          | centred; one line                                                                                          | homepage, details, editor, index  | a second sentence; a banner                         |
  * | screenshot     | one picture in a help page                                                           | `HelpPicture`                       | placed by inventory name; the width by kind: a member picture 390px and centred; a merchant picture its own width capped at the column's, centred, its aspect ratio from the inventory | help | a caption, border or annotation; a picture the inventory lacks |
  * | numbered list  | what to do, in order: one action per item, a control's label in bold                 | `NumberedList`                      | an ordered list; Polaris's numbers and spacing                                                             | help                              | two actions in one item; a workflow's steps         |
+ * | help table     | a reference page's rows: a word, its badge or button, and what it means              | `HelpTable`                         | the columns; the first column the row's title on a phone and the rest labelled by their heading           | help                              | pagination; a control in a cell; a merchant's rows |
  * | capped name    | a team, task or workflow name                                                        | `Name`                              | on a list: whole, wraps; on its home: whole, wraps; in a cutting control: allowed                         | index, details, homepage, editor  | an ellipsis on a list                               |
  * | Shopify text   | an item title, a variant, an item property                                           | `Clamp`                             | on a list: two lines and an ellipsis; on its home: whole, wraps; in a cutting control: never              | index, details, homepage, editor  | a badge, chip or select option                      |
  * | free text      | a block reason, a note, task instructions, an order note                             | `Clamp`, `Prose`, `ClampedProse`    | on a list: two lines; on its home: `Prose`, a block reason `ClampedProse`; in a cutting control: never   | index, details, homepage, editor  | collapsed line breaks                               |
@@ -308,6 +309,7 @@ export const ScreenPart = Schema.Literals([
   "foot line",
   "screenshot",
   "numbered list",
+  "help table",
   "capped name",
   "Shopify text",
   "free text",

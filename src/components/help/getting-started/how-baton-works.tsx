@@ -29,8 +29,8 @@ export function HowBatonWorks() {
             person who does the work. A member can be on more than one team.
           </s-paragraph>
           <s-paragraph>
-            The order page shows each item with its workflow and the step it is
-            on, such as Step 2 of 3 and the task&apos;s name.
+            The order page shows each item and the step its workflow is on, such
+            as Step 2 of 3 and the task&apos;s name.
           </s-paragraph>
           <HelpPicture name="howBatonWorks1" />
         </Things>

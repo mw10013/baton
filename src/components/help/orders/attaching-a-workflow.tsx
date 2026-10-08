@@ -7,7 +7,7 @@ import { Things } from "@/components/screen/Things";
  * page: attach, change and cancel. Read against
  * `src/routes/app.orders.$orderId.tsx` (`workflowSelect`: the Workflow
  * select with Choose workflow, the matches first and a rule before the rest,
- * Attach greyed until a choice, hidden on a closed order; the unmatched
+ * Attach disabled until a choice, hidden on a closed order; the unmatched
  * item's sentence pointing to Workflows; the Change workflow modal with its
  * Workflow select, the `changeWarning` paragraph, Cancel and Change
  * workflow, offered in Manage on an open or done item that has another
@@ -95,9 +95,9 @@ export function AttachingAWorkflow() {
           <s-paragraph>
             An item whose workflow is done can be changed the same way. An item
             whose workflow you cancelled has the <strong>Workflow</strong>{" "}
-            select under its card instead, the cancelled workflow among the
-            choices. Choose one and press <strong>Attach</strong>, with no
-            modal, since that work is over.
+            select under its card instead, with the cancelled workflow among the
+            choices while it is active. Choose one and press{" "}
+            <strong>Attach</strong>, with no modal, since that work is over.
           </s-paragraph>
         </Things>
       </s-section>

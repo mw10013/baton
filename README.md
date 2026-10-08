@@ -65,12 +65,12 @@ are provisional.
 up to eight per plan. Copy that does not fit is copy the dashboard silently truncates, so the
 lines are written to the limit. Enter them in this order:
 
-| #   | Basic                                 | Pro                                   |
-| --- | ------------------------------------- | ------------------------------------- |
-| 1   | `20 orders included, then $0.15 each` | `30 orders included, then $0.10 each` |
-| 2   | `3 members included, then $15 each`   | `10 members included, then $10 each`  |
-| 3   | `Unlimited workflows and teams`       | `Unlimited workflows and teams`       |
-| 4   | `Billed once work starts on an order` | `Billed once work starts on an order` |
+| #   | Basic                                    | Pro                                      |
+| --- | ---------------------------------------- | ---------------------------------------- |
+| 1   | `20 orders included, then $0.15 each`    | `30 orders included, then $0.10 each`    |
+| 2   | `3 members included, then $15 each`      | `10 members included, then $10 each`     |
+| 3   | `Workflows and teams at no extra charge` | `Workflows and teams at no extra charge` |
+| 4   | `Billed once work starts on an order`    | `Billed once work starts on an order`    |
 
 Line 1 must agree with `ordersPerCycle` in `ENTITLEMENTS` and with the meter's tier 2 price;
 line 2 with `membersIncluded` and the member meter's tier 2 price. Line 4 states the metering rule (`OrderRepository.countOrder`): an

@@ -70,7 +70,7 @@ export function Editing() {
             ]}
           />
           <s-paragraph>
-            Steps are done in order. Every step needs a team, so until the shop
+            Steps are done in order. Every task needs a team, so until the shop
             has one, the editor says to create a team first. How is in{" "}
             <s-link href="/help/teams-and-members/creating-a-team">
               Creating a team

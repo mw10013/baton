@@ -10,7 +10,8 @@ import { Things } from "@/components/screen/Things";
  * the page draws them), `Domain.taskActions` (who may press each, Done
  * without Start, Put back for the whole team, Undo while no later step's
  * task is started or done, nothing on a closed order or workflow),
- * the `menuItems` of the Workflows list's row, and `Domain.orderPosition`
+ * the `menuItems` of the Workflows list's row (Start alone on a ready task,
+ * Done and Put back on a started one), and `Domain.orderPosition`
  * (a started or done task makes the order Making).
  */
 export function RecordingYourWork() {
@@ -40,12 +41,14 @@ export function RecordingYourWork() {
           <s-paragraph>
             You can press <strong>Done</strong> without pressing Start first.
             Baton records that you started it too. On the Workflows list, the{" "}
-            <strong>…</strong> button on a row has the same buttons without
-            opening the page.
+            <strong>…</strong> button on a row has <strong>Start</strong> on a
+            ready task, and <strong>Done</strong> and <strong>Put back</strong>{" "}
+            on a started one.
           </s-paragraph>
           <s-paragraph>
-            The merchant&apos;s orders list moves an order from Not started to
-            Making when the first task on it is started.
+            The merchant&apos;s orders list moves an order from{" "}
+            <strong>Not started</strong> to <strong>Making</strong> when the
+            first task on it is started.
           </s-paragraph>
         </Things>
       </s-section>
@@ -53,11 +56,11 @@ export function RecordingYourWork() {
         <Things>
           <s-paragraph>
             If you pressed Start by mistake, or cannot do the task after all,
-            press <strong>Put back</strong>. The task reads Ready again, for
-            anyone on its team. Anyone on the team can put back a started task,
-            not only who started it. If nothing else on the order was started or
-            done, the order moves back to Not started on the merchant&apos;s
-            orders list.
+            press <strong>Put back</strong>. The task reads{" "}
+            <strong>Ready</strong> again, for anyone on its team. Anyone on the
+            team can put back a started task, not only who started it. If
+            nothing else on the order was started or done, the order moves back
+            to <strong>Not started</strong> on the merchant&apos;s orders list.
           </s-paragraph>
           <HelpPicture name="recordingYourWork2" />
         </Things>

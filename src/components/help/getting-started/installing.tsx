@@ -7,15 +7,17 @@ import { Things } from "@/components/screen/Things";
  * in the Partner Dashboard and change without a deploy, which is the home
  * page's own rule (the JSDoc on its component in `src/routes/app.index.tsx`).
  * Read against `src/routes/app.tsx` (an app subscription is required: an
- * unsubscribed shop is sent to Shopify's plan selection page, and the return
- * leg carries `plan_handle`), `ShopifyPartner.planSelectionUrl`,
+ * unsubscribed shop is sent to Shopify's plan selection page, which help
+ * calls the pricing page, and the return leg carries `plan_handle`),
+ * `ShopifyPartner.planSelectionUrl`, `ShopAgent.syncOpenOrders` (called
+ * only by Sync open orders on the Orders page: nothing syncs on install),
  * `src/routes/app.index.tsx` (the Orders this billing cycle and Members
  * tiles, "billed at your plan's rate", Manage plan), `ManagePlanButton`, and
  * the billing vocabulary and `Entitlements`, `ShopUsage`, `AppSubscription`
  * in `src/lib/domain/Billing.ts` (a counted order is counted once, when its
  * first item's workflow starts; a cycle's seats are its highest member
  * count; nothing past an allowance is refused; a plan change starts a new
- * billing cycle with both meters at zero; nothing is billed in a trial and
+ * billing cycle, orders at zero and the member mark at the member count; nothing is billed in a trial and
  * its usage does not carry over).
  */
 export function Installing() {
@@ -29,13 +31,21 @@ export function Installing() {
                 On Baton&apos;s listing in the Shopify App Store, press{" "}
                 <strong>Install</strong>.
               </>,
-              <>Shopify shows Baton&apos;s plans. Choose one.</>,
+              <>
+                Shopify&apos;s pricing page shows Baton&apos;s plans. Choose
+                one.
+              </>,
               <>Approve the charge. Baton opens on its home page.</>,
             ]}
           />
           <s-paragraph>
             Baton needs a plan to open. Until you choose one, Baton sends you
-            back to the plans.
+            back to the pricing page.
+          </s-paragraph>
+          <s-paragraph>
+            Then, on the Orders page, press <strong>Sync open orders</strong> to
+            bring in the open orders placed in the last 30 days. After that,
+            Baton reads each new order as it is placed.
           </s-paragraph>
         </Things>
       </s-section>
@@ -45,7 +55,7 @@ export function Installing() {
             Each plan includes a number of orders and a number of members for
             each billing cycle. Past either number, Baton keeps working, and
             each extra order or member is billed at your plan&apos;s rate. The
-            plans show the numbers and the rates.
+            pricing page shows the numbers and the rates.
           </s-paragraph>
           <s-unordered-list>
             <s-list-item>
@@ -63,8 +73,8 @@ export function Installing() {
             <strong>Members</strong>, each against what your plan includes. The
             Members tile shows today&apos;s count. To change plans, press{" "}
             <strong>Manage plan</strong> on the home page. A new plan applies at
-            once and starts a new billing cycle, with both counts at zero. The
-            details are in{" "}
+            once and starts a new billing cycle. Orders start again at zero, and
+            members start from the members you have. The details are in{" "}
             <s-link href="/help/reference/plans-and-billing">
               Plans and billing
             </s-link>
@@ -74,9 +84,9 @@ export function Installing() {
       </s-section>
       <s-section heading="The trial">
         <s-paragraph>
-          If a plan has a trial, the plans say how long it is. Nothing is billed
-          during the trial, and what you use in it does not carry into your
-          first billing cycle.
+          If a plan has a trial, the pricing page says how long it is. Nothing
+          is billed during the trial, and what you use in it does not carry into
+          your first billing cycle.
         </s-paragraph>
       </s-section>
     </>

@@ -3,14 +3,17 @@ import { Things } from "@/components/screen/Things";
 
 /**
  * Finding your work (`members/finding-your-work`): the Workflows list's five
- * states, the Team select, search and Show more. Read against
- * `src/routes/shop.$shop.workflows.index.tsx` and
+ * filters, the Team select, search and Show more. Read against
+ * `src/routes/shop.$shop.workflows.index.tsx` and `RunRepository.runListItems`
+ * (an item is listed while its current task is on one of your teams),
+ * `ShowMore` in `src/components/screen/ShowMore.tsx` ("Show n more of N"),
  * `src/lib/workflowsListStates.ts` (the labels and their order), and
  * `Domain.listStateOf` (a block wins, then a task you started, then any
  * started task, then Ready), `Domain.RecentItem` and
  * `Domain.workflowsListStateIsDone` (Done or closed holds the last day,
  * `DONE_WINDOW_MS`), `Domain.RunQuery` (a search ignores the state and the
- * team) and `Domain.RUN_PAGE` (25).
+ * team), `Domain.searchTerm` (an order number matched whole, else the start
+ * of a word in the item's title, variant or SKU) and `Domain.RUN_PAGE` (25).
  */
 export function FindingYourWork() {
   return (
@@ -18,9 +21,9 @@ export function FindingYourWork() {
       <s-section heading="Choose what to see">
         <Things>
           <s-paragraph>
-            The Workflows list shows the items with a task on your teams. The
-            strip at the top counts them by state. Press a state to list its
-            items.
+            The Workflows list shows the items whose current task is on one of
+            your teams. The strip at the top counts them by filter. Press a
+            filter to list its items.
           </s-paragraph>
           <s-unordered-list>
             <s-list-item>
@@ -36,7 +39,8 @@ export function FindingYourWork() {
             </s-list-item>
             <s-list-item>
               <strong>Blocked</strong>: someone stopped the work and said why. A
-              blocked item is listed here, not under Started or Ready.
+              blocked item is listed here, not under Started by you, Started by
+              others or Ready.
             </s-list-item>
             <s-list-item>
               <strong>Done or closed</strong>: tasks your teams did in the last
@@ -60,14 +64,15 @@ export function FindingYourWork() {
           </s-paragraph>
           <HelpPicture name="findingYourWork2" />
           <s-paragraph>
-            To find one item, search by its order number or by the item&apos;s
-            name, variant or SKU. A search looks across every state and every
-            team. Press <strong>Clear search</strong> to go back to the list you
-            had.
+            To find one item, search by its order number, or by the start of a
+            word in the item&apos;s title, variant or SKU. A search looks across
+            every filter and every team. Press <strong>Clear search</strong> to
+            go back to the list you had.
           </s-paragraph>
           <s-paragraph>
-            The list shows 25 at a time. The <strong>Show 25 more</strong>{" "}
-            button at its foot loads the next 25.
+            The list shows 25 at a time. The button at its foot says how many
+            are left, such as <strong>Show 25 more of 40</strong>, and loads up
+            to 25 more.
           </s-paragraph>
         </Things>
       </s-section>

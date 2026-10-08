@@ -48,9 +48,9 @@ export function RemovingAndDeleting() {
           </s-paragraph>
           <s-paragraph>
             A task they had started stays started under their email, and the
-            team&apos;s other members find it under Started by others. Any of
-            them can press <strong>Put back</strong> on it so someone else can
-            start it.
+            team&apos;s other members find it under{" "}
+            <strong>Started by others</strong>. Any of them can press{" "}
+            <strong>Put back</strong> on it so someone else can start it.
           </s-paragraph>
         </Things>
       </s-section>
@@ -87,7 +87,7 @@ export function RemovingAndDeleting() {
               </>,
               <>
                 The modal says this can&apos;t be undone. Press{" "}
-                <strong>Delete</strong>. It is greyed for a moment while the
+                <strong>Delete</strong>. It is disabled for a moment while the
                 page connects.
               </>,
             ]}
@@ -100,9 +100,10 @@ export function RemovingAndDeleting() {
           <s-paragraph>
             Nothing stops you deleting a team a workflow uses, so check the
             workflows first. Every task on the team, in every workflow, loses
-            its team and reads <strong>Needs a team</strong>. A workflow with
-            such a task starts on no new items until you give the task a team in
-            the editor and apply the changes, as in{" "}
+            its team and reads No team. The workflow reads{" "}
+            <strong>Needs a team</strong>. A workflow with such a task starts on
+            no new items until you give the task a team in the editor and apply
+            the changes, as in{" "}
             <s-link href="/help/workflows/editing">
               Editing steps and tasks
             </s-link>
