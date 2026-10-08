@@ -107,6 +107,37 @@ describe("help pages", () => {
     expect(unplaced).toEqual([]);
   });
 
+  /**
+   * A merchant picture's `aspectRatio` is its clip in CSS px
+   * (`HelpPicture.aspectRatio` in `src/lib/helpPictures.ts`), shot at 2x, so
+   * it is half the file's pixel size. A PNG's width and height are bytes 16
+   * to 23, big-endian, in its IHDR chunk. The files come in through Vite's
+   * `?inline` query as data URLs, the one way to their bytes inside workerd,
+   * which has no file system.
+   */
+  it("a merchant picture's aspect ratio is its file's", async () => {
+    const files = import.meta.glob<string>("/public/assets/help/**/*.png", {
+      query: "?inline",
+      import: "default",
+    });
+    const merchant = Object.entries(HELP_PICTURES).flatMap(([name, picture]) =>
+      picture.kind === "merchant" ? [{ name, picture }] : [],
+    );
+    for (const { name, picture } of merchant) {
+      const load = files[`/public${helpPictureSrc(picture)}`];
+      expect(load, name).toBeDefined();
+      const dataUrl = (await load?.()) ?? "";
+      const bytes = Uint8Array.from(
+        atob(dataUrl.slice(dataUrl.indexOf(",") + 1)),
+        (char) => char.codePointAt(0) ?? 0,
+      );
+      const view = new DataView(bytes.buffer);
+      expect(picture.aspectRatio, name).toBe(
+        `${String(view.getUint32(16) / 2)}/${String(view.getUint32(20) / 2)}`,
+      );
+    }
+  });
+
   it("every picture's alt text is 30 to 60 words", () => {
     for (const [name, picture] of Object.entries(HELP_PICTURES)) {
       const words = picture.alt.split(/\s+/u).filter((word) => word !== "");

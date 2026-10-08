@@ -1,7 +1,8 @@
 import { expect, test } from "@playwright/test";
 
-import { HELP_SECTIONS } from "@/lib/helpPages";
-import { HELP_PICTURES, HELP_PICTURES_PATH } from "@/lib/helpPictures";
+import { HELP_BODIES } from "@/components/help/bodies";
+import { findHelpPage, findHelpSection, HELP_SECTIONS } from "@/lib/helpPages";
+import { HELP_PICTURES_PATH } from "@/lib/helpPictures";
 
 import { gotoMember } from "./member";
 
@@ -87,33 +88,40 @@ test("the sign-in page links to Signing in", async ({ page }) => {
 });
 
 /**
- * Each For members page renders its body (a `HELP_BODIES` entry: sections
- * with headings, which the lead and the foot list have none of) and every
- * picture the inventory files under the page loads. `naturalWidth` is the
- * browser's word that the file arrived and decoded; a missing file still
- * draws an `s-image` box.
+ * Each page with a body (a `HELP_BODIES` key, read here so a section is
+ * covered as soon as its bodies are registered) renders it: sections with
+ * headings, which the lead and the foot list have none of. Every picture the
+ * body places loads, wherever the inventory files it: a body may place a
+ * picture first taken for another page. `naturalWidth` is the browser's word
+ * that the file arrived and decoded; a missing file still draws an
+ * `s-image` box.
  */
-test("each For members page renders its body and its pictures load", async ({
+test("each page with a body renders it and its pictures load", async ({
   page,
 }) => {
-  const section = HELP_SECTIONS.find((each) => each.slug === "members");
-  if (section === undefined) throw new Error("no members section");
-  for (const entry of section.pages) {
-    await gotoMember(page, `/help/members/${entry.slug}`);
+  for (const key of Object.keys(HELP_BODIES)) {
+    const [sectionSlug = "", pageSlug = ""] = key.split("/");
+    const section = findHelpSection(sectionSlug);
+    const entry =
+      section === undefined ? undefined : findHelpPage(section, pageSlug);
+    if (entry === undefined) throw new Error(`${key} is not in the tree`);
+    await gotoMember(page, `/help/${key}`);
     await expect(
       page.locator(`s-page[heading="${entry.title}"]`),
     ).toBeVisible();
     await expect(page.locator("s-section[heading]").first()).toBeVisible();
-    const files = Object.values(HELP_PICTURES)
-      .map((picture) => picture.file)
-      .filter((file) => file.startsWith(`members/${entry.slug}-`));
-    for (const file of files) {
-      const image = page.locator(
-        `s-image[src="${HELP_PICTURES_PATH}/${file}"] img`,
-      );
+    const pictures = page.locator(`s-image[src^="${HELP_PICTURES_PATH}/"]`);
+    const count = await pictures.count();
+    for (let index = 0; index < count; index += 1) {
+      const picture = pictures.nth(index);
+      const src = await picture.getAttribute("src");
+      const image = picture.locator("img");
       await image.scrollIntoViewIfNeeded();
       await expect
-        .poll(() => image.evaluate((img: HTMLImageElement) => img.naturalWidth))
+        .poll(
+          () => image.evaluate((img: HTMLImageElement) => img.naturalWidth),
+          { message: `${key}: ${src ?? ""} loads` },
+        )
         .toBeGreaterThan(0);
     }
   }

@@ -387,6 +387,7 @@ function RouteComponent() {
         </FootLine>
         <s-section heading="Screenshot">
           <HelpPicture name="recordingYourWork1" />
+          <HelpPicture name="firstOrder1" />
         </s-section>
         <s-section heading="Numbered list">
           <NumberedList

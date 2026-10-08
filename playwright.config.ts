@@ -1,7 +1,7 @@
 import { defineConfig } from "@playwright/test";
 import path from "path";
 
-import { localUrl, previewUrl } from "./e2e/devStore";
+import { localUrl, previewUrl } from "./e2e/devStore.ts";
 
 export const storageStatePath = path.join(
   process.cwd(),

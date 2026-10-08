@@ -31,7 +31,7 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
         slug: "how-baton-works",
         title: "How Baton works",
         description:
-          "Orders, items, workflows, steps, tasks, teams and members, and how they fit.",
+          "Baton takes each order's items through a workflow of steps, each step's tasks done by a team of members.",
       },
       {
         slug: "installing",

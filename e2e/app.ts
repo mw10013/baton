@@ -6,9 +6,9 @@ import {
   type Page,
 } from "@playwright/test";
 
-import { storageStatePath } from "../playwright.config";
-import { appHandle } from "./devStore";
-import { awaitHydration, awaitNavigated } from "./hydration";
+import { storageStatePath } from "../playwright.config.ts";
+import { appHandle } from "./devStore.ts";
+import { awaitHydration, awaitNavigated } from "./hydration.ts";
 
 /**
  * The embedded app's iframe — its `src` carries `embedded=1` (admin chrome is the

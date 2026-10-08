@@ -377,21 +377,21 @@ to the frame's bottom, across the frame's width (1056 CSS px, 2112 at 2x). A mod
 inside the frame while the admin dims around it, so a modal is a clip to the panel. The workflow
 editor is a full-window frame of its own and is shot as the window.
 
-| rule         | merchant screens                                                                                                                                                                                                            | member screens                                                       |
-| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| what is shot | Baton's page as the merchant sees it: the admin's title bar and the app frame below it, clipped to the frame's width; no admin sidebar, search bar or overlays                                                              | the whole phone screen, top bar included                             |
-| window       | 1280 × 800, device scale factor 2; grown to the frame's top plus the frame body's `scrollHeight` for a page taller than the window                                                                                          | 390 × 844, device scale factor 2                                     |
-| crop         | the whole page for a "Reading…" page; the one card, drawer or modal panel for a step; the whole window for the workflow editor                                                                                              | the whole screen; a modal when the step is the modal                 |
-| overlays     | the Dev Console closed; the dev mini console and the Sidekick composer hidden by a style rule; the shot refused if anything fixed-position still overlaps the clip                                                          | none                                                                 |
-| shown at     | column width (`s-image inlineSize="fill"`, `objectFit="contain"`, `aspectRatio` from the file)                                                                                                                              | 390 CSS px wide, centred, by the screenshot part; never column width |
-| file         | PNG, 2x, `public/assets/help/<section>/<page>-<n>.png`, `<n>` the picture's order on the page                                                                                                                               | the same                                                             |
-| data         | the showcase shop (`pnpm seed --showcase` and its store script, `docs/showcase-shop-research.md`): its names are the help's examples, so a name in the prose is a name in the picture                                       | the same, signed in as the showcase's member `ana@example.com`       |
-| state        | the screen as the step leaves it: after Create team, the team page; a modal open for the step that fills it                                                                                                                 | the same                                                             |
-| annotation   | none. A crop says where to look; a highlight box, arrow or blur is a second thing to keep current                                                                                                                           | none                                                                 |
-| alt text     | 30 to 60 words saying what the picture shows and which control or badge matters, in the screen's words; no caption                                                                                                          | the same                                                             |
-| exceptions   | Shopify's own screens (the App Store listing, the plan page, Open in Baton on an order) are shot as the whole 1280 window with the admin chrome, because the chrome is the point. No Home pictures until Home is redesigned | none                                                                 |
-| browser      | Chrome through Playwright's API in the script (not `playwright-cli`), headless, light theme; the e2e setup's storage state for the admin                                                                                    | the same, a member session from the magic link read back locally     |
-| when retaken | by the script, after any change to a screen the picture shows; a picture is never edited by hand                                                                                                                            | the same                                                             |
+| rule         | merchant screens                                                                                                                                                                                                                                                                                                                                                                                                      | member screens                                                       |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| what is shot | Baton's page as the merchant sees it: the admin's title bar and the app frame below it, clipped to the frame's width; no admin sidebar, search bar or overlays                                                                                                                                                                                                                                                        | the whole phone screen, top bar included                             |
+| window       | 1280 × 800, device scale factor 2; grown, never shrunk, when the page's content is taller than the frame (the frame's `scrollHeight` is never less than its own height, and a shorter window lifts the collapsed Dev Console into the frame)                                                                                                                                                                          | 390 × 844, device scale factor 2                                     |
+| crop         | the title bar and the frame, cut 20 CSS px under the lowest content (shadow roots included) for a page; the modal's panel, no margin, for a step that opens one; the editor's own window (the admin dialog that holds the editor frame, 1212 CSS px wide), cut under its content, for the editor. Corners are squared for the shot, or the admin's dark background and dimmed backdrop show as black triangles        | the whole screen; a modal when the step is the modal                 |
+| overlays     | the Dev Console closed; the dev mini console, the Sidekick composer and dock, and the toast viewport hidden by a style rule; the shot refused if any fixed, sticky or absolute element outside the picture's own parts still draws inside the clip and sits on top of it (a transparent click-through layer passes). The stems the check has met are a table in the Deviations of `docs/help-getting-started-plan.md` | none                                                                 |
+| shown at     | its own CSS width, capped at the column's, centred: a page or the editor window fills the column, a modal panel stays at its size, never past 1:1 at 2x; `aspectRatio` from the inventory, held to the file by a test                                                                                                                                                                                                 | 390 CSS px wide, centred, by the screenshot part; never column width |
+| file         | PNG, 2x, `public/assets/help/<section>/<page>-<n>.png`, `<n>` the picture's order on the page                                                                                                                                                                                                                                                                                                                         | the same                                                             |
+| data         | the showcase shop (`pnpm seed --showcase` and its store script, `docs/showcase-shop-research.md`): its names are the help's examples, so a name in the prose is a name in the picture                                                                                                                                                                                                                                 | the same, signed in as the showcase's member `ana@example.com`       |
+| state        | the screen as the step leaves it: after Create team, the team page; a modal open for the step that fills it                                                                                                                                                                                                                                                                                                           | the same                                                             |
+| annotation   | none. A crop says where to look; a highlight box, arrow or blur is a second thing to keep current                                                                                                                                                                                                                                                                                                                     | none                                                                 |
+| alt text     | 30 to 60 words saying what the picture shows and which control or badge matters, in the screen's words; no caption                                                                                                                                                                                                                                                                                                    | the same                                                             |
+| exceptions   | Shopify's own screens (the App Store listing, the plan page, Open in Baton on an order) are shot as the whole 1280 window with the admin chrome, because the chrome is the point. No Home pictures until Home is redesigned                                                                                                                                                                                           | none                                                                 |
+| browser      | Chrome through Playwright's API in the script (not `playwright-cli`), headless, light theme; the e2e setup's storage state for the admin                                                                                                                                                                                                                                                                              | the same, a member session from the magic link read back locally     |
+| when retaken | by the script, after any change to a screen the picture shows; a picture is never edited by hand                                                                                                                                                                                                                                                                                                                      | the same                                                             |
 
 Why the title bar and the frame and not the whole admin: the admin's sidebar and search change
 without Baton and would stale every picture, while the title bar carries Baton's heading and the
@@ -442,21 +442,23 @@ now and will be gone into in a later session. The plan is `docs/help-plan.md`.
 ## Roadmap
 
 Where the help work stands, one line per stage, and the doc that carries it. This research stays
-the umbrella; each stage's detail lives in its own research or plan. Updated 2026-10-07.
+the umbrella; each stage's detail lives in its own research or plan. Updated 2026-10-07, after the Getting started cycle: the skeleton and the For members stage are committed, the merchant kind and Getting started are done and uncommitted; 17 of 33 pages have no body.
 
-| stage                                          | status                                     | doc                                  |
-| ---------------------------------------------- | ------------------------------------------ | ------------------------------------ |
-| Approach, tree, anatomy, tone, screenshot spec | decided 2026-10-06                         | this research                        |
-| Skeleton: template row, help list, foot lines  | done 2026-10-06; the Syncing title is open | `docs/help-plan.md`                  |
-| Showcase data: fixture, products, real orders  | done, closed 2026-10-07                    | `docs/showcase-shop-plan.md`         |
-| Screenshot script, screenshot and steps parts  | next                                       | `docs/help-members-plan.md`          |
-| For members content (four pages)               | next, with the stage above                 | `docs/help-members-plan.md`          |
-| Order positions: what Not started means        | done 2026-10-07 (3579fda)                  | `docs/order-not-started-research.md` |
-| Getting started content                        | later                                      | a plan of its own                    |
-| Orders content                                 | later; order positions are settled         | a plan of its own                    |
-| Workflows, Teams and members content           | later                                      | a plan per section                   |
-| Reference pages and their vocabulary check     | later (decision 14)                        | a plan of its own                    |
-| Home page pictures                             | deferred until Home is redesigned          | none yet                             |
+| stage                                                                                                                  | status                                                                   | doc                                  |
+| ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------ |
+| Approach, tree, anatomy, tone, screenshot spec                                                                         | decided 2026-10-06                                                       | this research                        |
+| Skeleton: template row, help list, foot lines                                                                          | done 2026-10-06 (072010d, 7bd7529); the Syncing title decided 2026-10-06 | `docs/help-plan.md`                  |
+| Showcase data: fixture, products, real orders                                                                          | done, closed 2026-10-07                                                  | `docs/showcase-shop-plan.md`         |
+| Screenshot script, screenshot and numbered list parts, member pictures                                                 | done 2026-10-07 (1d7400e), reviewed, nothing open                        | `docs/help-members-plan.md`          |
+| For members content (four pages)                                                                                       | done 2026-10-07 (1d7400e)                                                | `docs/help-members-plan.md`          |
+| Order positions: what Not started means                                                                                | done 2026-10-07 (3579fda)                                                | `docs/order-not-started-research.md` |
+| Merchant pictures: the `merchant` picture kind in the script (page, modal, editor window, editor modal; overlap check) | done 2026-10-07, reviewed, uncommitted                                   | `docs/help-getting-started-plan.md`  |
+| Getting started content (5 pages)                                                                                      | done 2026-10-07, reviewed, uncommitted                                   | `docs/help-getting-started-plan.md`  |
+| Workflows content (6 pages)                                                                                            | later                                                                    | a plan of its own                    |
+| Teams and members content (4 pages)                                                                                    | later                                                                    | a plan of its own                    |
+| Orders content (6 pages)                                                                                               | later; order positions are settled                                       | a plan of its own                    |
+| Reference pages and their vocabulary check                                                                             | later (decision 14); needs no pictures, so it can run at any point       | a plan of its own                    |
+| Home page pictures                                                                                                     | deferred until Home is redesigned                                        | none yet                             |
 
 Carried into the content stages, decided elsewhere:
 
@@ -479,3 +481,51 @@ Carried into the content stages, decided elsewhere:
   is nothing a screen shows.
 - The For members pages are unaffected: 3579fda changed no member screen, no member label and no
   member fixture data (checked 2026-10-07, `docs/help-members-plan.md`).
+
+## How a content cycle runs
+
+Each remaining roadmap row is one cycle, run the way the Getting started cycle was on 2026-10-07
+(`docs/help-getting-started-plan.md`). One agent orchestrates; it writes the plan, farms out the
+reading and the building, and reviews. The user sees the result, not the plan. One cycle at a
+time: the cycles share the picture inventory, the bodies map, the screenshot script, the help e2e
+spec and the one dev store, so two in flight would merge-conflict and fight over the seed.
+
+1. **Facts first, in parallel.** The orchestrator starts two read-only agents and reads the
+   plan-shaped files itself meanwhile. One agent gathers the mechanics (the drivers, the
+   selectors, the capture spec, leftover spikes, timings); the other gathers the content (every
+   label, badge, modal sentence and empty state on the screens the pages describe, quoted
+   verbatim with its file; the fixture's data; the copy rules; what the tests assert). Both quote
+   code rather than summarize it. Their reports are the plan's evidence.
+2. **The plan.** The orchestrator writes `docs/help-<section>-plan.md` in the members plan's
+   shape: what to read first, the picture table (name, file, shape, screen and state), phases
+   (parts, script, pages, tests, run and look), checks, decisions taken without review, and an
+   empty Deviations section. It takes the decisions a reviewer would have taken and lists them,
+   so the review can reverse any of them. Anything two agents will both need to compile against
+   (inventory entries, a type) the orchestrator adds itself before launching them.
+3. **Two builders, split by file.** Two implementing agents run at once in the same checkout, on
+   a capable model, each told what it owns and what it must not touch: one owns the script, the
+   part, the kit page and the pictures; the other owns the bodies, the bodies map and the tests.
+   Each gets the facts it needs in its brief, is told to verify them in the code, to run the
+   checks it can, not to run `pnpm fmt` and not to commit, and to write every departure, problem
+   and unverifiable sentence under its own heading in the plan's Deviations section. A builder
+   whose tests fail only for the other's missing output says so rather than skipping them.
+4. **The orchestrator's pass.** `pnpm fmt`, then typecheck, lint, the test suite and the help
+   e2e project; `pnpm seed` if a run touched the store. Then it reads both Deviations sections,
+   looks at every picture and every page at both widths, reads every body against its screen,
+   and reads the diffs outside the builders' file lists. It writes a Review section on the plan:
+   numbered findings, each with a recommendation and the smallest change that closes it.
+5. **The user decides.** The review goes to the user as a numbered list of recommendations. On
+   acceptance the orchestrator makes the follow-ups itself (they are small by construction), runs
+   the checks again, updates this research (the roadmap row, the spec tables the cycle changed)
+   and the memory, and leaves the branch uncommitted for the user.
+
+What the first cycle taught, to keep:
+
+- The builders found four facts about the admin the plan had wrong, and the pictures are right
+  because they were told to record and fix, not to follow the plan into a bad picture.
+- A builder told "do not touch X" that cannot finish without touching X should touch it and say
+  so (the `.ts` import extensions); the review is where that is accepted.
+- The fact-finding agents' verbatim quotes are what let the bodies be checked against the
+  screens afterwards, and what let the orchestrator write a plan with exact labels in it.
+- The review's value is in looking: the orchestrator opens the pictures and the pages itself and
+  does not take a builder's "no sentence contradicts a picture" on trust.

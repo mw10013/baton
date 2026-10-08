@@ -1,5 +1,10 @@
 import type * as React from "react";
 
+import { FirstOrder } from "@/components/help/getting-started/first-order";
+import { FirstTeam } from "@/components/help/getting-started/first-team";
+import { FirstWorkflow } from "@/components/help/getting-started/first-workflow";
+import { HowBatonWorks } from "@/components/help/getting-started/how-baton-works";
+import { Installing } from "@/components/help/getting-started/installing";
 import { Blocking } from "@/components/help/members/blocking";
 import { FindingYourWork } from "@/components/help/members/finding-your-work";
 import { RecordingYourWork } from "@/components/help/members/recording-your-work";
@@ -16,6 +21,11 @@ import { SigningIn } from "@/components/help/members/signing-in";
  * Bodies are screen copy: the retired-word lint reads `src/components/`.
  */
 export const HELP_BODIES: Readonly<Record<string, () => React.JSX.Element>> = {
+  "getting-started/how-baton-works": HowBatonWorks,
+  "getting-started/installing": Installing,
+  "getting-started/first-workflow": FirstWorkflow,
+  "getting-started/first-team": FirstTeam,
+  "getting-started/first-order": FirstOrder,
   "members/signing-in": SigningIn,
   "members/finding-your-work": FindingYourWork,
   "members/recording-your-work": RecordingYourWork,

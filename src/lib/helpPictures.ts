@@ -8,22 +8,39 @@
  * an entry, and every entry is placed by some body.
  *
  * `file` is `<section>/<page>-<n>.png` under `public/assets/help/`, `<n>`
- * the picture's order on the page. `kind` says how it is shot and shown:
- * `member` is the whole phone screen, 390 × 844 CSS px at 2x, shown 390 CSS
- * px wide. Merchant pictures (the admin's title bar and the app frame, shown
- * at the column's width) are not taken yet; their kind joins this one when
- * the script can shoot them.
+ * the picture's order on the page where it was first taken; another page may
+ * place the same picture. `kind` says how it is shot and shown:
+ *
+ * - `member`: the whole phone screen, {@link MEMBER_SCREEN} at 2x, signed in
+ *   as a showcase member, and shown 390 CSS px wide and centred.
+ * - `merchant`: shot in the admin in {@link MERCHANT_WINDOW} at 2x, as one of
+ *   four shapes the entry's comment names: `page` (the admin's title bar and
+ *   the app frame, down to the page's content), `modal` (a modal's panel in
+ *   the app frame), `window` (the workflow editor's window) or `editor
+ *   modal` (a modal's panel in the editor). Shown at its own width capped at
+ *   the column's, so a page or the window fills the column and a modal keeps
+ *   its size. Its `aspectRatio` is the clip's size.
  *
  * `alt` is 30 to 60 words saying what the picture shows and which control or
  * badge matters, in the screen's words; a picture has no caption.
  */
-export type HelpPictureKind = "member";
+export type HelpPictureKind = "member" | "merchant";
 
 export interface HelpPicture {
   readonly file: string;
   readonly kind: HelpPictureKind;
   readonly alt: string;
+  /**
+   * A merchant picture's clip in CSS px as `<width>/<height>`, set from the
+   * script's output; the part passes it to `s-image` so the column reserves
+   * the height before the file loads, and the integration test holds it equal
+   * to the file. A member picture is {@link MEMBER_SCREEN} and carries none.
+   */
+  readonly aspectRatio?: string;
 }
+
+/** The window a merchant picture is shot in, in CSS px, at 2x. */
+export const MERCHANT_WINDOW = { width: 1280, height: 800 } as const;
 
 /**
  * The phone a member picture is shot on, in CSS px, and the same size as the
@@ -81,6 +98,55 @@ export const HELP_PICTURES = {
     file: "members/blocking-2.png",
     kind: "member",
     alt: "The page for a walnut cutting board, with a red Blocked banner under the item's name. The banner shows the reason as it was typed, that the board has a crack along the grain, then ana@example.com and when, and an Unblock button. The steps below are unchanged.",
+  },
+  /** #1206, the maple board "Grandma Rose" at Engrave, the second of three steps. Shape: page. */
+  howBatonWorks1: {
+    file: "getting-started/how-baton-works-1.png",
+    kind: "merchant",
+    aspectRatio: "1056/374",
+    alt: "The order page for order 1206, with Sync from Shopify and View in Shopify in the title bar. Its one item, an engraved cutting board in maple with the engraving text Grandma Rose, carries a blue status badge and reads Step 2 of 3, Engrave. Edit note and Manage sit under it. Order details shows it paid and unfulfilled.",
+  },
+  /** The Create workflow modal with Name typed and the Tag typed over its filled value. Shape: modal. */
+  firstWorkflow1: {
+    file: "getting-started/first-workflow-1.png",
+    kind: "merchant",
+    aspectRatio: "620/286",
+    alt: "The Create workflow modal. The Name field holds Engraved pen and the Tag field holds engraved-pen, with the line under it saying to put this tag, in Shopify, on the products the workflow should build. At the foot are Cancel and the Create button, ready to press.",
+  },
+  /** The editor on the new workflow with the New step form filled. Shape: window. */
+  firstWorkflow2: {
+    file: "getting-started/first-workflow-2.png",
+    kind: "merchant",
+    aspectRatio: "1212/466",
+    alt: "The workflow editor for Engraved pen, a window of its own with a Draft badge and a greyed Turn on workflow button in its title bar. The New step form is filled: Name reads Engrave, Team is set to Engraving, and Instructions say to check the spelling before running the laser. Add step and Cancel sit under it.",
+  },
+  /** After Add step, the Turn on modal in the editor. Shape: editor modal. */
+  firstWorkflow3: {
+    file: "getting-started/first-workflow-3.png",
+    kind: "merchant",
+    aspectRatio: "620/158",
+    alt: "The modal that opens from Turn on workflow in the editor. Its heading asks whether to turn on Engraved pen, and its sentence says every open order with an item tagged engraved-pen starts this workflow on that item. At the foot are Cancel and the Turn on button.",
+  },
+  /** The team page right after Create team. Shape: page. */
+  firstTeam1: {
+    file: "getting-started/first-team-1.png",
+    kind: "merchant",
+    aspectRatio: "1056/302",
+    alt: "The page for the new team Assembly, with More actions and Add members in its title bar. The Members section says nobody is on this team yet, so its tasks wait until a member joins, with a second Add members button. The Details section shows zero members and when the team was created.",
+  },
+  /** The Add members modal: the search field and the seven showcase members. Shape: modal. */
+  firstTeam2: {
+    file: "getting-started/first-team-2.png",
+    kind: "merchant",
+    aspectRatio: "620/386",
+    alt: "The Add members to Assembly modal. A search field by email sits above a checkbox for every member, from ana@example.com to gus@example.com, none ticked yet. At the foot are Cancel and the Add button, greyed until an email is ticked.",
+  },
+  /** #1210, the maple board "Fresh bread", done: the banner with Fulfill in Shopify. Shape: page. */
+  firstOrder1: {
+    file: "getting-started/first-order-1.png",
+    kind: "merchant",
+    aspectRatio: "1056/442",
+    alt: "The order page for order 1210. A banner with a green check says every item is done, with a Fulfill in Shopify link. The one item, an engraved cutting board in maple with the engraving text Fresh bread, carries a Done badge and reads Done, 3 steps. Order details shows it paid and unfulfilled.",
   },
 } as const satisfies Readonly<Record<string, HelpPicture>>;
 
