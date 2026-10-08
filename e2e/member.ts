@@ -1,4 +1,4 @@
-import type { Locator, Page } from "@playwright/test";
+import type { Page } from "@playwright/test";
 
 import { expect } from "@playwright/test";
 
@@ -14,6 +14,18 @@ import { awaitHydration } from "./hydration";
  * individual requests in Vite's unbundled module graph can hang forever. This
  * runs against `http://localhost:$PORT` with no tunnel in the path, so the
  * default timeout is honest and a rescue would be cargo-culted.
+ *
+ * Controls are located by role and name, and Playwright's own actionability
+ * is enough for them: `getByRole("button")` on a Polaris `s-button` resolves
+ * through the shadow root to the native `<button>` inside it, and Polaris
+ * mirrors the host's `disabled` onto that button as a real attribute
+ * (measured 2026-10-07), so `.click()` waits for enabled and `toBeEnabled()` /
+ * `toBeDisabled()` read the truth. `s-clickable` renders the same way. The
+ * host tag is never a locator for a control: on `locator("s-button")`
+ * Playwright reports a disabled control as enabled, because the host is
+ * neither a native form control nor `aria-disabled`. `scripts/rules-lint.ts`
+ * refuses it under `e2e/`. Hoisted controls are another matter: they are the
+ * admin's DOM, not Polaris's, and go through `clickHoisted` (`e2e/app.ts`).
  */
 
 /** Land on a member-area path and return once it is safe to interact. */
@@ -53,61 +65,4 @@ export const signIn = async (page: Page, email: string): Promise<void> => {
     page.locator('s-section[heading="Check your email"]'),
   ).toBeVisible();
   await followMagicLink(page);
-};
-
-/**
- * Whether a Polaris control is accepting clicks. `toBeEnabled()` cannot answer
- * this: Playwright's enabled check knows native form controls and
- * `aria-disabled`, and an `s-button` is neither — so a disabled one reports as
- * enabled, the click is dispatched into nothing, and the spec fails later at
- * whatever the click was supposed to cause. Reads the element's own `disabled`
- * state instead, the way `hoistedEnabled` (`e2e/app.ts`) does for the embedded
- * side. `closest` covers both shapes `getByRole` can resolve to — the
- * `s-button` host, or the native button inside its shadow root, where the
- * shadow boundary stops `closest` and the element itself is the one carrying
- * `disabled`.
- */
-const controlEnabled = (locator: Locator): Promise<boolean> =>
-  locator.evaluate((el) => {
-    const control = el.closest("s-button") ?? el;
-    return (
-      !(control as HTMLButtonElement).disabled &&
-      control.getAttribute("aria-disabled") !== "true"
-    );
-  });
-
-/**
- * Wait for a control to come alive without clicking it: on the workflows list that is
- * the member's socket identifying, which a spec needs before something *else*
- * happens to that socket, such as a revocation.
- */
-export const awaitEnabled = async (locator: Locator): Promise<void> => {
-  await expect(locator).toBeVisible();
-  await expect.poll(() => controlEnabled(locator)).toBe(true);
-};
-
-/**
- * Wait for a control to be really disabled, for the rows that keep a control
- * on screen to say the reader cannot use it — a missing button reads as a row
- * that never offered one. Same `disabled` read as {@link awaitEnabled},
- * because Playwright's own check cannot see an `s-button`'s.
- */
-export const awaitDisabled = async (locator: Locator): Promise<void> => {
-  await expect(locator).toBeVisible();
-  await expect.poll(() => controlEnabled(locator)).toBe(false);
-};
-
-/**
- * Click a control once it is really clickable.
- *
- * On `/shop/$shop` this doubles as the wait for the `ShopAgent` socket: the
- * workflows list's buttons are disabled until the socket identifies, because the socket
- * is the only transport its actions have (`src/routes/shop.$shop.workflows.index.tsx`).
- * Hydration is therefore not enough to click on — the document is interactive
- * while the connect and the `cf_agent_identity` handshake are still in
- * flight — and this poll is what closes that window.
- */
-export const clickWhenEnabled = async (locator: Locator): Promise<void> => {
-  await awaitEnabled(locator);
-  await locator.click();
 };

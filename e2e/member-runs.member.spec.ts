@@ -7,7 +7,7 @@ import { expect, test } from "@playwright/test";
 import * as Domain from "@/lib/Domain";
 import { ANY_OPTION_VALUE } from "@/lib/Screen";
 
-import { awaitEnabled, clickWhenEnabled, gotoMember, signIn } from "./member";
+import { gotoMember, signIn } from "./member";
 import { seedConfig, seedMembers } from "./seed";
 
 /**
@@ -428,9 +428,9 @@ const rowLines = (page: Page, orderName: string) =>
  * A row's kebab: every verb a row offers is inside the menu it opens, which
  * is the shape Polaris's own resource list gives a row. It carries the gate
  * the bare buttons used to — `useMemberRunActions` holds `pending` true until
- * the socket identifies — so `clickWhenEnabled` on it is still the wait for
- * the handshake and a broken gate still fails on the control rather than on
- * the outcome.
+ * the socket identifies — so `.click()` on it, which waits for the button to
+ * be enabled, is still the wait for the handshake, and a broken gate still
+ * fails on the control rather than on the outcome.
  */
 const rowMenu = (page: Page, orderName: string) =>
   card(page, orderName).getByRole("button", {
@@ -443,7 +443,7 @@ const rowAction = async (
   orderName: string,
   action: string,
 ): Promise<void> => {
-  await clickWhenEnabled(rowMenu(page, orderName));
+  await rowMenu(page, orderName).click();
   await card(page, orderName)
     .getByRole("menuitem", { name: action, exact: true })
     .click();
@@ -490,7 +490,7 @@ test.afterEach(async () => {
  * carries the write, and the answer repaints the page the member is standing
  * on. Nothing here posts a form — Start and Done are `@callable()`s, so a
  * broken gate or a socket that never identifies leaves the buttons disabled
- * and `clickWhenEnabled` fails on the button rather than on the outcome.
+ * and `.click()` fails on the button rather than on the outcome.
  */
 test("a member starts and completes their team's current task over the socket", async ({
   browser,
@@ -529,7 +529,7 @@ test("a member starts and completes their team's current task over the socket", 
     rowLines(page, RING_ORDER).filter({ hasText: RING_RECIPE }),
   ).toBeVisible();
   await expect(card(page, RING_ORDER).getByText(STARTED_BY_YOU)).toHaveCount(0);
-  await clickWhenEnabled(rowMenu(page, RING_ORDER));
+  await rowMenu(page, RING_ORDER).click();
   const ring = card(page, RING_ORDER);
   await expect(
     ring.getByRole("menuitem", { name: "Start", exact: true }),
@@ -598,7 +598,7 @@ test("a task one member marks done lands on another member's workflows list with
   const mate = await openRuns(browser, config, mateState, "ready");
   await expect(rowLink(mate, RING_ORDER)).toBeVisible();
   await expect(rowLink(mate, BOX_ORDER)).toBeVisible();
-  await awaitEnabled(rowMenu(mate, RING_ORDER));
+  await expect(rowMenu(mate, RING_ORDER)).toBeEnabled();
   await markDocument(mate);
 
   const maker = await openRuns(browser, config, makerState, "ready");
@@ -635,8 +635,8 @@ test("a task one member marks done lands on another member's workflows list with
  * invalidates the router, and the loader re-runs against the new membership.
  *
  * The socket must be up before the re-seed or there is nothing to revoke and
- * the test would pass for the wrong reason — hence `awaitEnabled` first, which
- * is exactly the identified gate.
+ * the test would pass for the wrong reason — hence `toBeEnabled()` on the row's
+ * menu first, which is exactly the identified gate.
  *
  * The member keeps their shop membership here, so the answer is the list's
  * "not on a team yet" state rather than not-found; `member-area.member.spec.ts`
@@ -649,7 +649,7 @@ test("removing a member from a team empties their open workflows list", async ({
   await seedRuns(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
   const page = await openRuns(browser, config, makerState, "ready");
   await expect(rowLink(page, RING_ORDER)).toBeVisible();
-  await awaitEnabled(rowMenu(page, RING_ORDER));
+  await expect(rowMenu(page, RING_ORDER)).toBeEnabled();
   await markDocument(page);
 
   await seedRuns(config, { cutMembers: [MATE], keepIdentities: true });
@@ -674,7 +674,7 @@ test("a started card moves to Started by you for the starter and Started by othe
   await seedRuns(config, { cutMembers: [MAKER, MATE], keepIdentities: true });
   const mate = await openRuns(browser, config, mateState, "ready");
   await expect(stateCount(mate, READY, 2)).toBeVisible();
-  await awaitEnabled(rowMenu(mate, RING_ORDER));
+  await expect(rowMenu(mate, RING_ORDER)).toBeEnabled();
 
   const maker = await openRuns(browser, config, makerState, "ready");
   await expect(stateCount(maker, READY, 1)).toBeVisible();
@@ -1431,9 +1431,7 @@ test("a done run's workflow page offers Undo on its last task", async ({
   await rowLink(page, RING_ORDER).click();
   await expect(page.locator(`s-page[heading="${RING_ORDER}"]`)).toBeVisible();
 
-  await clickWhenEnabled(
-    page.getByRole("button", { name: "Done", exact: true }),
-  );
+  await page.getByRole("button", { name: "Done", exact: true }).click();
   await expect(page.getByText(FINISHED)).toBeVisible();
   /* The run's own badge says it is done; the task still offers Undo. */
   await expect(page.locator('s-badge:has-text("Done")').first()).toBeVisible();
@@ -1442,7 +1440,7 @@ test("a done run's workflow page offers Undo on its last task", async ({
     page.getByRole("button", { name: "Done", exact: true }),
   ).toHaveCount(0);
 
-  await clickWhenEnabled(page.getByRole("button", { name: "Undo" }));
+  await page.getByRole("button", { name: "Undo" }).click();
   /* Undo returns the task to Ready and records nothing: no starter, so
      Start is back. */
   await expect(page.locator('s-badge:has-text("Ready")')).toBeVisible();
@@ -1494,7 +1492,7 @@ test("a blocked undo offers nothing and explains nothing, on the row or the work
   await rowAction(maker, BAND_ORDER, "Done");
   await expect(stateCount(maker, DONE_OR_CLOSED, 1)).toBeVisible();
   await selectState(maker, "done", DONE_OR_CLOSED);
-  await awaitEnabled(rowMenu(maker, BAND_ORDER));
+  await expect(rowMenu(maker, BAND_ORDER)).toBeEnabled();
 
   const mate = await openRuns(browser, config, mateState, "ready");
   await rowAction(mate, BAND_ORDER, "Start");
@@ -1557,7 +1555,7 @@ test("the run note opens in a modal and the task cards carry no note button", as
   await expect(steps.getByRole("button", { name: /Edit/u })).toHaveCount(0);
 
   const noteModal = page.locator("s-modal#run-note");
-  await clickWhenEnabled(note.getByRole("button", { name: "Edit note" }));
+  await note.getByRole("button", { name: "Edit note" }).click();
   await expect(noteModal.getByRole("textbox", { name: "Note" })).toBeVisible();
   await noteModal.getByRole("textbox", { name: "Note" }).fill("x".repeat(1799));
   await expect(noteModal.getByText("characters left")).toBeHidden();
@@ -1566,24 +1564,20 @@ test("the run note opens in a modal and the task cards carry no note button", as
   await noteModal
     .getByRole("textbox", { name: "Note" })
     .fill("Left edge is rough");
-  await clickWhenEnabled(
-    noteModal.getByRole("button", { name: "Save", exact: true }),
-  );
+  await noteModal.getByRole("button", { name: "Save", exact: true }).click();
   await expect(note.getByText("Left edge is rough")).toBeVisible();
   await expect(note.getByRole("button", { name: "Edit note" })).toHaveCount(1);
 
   /* Edit opens on the saved text, so appending is the path of least
      resistance. */
-  await clickWhenEnabled(note.getByRole("button", { name: "Edit note" }));
+  await note.getByRole("button", { name: "Edit note" }).click();
   await expect(noteModal.getByRole("textbox", { name: "Note" })).toHaveValue(
     "Left edge is rough",
   );
   await noteModal
     .getByRole("textbox", { name: "Note" })
     .fill("Left edge is rough\nSanded it — J");
-  await clickWhenEnabled(
-    noteModal.getByRole("button", { name: "Save", exact: true }),
-  );
+  await noteModal.getByRole("button", { name: "Save", exact: true }).click();
   await expect(note.getByText("Sanded it — J")).toBeVisible();
 });
 
@@ -1608,15 +1602,14 @@ test("the workflow page shows the task history and takes a note, a block, and Do
   await expect(page.getByText("Quantity 1", { exact: true })).toBeVisible();
 
   const noteModal = page.locator("s-modal#run-note");
-  await clickWhenEnabled(
-    page.locator("s-stack#note").getByRole("button", { name: "Edit note" }),
-  );
+  await page
+    .locator("s-stack#note")
+    .getByRole("button", { name: "Edit note" })
+    .click();
   await noteModal
     .getByRole("textbox", { name: "Note" })
     .fill("Left edge is rough");
-  await clickWhenEnabled(
-    noteModal.getByRole("button", { name: "Save", exact: true }),
-  );
+  await noteModal.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByText("Left edge is rough")).toBeVisible();
 
   /* The block, and what a block means: the banner heading says Blocked, the
@@ -1624,18 +1617,14 @@ test("the workflow page shows the task history and takes a note, a block, and Do
      lifted. The banner offers Unblock and no Edit reason: a new reason is
      Unblock, then Block. */
   const blockModal = page.locator("s-modal#run-block");
-  await clickWhenEnabled(
-    page.getByRole("button", { name: "Block", exact: true }),
-  );
+  await page.getByRole("button", { name: "Block", exact: true }).click();
   /* The heading names the order and the body's first line the item. */
   await expect(blockModal.getByText(`Block ${BAND_ORDER}?`)).toBeVisible();
   await expect(blockModal.getByText(BAND_ITEM, { exact: true })).toBeVisible();
   await blockModal
     .getByRole("textbox", { name: "Reason" })
     .fill("Waiting on stones");
-  await clickWhenEnabled(
-    blockModal.getByRole("button", { name: "Block", exact: true }),
-  );
+  await blockModal.getByRole("button", { name: "Block", exact: true }).click();
   await expect(page.locator('s-banner[heading="Blocked"]')).toBeVisible();
   /* Page level, above the item, not inside it. */
   await expect(
@@ -1669,7 +1658,7 @@ test("the workflow page shows the task history and takes a note, a block, and Do
   /* No badge on the row either: "Blocked" there would repeat the pressed state,
      the verb in the menu, and the reason on line two. */
   await expect(blocked.getByText("Blocked")).toHaveCount(0);
-  await clickWhenEnabled(rowMenu(page, BAND_ORDER));
+  await rowMenu(page, BAND_ORDER).click();
   await expect(
     blocked.getByRole("menuitem", { name: "Unblock", exact: true }),
   ).toBeVisible();
@@ -1683,10 +1672,8 @@ test("the workflow page shows the task history and takes a note, a block, and Do
   await rowLink(page, BAND_ORDER).click();
   await expect(page.locator(`s-page[heading="${BAND_ORDER}"]`)).toBeVisible();
 
-  await clickWhenEnabled(page.getByRole("button", { name: "Unblock" }));
-  await clickWhenEnabled(
-    page.getByRole("button", { name: "Done", exact: true }),
-  );
+  await page.getByRole("button", { name: "Unblock" }).click();
+  await page.getByRole("button", { name: "Done", exact: true }).click();
   await expect(page.getByText(FINISHED)).toBeVisible();
   await expect(page.getByRole("button", { name: "Undo" })).toBeVisible();
 
@@ -1830,14 +1817,19 @@ const taskRow = (box: Locator, name: string) =>
     .filter({ has: box.page().getByText(name, { exact: true }) });
 
 /**
- * The labels of a row's buttons, in document order. Read from the `s-button`
- * hosts: the native button in each shadow root has no text of its own, the
- * label is slotted.
+ * The labels of a row's buttons, in document order. Located by role, which
+ * resolves to the native button inside each `s-button`'s shadow root; that
+ * button has no text of its own, because the label is slotted, so the text is
+ * read from its host.
  */
-const buttonLabels = async (row: Locator) => {
-  const labels = await row.locator("s-button").allTextContents();
-  return labels.map((label) => label.trim());
-};
+const buttonLabels = (row: Locator) =>
+  row.getByRole("button").evaluateAll((buttons) =>
+    buttons.map((button) => {
+      const root = button.getRootNode();
+      const host = root instanceof ShadowRoot ? root.host : button;
+      return host.textContent?.trim() ?? "";
+    }),
+  );
 
 test("one step is one box: parallel tasks share it and a single task has it alone", async ({
   browser,
@@ -1867,15 +1859,17 @@ test("task buttons are all secondary and the advancing one comes first", async (
   browser,
 }) => {
   const { page, boxes } = await openPair(browser);
+  /* The host tag on purpose: `variant` is an `s-button` attribute no role or
+     name exposes, and nothing here is clicked. */
   await expect(
     page
       .locator('s-stack[accessibilityRole="ordered-list"]')
       .locator('s-button[variant="primary"]'),
   ).toHaveCount(0);
   const cut = taskRow(boxes.nth(0), CUT_TASK);
-  await awaitEnabled(cut.getByRole("button", { name: "Start" }));
+  await expect(cut.getByRole("button", { name: "Start" })).toBeEnabled();
   expect(await buttonLabels(cut)).toEqual(["Start", "Done"]);
-  await clickWhenEnabled(cut.getByRole("button", { name: "Start" }));
+  await cut.getByRole("button", { name: "Start" }).click();
   await expect(cut.getByRole("button", { name: "Put back" })).toBeVisible();
   expect(await buttonLabels(cut)).toEqual(["Done", "Put back"]);
 });
@@ -1915,7 +1909,7 @@ test("a merchant's completion reads as Merchant on the workflows list and the wo
      Undo returns the task to Ready (`RunRepository.reopenTask`),
      clearing the merchant's backfilled start along with everything else — the
      task is nobody's, not "Started by Merchant". */
-  await clickWhenEnabled(page.getByRole("button", { name: "Undo" }));
+  await page.getByRole("button", { name: "Undo" }).click();
   await expect(page.getByRole("button", { name: "Start" })).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Done", exact: true }),

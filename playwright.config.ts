@@ -17,29 +17,40 @@ try {
 }
 
 /**
- * The E2E suite. Each practice is stated on the helper that enforces it; this
- * comment is the index.
+ * The E2E suite. Each practice is stated on the helper that holds its
+ * reasoning; this comment is the index, one line per practice.
  *
- * - Interaction gate: nothing fills or clicks before `awaitHydration`
- *   (`e2e/hydration.ts`). Specs reach it through `gotoApp` (`e2e/app.ts`, the
- *   embedded app) and `gotoMember` (`e2e/member.ts`, `/shop`, `/login`,
- *   `/admin`). A hand-driven `playwright-cli` session waits on the same
- *   `body[data-hydrated="true"]` selector.
- * - Frames: the embedded app and the workflow editor are separate iframes,
- *   reached through `appFrame` and `editorFrame` (`e2e/app.ts`).
- * - Admin session: the `setup` project exports Chrome's Shopify cookies
- *   through `refreshShopifyAuth` (`scripts/lib/shopify-playwright-auth.ts`),
- *   which also documents how that export fails. Before a run, open the store's
- *   admin in a normal Chrome window.
- * - Data: each spec seeds the exact shape its assertions compute through
- *   `e2e/seed.ts`. `e2e/fixture.ts` is the shared shop for `pnpm seed` and
- *   manual exploration, not for specs.
- * - Projects: listed below, each with its reason. `pnpm test:e2e` runs e2e,
- *   member, admin and public headless; billing runs only through
- *   `pnpm test:e2e:billing`.
+ * - Interaction gate: `awaitHydration` (`e2e/hydration.ts`), reached through
+ *   `gotoApp` (`e2e/app.ts`) and `gotoMember` (`e2e/member.ts`); a
+ *   hand-driven `playwright-cli` session waits on the same selector.
+ * - Frames: `appFrame` and `editorFrame` (`e2e/app.ts`), the app's iframe and
+ *   the workflow editor's.
+ * - Hoisted controls: `clickHoisted`, `hoistedEnabled` and `closeDevConsole`
+ *   (`e2e/app.ts`): the admin's DOM, the native click, and the overlay that
+ *   defeats it.
+ * - Polaris controls: by role and name, never by host tag; Playwright's
+ *   actionability is enough (`e2e/member.ts` header, `hostTagLocatorHits`
+ *   in `scripts/lib/rules-lint.ts`).
+ * - The editor window: `openEditor` and `closeEditor`
+ *   (`e2e/workflows.spec.ts`), the one known flake and its retry.
+ * - One admin boot per embedded spec: `openApp` (`e2e/app.ts`), serial mode;
+ *   `openScreen` opens a screen bare and waits out its loaders
+ *   (`awaitNavigated` in `e2e/hydration.ts`).
+ * - Admin session: the `setup` project, through `refreshShopifyAuth`
+ *   (`scripts/lib/shopify-playwright-auth.ts`).
+ * - Preflight: "dev server ready" (`e2e/preflight.ts`), the `globalSetup`.
+ * - Data: each spec seeds what its assertions compute (`e2e/seed.ts`);
+ *   `e2e/fixture.ts` is for `pnpm seed`, not for specs.
+ * - Timeouts: this config holds them; a test that sets its own says why.
+ * - Projects: below, in run order, cheap first, each with its reason.
+ *   `pnpm test:e2e` runs public, admin, member and e2e headless and stops
+ *   after three failures; billing runs only through `pnpm test:e2e:billing`.
  */
 export default defineConfig({
   testDir: "./e2e",
+  globalSetup: "./e2e/preflight.ts",
+  // A test that needs longer sets its own with `test.setTimeout` and says why.
+  timeout: 60_000,
   outputDir: "./playwright/test-results",
   // Embedded Shopify app cold starts can exceed Playwright's 5s default assertion timeout.
   expect: { timeout: 10_000 },
@@ -47,9 +58,12 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   workers: 1,
-  reporter: [["html", { outputFolder: "./playwright/report" }]],
+  reporter: [["list"], ["html", { outputFolder: "./playwright/report" }]],
   use: {
     trace: "on-first-retry",
+    // Without these a click on a missing element waits out the whole test timeout.
+    actionTimeout: 10_000,
+    navigationTimeout: 30_000,
   },
   projects: [
     {
@@ -60,37 +74,15 @@ export default defineConfig({
         baseURL: previewUrl(),
       },
     },
-    {
-      name: "e2e",
-      testMatch: ["**/*.spec.ts"],
-      testIgnore: [
-        "**/*.admin.spec.ts",
-        "**/*.member.spec.ts",
-        "**/*.billing.spec.ts",
-        "**/*.public.spec.ts",
-      ],
-      dependencies: ["setup"],
-      use: {
-        channel: "chrome",
-        baseURL: previewUrl(),
-        storageState: storageStatePath,
-      },
-    },
     /**
-     * The member area (`/shop/*`) is the one part of the app that is NOT
-     * embedded: `BETTER_AUTH_URL` in `.env` points at `http://localhost:$PORT`,
-     * so the magic link a member follows never touches the admin tunnel. Hence
-     * a project of its own — no `setup` dependency (nothing here needs a
-     * Shopify admin session, so a run never prompts for Keychain access) and no
-     * `storageState`, because the whole point is that a member with zero
-     * Shopify cookies can sign in. It still seeds through the app, which
-     * needs a `ShopSession`: the `setup` project's "shopify app installed"
-     * test creates one, and runs first because Playwright takes the projects
-     * with no dependencies in config order under `workers: 1`.
+     * The public help (`/help/*`) needs no session of any kind: served off
+     * `http://localhost:$PORT` like the member area, with empty storage state
+     * and no `setup` dependency, and it reads no shop data, so it seeds
+     * nothing.
      */
     {
-      name: "member",
-      testMatch: ["**/*.member.spec.ts"],
+      name: "public",
+      testMatch: ["**/*.public.spec.ts"],
       use: {
         channel: "chrome",
         baseURL: localUrl(),
@@ -113,18 +105,39 @@ export default defineConfig({
       },
     },
     /**
-     * The public help (`/help/*`) needs no session of any kind: served off
-     * `http://localhost:$PORT` like the member area, with empty storage state
-     * and no `setup` dependency, and it reads no shop data, so it seeds
-     * nothing.
+     * The member area (`/shop/*`) is the one part of the app that is NOT
+     * embedded: `BETTER_AUTH_URL` in `.env` points at `http://localhost:$PORT`,
+     * so the magic link a member follows never touches the admin tunnel. Hence
+     * a project of its own — no `setup` dependency (nothing here needs a
+     * Shopify admin session, so a run never prompts for Keychain access) and no
+     * `storageState`, because the whole point is that a member with zero
+     * Shopify cookies can sign in. It still seeds through the app, which
+     * needs a `ShopSession`; the preflight (`e2e/preflight.ts`) refuses the
+     * run before any project when there is none.
      */
     {
-      name: "public",
-      testMatch: ["**/*.public.spec.ts"],
+      name: "member",
+      testMatch: ["**/*.member.spec.ts"],
       use: {
         channel: "chrome",
         baseURL: localUrl(),
         storageState: { cookies: [], origins: [] },
+      },
+    },
+    {
+      name: "e2e",
+      testMatch: ["**/*.spec.ts"],
+      testIgnore: [
+        "**/*.admin.spec.ts",
+        "**/*.member.spec.ts",
+        "**/*.billing.spec.ts",
+        "**/*.public.spec.ts",
+      ],
+      dependencies: ["setup"],
+      use: {
+        channel: "chrome",
+        baseURL: previewUrl(),
+        storageState: storageStatePath,
       },
     },
     /**

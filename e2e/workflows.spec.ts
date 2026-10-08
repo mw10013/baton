@@ -5,14 +5,28 @@ import { expect, test } from "@playwright/test";
 import * as Domain from "@/lib/Domain";
 
 import {
-  appNavLink,
   clickHoisted,
   editorFrame,
-  gotoApp,
   hoistedEnabled,
+  openApp,
+  openScreen,
 } from "./app";
 import { awaitHydration } from "./hydration";
 import { seedConfig, seedMembers } from "./seed";
+
+test.describe.configure({ mode: "serial" });
+
+let page: Page;
+let frame: FrameLocator;
+
+/** One admin boot for the spec (`openApp`); each test seeds and navigates. */
+test.beforeAll(async ({ browser }) => {
+  ({ page, frame } = await openApp(browser));
+});
+
+test.afterAll(async () => {
+  await page.context().close();
+});
 
 /**
  * A More actions menu item on the detail page. The title-bar button is hoisted
@@ -62,9 +76,9 @@ const clickMenuItem = (frame: FrameLocator, name: string) =>
  * — is `editor`, and the detail page only comes back once the window hides.
  * Modals render in whichever frame opened them.
  *
- * Budget: this spec makes far more round trips than `teams.spec.ts` and each
- * one re-runs the Shopify auth middleware, so it pins its own timeout for the
- * same reason that one does.
+ * The spec shares one page (`openApp`), so a test that opens the editor
+ * closes it before it ends: the window covers the admin, and the next test's
+ * nav click would land under it.
  */
 
 const MEMBER = "e2e.workflows@example.com";
@@ -140,11 +154,7 @@ const openEditor = async (page: Page) => {
 const taskPanel = (editor: FrameLocator) =>
   editor.locator('s-section[slot="aside"]');
 
-test("a fresh workflow turns on from the editor, then edits go through the draft", async ({
-  page,
-}) => {
-  test.setTimeout(180_000);
-
+test("a fresh workflow turns on from the editor, then edits go through the draft", async () => {
   await seedMembers(
     seedConfig(),
     [MEMBER],
@@ -161,9 +171,8 @@ test("a fresh workflow turns on from the editor, then edits go through the draft
     ],
   );
 
-  const frame = await gotoApp(page);
   const editor = editorFrame(page);
-  await clickHoisted(appNavLink(page, "Workflows"));
+  await openScreen(page, "Workflows");
   await expect(frame.locator('s-page[heading="Workflows"]')).toBeVisible();
   await expect(frame.getByRole("link", { name: EXISTING })).toBeVisible();
 
@@ -286,7 +295,9 @@ test("a fresh workflow turns on from the editor, then edits go through the draft
   await editor.getByRole("button", { name: "Move to its own step" }).click();
   await expect(editor.getByText("Step 2", { exact: true })).toBeVisible();
 
-  /* Card order in the canvas: the label the card carries, top to bottom. */
+  /* Card order in the canvas: the label the card carries, top to bottom. The
+     host tag on purpose: this reads each card's `accessibilityLabel` attribute
+     in document order and clicks nothing. */
   const taskOrder = () =>
     editor
       .locator('s-clickable[accessibilityLabel^="Edit "]')
@@ -365,11 +376,7 @@ test("a fresh workflow turns on from the editor, then edits go through the draft
  * Turn on applies to every stored open order: an order placed while the
  * workflow was off gets its run the moment the workflow is turned on.
  */
-test("turning on a workflow creates runs on the open orders already stored", async ({
-  page,
-}) => {
-  test.setTimeout(120_000);
-
+test("turning on a workflow creates runs on the open orders already stored", async () => {
   await seedMembers(
     seedConfig(),
     [MEMBER],
@@ -390,8 +397,7 @@ test("turning on a workflow creates runs on the open orders already stored", asy
     ],
   );
 
-  const frame = await gotoApp(page);
-  await clickHoisted(appNavLink(page, "Workflows"));
+  await openScreen(page, "Workflows");
   await frame.getByRole("link", { name: EXISTING }).click();
   await expect(frame.locator(`s-page[heading="${EXISTING}"]`)).toBeVisible();
 
@@ -414,7 +420,7 @@ test("turning on a workflow creates runs on the open orders already stored", asy
      it the card carries no Workflow select at rest. Scoped to the section
      because another item's Workflow select on the same page lists every workflow by
      name. */
-  await clickHoisted(appNavLink(page, "Orders"));
+  await openScreen(page, "Orders");
   /* Show: Open: the default, Making, leaves out an order nobody has started. */
   await frame
     .getByRole("combobox", { name: "Show" })
@@ -435,11 +441,7 @@ test("turning on a workflow creates runs on the open orders already stored", asy
  * The tag is the workflow's key: unique across the shop, active or inactive, and
  * refused where the merchant typed it. The switch says nothing about it.
  */
-test("creating a workflow with a taken tag is refused under the field and names the holder", async ({
-  page,
-}) => {
-  test.setTimeout(120_000);
-
+test("creating a workflow with a taken tag is refused under the field and names the holder", async () => {
   const HOLDER = "E2E Ring";
   await seedMembers(
     seedConfig(),
@@ -455,8 +457,7 @@ test("creating a workflow with a taken tag is refused under the field and names 
     ],
   );
 
-  const frame = await gotoApp(page);
-  await clickHoisted(appNavLink(page, "Workflows"));
+  await openScreen(page, "Workflows");
   await expect(frame.locator('s-page[heading="Workflows"]')).toBeVisible();
 
   await clickHoisted(page.getByRole("button", { name: "Create workflow" }));
@@ -475,17 +476,15 @@ test("creating a workflow with a taken tag is refused under the field and names 
   await expect(
     editorFrame(page).locator('s-page[heading="E2E Ring Rush"]'),
   ).toBeVisible();
+  /* Create left the editor open; see the spec's note on the shared page. */
+  await closeEditor(page);
 });
 
 /**
  * Duplicate asks for the new workflow's name and tag, both prefilled, and
  * the new workflow lands off with the tag the merchant chose.
  */
-test("duplicate asks for a name and a tag, and the new workflow is inactive with the given tag", async ({
-  page,
-}) => {
-  test.setTimeout(120_000);
-
+test("duplicate asks for a name and a tag, and the new workflow is inactive with the given tag", async () => {
   const SOURCE = "E2E Ring";
   await seedMembers(
     seedConfig(),
@@ -501,8 +500,7 @@ test("duplicate asks for a name and a tag, and the new workflow is inactive with
     ],
   );
 
-  const frame = await gotoApp(page);
-  await clickHoisted(appNavLink(page, "Workflows"));
+  await openScreen(page, "Workflows");
   await frame.getByRole("link", { name: SOURCE, exact: true }).click();
   await expect(frame.locator(`s-page[heading="${SOURCE}"]`)).toBeVisible();
 
@@ -526,7 +524,7 @@ test("duplicate asks for a name and a tag, and the new workflow is inactive with
   await expect(frame.locator(`s-page[heading="${SOURCE} copy"]`)).toBeVisible();
 
   /* The copy carries the tag the dialog collected, and is inactive. */
-  await clickHoisted(appNavLink(page, "Workflows"));
+  await openScreen(page, "Workflows");
   const copyRow = frame
     .locator("s-table-row")
     .filter({ hasText: `${SOURCE} copy` });
@@ -539,11 +537,7 @@ test("duplicate asks for a name and a tag, and the new workflow is inactive with
 });
 
 /** Edit tag: on the detail page, immediate, and it makes no draft. */
-test("editing the tag from the detail page writes immediately and starts no draft", async ({
-  page,
-}) => {
-  test.setTimeout(120_000);
-
+test("editing the tag from the detail page writes immediately and starts no draft", async () => {
   const SOURCE = "E2E Ring";
   const RIVAL = "E2E Rush";
   await seedMembers(
@@ -566,8 +560,7 @@ test("editing the tag from the detail page writes immediately and starts no draf
     ],
   );
 
-  const frame = await gotoApp(page);
-  await clickHoisted(appNavLink(page, "Workflows"));
+  await openScreen(page, "Workflows");
   await frame.getByRole("link", { name: SOURCE, exact: true }).click();
   await expect(frame.locator(`s-page[heading="${SOURCE}"]`)).toBeVisible();
 
@@ -596,11 +589,7 @@ test("editing the tag from the detail page writes immediately and starts no draf
  * `WorkflowsSearch` on the `/app/workflows` layout: the filter rides the
  * workflow page's URL, so its breadcrumb returns to the filtered list.
  */
-test("the workflows index keeps its filter across the workflow page", async ({
-  page,
-}) => {
-  test.setTimeout(120_000);
-
+test("the workflows index keeps its filter across the workflow page", async () => {
   const OFF = "E2E Keep Off";
   await seedMembers(
     seedConfig(),
@@ -621,8 +610,7 @@ test("the workflows index keeps its filter across the workflow page", async ({
     ],
   );
 
-  const frame = await gotoApp(page);
-  await clickHoisted(appNavLink(page, "Workflows"));
+  await openScreen(page, "Workflows");
   await expect(frame.getByRole("link", { name: OFF })).toBeVisible();
   const state = () => new URL(page.url()).searchParams.get("state");
 
@@ -655,11 +643,7 @@ test("the workflows index keeps its filter across the workflow page", async ({
  * `Domain.ORDER_ISSUE_TONE`). Seeded off, because the seed refuses to turn
  * on a workflow with an unassigned task.
  */
-test("the workflow page raises Needs a team as its one banner and marks an empty team's step No members", async ({
-  page,
-}) => {
-  test.setTimeout(120_000);
-
+test("the workflow page raises Needs a team as its one banner and marks an empty team's step No members", async () => {
   const BOTH = "E2E Both faults";
   const EMPTY = "E2E Nobody here";
   await seedMembers(
@@ -682,8 +666,7 @@ test("the workflow page raises Needs a team as its one banner and marks an empty
     ],
   );
 
-  const frame = await gotoApp(page);
-  await clickHoisted(appNavLink(page, "Workflows"));
+  await openScreen(page, "Workflows");
   const row = frame.locator("s-table-row", { hasText: BOTH });
   await expect(row.getByText("Needs a team", { exact: true })).toBeVisible();
   await expect(
@@ -709,11 +692,7 @@ test("the workflow page raises Needs a team as its one banner and marks an empty
  * submits; the state buttons give way to how many workflows match and Clear
  * search, which puts the list back.
  */
-test("the workflows index searches by name and clears back to the list", async ({
-  page,
-}) => {
-  test.setTimeout(120_000);
-
+test("the workflows index searches by name and clears back to the list", async () => {
   const GLAZE = "E2E Mug glaze";
   await seedMembers(
     seedConfig(),
@@ -733,8 +712,7 @@ test("the workflows index searches by name and clears back to the list", async (
     ],
   );
 
-  const frame = await gotoApp(page);
-  await clickHoisted(appNavLink(page, "Workflows"));
+  await openScreen(page, "Workflows");
   await expect(frame.getByRole("link", { name: EXISTING })).toBeVisible();
   await awaitHydration(frame);
 
@@ -761,11 +739,7 @@ test("the workflows index searches by name and clears back to the list", async (
  * line, a countdown from `Domain.noteCountFrom`, and Save refuses past the
  * cap with the field's own error while the text stays.
  */
-test("the editor counts instructions down from 300 and refuses 501 on save", async ({
-  page,
-}) => {
-  test.setTimeout(120_000);
-
+test("the editor counts instructions down from 300 and refuses 501 on save", async () => {
   await seedMembers(
     seedConfig(),
     [MEMBER],
@@ -779,9 +753,8 @@ test("the editor counts instructions down from 300 and refuses 501 on save", asy
     ],
   );
 
-  const frame = await gotoApp(page);
   const editor = editorFrame(page);
-  await clickHoisted(appNavLink(page, "Workflows"));
+  await openScreen(page, "Workflows");
   await frame.getByRole("link", { name: EXISTING }).click();
   await expect(frame.locator(`s-page[heading="${EXISTING}"]`)).toBeVisible();
   await openEditor(page);
@@ -804,4 +777,7 @@ test("the editor counts instructions down from 300 and refuses 501 on save", asy
   await editor.getByRole("button", { name: "Save", exact: true }).click();
   await expect(editor.getByText("Up to 500 characters")).toBeVisible();
   await expect(instructions).toHaveValue(over);
+  /* The editor is closed on the way out; see the spec's note on the shared
+     page. */
+  await closeEditor(page);
 });

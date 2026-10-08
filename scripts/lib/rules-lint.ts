@@ -665,3 +665,36 @@ export const layoutHits = (source: string): readonly RouteLayoutHit[] => {
     text,
   }));
 };
+
+/** One host-tag locator in an e2e file: its line and the text that matched. */
+export interface HostTagLocatorHit {
+  readonly line: number;
+  readonly text: string;
+}
+
+const HOST_TAG_LOCATOR =
+  /\blocator\(\s*(?<quote>["'`])s-(?:button|clickable)\k<quote>/gu;
+
+/**
+ * **An e2e spec locates a control by role, never by its host tag.** Under
+ * `e2e/`, `locator("s-button")` and `locator("s-clickable")` (any quote) are
+ * refused: Playwright's enabled check knows native form controls and
+ * `aria-disabled`, and a Polaris host is neither, so it reports a disabled
+ * control as enabled and a click is dispatched into nothing. A role locator
+ * resolves through the shadow root to the native `<button>`, which carries
+ * the real `disabled`. A selector that qualifies the tag
+ * (`s-button[variant="primary"]`) reads a host attribute no role exposes and
+ * is allowed; the site says why in a comment. Comments are blanked before the
+ * scan.
+ */
+export const hostTagLocatorHits = (
+  source: string,
+): readonly HostTagLocatorHit[] => {
+  const blanked = source.replaceAll(COMMENT, (text) =>
+    text.replaceAll(/[^\n]/gu, " "),
+  );
+  return [...blanked.matchAll(HOST_TAG_LOCATOR)].map(({ index, 0: text }) => ({
+    line: blanked.slice(0, index).split("\n").length,
+    text,
+  }));
+};

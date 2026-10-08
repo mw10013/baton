@@ -688,3 +688,26 @@ describe("layout primitives and layout props are refused outside src/components/
     expect(RulesLint.layoutHits(source)).toEqual([]);
   });
 });
+
+describe("an e2e spec locates a control by role, never by its host tag", () => {
+  it("refuses a bare s-button or s-clickable locator in any quote", () => {
+    const source = [
+      'page.locator("s-button").click();',
+      "row.locator('s-clickable');",
+      "row.locator(`s-button`);",
+    ].join("\n");
+    expect(
+      RulesLint.hostTagLocatorHits(source).map(({ line }) => line),
+    ).toEqual([1, 2, 3]);
+  });
+
+  it("allows a role locator, a qualified host selector and a comment", () => {
+    const source = [
+      '/** never `locator("s-button")` */',
+      'page.getByRole("button", { name: "Done" });',
+      "page.locator('s-button[variant=\"primary\"]');",
+      'page.locator("s-buttons");',
+    ].join("\n");
+    expect(RulesLint.hostTagLocatorHits(source)).toEqual([]);
+  });
+});

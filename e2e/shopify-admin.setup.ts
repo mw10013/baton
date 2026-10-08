@@ -9,7 +9,6 @@ import {
   CHROME_PROFILE,
   refreshShopifyAuth,
 } from "../scripts/lib/shopify-playwright-auth.ts";
-import { gotoApp } from "./app";
 
 /**
  * Whether the export on disk is still worth using, judged by the cookie it
@@ -56,22 +55,4 @@ setup("shopify admin auth", async () => {
       Effect.provide(NodeServices.layer),
     ),
   );
-});
-
-/**
- * Opens the app once under the exported session so the shop's `ShopSession`
- * row exists before anything seeds. `/api/dev/seed` refuses a shop with no
- * session (409), and after `pnpm d1:reset` the only thing that creates one is
- * the embedded app loading in the admin. The `member` and `admin` projects
- * seed without depending on this project (see `playwright.config.ts`), and
- * with `workers: 1` Playwright runs the projects with no dependencies in
- * config order, so this project's tests finish before their first seed.
- */
-setup("shopify app installed", async ({ browser }) => {
-  const context = await browser.newContext({ storageState: storageStatePath });
-  try {
-    await gotoApp(await context.newPage());
-  } finally {
-    await context.close();
-  }
 });

@@ -21,7 +21,9 @@
  * syntactic rules: no info banner ({@link infoBannerHits}), no `maxLength`
  * on a field outside `src/components/screen/` ({@link maxLengthHits}), no
  * parenthesis in an option ({@link optionAnnotationHits}), and no `details`
- * slot outside `src/components/screen/` ({@link detailsSlotHits}).
+ * slot outside `src/components/screen/` ({@link detailsSlotHits}); and,
+ * under `e2e/`, no control located by its host tag
+ * ({@link hostTagLocatorHits}).
  *
  * A grep, not an oxlint rule: the pattern is three tokens and has stayed
  * quiet. Union narrowing on `actor.role` and the connection state's `role`
@@ -48,6 +50,7 @@ import {
   reservedStemHits,
   retiredCopyHits,
   layoutHits,
+  hostTagLocatorHits,
   shapeSuffixes,
   textAreaPlaceholderHits,
 } from "./lib/rules-lint.ts";
@@ -261,7 +264,21 @@ const layoutViolations = [
 
 for (const hit of layoutViolations) console.error(hit);
 
+const E2E = new URL("../e2e/", import.meta.url).pathname;
+
+const hostTagHits = walk(E2E)
+  .filter((path) => path.endsWith(".ts"))
+  .flatMap((path) =>
+    hostTagLocatorHits(readFileSync(path, "utf8")).map(
+      ({ line, text }) =>
+        `rules-lint: e2e/${relative(E2E, path)}:${String(line)} ${text}; locate a control by role, never by its host tag (e2e/member.ts)`,
+    ),
+  );
+
+for (const hit of hostTagHits) console.error(hit);
+
 if (
+  hostTagHits.length > 0 ||
   layoutViolations.length > 0 ||
   hibernationHits.length > 0 ||
   importHits.length > 0 ||

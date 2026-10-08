@@ -26,3 +26,20 @@ export const awaitHydration = (
   scope
     .locator('body[data-hydrated="true"]')
     .waitFor({ state: "attached", timeout });
+
+/**
+ * Wait until the document in `scope` has finished loading its navigation:
+ * hydrated, and no `data-navigating` marker on `<body>`
+ * (`src/routes/__root.tsx`), which is there while any of the router's
+ * loaders run, in the foreground or in the background.
+ *
+ * Call it once the URL says the navigation started. The URL alone is not
+ * enough, because the router pushes the location before its loaders run, and
+ * a screen visited before paints its cached data while they rerun; a click
+ * in that window follows the previous data. Before the navigation has
+ * started the marker is absent too, so this cannot replace the URL check.
+ */
+export const awaitNavigated = (scope: Page | FrameLocator): Promise<void> =>
+  scope
+    .locator('body[data-hydrated="true"]:not([data-navigating])')
+    .waitFor({ state: "attached" });

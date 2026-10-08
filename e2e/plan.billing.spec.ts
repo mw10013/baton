@@ -124,6 +124,9 @@ const switchPlan = async (
 test("switching plans on Shopify's pricing page moves the ceiling on the Plan card, both ways", async ({
   page,
 }) => {
+  /* Two plan switches, each through Shopify's hosted pricing page and a full
+     admin reload, whose waits `switchPlan` bounds at 30 to 60 s apiece: the
+     test timeout leaves those bounds room to be the ones that fail. */
   test.setTimeout(360_000);
   expect(Domain.entitlementsOfPlan("basic").ordersPerCycle).not.toBe(
     Domain.entitlementsOfPlan("pro").ordersPerCycle,
@@ -185,6 +188,9 @@ test("a paid-to-paid downgrade applies at once, and the usage outbox drains", as
   browser,
   page,
 }, testInfo) => {
+  /* Two plan switches, each through Shopify's hosted pricing page and a full
+     admin reload, whose waits `switchPlan` bounds at 30 to 60 s apiece: the
+     test timeout leaves those bounds room to be the ones that fail. */
   test.setTimeout(360_000);
   const start = await readPlan(await gotoApp(page));
   try {

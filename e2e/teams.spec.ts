@@ -1,9 +1,23 @@
-import { expect, type FrameLocator, test } from "@playwright/test";
+import { expect, type FrameLocator, type Page, test } from "@playwright/test";
 
 import * as Domain from "@/lib/Domain";
 
-import { appNavLink, clickHoisted, gotoApp } from "./app";
+import { clickHoisted, openApp, openScreen } from "./app";
 import { seedConfig, seedMembers } from "./seed";
+
+test.describe.configure({ mode: "serial" });
+
+let page: Page;
+let frame: FrameLocator;
+
+/** One admin boot for the spec (`openApp`); each test seeds and navigates. */
+test.beforeAll(async ({ browser }) => {
+  ({ page, frame } = await openApp(browser));
+});
+
+test.afterAll(async () => {
+  await page.context().close();
+});
 
 /**
  * The embedded half of teams: creating, adding members to, renaming, and deleting on
@@ -12,13 +26,6 @@ import { seedConfig, seedMembers } from "./seed";
  *
  * Seeds one member and zero teams first, so both empty states are real
  * assertions rather than an accident of what a previous run left behind.
- *
- * The 30s default test budget is too tight: `gotoApp` alone spends 4-6s on a
- * healthy load (15s before its reload rescue fires), and this spec then makes
- * eight round trips through server functions that each re-run the Shopify auth
- * middleware. A cold `/app/teams` module — Vite compiles route modules on
- * demand, so the first navigation after an edit pays for it — has exhausted the
- * default before the page ever renders.
  */
 
 /**
@@ -41,15 +48,10 @@ const EMPTY_STATE = "No teams yet";
 const TEAM = "E2E Cut";
 const RENAMED = "E2E Cutting";
 
-test("teams screen creates, adds members to, renames, and deletes a team", async ({
-  page,
-}) => {
-  test.setTimeout(120_000);
-
+test("teams screen creates, adds members to, renames, and deletes a team", async () => {
   await seedMembers(seedConfig(), [MEMBER_EMAIL]);
 
-  const frame = await gotoApp(page);
-  await clickHoisted(appNavLink(page, "Teams"));
+  await openScreen(page, "Teams");
   await expect(frame.locator('s-page[heading="Teams"]')).toBeVisible();
   await expect(frame.getByText(EMPTY_STATE)).toBeVisible();
 
@@ -73,7 +75,7 @@ test("teams screen creates, adds members to, renames, and deletes a team", async
   /* Uniqueness is a unique constraint, not a pre-check, so the
      duplicate has to come back as the field error in the dialog rather than
      as a raw constraint error. */
-  await clickHoisted(appNavLink(page, "Teams"));
+  await openScreen(page, "Teams");
   await expect(frame.getByRole("link", { name: TEAM })).toBeVisible();
   /* With teams present the Create button is the title-bar primary action,
      hoisted into the admin chrome by App Bridge (see `clickHoisted`); the
@@ -151,9 +153,7 @@ test("teams screen creates, adds members to, renames, and deletes a team", async
  * `Screen.ts`): Previous after Next is the browser's Back. Eleven members:
  * one past a details page of ten.
  */
-test("the team page pages its members", async ({ page }) => {
-  test.setTimeout(120_000);
-
+test("the team page pages its members", async () => {
   const PAGES_TEAM = "E2E Pages";
   const members = Array.from(
     { length: 11 },
@@ -161,8 +161,7 @@ test("the team page pages its members", async ({ page }) => {
   );
   await seedMembers(seedConfig(), members, [{ name: PAGES_TEAM, members }]);
 
-  const frame = await gotoApp(page);
-  await clickHoisted(appNavLink(page, "Teams"));
+  await openScreen(page, "Teams");
   await frame.getByRole("link", { name: PAGES_TEAM }).click();
   await expect(frame.locator(`s-page[heading="${PAGES_TEAM}"]`)).toBeVisible();
 

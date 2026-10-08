@@ -8,8 +8,28 @@ import {
 
 import * as Domain from "@/lib/Domain";
 
-import { appNavLink, clickHoisted, gotoApp, hoistedEnabled } from "./app";
+import {
+  clickHoisted,
+  gotoApp,
+  hoistedEnabled,
+  openApp,
+  openScreen,
+} from "./app";
 import { seedConfig, seedMembers } from "./seed";
+
+test.describe.configure({ mode: "serial" });
+
+let page: Page;
+let frame: FrameLocator;
+
+/** One admin boot for the spec (`openApp`); each test seeds and navigates. */
+test.beforeAll(async ({ browser }) => {
+  ({ page, frame } = await openApp(browser));
+});
+
+test.afterAll(async () => {
+  await page.context().close();
+});
 
 /**
  * The open-orders sync end to end, against the real sandbox: click, and real orders
@@ -25,8 +45,10 @@ import { seedConfig, seedMembers } from "./seed";
  * Timings are generous because the run is Shopify's, not ours: submitting the
  * bulk operation, waiting for Shopify to execute it, and the first 5-second
  * poll sleep put a realistic floor around 15-30s even for a sandbox with fewer
- * than a hundred orders. A two-minute budget is roughly 4x that floor, not a
- * hedge against an unknown.
+ * than a hundred orders. The two-minute wait for the run to finish is roughly
+ * 4x that floor, not a hedge against an unknown, and the test's 180 s timeout
+ * holds that wait and the clicks around it; the config's 60 s would cut it
+ * short. It runs first in the spec so no other test's seed races the sync.
  *
  * The Sync open orders button is the gate on both ends: it disables while the Agents SDK
  * tracks a run and re-enables when the completion callback deletes that row,
@@ -50,11 +72,10 @@ import { seedConfig, seedMembers } from "./seed";
  * in Shopify. A store with none syncs nothing, and the wait for the first
  * row times out.
  */
-test("orders screen syncs open orders and lists them", async ({ page }) => {
+test("orders screen syncs open orders and lists them", async () => {
   test.setTimeout(180_000);
 
-  const frame = await gotoApp(page);
-  await clickHoisted(appNavLink(page, "Orders"));
+  await openScreen(page, "Orders");
   await expect(frame.locator('s-page[heading="Orders"]')).toBeVisible();
 
   const sync = page.getByRole("button", { name: "Sync open orders" });
@@ -100,9 +121,7 @@ test("orders screen syncs open orders and lists them", async ({ page }) => {
  * Each row of the orders index opens the order in the Shopify admin through
  * an icon button whose accessible name says where it goes.
  */
-test("the orders index links each order to Shopify", async ({ page }) => {
-  test.setTimeout(120_000);
-
+test("the orders index links each order to Shopify", async () => {
   const MEMBER = "e2e.orders@example.com";
   const TEAM = "E2E Bench";
   await seedMembers(
@@ -124,8 +143,7 @@ test("the orders index links each order to Shopify", async ({ page }) => {
     ],
   );
 
-  const frame = await gotoApp(page);
-  await clickHoisted(appNavLink(page, "Orders"));
+  await openScreen(page, "Orders");
   await showOpen(frame);
 
   await expect(
@@ -187,11 +205,7 @@ const searchField = (frame: FrameLocator) =>
  * Made; while it is on the strip gives way to the match line and the selects
  * are disabled, and Clear search brings the strip back with Made kept.
  */
-test("the orders index searches by order number and clears back to the list", async ({
-  page,
-}) => {
-  test.setTimeout(120_000);
-
+test("the orders index searches by order number and clears back to the list", async () => {
   const MEMBER = "e2e.orders@example.com";
   const TEAM = "E2E Bench";
   await seedMembers(
@@ -219,8 +233,7 @@ test("the orders index searches by order number and clears back to the list", as
     ],
   );
 
-  const frame = await gotoApp(page);
-  await clickHoisted(appNavLink(page, "Orders"));
+  await openScreen(page, "Orders");
   await expect(
     frame.getByRole("link", { name: "#9302", exact: true }),
   ).toBeVisible();
@@ -310,7 +323,9 @@ test("the orders index searches by order number and clears back to the list", as
 
   /* A bare order number typed into the URL is the search (`ListSearchParam`
      in `searchParams.ts`): the router parses `q=9301` as a number, and it
-     reads as the digits rather than being dropped as an unreadable key. */
+     reads as the digits rather than being dropped as an unreadable key.
+     Typed into the URL means a document load, so this is a second admin boot
+     on the shared page; no in-app link carries a bare number. */
   const typed = await gotoApp(page, "app/orders?q=9301");
   await expect(
     typed.getByRole("link", { name: "#9301", exact: true }),
@@ -331,11 +346,7 @@ test("the orders index searches by order number and clears back to the list", as
  * No extra admin sign-in: the `e2e` project reuses the setup project's storage
  * state, so this is one more page load on the session the file already has.
  */
-test("the merchant marks a task done, reopens it, and blocks the run", async ({
-  page,
-}) => {
-  test.setTimeout(120_000);
-
+test("the merchant marks a task done, reopens it, and blocks the run", async () => {
   const MEMBER = "e2e.manage@example.com";
   const CUT_TEAM = "E2E Manage Cut";
   const POLISH_TEAM = "E2E Manage Polish";
@@ -364,8 +375,7 @@ test("the merchant marks a task done, reopens it, and blocks the run", async ({
     ],
   );
 
-  const frame = await gotoApp(page);
-  await clickHoisted(appNavLink(page, "Orders"));
+  await openScreen(page, "Orders");
   await showOpen(frame);
   await frame.getByRole("link", { name: "#9301", exact: true }).click();
   await expect(frame.locator('s-page[heading="#9301"]')).toBeVisible();
@@ -443,9 +453,7 @@ test("the merchant marks a task done, reopens it, and blocks the run", async ({
  * (`RunRepository.putBackTask`). There is no merchant Start, so the
  * seed has the member start the task; Put back returns it to Ready.
  */
-test("the merchant puts back a task a member started", async ({ page }) => {
-  test.setTimeout(120_000);
-
+test("the merchant puts back a task a member started", async () => {
   const MEMBER = "e2e.putback@example.com";
   const CUT_TEAM = "E2E Put Back Cut";
   await seedMembers(
@@ -468,8 +476,7 @@ test("the merchant puts back a task a member started", async ({ page }) => {
     ],
   );
 
-  const frame = await gotoApp(page);
-  await clickHoisted(appNavLink(page, "Orders"));
+  await openScreen(page, "Orders");
   await showOpen(frame);
   await frame.getByRole("link", { name: "#9304", exact: true }).click();
   await frame.getByRole("button", { name: "Manage" }).click();
@@ -490,11 +497,7 @@ test("the merchant puts back a task a member started", async ({ page }) => {
  * screen names the task in the way. Both steps are done, so Cut offers
  * nothing and Polish, the last step, offers Reopen.
  */
-test("the merchant cannot reopen a task whose next step is done", async ({
-  page,
-}) => {
-  test.setTimeout(120_000);
-
+test("the merchant cannot reopen a task whose next step is done", async () => {
   const MEMBER = "e2e.reopen@example.com";
   const CUT_TEAM = "E2E Reopen Cut";
   const POLISH_TEAM = "E2E Reopen Polish";
@@ -524,8 +527,7 @@ test("the merchant cannot reopen a task whose next step is done", async ({
     ],
   );
 
-  const frame = await gotoApp(page);
-  await clickHoisted(appNavLink(page, "Orders"));
+  await openScreen(page, "Orders");
   await showOpen(frame);
   await frame.getByRole("link", { name: "#9302", exact: true }).click();
   await frame.getByRole("button", { name: "Manage" }).click();
@@ -549,11 +551,7 @@ test("the merchant cannot reopen a task whose next step is done", async ({
  * The run note is always on the card, blank as its "Edit note" button alone,
  * with no placeholder word and no Add note.
  */
-test("the merchant blocks a run with a reason, notes the run, and unblocks it", async ({
-  page,
-}) => {
-  test.setTimeout(120_000);
-
+test("the merchant blocks a run with a reason, notes the run, and unblocks it", async () => {
   const MEMBER = "e2e.block@example.com";
   const TEAM = "E2E Block Bench";
   await seedMembers(
@@ -575,8 +573,7 @@ test("the merchant blocks a run with a reason, notes the run, and unblocks it", 
     ],
   );
 
-  const frame = await gotoApp(page);
-  await clickHoisted(appNavLink(page, "Orders"));
+  await openScreen(page, "Orders");
   await showOpen(frame);
   await frame.getByRole("link", { name: "#9303", exact: true }).click();
   await frame.getByRole("button", { name: "Manage" }).click();
@@ -646,11 +643,7 @@ test("the merchant blocks a run with a reason, notes the run, and unblocks it", 
  * with Show more when the cut hides text; the Now line; the note; and Manage
  * last, directly above the drawer it opens.
  */
-test("the order card puts the run's badges on the title line, Manage above its drawer, and cuts a long reason", async ({
-  page,
-}) => {
-  test.setTimeout(120_000);
-
+test("the order card puts the run's badges on the title line, Manage above its drawer, and cuts a long reason", async () => {
   const MEMBER = "e2e.card@example.com";
   const TEAM = "E2E Card Bench";
   const REASON =
@@ -684,8 +677,7 @@ test("the order card puts the run's badges on the title line, Manage above its d
     ],
   );
 
-  const frame = await gotoApp(page);
-  await clickHoisted(appNavLink(page, "Orders"));
+  await openScreen(page, "Orders");
   await showOpen(frame);
   await frame.getByRole("link", { name: "#9311", exact: true }).click();
   const item = frame.locator("s-section").filter({
@@ -762,11 +754,7 @@ test("the order card puts the run's badges on the title line, Manage above its d
  * moved to the other workflow through the Change workflow modal, which holds
  * the select and, on a run with work on it, the warning.
  */
-test("an item matching two workflows waits for the merchant to choose, then changes", async ({
-  page,
-}) => {
-  test.setTimeout(180_000);
-
+test("an item matching two workflows waits for the merchant to choose, then changes", async () => {
   const MEMBER = "e2e.orders@example.com";
   const TEAM = "E2E Bench";
   const ENGRAVING = "E2E Engraving";
@@ -801,8 +789,7 @@ test("an item matching two workflows waits for the merchant to choose, then chan
     ],
   );
 
-  const frame = await gotoApp(page);
-  await clickHoisted(appNavLink(page, "Orders"));
+  await openScreen(page, "Orders");
   await showOpen(frame);
 
   /* The row's Issues cell says what it is waiting on, and the Issues filter
@@ -937,7 +924,7 @@ test("an item matching two workflows waits for the merchant to choose, then chan
   await expect(manage).toBeVisible();
 
   /* And the order has left the issue: one live run, nothing left to choose. */
-  await clickHoisted(appNavLink(page, "Orders"));
+  await openScreen(page, "Orders");
   await showOpen(frame);
   await expect(
     frame
@@ -956,11 +943,7 @@ const button = (scope: Locator, name: string) =>
  * seeded order per state, so the table the page is built from is looked at
  * rather than reasoned about.
  */
-test("each order-page state draws the controls its action set allows", async ({
-  page,
-}) => {
-  test.setTimeout(240_000);
-
+test("each order-page state draws the controls its action set allows", async () => {
   const MEMBER = "e2e.states@example.com";
   const TEAM = "E2E States";
   const workflow = (name: string, tag: string) => ({
@@ -1040,10 +1023,18 @@ test("each order-page state draws the controls its action set allows", async ({
     ],
   );
 
-  /* By URL rather than through the index: the index opens on Open orders,
-     and #9502 is cancelled in Shopify. */
+  /* Through the index with Show set to All, as the merchant gets there,
+     except #9502: Shopify cancelled it, so no list shows it, and it is opened
+     by URL, which is an admin boot on the shared page. */
   const open = async (n: number, title: string) => {
-    const frame = await gotoApp(page, `app/orders/seed-${String(n)}`);
+    if (n === 9502) await gotoApp(page, `app/orders/seed-${String(n)}`);
+    else {
+      await openScreen(page, "Orders");
+      await showSelect(frame).selectOption({ label: "All" });
+      await frame
+        .getByRole("link", { name: `#${String(n)}`, exact: true })
+        .click();
+    }
     await expect(
       frame.locator(`s-page[heading="#${String(n)}"]`),
     ).toBeVisible();
@@ -1133,11 +1124,7 @@ test("each order-page state draws the controls its action set allows", async ({
  * matching two workflows, which is an issue. `#9503` matches nothing, so it
  * is No workflow, waits on no team and only the unnarrowed counts see it.
  */
-test("each count is what choosing it shows, given the team", async ({
-  page,
-}) => {
-  test.setTimeout(120_000);
-
+test("each count is what choosing it shows, given the team", async () => {
   const MEMBER = "e2e.issues@example.com";
   const TEAM = "E2E Issues Bench";
   await seedMembers(
@@ -1179,8 +1166,7 @@ test("each count is what choosing it shows, given the team", async ({
     ],
   );
 
-  const frame = await gotoApp(page);
-  await clickHoisted(appNavLink(page, "Orders"));
+  await openScreen(page, "Orders");
   await expect(frame.locator('s-page[heading="Orders"]')).toBeVisible();
 
   /* `#9503` is counted under No workflow before the team narrows the
@@ -1242,9 +1228,7 @@ test("each count is what choosing it shows, given the team", async ({
  * `#9702` is making with none; both have a started task, so both are listed
  * under Making, the default. The team keeps the test to its own orders.
  */
-test("the strip and the Show select hold one value", async ({ page }) => {
-  test.setTimeout(120_000);
-
+test("the strip and the Show select hold one value", async () => {
   const MEMBER = "e2e.combine@example.com";
   const TEAM = "E2E Combine Bench";
   await seedMembers(
@@ -1284,8 +1268,7 @@ test("the strip and the Show select hold one value", async ({ page }) => {
     ],
   );
 
-  const frame = await gotoApp(page);
-  await clickHoisted(appNavLink(page, "Orders"));
+  await openScreen(page, "Orders");
   await expect(frame.locator('s-page[heading="Orders"]')).toBeVisible();
   await frame
     .getByRole("combobox", { name: "Team" })
@@ -1366,16 +1349,11 @@ const listContext = (page: Page) => {
  * the order page's URL, so the breadcrumb and the browser's history both
  * return to them. Previous on a page Next pushed is the browser's Back.
  */
-test("the orders index keeps its filters and page across the order page", async ({
-  page,
-}) => {
-  test.setTimeout(180_000);
-
+test("the orders index keeps its filters and page across the order page", async () => {
   const TEAM = "E2E Pages Bench";
   await seedTwoPages(TEAM);
 
-  const frame = await gotoApp(page);
-  await clickHoisted(appNavLink(page, "Orders"));
+  await openScreen(page, "Orders");
   const rows = frame.locator("s-table-row", { hasText: /#96\d\d/u });
   await stripCell(frame, "Making").click();
   await frame
@@ -1442,16 +1420,11 @@ test("the orders index keeps its filters and page across the order page", async 
  * so the page resets, and it replaces the history entry, so Back leaves the
  * list rather than replaying the filters.
  */
-test("a filter change resets the page and replaces history", async ({
-  page,
-}) => {
-  test.setTimeout(180_000);
-
+test("a filter change resets the page and replaces history", async () => {
   const TEAM = "E2E Pages Filter";
   await seedTwoPages(TEAM);
 
-  const frame = await gotoApp(page);
-  await clickHoisted(appNavLink(page, "Orders"));
+  await openScreen(page, "Orders");
   await expect(frame.locator('s-page[heading="Orders"]')).toBeVisible();
   const rows = frame.locator("s-table-row", { hasText: /#96\d\d/u });
   await stripCell(frame, "Making").click();
@@ -1479,10 +1452,10 @@ test("a filter change resets the page and replaces history", async ({
 });
 
 /** `lenientSearchKey`: an unreadable filter reads as that key being off, never as an error; an old `?view=`, `?position=` or `?issues=` is not a key at all. */
-test("a bad filter value reads as no filter", async ({ page }) => {
-  test.setTimeout(120_000);
-
-  const frame = await gotoApp(
+test("a bad filter value reads as no filter", async () => {
+  /* A URL typed by hand is a document load, so this is an admin boot on the
+     shared page: no in-app link carries an unreadable value. */
+  await gotoApp(
     page,
     "app/orders?show=nonsense&position=made&issues=1&view=issues&after=nonsense",
   );
@@ -1512,11 +1485,7 @@ test("a bad filter value reads as no filter", async ({ page }) => {
  * `#9603`'s second step is seeded on a team that is then deleted on the
  * teams screen, which is how a task becomes unassigned in the app.
  */
-test("every issue kind counts in the Issues filter and its badge is critical", async ({
-  page,
-}) => {
-  test.setTimeout(120_000);
-
+test("every issue kind counts in the Issues filter and its badge is critical", async () => {
   const MEMBER = "e2e.flagged@example.com";
   const TEAM = "E2E Flagged Bench";
   const EMPTY_TEAM = "E2E Flagged Empty";
@@ -1583,8 +1552,7 @@ test("every issue kind counts in the Issues filter and its badge is critical", a
     ],
   );
 
-  const frame = await gotoApp(page);
-  await clickHoisted(appNavLink(page, "Teams"));
+  await openScreen(page, "Teams");
   await frame.getByRole("link", { name: GONE_TEAM }).click();
   await expect(frame.locator(`s-page[heading="${GONE_TEAM}"]`)).toBeVisible();
   /* Delete sits in the title bar's More actions menu, which App Bridge
@@ -1600,7 +1568,7 @@ test("every issue kind counts in the Issues filter and its badge is critical", a
     .click();
   await expect(frame.locator('s-page[heading="Teams"]')).toBeVisible();
 
-  await clickHoisted(appNavLink(page, "Orders"));
+  await openScreen(page, "Orders");
   await expect(frame.locator('s-page[heading="Orders"]')).toBeVisible();
   await stripCell(frame, "Issues").click();
   await expect

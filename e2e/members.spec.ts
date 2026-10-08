@@ -1,9 +1,23 @@
-import { expect, test } from "@playwright/test";
+import { expect, type FrameLocator, type Page, test } from "@playwright/test";
 
 import * as Domain from "@/lib/Domain";
 
-import { appNavLink, clickHoisted, gotoApp } from "./app";
+import { clickHoisted, gotoApp, openApp, openScreen } from "./app";
 import { seedConfig, seedMembers } from "./seed";
+
+test.describe.configure({ mode: "serial" });
+
+let page: Page;
+let frame: FrameLocator;
+
+/** One admin boot for the spec (`openApp`); each test seeds and navigates. */
+test.beforeAll(async ({ browser }) => {
+  ({ page, frame } = await openApp(browser));
+});
+
+test.afterAll(async () => {
+  await page.context().close();
+});
 
 /**
  * The embedded half of member access: adding a member on the members
@@ -24,22 +38,14 @@ const EMPTY_STATE = "No members yet";
 const emailOfLength = (length: number) =>
   `${"a".repeat(length - "@example.com".length)}@example.com`;
 
-test("the members index adds a member and the member page adds it to teams, removes it, and deletes it", async ({
-  page,
-}) => {
-  /* `gotoApp` spends 4-6s on a healthy load and each of the mutations below
-     re-runs the Shopify auth middleware, so the 30s default leaves no
-     headroom. Same reason `teams.spec.ts` raises its own. */
-  test.setTimeout(120_000);
-
+test("the members index adds a member and the member page adds it to teams, removes it, and deletes it", async () => {
   await seedMembers(
     seedConfig(),
     [],
     TEAMS.map((name) => ({ name, members: [] })),
   );
 
-  const frame = await gotoApp(page);
-  await clickHoisted(appNavLink(page, "Members"));
+  await openScreen(page, "Members");
   await expect(frame.locator('s-page[heading="Members"]')).toBeVisible();
   await expect(frame.getByText(EMPTY_STATE)).toBeVisible();
 
@@ -83,7 +89,7 @@ test("the members index adds a member and the member page adds it to teams, remo
   ).toBeVisible();
 
   /* The index shows a count, not the names. */
-  await clickHoisted(appNavLink(page, "Members"));
+  await openScreen(page, "Members");
   const row = frame.locator("s-table-row", { hasText: MEMBER_EMAIL });
   await expect(row.locator("s-table-cell").nth(1)).toHaveText("1");
   await frame.getByRole("link", { name: MEMBER_EMAIL }).click();
@@ -121,16 +127,12 @@ test("the members index adds a member and the member page adds it to teams, remo
  * member is deleted at the end, since the seeded member count is pinned
  * elsewhere.
  */
-test("a 254-character email is added and printed whole, and 255 is refused on Add", async ({
-  page,
-}) => {
-  test.setTimeout(120_000);
+test("a 254-character email is added and printed whole, and 255 is refused on Add", async () => {
   await seedMembers(seedConfig(), [], []);
   const longest = emailOfLength(Domain.EMAIL_MAX_LENGTH);
   const tooLong = emailOfLength(Domain.EMAIL_MAX_LENGTH + 1);
 
-  const frame = await gotoApp(page);
-  await clickHoisted(appNavLink(page, "Members"));
+  await openScreen(page, "Members");
   await frame.getByRole("button", { name: "Add member" }).click();
   const field = frame.getByRole("textbox", { name: "Email", exact: true });
   await field.fill(tooLong);
@@ -164,10 +166,7 @@ test("a 254-character email is added and printed whole, and 255 is refused on Ad
  * `Domain.ShopLimits.maxMembers` after the add. The home page's Members tile
  * is where the merchant is told the extra seats are billed.
  */
-test("adding a member past the included seats succeeds and the home tile says it is billed", async ({
-  page,
-}) => {
-  test.setTimeout(120_000);
+test("adding a member past the included seats succeeds and the home tile says it is billed", async () => {
   const seeded = Array.from(
     { length: Domain.MAX_ENTITLEMENTS.membersIncluded + 1 },
     (_, index) => `e2e.seat${String(index).padStart(2, "0")}@example.com`,
@@ -175,11 +174,14 @@ test("adding a member past the included seats succeeds and the home tile says it
   expect(seeded.length).toBeLessThan(Domain.ShopLimits.maxMembers);
   await seedMembers(seedConfig(), seeded, []);
 
-  const frame = await gotoApp(page);
+  /* A second boot, on the shared page: home's tile reads the seats in its
+     loader and does not refetch on the seed's publish, and the app's Home link
+     is hidden (`rel="home"`), so there is no hoisted link back to it. */
+  await gotoApp(page);
   await expect(
     frame.getByText(/past your plan's included seats/u),
   ).toBeVisible();
-  await clickHoisted(appNavLink(page, "Members"));
+  await openScreen(page, "Members");
   await expect(frame.locator('s-page[heading="Members"]')).toBeVisible();
   await expect(frame.getByText(seeded[0] ?? "", { exact: true })).toBeVisible();
 

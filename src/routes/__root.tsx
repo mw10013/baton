@@ -8,6 +8,7 @@ import {
   Outlet,
   Scripts,
   useHydrated,
+  useRouterState,
 } from "@tanstack/react-router";
 
 import { POLARIS_URL } from "@/lib/shopifyConstants";
@@ -75,6 +76,20 @@ function RouteComponent() {
  * string `"false"`). It cannot cause a hydration mismatch: it is `undefined`
  * on both the server and the first client render.
  *
+ * `data-navigating="true"` is on `<body>` while the router loads: a
+ * navigation (`isLoading`), or a loader it reruns in the background for a
+ * match it already holds (`isFetching` on the match). The second is the
+ * router's stale-while-revalidate: a screen visited before paints its cached
+ * loader data at once, the router reports itself idle, and the fresh data
+ * lands when the background loader returns. The marker is the signal e2e
+ * waits on after a hoisted nav click (`awaitNavigated` in
+ * `e2e/hydration.ts`), because until both are done the screen can show the
+ * previous data: under a shared page that is the previous test's, and a
+ * click follows its ids (seen 2026-10-07: a reseeded workflow of the same
+ * name, clicked by its old id, opened "That workflow no longer exists."). It
+ * is gated on `hydrated` like the marker above, so the server and the first
+ * client render agree.
+ *
  * `useHydrated()` is read elsewhere only where this boundary cannot reach:
  * the App-Bridge-hoisted nav and the browser-only token query in
  * `src/routes/app.tsx`, the SSR-mismatch `ClientOnly` in
@@ -86,6 +101,11 @@ function RouteComponent() {
  */
 function RootDocument({ children }: { children: React.ReactNode }) {
   const hydrated = useHydrated();
+  const navigating = useRouterState({
+    select: (state) =>
+      state.isLoading ||
+      state.matches.some((match) => match.isFetching !== false),
+  });
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
@@ -102,7 +122,11 @@ function RootDocument({ children }: { children: React.ReactNode }) {
             and must stay the document's first script tag. */}
         <script src={POLARIS_URL} />
       </head>
-      <body inert={!hydrated} data-hydrated={hydrated ? "true" : undefined}>
+      <body
+        inert={!hydrated}
+        data-hydrated={hydrated ? "true" : undefined}
+        data-navigating={hydrated && navigating ? "true" : undefined}
+      >
         {children}
         <Scripts />
       </body>
