@@ -1,6 +1,6 @@
 import { D1Client } from "@effect/sql-d1";
 import { Context, Effect, Layer } from "effect";
-import { Reactivity } from "effect/unstable/reactivity";
+import { Reactivity } from "effect/reactivity";
 
 import { CloudflareEnv } from "@/lib/CloudflareEnv";
 

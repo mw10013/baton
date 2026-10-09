@@ -29,7 +29,7 @@ export class Email extends Context.Service<
     Email,
     Effect.gen(function* () {
       const { EMAIL: binding, ENVIRONMENT } = yield* CloudflareEnv;
-      const from = yield* Config.nonEmptyString("EMAIL_FROM");
+      const from = yield* Config.NonEmptyString("EMAIL_FROM");
       /**
        * The plain-text body is echoed into the log annotations only when
        * `ENVIRONMENT === "local"`. Without `remote: true` on the `send_email`

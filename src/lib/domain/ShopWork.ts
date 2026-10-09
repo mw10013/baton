@@ -622,42 +622,39 @@ export type WorkflowTaskId = typeof WorkflowTaskId.Type;
 /** The length of every trimmed name: the schema check and the field's submit error (`TextLimit` in `src/components/screen/`) read this. */
 export const NAME_MAX_LENGTH = 64;
 
-const trimmedName = <B extends string>(brand: B) =>
+/**
+ * The brand arrives as `Schema.brand("Name")`, not as the name: `Schema.brand`
+ * refuses a type parameter it cannot prove is a single literal, so a helper
+ * generic over the name cannot call it.
+ */
+const trimmedText = <Out extends Schema.Top & { readonly Encoded: string }>(
+  brand: (schema: ReturnType<typeof nonEmptyUpTo>) => Out,
+  maxLength: number,
+) =>
   Schema.String.pipe(
-    Schema.decodeTo(
-      Schema.NonEmptyString.check(Schema.isMaxLength(NAME_MAX_LENGTH)).pipe(
-        Schema.brand(brand),
-      ),
-      {
-        decode: SchemaGetter.transform((s) => s.trim()),
-        encode: SchemaGetter.transform((s) => s),
-      },
-    ),
+    Schema.decodeTo(brand(nonEmptyUpTo(maxLength)), {
+      decode: SchemaGetter.transform((s) => s.trim()),
+      encode: SchemaGetter.transform((s) => s),
+    }),
   );
+
+const nonEmptyUpTo = (maxLength: number) =>
+  Schema.NonEmptyString.check(Schema.isMaxLength(maxLength));
+
+const trimmedName = <Out extends Schema.Top & { readonly Encoded: string }>(
+  brand: (schema: ReturnType<typeof nonEmptyUpTo>) => Out,
+) => trimmedText(brand, NAME_MAX_LENGTH);
 
 /**
  * Same shape and reasoning as {@link TeamName}: trimmed, case preserved,
  * and unique in its shop, compared exactly. See {@link Workflow} for why the
  * name is unique as well as the tag.
  */
-export const WorkflowName = trimmedName("WorkflowName");
+export const WorkflowName = trimmedName(Schema.brand("WorkflowName"));
 export type WorkflowName = typeof WorkflowName.Type;
 
-export const TaskName = trimmedName("TaskName");
+export const TaskName = trimmedName(Schema.brand("TaskName"));
 export type TaskName = typeof TaskName.Type;
-
-const trimmedText = <B extends string>(brand: B, maxLength: number) =>
-  Schema.String.pipe(
-    Schema.decodeTo(
-      Schema.NonEmptyString.check(Schema.isMaxLength(maxLength)).pipe(
-        Schema.brand(brand),
-      ),
-      {
-        decode: SchemaGetter.transform((s) => s.trim()),
-        encode: SchemaGetter.transform((s) => s),
-      },
-    ),
-  );
 
 /** The cap {@link TaskInstructions} enforces, exported so the editor's field can count down to it and refuse past it. */
 export const TASK_INSTRUCTIONS_MAX_LENGTH = 500;
@@ -673,7 +670,7 @@ export const TASK_INSTRUCTIONS_MAX_LENGTH = 500;
  * string.
  */
 export const TaskInstructions = trimmedText(
-  "TaskInstructions",
+  Schema.brand("TaskInstructions"),
   TASK_INSTRUCTIONS_MAX_LENGTH,
 );
 export type TaskInstructions = typeof TaskInstructions.Type;
@@ -702,11 +699,17 @@ export const noteCountFrom = (maxLength: number) => maxLength - 200;
  * it, appended to by convention. Trimmed like {@link TaskName}; `null` clears.
  * The write rule is on {@link SetRunNoteCommand}.
  */
-export const RunNote = trimmedText("RunNote", RUN_NOTE_MAX_LENGTH);
+export const RunNote = trimmedText(
+  Schema.brand("RunNote"),
+  RUN_NOTE_MAX_LENGTH,
+);
 export type RunNote = typeof RunNote.Type;
 
 /** Why a run is blocked, in `Run.blockReason`. Same trimming; `null` blocks without one. */
-export const BlockReason = trimmedText("BlockReason", BLOCK_REASON_MAX_LENGTH);
+export const BlockReason = trimmedText(
+  Schema.brand("BlockReason"),
+  BLOCK_REASON_MAX_LENGTH,
+);
 export type BlockReason = typeof BlockReason.Type;
 
 /** Shopify's tag length limit: the schema check and the tag fields' submit error read this. */
@@ -1697,7 +1700,7 @@ export const OrdersCursor = Schema.String.check(
  * refused: {@link searchTerm} would read it as the order number `#`, a prefix every
  * order shares.
  */
-export const ListSearch = trimmedText("ListSearch", 64).check(
+export const ListSearch = trimmedText(Schema.brand("ListSearch"), 64).check(
   Schema.makeFilter(
     (q) =>
       q.replace(/^#+/u, "").length > 0 ||

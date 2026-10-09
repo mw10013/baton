@@ -58,10 +58,10 @@ const make = Effect.gen(function* () {
   >();
   const env = yield* CloudflareEnv;
   const config = yield* Config.all({
-    baseURL: Config.nonEmptyString("BETTER_AUTH_URL"),
-    secret: Config.redacted("BETTER_AUTH_SECRET"),
-    adminEmails: Config.string("ADMIN_EMAILS").pipe(Config.withDefault("")),
-    demoMode: Config.boolean("DEMO_MODE").pipe(Config.withDefault(false)),
+    baseURL: Config.NonEmptyString("BETTER_AUTH_URL"),
+    secret: Config.Redacted("BETTER_AUTH_SECRET"),
+    adminEmails: Config.String("ADMIN_EMAILS").pipe(Config.withDefault("")),
+    demoMode: Config.Boolean("DEMO_MODE").pipe(Config.withDefault(false)),
   });
   const adminEmails = new Set(
     config.adminEmails

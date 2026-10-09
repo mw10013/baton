@@ -6,7 +6,7 @@ import { getAgentByName } from "agents";
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { Effect, Layer, Ref, Schema } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import { describe, it } from "vitest";
 
 import { BillingAgent } from "@/lib/agent/Billing";

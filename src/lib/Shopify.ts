@@ -1,6 +1,6 @@
 import "@shopify/shopify-api/adapters/web-api";
 import type { Cause } from "effect";
-import type { SqlError } from "effect/unstable/sql";
+import type { SqlError } from "effect/sql";
 
 import * as ShopifyApi from "@shopify/shopify-api";
 import {
@@ -232,22 +232,22 @@ const StoredSessionExpiry = Schema.NullOr(Schema.DateFromMillis);
  * for those keys because `pnpm dev` sources `.env` into the shell first.
  */
 const shopifyConfig = Config.all({
-  apiKey: Config.nonEmptyString("SHOPIFY_API_KEY").pipe(
+  apiKey: Config.NonEmptyString("SHOPIFY_API_KEY").pipe(
     Config.map(Redacted.make),
   ),
-  apiSecretKey: Config.nonEmptyString("SHOPIFY_API_SECRET").pipe(
+  apiSecretKey: Config.NonEmptyString("SHOPIFY_API_SECRET").pipe(
     Config.map(Redacted.make),
   ),
-  appUrl: Config.nonEmptyString("SHOPIFY_APP_URL").pipe(
-    Config.orElse(() => Config.nonEmptyString("APP_URL")),
-    Config.orElse(() => Config.nonEmptyString("HOST")),
+  appUrl: Config.NonEmptyString("SHOPIFY_APP_URL").pipe(
+    Config.orElse(() => Config.NonEmptyString("APP_URL")),
+    Config.orElse(() => Config.NonEmptyString("HOST")),
     Config.map((value) =>
       value.startsWith("http://") || value.startsWith("https://")
         ? value
         : `https://${value}`,
     ),
   ),
-  environment: Config.literals(
+  environment: Config.Literals(
     ["local", "staging", "production"],
     "ENVIRONMENT",
   ).pipe(Config.withDefault("local")),

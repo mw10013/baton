@@ -27,7 +27,7 @@
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { Console, Effect, FileSystem } from "effect";
-import { CliError, Command, Flag } from "effect/unstable/cli";
+import { CliError, Command, Flag } from "effect/cli";
 import path from "node:path";
 import process from "node:process";
 
@@ -140,7 +140,7 @@ const init = Effect.fn(function* (index: number) {
 const initCommand = Command.make(
   "init",
   {
-    index: Flag.integer("index").pipe(
+    index: Flag.Int("index").pipe(
       Flag.withDescription(
         "This worktree's index, 1 for wt-01: port 3800+index, store sandbox-shop-NN",
       ),

@@ -2,7 +2,7 @@ import { SqliteClient } from "@effect/sql-sqlite-do";
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { Effect, Layer } from "effect";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 
 import { OrderRepository } from "@/lib/OrderRepository";
 import { RunRepository } from "@/lib/RunRepository";

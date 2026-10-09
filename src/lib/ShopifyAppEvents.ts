@@ -11,11 +11,7 @@ import {
   Schedule,
   Schema,
 } from "effect";
-import {
-  HttpClient,
-  HttpClientRequest,
-  HttpClientResponse,
-} from "effect/unstable/http";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 export class ShopifyAppEventsError extends Schema.TaggedError<ShopifyAppEventsError>()(
   "ShopifyAppEventsError",
@@ -109,12 +105,12 @@ export class ShopifyAppEvents extends Context.Service<
     ShopifyAppEvents,
     Effect.gen(function* () {
       const { apiKey, apiSecret, apiVersion, appHandle } = yield* Config.all({
-        apiKey: Config.nonEmptyString("SHOPIFY_API_KEY"),
-        apiSecret: Config.nonEmptyString("SHOPIFY_API_SECRET").pipe(
+        apiKey: Config.NonEmptyString("SHOPIFY_API_KEY"),
+        apiSecret: Config.NonEmptyString("SHOPIFY_API_SECRET").pipe(
           Config.map(Redacted.make),
         ),
-        apiVersion: Config.nonEmptyString("SHOPIFY_APP_EVENTS_API_VERSION"),
-        appHandle: Config.nonEmptyString("SHOPIFY_APP_HANDLE"),
+        apiVersion: Config.NonEmptyString("SHOPIFY_APP_EVENTS_API_VERSION"),
+        appHandle: Config.NonEmptyString("SHOPIFY_APP_HANDLE"),
       });
       const endpoint = `https://api.shopify.com/app/${apiVersion}/events`;
 

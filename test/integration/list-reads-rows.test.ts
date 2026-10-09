@@ -1,6 +1,6 @@
 import { strictEqual } from "@effect/vitest/utils";
 import { Effect, Schema } from "effect";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import { describe, it } from "vitest";
 
 import * as Domain from "@/lib/Domain";

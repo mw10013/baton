@@ -23,7 +23,7 @@
 
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
 import { Console, Effect, Result } from "effect";
-import { CliError, Command } from "effect/unstable/cli";
+import { CliError, Command } from "effect/cli";
 import { globSync, readdirSync, readFileSync, statSync } from "node:fs";
 
 import * as Domain from "../src/lib/Domain.ts";

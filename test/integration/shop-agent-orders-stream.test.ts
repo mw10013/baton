@@ -3,7 +3,7 @@ import { strictEqual } from "@effect/vitest/utils";
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { Clock, Effect, Layer, Option, Schema } from "effect";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import { describe, it } from "vitest";
 
 import * as Domain from "@/lib/Domain";

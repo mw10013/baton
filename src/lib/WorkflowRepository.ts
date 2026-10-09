@@ -1,11 +1,7 @@
-import type { SqlError } from "effect/unstable/sql";
+import type { SqlError } from "effect/sql";
 
 import { Clock, Context, Effect, Layer, Option, Schema } from "effect";
-import {
-  SqlClient,
-  type SqlConnection,
-  type Statement,
-} from "effect/unstable/sql";
+import { SqlClient, type SqlConnection, type Statement } from "effect/sql";
 
 import * as Domain from "@/lib/Domain";
 import * as WorkflowLayout from "@/lib/WorkflowLayout";

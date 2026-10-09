@@ -2,7 +2,7 @@
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { Console, Effect } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
+import { Command, Flag } from "effect/cli";
 
 import {
   CHROME_PROFILE,
@@ -12,16 +12,16 @@ import {
 const command = Command.make(
   "refresh-shopify-playwright-auth",
   {
-    output: Flag.string("output").pipe(
+    output: Flag.String("output").pipe(
       Flag.withDefault("playwright/.auth/shopify-admin.json"),
     ),
-    profile: Flag.string("profile").pipe(
+    profile: Flag.String("profile").pipe(
       Flag.withDescription(
         "Chrome profile directory (chrome://version → Profile Path)",
       ),
       Flag.withDefault(CHROME_PROFILE),
     ),
-    dryRun: Flag.boolean("dry-run").pipe(
+    dryRun: Flag.Boolean("dry-run").pipe(
       Flag.withDescription(
         "Read and decrypt cookies without writing storage state; may prompt for Keychain access",
       ),

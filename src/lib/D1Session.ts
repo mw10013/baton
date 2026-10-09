@@ -1,6 +1,6 @@
 import { D1Client } from "@effect/sql-d1";
 import { Context, Layer } from "effect";
-import { Reactivity } from "effect/unstable/reactivity";
+import { Reactivity } from "effect/reactivity";
 
 /**
  * The per-request read-replica session (Cloudflare D1 Sessions API,

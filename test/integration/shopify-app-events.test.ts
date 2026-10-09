@@ -1,6 +1,6 @@
 import { strictEqual } from "@effect/vitest/utils";
 import { Effect, Layer, Schema } from "effect";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import { describe, it } from "vitest";
 
 import * as Domain from "@/lib/Domain";

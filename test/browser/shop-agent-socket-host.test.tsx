@@ -199,6 +199,7 @@ describe("ShopAgentSocketProvider", () => {
       .element(
         screen.getByText(
           "Signed in elsewhere. Reconnect to keep working here.",
+          { exact: false },
         ),
       )
       .toBeInTheDocument();

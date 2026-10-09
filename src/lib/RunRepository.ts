@@ -1,4 +1,4 @@
-import type { SqlError } from "effect/unstable/sql";
+import type { SqlError } from "effect/sql";
 
 import {
   Clock,
@@ -10,7 +10,7 @@ import {
   Schema,
   Struct,
 } from "effect";
-import { SqlClient, type Statement } from "effect/unstable/sql";
+import { SqlClient, type Statement } from "effect/sql";
 
 import * as CurrentWhere from "@/lib/currentWhere";
 import * as Domain from "@/lib/Domain";

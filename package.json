@@ -77,8 +77,8 @@
     "tail:PRODUCTION": "mkdir -p logs && wrangler tail --env production --format json 2>&1 | tee logs/production-worker.log | jq -r --unbuffered -f scripts/wrangler-tail-compact.jq | tee logs/production-worker.compact.log"
   },
   "dependencies": {
-    "@effect/sql-d1": "4.0.0-rc.112",
-    "@effect/sql-sqlite-do": "4.0.0-rc.112",
+    "@effect/sql-d1": "4.0.2",
+    "@effect/sql-sqlite-do": "4.0.2",
     "@shopify/app-bridge-react": "4.2.13",
     "@shopify/shopify-api": "15.0.0",
     "@tanstack/react-form": "1.33.5",
@@ -89,7 +89,7 @@
     "@tanstack/router-plugin": "1.168.36",
     "agents": "0.28.0",
     "better-auth": "1.7.2",
-    "effect": "4.0.0-rc.112",
+    "effect": "4.0.2",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "vite-tsconfig-paths": "6.1.1"
@@ -97,8 +97,8 @@
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.63.1",
     "@cloudflare/vitest-plugin": "1.4.0",
-    "@effect/platform-node": "4.0.0-rc.112",
-    "@effect/vitest": "4.0.0-rc.112",
+    "@effect/platform-node": "4.0.2",
+    "@effect/vitest": "4.0.2",
     "@graphql-codegen/cli": "6.3.1",
     "@graphql-codegen/typescript": "5.0.10",
     "@playwright/test": "1.63.0",
@@ -113,7 +113,7 @@
     "@types/react": "19.2.7",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.1.2",
-    "@vitest/browser-playwright": "4.1.4",
+    "@vitest/browser-playwright": "5.0.3",
     "graphql-config": "5.1.6",
     "jsonc-parser": "3.3.1",
     "oxfmt": "0.67.0",
@@ -122,8 +122,8 @@
     "playwright-core": "1.63.0",
     "typescript": "7.0.2",
     "vite": "8.3.4",
-    "vitest": "4.1.4",
-    "vitest-browser-react": "2.2.0",
+    "vitest": "5.0.3",
+    "vitest-browser-react": "2.3.0",
     "wrangler": "4.149.0"
   },
   "devEngines": {

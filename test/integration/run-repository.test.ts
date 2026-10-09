@@ -3,7 +3,7 @@ import { deepStrictEqual, strictEqual } from "@effect/vitest/utils";
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { Effect, Layer, Option, Ref, Schema } from "effect";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import { describe, it } from "vitest";
 
 import * as Domain from "@/lib/Domain";

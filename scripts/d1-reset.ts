@@ -2,7 +2,7 @@
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { Console, Effect } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
+import { Command, Flag } from "effect/cli";
 import * as jsonc from "jsonc-parser";
 
 import { runCommand } from "./lib/command.ts";
@@ -97,7 +97,7 @@ const resetRemote = (env: string, databaseName: string) =>
 const command = Command.make(
   "d1-reset",
   {
-    env: Flag.choice("env", ["local", "staging", "production"]).pipe(
+    env: Flag.Literals("env", ["local", "staging", "production"]).pipe(
       Flag.withDescription("Target environment to reset"),
       Flag.withDefault("local"),
     ),

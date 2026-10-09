@@ -1,7 +1,7 @@
-import type { SqlError } from "effect/unstable/sql";
+import type { SqlError } from "effect/sql";
 
 import { Clock, Context, Effect, Layer, Match, Option, Schema } from "effect";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 
 import * as CurrentWhere from "@/lib/currentWhere";
 import * as Domain from "@/lib/Domain";

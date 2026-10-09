@@ -14,7 +14,7 @@ import {
   HttpClient,
   HttpClientRequest,
   HttpClientResponse,
-} from "effect/unstable/http";
+} from "effect/http";
 
 import * as Domain from "@/lib/Domain";
 
@@ -166,10 +166,10 @@ export class ShopifyPartner extends Context.Service<
     ShopifyPartner,
     Effect.gen(function* () {
       const { orgId, appId, appHandle, apiToken } = yield* Config.all({
-        orgId: Config.nonEmptyString("SHOPIFY_PARTNER_ORG_ID"),
-        appId: Config.nonEmptyString("SHOPIFY_PARTNER_APP_ID"),
-        appHandle: Config.nonEmptyString("SHOPIFY_APP_HANDLE"),
-        apiToken: Config.nonEmptyString("SHOPIFY_PARTNER_API_TOKEN").pipe(
+        orgId: Config.NonEmptyString("SHOPIFY_PARTNER_ORG_ID"),
+        appId: Config.NonEmptyString("SHOPIFY_PARTNER_APP_ID"),
+        appHandle: Config.NonEmptyString("SHOPIFY_APP_HANDLE"),
+        apiToken: Config.NonEmptyString("SHOPIFY_PARTNER_API_TOKEN").pipe(
           Config.map(Redacted.make),
         ),
       });

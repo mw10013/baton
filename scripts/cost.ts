@@ -7,7 +7,7 @@
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { Console, Effect } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
+import { Command, Flag } from "effect/cli";
 
 import {
   cost,
@@ -27,69 +27,69 @@ const num = (n: number) =>
   n >= 100 ? Math.round(n).toLocaleString("en-US") : n.toPrecision(3);
 
 const shopFlags = {
-  members: Flag.integer("members").pipe(
+  members: Flag.Int("members").pipe(
     Flag.withDescription("members with a sign-in"),
     Flag.optional,
   ),
-  merchants: Flag.integer("merchants").pipe(
+  merchants: Flag.Int("merchants").pipe(
     Flag.withDescription("Shopify staff with the app open"),
     Flag.optional,
   ),
-  openOrders: Flag.integer("open-orders").pipe(
+  openOrders: Flag.Int("open-orders").pipe(
     Flag.withDescription("open orders stored at one moment"),
     Flag.optional,
   ),
-  newOrders: Flag.integer("orders").pipe(
+  newOrders: Flag.Int("orders").pipe(
     Flag.withDescription("new orders synced per month"),
     Flag.optional,
   ),
-  items: Flag.float("items").pipe(
+  items: Flag.Finite("items").pipe(
     Flag.withDescription("line items per order that match a workflow"),
     Flag.optional,
   ),
-  tasks: Flag.float("tasks").pipe(
+  tasks: Flag.Finite("tasks").pipe(
     Flag.withDescription("tasks per run"),
     Flag.optional,
   ),
-  webhooks: Flag.float("webhooks").pipe(
+  webhooks: Flag.Finite("webhooks").pipe(
     Flag.withDescription("webhook deliveries per order over its life"),
     Flag.optional,
   ),
-  liveScreens: Flag.float("live-screens").pipe(
+  liveScreens: Flag.Finite("live-screens").pipe(
     Flag.withDescription(
       "share of members and merchants with a visible live screen at any moment (1 = everyone, always)",
     ),
     Flag.optional,
   ),
-  teamSets: Flag.integer("team-sets").pipe(
+  teamSets: Flag.Int("team-sets").pipe(
     Flag.withDescription("distinct team sets among the members"),
     Flag.optional,
   ),
-  merchantFilters: Flag.integer("merchant-filters").pipe(
+  merchantFilters: Flag.Int("merchant-filters").pipe(
     Flag.withDescription(
       "distinct orders-index filters the merchants hold open",
     ),
     Flag.optional,
   ),
-  teamShare: Flag.float("team-share").pipe(
+  teamShare: Flag.Finite("team-share").pipe(
     Flag.withDescription("share of open runs a member's teams can see"),
     Flag.optional,
   ),
-  pageviews: Flag.integer("pageviews").pipe(
+  pageviews: Flag.Int("pageviews").pipe(
     Flag.withDescription("navigations per live screen per working day"),
     Flag.optional,
   ),
-  peak: Flag.float("peak").pipe(
+  peak: Flag.Finite("peak").pipe(
     Flag.withDescription(
       "how much busier the busiest hour is than the average working hour",
     ),
     Flag.optional,
   ),
-  preset: Flag.choice("preset", Object.keys(PRESETS)).pipe(
+  preset: Flag.Literals("preset", Object.keys(PRESETS)).pipe(
     Flag.withDescription("start from a named shop; flags override it"),
     Flag.optional,
   ),
-  json: Flag.boolean("json").pipe(Flag.withDefault(false)),
+  json: Flag.Boolean("json").pipe(Flag.withDefault(false)),
 };
 
 type ShopFlags = {
@@ -164,7 +164,7 @@ const shopCommand = Command.make(
 
 const ladderCommand = Command.make(
   "ladder",
-  { json: Flag.boolean("json").pipe(Flag.withDefault(false)) },
+  { json: Flag.Boolean("json").pipe(Flag.withDefault(false)) },
   Effect.fn(function* ({ json }) {
     const reports = Object.keys(PRESETS).map((name) => ({
       name,

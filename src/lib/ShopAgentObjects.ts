@@ -4,7 +4,7 @@ import {
   HttpClient,
   HttpClientRequest,
   HttpClientResponse,
-} from "effect/unstable/http";
+} from "effect/http";
 
 export class ShopAgentObjectsError extends Schema.TaggedError<ShopAgentObjectsError>()(
   "ShopAgentObjectsError",
@@ -78,16 +78,16 @@ export class ShopAgentObjects extends Context.Service<
   static readonly layer = Layer.effect(
     ShopAgentObjects,
     Effect.gen(function* () {
-      const environment = yield* Config.string("ENVIRONMENT");
+      const environment = yield* Config.String("ENVIRONMENT");
       const isLocal = environment === "local";
       const targetScript =
         environment === "production" ? "baton" : `baton-${environment}`;
       const baseUrl = isLocal
-        ? `http://localhost:${yield* Config.string("PORT")}/cdn-cgi/explorer/api`
-        : `https://api.cloudflare.com/client/v4/accounts/${yield* Config.nonEmptyString("CLOUDFLARE_ACCOUNT_ID")}`;
+        ? `http://localhost:${yield* Config.String("PORT")}/cdn-cgi/explorer/api`
+        : `https://api.cloudflare.com/client/v4/accounts/${yield* Config.NonEmptyString("CLOUDFLARE_ACCOUNT_ID")}`;
       const apiToken = isLocal
         ? undefined
-        : yield* Config.nonEmptyString("CLOUDFLARE_WORKERS_API_TOKEN").pipe(
+        : yield* Config.NonEmptyString("CLOUDFLARE_WORKERS_API_TOKEN").pipe(
             Config.map(Redacted.make),
           );
 

@@ -52,8 +52,8 @@
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { Console, Data, Effect, FileSystem, Option, Schema } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { Command, Flag } from "effect/cli";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
@@ -696,7 +696,7 @@ const runLocked = <E, R>(
   }).pipe(Effect.scoped);
 
 const seedFlag = (defaultValue: boolean, description: string) =>
-  Flag.boolean(defaultValue ? "no-seed" : "seed").pipe(
+  Flag.Boolean(defaultValue ? "no-seed" : "seed").pipe(
     Flag.withDescription(description),
     Flag.withDefault(false),
     Flag.map((flag) => (defaultValue ? !flag : flag)),
@@ -770,7 +770,7 @@ const tunnelNote: Record<TunnelState, string> = {
 const statusCommand = Command.make(
   "status",
   {
-    json: Flag.boolean("json").pipe(
+    json: Flag.Boolean("json").pipe(
       Flag.withDescription("Print the report as JSON"),
       Flag.withDefault(false),
     ),
@@ -835,7 +835,7 @@ const recentCliOutput = (pane: Option.Option<string>, lines: number) =>
 const logsCommand = Command.make(
   "logs",
   {
-    lines: Flag.integer("lines").pipe(
+    lines: Flag.Int("lines").pipe(
       Flag.withDescription("Lines from each log"),
       Flag.withDefault(80),
     ),

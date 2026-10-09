@@ -2,7 +2,7 @@
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { Config, Console, Effect, Redacted, Schema } from "effect";
-import { Argument, Command, Flag } from "effect/unstable/cli";
+import { Argument, Command, Flag } from "effect/cli";
 import { parse, type ParseError } from "jsonc-parser";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -322,26 +322,26 @@ function synthesize(
 const gen = Command.make(
   "gen",
   {
-    model: Flag.choice("model", ["aura-1", "aura-2"]).pipe(
+    model: Flag.Literals("model", ["aura-1", "aura-2"]).pipe(
       Flag.withDescription("Speech model: aura-1 or aura-2 (English, default)"),
       Flag.withDefault("aura-2"),
     ),
-    voice: Flag.choice("voice", VOICES).pipe(
+    voice: Flag.Literals("voice", VOICES).pipe(
       Flag.withDescription(`Female voice (default: luna). ${VOICE_HELP}`),
       Flag.withDefault("luna"),
     ),
-    text: Argument.string("text").pipe(
+    text: Argument.String("text").pipe(
       Argument.withDescription(
         "Required text to speak (1–500 Unicode code points); quote it as one argument",
       ),
     ),
-    output: Flag.string("output").pipe(
+    output: Flag.String("output").pipe(
       Flag.withDescription(
         "MP3 file path, absolute or relative to the repo root; defaults to tmp/tts/<YYYYMMDD>-<NN>-<excerpt>/<excerpt>.mp3; creates parent directories; never overwrites",
       ),
       Flag.withDefault(""),
     ),
-    dryRun: Flag.boolean("dry-run").pipe(
+    dryRun: Flag.Boolean("dry-run").pipe(
       Flag.withDescription(
         "Preview without loading credentials, writing files, or making requests",
       ),
@@ -408,7 +408,7 @@ const gen = Command.make(
       );
       return;
     }
-    const token = yield* Config.redacted("CLOUDFLARE_API_TOKEN").pipe(
+    const token = yield* Config.Redacted("CLOUDFLARE_API_TOKEN").pipe(
       Effect.mapError(
         () =>
           new SpeechError({
@@ -445,13 +445,13 @@ const gen = Command.make(
 const play = Command.make(
   "play",
   {
-    path: Argument.string("path").pipe(
+    path: Argument.String("path").pipe(
       Argument.withDescription(
         "MP3 path or daily sequence number (newest matching date); defaults to the latest recording in tmp/tts",
       ),
       Argument.withDefault(""),
     ),
-    device: Flag.string("device").pipe(
+    device: Flag.String("device").pipe(
       Flag.withDescription(
         "mpv output device identifier; defaults to Speakers + BlackHole; use auto for normal system output or mpv --audio-device=help to list devices",
       ),

@@ -1,6 +1,6 @@
 import { Clock, Effect, Schedule, Schema, Stream } from "effect";
-import { Ndjson } from "effect/unstable/encoding";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { Ndjson } from "effect/encoding";
+import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as Domain from "@/lib/Domain";
 import { OrderRepository } from "@/lib/OrderRepository";

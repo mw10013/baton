@@ -56,8 +56,8 @@ Problems, all observed in this repo:
 
 ## 2. What prelive's refs.ts does
 
-`../ableton-extension-prelive/scripts/refs.ts` (1484 lines, Effect v4 + `effect/unstable/cli`
-`Command`/`Flag`/`Argument`, `effect/unstable/process` `ChildProcess`). Commands:
+`../ableton-extension-prelive/scripts/refs.ts` (1484 lines, Effect v4 + `effect/cli`
+`Command`/`Flag`/`Argument`, `effect/process` `ChildProcess`). Commands:
 
 ```
 node scripts/refs.ts fetch <name...>   fetch those refs
@@ -88,7 +88,7 @@ Mechanics that matter for baton:
   from prelive if a crawl-only source ever appears.
 
 Compatibility check, verified in this repo: `effect@4.0.0-rc.108` in `node_modules` ships
-both `effect/unstable/cli` (Argument, Command, Flag, CliError) and `effect/unstable/process`
+both `effect/cli` (Argument, Command, Flag, CliError) and `effect/process`
 (ChildProcess, ChildProcessSpawner). The port needs `@effect/platform-node` (already a
 devDependency) and nothing else.
 

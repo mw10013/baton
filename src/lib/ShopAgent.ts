@@ -18,7 +18,7 @@ import {
   Schema,
   type SchemaAST,
 } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 
 import { BillingAgent } from "@/lib/agent/Billing";
 import { ShopAgentHost } from "@/lib/agent/Host";

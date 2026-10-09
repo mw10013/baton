@@ -23,14 +23,14 @@ import {
   Schedule,
   Schema,
 } from "effect";
-import { Argument, CliError, Command, Flag } from "effect/unstable/cli";
+import { Argument, CliError, Command, Flag } from "effect/cli";
 import {
   FetchHttpClient,
   HttpClient,
   HttpClientRequest,
   HttpClientResponse,
-} from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+} from "effect/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { checkoutKind } from "./lib/worktree.ts";
 import * as ShopifyDocs from "./refs-shopify-docs.ts";
@@ -1228,11 +1228,11 @@ const toUserError = (error: unknown) =>
 const fetchCommand = Command.make(
   "fetch",
   {
-    all: Flag.boolean("all").pipe(
+    all: Flag.Boolean("all").pipe(
       Flag.withDescription("Fetch every ref except the opt-in ones"),
       Flag.withDefault(false),
     ),
-    names: Argument.choice("name", refNames).pipe(
+    names: Argument.Literals("name", refNames).pipe(
       Argument.variadic(),
       Argument.withDescription("Refs to fetch"),
     ),

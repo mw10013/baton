@@ -1,5 +1,5 @@
 import { Data, Effect, FileSystem, Stream } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { createDecipheriv, pbkdf2Sync } from "node:crypto";
 import { homedir } from "node:os";
 import path from "node:path";

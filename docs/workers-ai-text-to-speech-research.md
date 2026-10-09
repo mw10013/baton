@@ -300,10 +300,10 @@ Suggested files:
 
 The project already has `effect` and `@effect/platform-node` **4.0.0-rc.112**. No extra SDK, `@effect/cli`, `@effect/platform`, TypeScript runner, or Cloudflare package is needed. Follow the existing CLI shape in `scripts/refresh-shopify-playwright-auth.ts`:
 
-- `Command` and `Flag` from `effect/unstable/cli`.
+- `Command` and `Flag` from `effect/cli`.
 - `Command.make`, `Command.run`, `Effect.gen` or `Effect.fn`, and `NodeRuntime.runMain`.
 - `NodeServices.layer` for local platform services, including `FileSystem` and `Path`.
-- `HttpClient`, `HttpClientRequest`, and `FetchHttpClient` from `effect/unstable/http`; provide `FetchHttpClient.layer` as well as Node services.
+- `HttpClient`, `HttpClientRequest`, and `FetchHttpClient` from `effect/http`; provide `FetchHttpClient.layer` as well as Node services.
 - A redacted configuration value for the token; typed failures for configuration, HTTP status, invalid audio, timeout, and file output.
 
 Recommended initial command surface:

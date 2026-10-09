@@ -24,7 +24,7 @@ const getLoaderData = createServerFn({ method: "GET" }).handler(
   ({ context: { runEffect } }) =>
     runEffect(
       Effect.map(
-        Config.boolean("DEMO_MODE").pipe(Config.withDefault(false)),
+        Config.Boolean("DEMO_MODE").pipe(Config.withDefault(false)),
         (isDemoMode) => ({ isDemoMode }) satisfies LoginLoaderData,
       ),
     ),
@@ -73,7 +73,7 @@ const loginFn = createServerFn({ method: "POST" })
           email: data.email,
           callbackURL: "/login-callback",
         });
-        const isDemoMode = yield* Config.boolean("DEMO_MODE").pipe(
+        const isDemoMode = yield* Config.Boolean("DEMO_MODE").pipe(
           Config.withDefault(false),
         );
         const kv = yield* KV;

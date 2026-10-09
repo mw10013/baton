@@ -22,7 +22,7 @@ import {
   HttpClient,
   HttpClientRequest,
   HttpClientResponse,
-} from "effect/unstable/http";
+} from "effect/http";
 import zlib from "node:zlib";
 
 export class ShopifyDocsError extends Data.TaggedError("ShopifyDocsError")<{
