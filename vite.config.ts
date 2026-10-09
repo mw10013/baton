@@ -1,8 +1,8 @@
 import { cloudflare } from "@cloudflare/vite-plugin";
-import babel from "@rolldown/plugin-babel";
 import { devtools } from "@tanstack/devtools-vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import viteReact from "@vitejs/plugin-react";
+import agents from "agents/vite";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import viteTsConfigPaths from "vite-tsconfig-paths";
@@ -129,9 +129,7 @@ const config = defineConfig({
       },
     }),
     viteReact(),
-    babel({
-      plugins: [["@babel/plugin-proposal-decorators", { version: "2023-11" }]],
-    }),
+    agents(),
   ],
 });
 

@@ -1,7 +1,7 @@
-import babel from "@rolldown/plugin-babel";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import viteReact from "@vitejs/plugin-react";
 import { playwright } from "@vitest/browser-playwright";
+import agents from "agents/vite";
 /* oxlint-disable */
 import path from "node:path";
 import tsconfigPaths from "vite-tsconfig-paths";
@@ -23,9 +23,7 @@ export default defineConfig({
      */
     tanstackStart({ importProtection: { behavior: "error" } }),
     viteReact(),
-    babel({
-      plugins: [["@babel/plugin-proposal-decorators", { version: "2023-11" }]],
-    }),
+    agents(),
   ],
   resolve: {
     alias: {
