@@ -1,3 +1,4 @@
+import babel from "@rolldown/plugin-babel";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import viteReact from "@vitejs/plugin-react";
 import { playwright } from "@vitest/browser-playwright";
@@ -21,12 +22,9 @@ export default defineConfig({
      * leak and must fail the test, not be swapped for a Proxy and logged once.
      */
     tanstackStart({ importProtection: { behavior: "error" } }),
-    viteReact({
-      babel: {
-        plugins: [
-          ["@babel/plugin-proposal-decorators", { version: "2023-11" }],
-        ],
-      },
+    viteReact(),
+    babel({
+      plugins: [["@babel/plugin-proposal-decorators", { version: "2023-11" }]],
     }),
   ],
   resolve: {

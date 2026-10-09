@@ -1,4 +1,5 @@
 import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-plugin";
+import babel from "@rolldown/plugin-babel";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import viteReact from "@vitejs/plugin-react";
 /* oxlint-disable */
@@ -52,12 +53,11 @@ export default defineConfig(async () => {
         projects: [path.join(rootDir, "tsconfig.json")],
       }),
       tanstackStart(),
-      viteReact({
-        babel: {
-          plugins: [
-            ["@babel/plugin-proposal-decorators", { version: "2023-11" }],
-          ],
-        },
+      viteReact(),
+      babel({
+        plugins: [
+          ["@babel/plugin-proposal-decorators", { version: "2023-11" }],
+        ],
       }),
     ],
     resolve: {

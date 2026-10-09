@@ -1,4 +1,5 @@
 import { cloudflare } from "@cloudflare/vite-plugin";
+import babel from "@rolldown/plugin-babel";
 import { devtools } from "@tanstack/devtools-vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import viteReact from "@vitejs/plugin-react";
@@ -89,7 +90,7 @@ const config = defineConfig({
     },
   },
   build: {
-    rollupOptions: {
+    rolldownOptions: {
       external: ["node:stream", "node:stream/web", "node:async_hooks"],
     },
   },
@@ -127,12 +128,9 @@ const config = defineConfig({
         client: { specifiers: [/^better-auth(?:\/|$)/u, /^kysely(?:\/|$)/u] },
       },
     }),
-    viteReact({
-      babel: {
-        plugins: [
-          ["@babel/plugin-proposal-decorators", { version: "2023-11" }],
-        ],
-      },
+    viteReact(),
+    babel({
+      plugins: [["@babel/plugin-proposal-decorators", { version: "2023-11" }]],
     }),
   ],
 });
