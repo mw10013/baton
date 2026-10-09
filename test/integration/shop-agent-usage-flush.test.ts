@@ -27,7 +27,7 @@ import { runShopAgentMigrations } from "@/lib/ShopAgentSchema";
  * first time it sends and keeps that function, so the stand-in is installed
  * at module load, before any request, and delegates everything that is not
  * `api.shopify.com` to the real `fetch`. The patch reaches no other test
- * file: vitest-pool-workers runs each file in its own isolate.
+ * file: vitest-plugin runs each file in its own isolate.
  */
 const appEvents: { idempotencyKey: string; value: number }[] = [];
 const realFetch = globalThis.fetch;

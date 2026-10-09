@@ -15,8 +15,8 @@
       "vitest",
       "node",
       "vite/client",
-      "@cloudflare/vitest-pool-workers",
-      "@cloudflare/vitest-pool-workers/types",
+      "@cloudflare/vitest-plugin",
+      "@cloudflare/vitest-plugin/types",
       "@playwright/test"
     ],
     "tsBuildInfoFile": "../node_modules/.tmp/tsconfig.test.tsbuildinfo",

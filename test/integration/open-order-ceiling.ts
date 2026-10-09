@@ -11,7 +11,7 @@ import * as Domain from "@/lib/Domain";
  * tests lower the constant for the duration — the same seam the open-run
  * ceiling tests use, and for the same reason: threading a limit through
  * `syncOrderWebhook` for nobody but a test would put a test seam in the
- * production signature. vitest-pool-workers runs each file in its own
+ * production signature. vitest-plugin runs each file in its own
  * isolate, so no other file sees the change.
  */
 export const withMaxOpenOrders = <A>(limit: number, body: () => Promise<A>) => {

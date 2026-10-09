@@ -62,7 +62,7 @@ Downloaded source code of libraries are in `refs/` for reference.
 - **Shopify CLI**: `refs/shopify-cli/`
 - **Shopify Docs**: `refs/shopify-docs/`
 - **Shopify Flow manual** (merchant help center): `refs/flow-manual/` (markdown; `reference/` has triggers, conditions, actions)
-- **Workers SDK**: `refs/workers-sdk/` (source for `wrangler`, `@cloudflare/vite-plugin`, `vitest-pool-workers`)
+- **Workers SDK**: `refs/workers-sdk/` (source for `wrangler`, `@cloudflare/vite-plugin`, `vitest-plugin`)
 - **Agents**: `refs/agents/` (source for the `agents` SDK; `packages/agents/CHANGELOG.md` is the upgrade record)
 - **PartyKit**: `refs/partykit/` (the monorepo, pinned to the `partysocket` version `agents` depends on; `packages/partysocket/` is the reconnecting WebSocket client under `useAgent`, `packages/partyserver/` is the Durable Object runtime that `agents` vendors into `agents/lifecycle`)
 - **Vitest**: `refs/vitest/`

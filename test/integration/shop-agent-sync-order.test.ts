@@ -29,7 +29,7 @@ import { storeOpenOrders, withMaxOpenOrders } from "./open-order-ceiling.ts";
  * the fetch its adapter registered when it was imported, not through
  * `globalThis.fetch`, so the stand-in replaces that registration. It answers
  * the one-order query for every `/admin/api/` request and delegates
- * everything else to the real `fetch`; vitest-pool-workers runs each file in
+ * everything else to the real `fetch`; vitest-plugin runs each file in
  * its own isolate, so no other file sees it. It answers the order the
  * request names, `ORDER_ID` when it names none. `shopifyHasOrder` false makes
  * it answer `null`, as Shopify does for a deleted order.
