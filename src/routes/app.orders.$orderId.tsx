@@ -47,7 +47,7 @@ import { errorMessage, textOrNull } from "@/lib/useMemberRunActions";
 const orderQueryKey = (shop: string, legacyId: string) =>
   ["order", shop, legacyId] as const;
 
-/** See the note on `decodeOrdersIndexData` in `app.orders.index.tsx`. */
+/** See the note on `decodeOrdersIndexData` in `src/lib/ordersIndexQuery.ts`. */
 const decodeDetail = Schema.decodeUnknownPromise(
   Schema.toType(Schema.NullOr(Domain.OrderPageData)),
 );

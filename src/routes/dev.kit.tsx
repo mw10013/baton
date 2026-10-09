@@ -21,12 +21,17 @@ import { PageNote } from "@/components/screen/PageNote";
 import { Prose } from "@/components/screen/Prose";
 import { ResourceRow, RowLine } from "@/components/screen/ResourceRow";
 import { SearchLine } from "@/components/screen/SearchLine";
+import {
+  SetupGuide,
+  type SetupGuideStep,
+} from "@/components/screen/SetupGuide";
 import { ShowMore } from "@/components/screen/ShowMore";
 import { Strip } from "@/components/screen/Strip";
 import { Token } from "@/components/screen/Token";
 import { CloudflareEnv } from "@/lib/CloudflareEnv";
 import * as Domain from "@/lib/Domain";
 import { findHelpSection } from "@/lib/helpPages";
+import { ORDERS_STRIP } from "@/lib/ordersIndexQuery";
 import { STATE_LABEL, STATES } from "@/lib/workflowsListStates";
 
 /**
@@ -105,13 +110,43 @@ const UPDATED_AT = Date.UTC(2026, 8, 30, 23, 59);
  */
 const HELP_ENTRIES = (findHelpSection("workflows")?.pages ?? []).slice(2);
 
-const ORDER_STRIP: readonly (keyof Domain.OrderCounts)[] = [
-  "no_workflow",
-  "not_started",
-  "making",
-  "made",
-  "issues",
-];
+/**
+ * The home page's setup guide in each state: `done` marks the steps done, in
+ * order. The strings are the home page's; the long case is the help titles
+ * at phone width, the longest line the guide has.
+ */
+const setupSteps = (done: number): readonly SetupGuideStep[] => {
+  const help = findHelpSection("getting-started")?.pages ?? [];
+  const helpLink = (slug: string) => ({
+    label: help.find((page) => page.slug === slug)?.title ?? slug,
+    href: "/dev/kit",
+  });
+  const steps = [
+    {
+      key: "teamWithMember",
+      sentence: "Create a team and add a member",
+      link: { label: "Teams", href: "/dev/kit" },
+      help: helpLink("first-team"),
+    },
+    {
+      key: "activeWorkflow",
+      sentence: "Create a workflow and turn it on",
+      link: { label: "Workflows", href: "/dev/kit" },
+      help: helpLink("first-workflow"),
+    },
+    {
+      key: "run",
+      sentence: "An item gets a workflow",
+      body: "New orders arrive as they are placed.",
+      help: helpLink("first-order"),
+    },
+  ];
+  return steps.map((step, index) => ({
+    ...step,
+    done: index < done,
+    state: index < done ? "Done" : "Not done",
+  }));
+};
 
 const noop = () => {
   /* static data: nothing to do */
@@ -279,7 +314,7 @@ function RouteComponent() {
           head={
             <>
               <Strip
-                cells={ORDER_STRIP.map((key, index) => ({
+                cells={ORDERS_STRIP.map((key, index) => ({
                   key,
                   label: Domain.ORDERS_SHOW_LABEL[key],
                   count: 1000 + index * 120,
@@ -316,6 +351,27 @@ function RouteComponent() {
             </s-table-body>
           </s-table>
         </IndexSection>
+        {[0, 1, 2].map((done) => (
+          <SetupGuide
+            key={done}
+            heading="Getting started"
+            count={`${String(done)} of 3 done`}
+            steps={setupSteps(done)}
+          />
+        ))}
+        {/* All three done: the home page leaves the guide out, so its place is empty. */}
+        <s-section heading="Setup guide, all done" />
+        {/* The home page's strip: the same cells as links, nothing chosen. */}
+        <s-section heading="Orders">
+          <Strip
+            cells={ORDERS_STRIP.map((key, index) => ({
+              key,
+              label: Domain.ORDERS_SHOW_LABEL[key],
+              count: 1000 + index * 120,
+              href,
+            }))}
+          />
+        </s-section>
         <IndexSection
           label="Workflows index"
           head={

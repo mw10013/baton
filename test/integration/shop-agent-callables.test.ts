@@ -144,6 +144,7 @@ describe("ShopAgent callable role gate", () => {
       "flushUsageEvents",
       "revokeAllConnections",
       "onOrdersStream",
+      "getWorkflowSetupFacts",
     ])
       expect(callables, `${name} must not be @callable()`).not.toContain(name);
     socket.close();

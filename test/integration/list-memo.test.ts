@@ -1,7 +1,7 @@
 import type { ShopAgent } from "@/lib/ShopAgent";
 
 import { SqliteClient } from "@effect/sql-sqlite-do";
-import { strictEqual } from "@effect/vitest/utils";
+import { deepStrictEqual, strictEqual } from "@effect/vitest/utils";
 import { getAgentByName } from "agents";
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
@@ -17,6 +17,11 @@ import { D1Session } from "@/lib/D1Session";
 import * as Domain from "@/lib/Domain";
 import { makeEnvLayer } from "@/lib/LayerEx";
 import { OrderRepository } from "@/lib/OrderRepository";
+import {
+  ORDERS_ARRIVAL_INPUT,
+  ordersIndexInput,
+  ordersQueryKey,
+} from "@/lib/ordersIndexQuery";
 import { Repository } from "@/lib/Repository";
 import { RunRepository, RunRepositoryError } from "@/lib/RunRepository";
 import { runShopAgentMigrations } from "@/lib/ShopAgentSchema";
@@ -376,5 +381,21 @@ describe("the list memo", () => {
     );
     strictEqual(first, "once");
     strictEqual(second, 1);
+  });
+});
+
+describe("the orders index's arrival read", () => {
+  it("Home and the orders index read the same listOrders input", () => {
+    const arrival = ordersIndexInput({
+      after: null,
+      q: null,
+      show: null,
+      team: null,
+    });
+    deepStrictEqual(arrival, ORDERS_ARRIVAL_INPUT);
+    deepStrictEqual(
+      ordersQueryKey("shop.myshopify.com", arrival),
+      ordersQueryKey("shop.myshopify.com", ORDERS_ARRIVAL_INPUT),
+    );
   });
 });

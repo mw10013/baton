@@ -534,6 +534,14 @@ const make = Effect.gen(function* () {
     });
   };
 
+  /**
+   * The object's half of {@link Domain.SetupFacts}, for the home page's
+   * loader. Not memoized: the guide is read on a loader, never on a publish.
+   */
+  const workflowSetupFacts = WorkflowRepository.pipe(
+    Effect.flatMap((repository) => repository.workflowSetupFacts()),
+  );
+
   const listWorkflows = (input: Domain.ListWorkflowsInput) =>
     Effect.gen(function* () {
       return yield* (yield* WorkflowRepository).listWorkflows({
@@ -2162,6 +2170,7 @@ const make = Effect.gen(function* () {
 
   return {
     listOrders,
+    workflowSetupFacts,
     getWorkflowDetail,
     createWorkflow,
     duplicateWorkflow,

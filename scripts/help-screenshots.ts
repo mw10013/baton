@@ -829,6 +829,17 @@ const MERCHANT_SHOTS: readonly {
   readonly after?: typeof reseedShowcase;
 }[] = [
   {
+    name: "installing1",
+    shape: "page",
+    take: async (page) => {
+      await gotoApp(page);
+      const frame = appFrame(page);
+      await frame.locator('s-page[heading="Baton"]').waitFor();
+      await frame.getByRole("link", { name: /^Issues, \d+$/u }).waitFor();
+      await parkPointer(page);
+    },
+  },
+  {
     name: "howBatonWorks1",
     shape: "page",
     take: (page) => openOrder(page, orderWith("Grandma Rose")),

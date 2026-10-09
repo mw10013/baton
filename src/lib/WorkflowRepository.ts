@@ -239,6 +239,17 @@ export class WorkflowRepository extends Context.Service<
       readonly Domain.WorkflowDetail[],
       SqlError.SqlError | WorkflowRepositoryError
     >;
+    /**
+     * The object's half of `Domain.SetupFacts`, in one statement: some
+     * workflow is active, and some run exists in any state. Each `exists`
+     * stops at its first row: `Workflow` holds at most
+     * `Domain.WorkflowLimits.maxWorkflows` rows, and `Run` is read through its
+     * primary key.
+     */
+    readonly workflowSetupFacts: () => Effect.Effect<
+      Domain.WorkflowSetupFacts,
+      SqlError.SqlError | WorkflowRepositoryError
+    >;
     /** Every active workflow with tasks, by name: the Workflow select's options past the order's matches. */
     readonly listActiveWorkflowNames: () => Effect.Effect<
       readonly Domain.WorkflowNameRow[],
@@ -961,6 +972,27 @@ export class WorkflowRepository extends Context.Service<
             tasks: row.tasks,
           }));
         }),
+
+        workflowSetupFacts: Effect.fn("WorkflowRepository.workflowSetupFacts")(
+          function* () {
+            const [row] = yield* decode(
+              Schema.Array(
+                Schema.Struct({
+                  activeWorkflow: Domain.SqliteBoolean,
+                  run: Domain.SqliteBoolean,
+                }),
+              ),
+              "Invalid setup facts row",
+            )(
+              yield* sql`
+                select
+                  exists (select 1 from Workflow where state = 'active') as activeWorkflow,
+                  exists (select 1 from Run) as run
+              `,
+            );
+            return row ?? { activeWorkflow: false, run: false };
+          },
+        ),
 
         listActiveWorkflowNames: Effect.fn(
           "WorkflowRepository.listActiveWorkflowNames",

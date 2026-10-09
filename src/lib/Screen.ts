@@ -77,6 +77,8 @@ import { Schema } from "effect";
  * | button      | names the act                                                                                   | the vocabulary's verb label, or verb + noun ("Clear search")                                                   | (never)                                                                | Clear search                                | an article ("Add a step"); a sentence                          |
  * | badge       | one state word                                                                                  | the vocabulary's screen word for the state                                                                     | (never)                                                                | No members                                  | a sentence                                                     |
  * | body        | a fact the screen has to say that no other slot carries                                         | one or two sentences                                                                                         | it restates a heading, badge, button or label; it explains the product beside content (the explanation is the empty state's) | Nobody is on this team, so its tasks wait until a member joins. | idioms; "we"; a code word; a sentence about the product above a list that has rows |
+ * | line        | one entry of a checklist the screen reads and the person does not tick: a setup step           | a verb phrase for what the person does ("Create a team and add a member"), or a fact for what happens on its own ("An item gets a workflow"); no period | (never)                                                                | Create a workflow and turn it on            | a question; a period; a button's verb label alone             |
+ * | count       | says how much of a list is done, on its heading's line                                          | "<n> of <total> done"; no period                                                                             | the list is hidden                                                     | of 3 done                                   | a percentage; a progress bar; a sentence                       |
  *
  */
 export const CopySlot = Schema.Literals([
@@ -93,6 +95,8 @@ export const CopySlot = Schema.Literals([
   "button",
   "badge",
   "body",
+  "line",
+  "count",
 ]);
 export type CopySlot = typeof CopySlot.Type;
 
@@ -217,7 +221,7 @@ export type ScreenTemplate = typeof ScreenTemplate.Type;
  * | part           | job                                                                                  | component                           | fixes                                                                                                      | used on                           | never                                               |
  * | -------------- | ------------------------------------------------------------------------------------ | ----------------------------------- | ---------------------------------------------------------------------------------------------------------- | --------------------------------- | --------------------------------------------------- |
  * | index section  | the list's frame: one card holding its head (banners, strip or search line, filter row) and the list | `IndexSection`  | frame, padding none; `base` around and between the head's things                                           | index                             | a card in a card; a second list in one card         |
- * | strip          | counts that are also the main filter                                                 | `Strip`                             | one column per cell above the breakpoint and three below; cell padding; the count at the cell's foot      | index                             | a red cell; a cell that comes and goes with the data |
+ * | strip          | counts that are also the main filter                                                 | `Strip`                             | one column per cell above the breakpoint and three below; cell padding; the count at the cell's foot; a cell is a filter press (index) or a link to the index with that value chosen (homepage), never both on one strip | index, homepage                   | a red cell; a cell that comes and goes with the data |
  * | filter row     | the main filter, the search and a secondary filter                                   | `FilterRow`                         | columns (at least 10rem and its content, the rest, 12rem) above the breakpoint, stacked below            | index                             | a visible label over the row; the table's filters slot |
  * | search field   | the list's search                                                                    | `ListSearchField`                   | submits on Enter and blur                                                                                  | index                             | a debounce; a character counter                     |
  * | search line    | how many rows a search matches, and Clear search, in the filters' place              | `SearchLine`                        | the sentence's form; `base` to its button                                                                  | index                             | filters that look set but do nothing                |
@@ -238,6 +242,7 @@ export type ScreenTemplate = typeof ScreenTemplate.Type;
  * | fields         | a form's fields, stacked                                                             | `Fields`                            | `base` between fields, so one field's error never runs into the next label                               | index, details, editor            | a field beside a field                              |
  * | panel          | a box inside a card: a task card, the order page's Manage drawer, the editor's add form | `Panel`                           | `base` padding; a solid border, a subdued fill or a dashed border by kind                                  | details, editor                   | a box inside a panel                                |
  * | select row     | a select and the button that submits it, side by side                                | `SelectRow`                         | the select at most 20rem and shrinking; the button beside it at every width                               | details                           | a select that pushes its button to the next line    |
+ * | setup guide    | the shop's setup while it is undone: a heading with the done count, then the steps in order, each a done mark, its sentence, its link to a screen and its help link | `SetupGuide` | a details card; the heading and the count on one line; a step's mark beside its lines, `small-300` between them, `base` between its two links and between steps; a done step stays in place, marked, with no links, so no step changes place as steps complete | homepage | a checkbox; a dismiss button; a progress bar; a step that comes and goes |
  * | tiles          | tiles side by side where there is room, one column where there is not               | `Tiles`                             | `repeat(auto-fit, minmax(300px, 1fr))`; `base` between tiles                                              | homepage, details                 | a breakpoint                                        |
  * | meter tile     | one capacity meter as a link: dimension, number, bar, sentence                       | `MeterTile`                         | `base` padding, the border, `small-300` between lines                                                      | homepage                          | a bar rescaled past its limit                       |
  * | table frame    | a table inside a details card, framed                                               | `TableFrame`                        | the border and its rounded corners                                                                         | details                           | a table floating in a padded card                   |
@@ -293,6 +298,7 @@ export const ScreenPart = Schema.Literals([
   "fields",
   "panel",
   "select row",
+  "setup guide",
   "tiles",
   "meter tile",
   "table frame",

@@ -99,6 +99,13 @@ export const HELP_PICTURES = {
     kind: "member",
     alt: "The page for a walnut cutting board, with a red Blocked banner under the item's name. The banner shows the reason as it was typed, that the board has a crack along the grain, then ana@example.com and when, and an Unblock button. The steps below are unchanged.",
   },
+  /** The home page on the showcase shop: setup done, so no Getting started; the Orders strip, then Usage and capacity. Shape: page. */
+  installing1: {
+    file: "getting-started/installing-1.png",
+    kind: "merchant",
+    aspectRatio: "1056/508",
+    alt: "Baton's home page. The Orders card counts No workflow, Not started, Making, Made and Issues, each a link to the Orders page. Below it, Usage and capacity shows the Orders this billing cycle and Members tiles, each a number against what the plan includes with a bar under it, and the Manage plan button.",
+  },
   /** #1206, the maple board "Grandma Rose" at Engrave, the second of three steps. Shape: page. */
   howBatonWorks1: {
     file: "getting-started/how-baton-works-1.png",

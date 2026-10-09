@@ -265,6 +265,15 @@ export class Repository extends Context.Service<
       shop: Domain.Shop,
     ) => Effect.Effect<number, SqlError.SqlError>;
     /**
+     * The D1 half of `Domain.SetupFacts`: some team of the shop has a
+     * member. One `exists`, which stops at the first edge: `Team`'s
+     * `unique (shop, name)` index finds the shop's teams and
+     * `TeamMember`'s primary key `(teamId, memberId)` probes each for one row.
+     */
+    readonly teamWithMemberExists: (
+      shop: Domain.Shop,
+    ) => Effect.Effect<boolean, SqlError.SqlError>;
+    /**
      * The merchant-facing delete: the row goes, `ShopSession` is untouched;
      * what goes with it is the member rows on {@link D1_TABLES}. Returns the
      * deleted member's id, which the caller hands to
@@ -717,6 +726,19 @@ export class Repository extends Context.Service<
             .values;
         return Number(rows[0]?.[0] ?? 0);
       });
+
+      const teamWithMemberExists = Effect.fn("Repository.teamWithMemberExists")(
+        function* (shop: Domain.Shop) {
+          const rows = yield* sqlPrimary`
+          select exists (
+            select 1 from Team t
+            join TeamMember tm on tm.teamId = t.id
+            where t.shop = ${shop}
+          )
+        `.values;
+          return Number(rows[0]?.[0] ?? 0) === 1;
+        },
+      );
 
       const countTeams = Effect.fn("Repository.countTeams")(function* (
         shop: Domain.Shop,
@@ -1342,6 +1364,7 @@ export class Repository extends Context.Service<
         listMembersPage,
         addMember,
         countMembers,
+        teamWithMemberExists,
         deleteMember,
         findMemberDetail,
         addMemberTeams,

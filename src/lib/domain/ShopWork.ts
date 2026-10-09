@@ -35,6 +35,7 @@
  * | match         | an item and an eligible workflow: a product tag equals the workflow's tag and units to make are above zero | `itemMatches`                                                                            | the order page's Workflow select lists them first                    |
  * | multi-match   | an item two or more eligible workflows match, with units to make and no run in any state                   | `multiMatchItems`, `OrderIssue` `multi_match`                                            | Multiple workflows match                                    |
  * | units to make | what is left to make on an item: Shopify's current quantity                                                | `unitsToMake`                                                                            | the quantity on the card                                    |
+ * | setup         | the three facts a shop needs before Baton does its work: a team with a member, an active workflow, a run; derived, never stored | `SetupFacts`, `setupIsComplete`                                                          | Getting started, the home page's guide                      |
  *
  * Each list's main filter is keyed in the URL by its axis's word:
  * `?show=` on the orders index (`OrdersShow`), `?state=` on the
@@ -4170,3 +4171,68 @@ export const RunResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("NotAllowed") }),
 ]);
 export type RunResult = typeof RunResult.Type;
+
+/**
+ * **Setup is derived from three facts and stores nothing.** The home page's
+ * Getting started guide lists them in this order, one entry per fact
+ * ({@link SETUP_FACTS}):
+ *
+ * | fact             | holds when                         | store    |
+ * | ---------------- | ---------------------------------- | -------- |
+ * | `teamWithMember` | some team of the shop has a member | D1       |
+ * | `activeWorkflow` | some workflow is active            | the object |
+ * | `run`            | some run exists, in any state      | the object |
+ *
+ * - **The guide shows while any fact does not hold, and comes back when one
+ *   stops holding** ({@link setupIsComplete}). There is no tick, no
+ *   dismiss and no stored flag: a tick is a second record of something
+ *   Baton already knows, and it goes wrong the day the team it ticked is
+ *   deleted. So the guide is a status. A merchant who turns off every
+ *   workflow sees the second entry undone again, which is true.
+ * - **The third fact is a `Run` row in any state**, open, done or closed:
+ *   the first moment Baton does what it is for is a workflow starting for
+ *   an item. It is not "ever": Baton keeps no history beyond its rows, and
+ *   retention deletes an order a year old with its runs
+ *   ({@link ShopLimits.orderRetentionDays}), so a shop with no order in a
+ *   year sees the entry undone again. That is the status reading: no item
+ *   has a workflow now.
+ * - **The third entry has no action on the home page.** Orders arrive by
+ *   the orders webhooks as they are placed, so it completes on its own once
+ *   a product carries an active workflow's tag and an order for it arrives.
+ *   Sync open orders is a one-time catch-up for orders placed before
+ *   install and stays on the orders index, so the home page never teaches
+ *   it as a routine.
+ */
+export const SetupFacts = Schema.Struct({
+  teamWithMember: Schema.Boolean,
+  activeWorkflow: Schema.Boolean,
+  run: Schema.Boolean,
+});
+export type SetupFacts = typeof SetupFacts.Type;
+
+/** One of the {@link SetupFacts}. */
+export type SetupFact = keyof SetupFacts;
+
+/** The {@link SetupFacts} in the guide's order: a team and members, a workflow, an item with a workflow, the order Getting started teaches them. */
+export const SETUP_FACTS: readonly SetupFact[] = [
+  "teamWithMember",
+  "activeWorkflow",
+  "run",
+];
+
+/**
+ * The two {@link SetupFacts} the object holds, read in one statement: the
+ * third, a team with a member, is D1's.
+ */
+export const WorkflowSetupFacts = SetupFacts.mapFields(
+  Struct.pick(["activeWorkflow", "run"]),
+);
+export type WorkflowSetupFacts = typeof WorkflowSetupFacts.Type;
+
+/** Whether one entry of the guide is done; the rules are on {@link SetupFacts}. */
+export const setupFactHolds = (facts: SetupFacts, fact: SetupFact) =>
+  facts[fact];
+
+/** Every {@link SetupFacts} fact holds, so the guide is hidden; the rules are on {@link SetupFacts}. */
+export const setupIsComplete = (facts: SetupFacts) =>
+  SETUP_FACTS.every((fact) => setupFactHolds(facts, fact));

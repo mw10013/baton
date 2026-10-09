@@ -127,6 +127,10 @@ export class ShopAgentClient extends Context.Service<
     readonly getUsage: (
       shop: string,
     ) => Effect.Effect<Domain.ShopUsage, ShopAgentClientError>;
+    /** The home page's loader read of the object's two setup facts (`Domain.SetupFacts`). */
+    readonly getWorkflowSetupFacts: (
+      shop: string,
+    ) => Effect.Effect<Domain.WorkflowSetupFacts, ShopAgentClientError>;
     readonly listWorkflows: (
       shop: string,
       input: Domain.ListWorkflowsInput,
@@ -229,6 +233,7 @@ export class ShopAgentClient extends Context.Service<
       const orderDetail = Schema.toType(Schema.NullOr(Domain.OrderPageData));
       const usage = Schema.toType(Domain.ShopUsage);
       const workflows = Schema.toType(Domain.WorkflowsIndexData);
+      const workflowSetupFacts = Schema.toType(Domain.WorkflowSetupFacts);
       const workflowDetail = Schema.toType(
         Schema.NullOr(Domain.WorkflowPageData),
       );
@@ -259,6 +264,13 @@ export class ShopAgentClient extends Context.Service<
         ),
         getUsage: Effect.fn("ShopAgentClient.getUsage")((shop: string) =>
           call("getUsage", usage, shop, (stub) => stub.getUsage()),
+        ),
+        getWorkflowSetupFacts: Effect.fn(
+          "ShopAgentClient.getWorkflowSetupFacts",
+        )((shop: string) =>
+          call("getWorkflowSetupFacts", workflowSetupFacts, shop, (stub) =>
+            stub.getWorkflowSetupFacts(),
+          ),
         ),
         listWorkflows: Effect.fn("ShopAgentClient.listWorkflows")(
           (shop: string, input: Domain.ListWorkflowsInput) =>

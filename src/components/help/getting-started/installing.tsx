@@ -1,9 +1,11 @@
+import { HelpPicture } from "@/components/screen/HelpPicture";
 import { NumberedList } from "@/components/screen/NumberedList";
 import { Things } from "@/components/screen/Things";
 
 /**
- * Installing Baton and choosing a plan (`getting-started/installing`). No
- * pictures, and no plan name, price, count or trial length: those are set
+ * Installing Baton and choosing a plan (`getting-started/installing`). One
+ * picture, the home page on the showcase shop, and no plan name, price,
+ * count or trial length: those are set
  * in the Partner Dashboard and change without a deploy, which is the home
  * page's own rule (the JSDoc on its component in `src/routes/app.index.tsx`).
  * Read against `src/routes/app.tsx` (an app subscription is required: an
@@ -11,8 +13,10 @@ import { Things } from "@/components/screen/Things";
  * calls the pricing page, and the return leg carries `plan_handle`),
  * `ShopifyPartner.planSelectionUrl`, `ShopAgent.syncOpenOrders` (called
  * only by Sync open orders on the Orders page: nothing syncs on install),
- * `src/routes/app.index.tsx` (the Orders this billing cycle and Members
- * tiles, "billed at your plan's rate", Manage plan), `ManagePlanButton`, and
+ * `src/routes/app.index.tsx` (the Getting started guide while a setup fact
+ * does not hold, `Domain.SetupFacts`; the Orders strip; the Orders this
+ * billing cycle and Members tiles, "billed at your plan's rate", Manage
+ * plan), `ManagePlanButton`, and
  * the billing vocabulary and `Entitlements`, `ShopUsage`, `AppSubscription`
  * in `src/lib/domain/Billing.ts` (a counted order is counted once, when its
  * first item's workflow starts; a cycle's seats are its highest member
@@ -69,7 +73,11 @@ export function Installing() {
             </s-list-item>
           </s-unordered-list>
           <s-paragraph>
-            The home page shows <strong>Orders this billing cycle</strong> and{" "}
+            Until Baton is set up, the home page starts with a{" "}
+            <strong>Getting started</strong> list: a team with a member, a
+            workflow turned on, and an item with a workflow. Below it, the home
+            page shows where your open orders stand, then{" "}
+            <strong>Orders this billing cycle</strong> and{" "}
             <strong>Members</strong>, each against what your plan includes. The
             Members tile shows today&apos;s count. To change plans, press{" "}
             <strong>Manage plan</strong> on the home page. A new plan applies at
@@ -80,6 +88,7 @@ export function Installing() {
             </s-link>
             .
           </s-paragraph>
+          <HelpPicture name="installing1" />
         </Things>
       </s-section>
       <s-section heading="The trial">

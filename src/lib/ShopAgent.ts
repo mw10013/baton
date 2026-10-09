@@ -1406,6 +1406,21 @@ export class ShopAgent extends Agent {
   }
 
   /**
+   * The home page's loader read of the object's two setup facts; the rules
+   * are on `Domain.SetupFacts`. Plain RPC, not `@callable()`: the guide is
+   * loader-only (it changes once in a shop's life, and a live guide would add
+   * a read to every invalidation), so nothing browser-side reads it.
+   */
+  getWorkflowSetupFacts(): Promise<Domain.WorkflowSetupFacts> {
+    return this.runEffect(
+      Effect.gen(function* () {
+        yield* connectionRoleGuard("rpc");
+        return yield* (yield* ShopWorkAgent).workflowSetupFacts;
+      }).pipe(Effect.withLogSpan("ShopAgent.getWorkflowSetupFacts")),
+    );
+  }
+
+  /**
    * The workflows index's loader read; the rule is on {@link ShopWorkAgent}'s
    * `listWorkflows`. Plain RPC, not `@callable()`: workflow definitions are
    * configuration, so `/app/workflows` reads them through its loader via

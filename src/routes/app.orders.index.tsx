@@ -22,6 +22,12 @@ import { Strip } from "@/components/screen/Strip";
 import * as Domain from "@/lib/Domain";
 import { formatNumber } from "@/lib/format";
 import { adminOrderUrl, useResourceLinkTarget } from "@/lib/orderLinks";
+import {
+  decodeOrdersIndexData,
+  ORDERS_STRIP,
+  ordersIndexInput,
+  ordersQueryKey,
+} from "@/lib/ordersIndexQuery";
 import { ORDER_SYNC_WINDOW_DAYS } from "@/lib/orderSyncConstants";
 import { ANY_OPTION_VALUE } from "@/lib/Screen";
 import { ShopAgentClient } from "@/lib/ShopAgentClient";
@@ -29,38 +35,6 @@ import { withSocketRecovery } from "@/lib/ShopAgentContext";
 import { shopifyServerFnMiddleware } from "@/lib/ShopifyServerFnMiddleware";
 import { SocketBanner } from "@/lib/SocketBanner";
 import { useLiveQuery } from "@/lib/useLiveQuery";
-
-const ORDERS_PAGE_SIZE = 25;
-
-/**
- * Keyed by every filter, the search and the page as well as the shop: each
- * combination is a different read, and the order page's invalidation of
- * `["orders", shop]` is a prefix match so it still reaches every one of them.
- */
-const ordersQueryKey = (
-  shop: string,
-  q: Domain.ListSearch | null,
-  show: Domain.OrdersShow | null,
-  team: Domain.TeamId | null,
-  after: string | null,
-) => ["orders", shop, q, show, team, after] as const;
-
-/**
- * The strip, left to right: the four positions No workflow, Not started,
- * Making and Made in the order an order moves, then Issues, which cuts
- * across them. These are the five values `Domain.OrderCounts` counts; each
- * cell is the value's name over its count, and choosing it sets the Show
- * filter. Making is the default, `?show=` left out, and is the chosen cell
- * then. Open, Unpaid, Fulfilled, Cancelled and All carry no count and live
- * in the Show select. Labels are `Domain.ORDERS_SHOW_LABEL`.
- */
-const STRIP: readonly (keyof Domain.OrderCounts)[] = [
-  "no_workflow",
-  "not_started",
-  "making",
-  "made",
-  "issues",
-];
 
 /**
  * The Show select's values, in its order: the strip's five, then Open,
@@ -81,18 +55,6 @@ const SHOW: readonly (Domain.OrdersShow | null)[] = [
   "all",
 ];
 
-/**
- * `Schema.toType`, not the schema itself. A Durable Object RPC result has
- * already been through the repository's decoder, so what arrives is the
- * **decoded** shape — `fullyPaid` a boolean, `properties` an array. Decoding it again
- * against `Domain.OrdersIndexData` would demand the *encoded* row shape (`0`/`1`,
- * a JSON string) and fail on the first order. `toType` derives a validator over
- * the decoded side, so the wire value is checked without re-running transforms
- * that already ran. Same reasoning as the better-auth boundary in `Auth.ts`.
- */
-const decodeOrdersIndexData = Schema.decodeUnknownPromise(
-  Schema.toType(Domain.OrdersIndexData),
-);
 const decodeSyncResult = Schema.decodeUnknownPromise(
   Schema.toType(Domain.OrdersSyncResult),
 );
@@ -217,13 +179,10 @@ const getLoaderData = createServerFn({ method: "GET" })
         Effect.gen(function* () {
           const client = yield* ShopAgentClient;
           return {
-            orders: yield* client.listOrders(session.shop, {
-              limit: ORDERS_PAGE_SIZE,
-              cursor: after,
-              q,
-              show,
-              team,
-            }),
+            orders: yield* client.listOrders(
+              session.shop,
+              ordersIndexInput({ after, q, show, team }),
+            ),
             usage: yield* client.getUsage(session.shop),
           } satisfies OrdersIndexLoaderData;
         }),
@@ -270,6 +229,7 @@ function RouteComponent() {
   const resourceLinkTarget = useResourceLinkTarget();
   const { orders: initialOrders, usage } = Route.useLoaderData();
   const [syncing, setSyncing] = React.useState(false);
+  const input = ordersIndexInput({ after, q, show, team });
 
   /**
    * A filter or search change is a new list, so the page resets to one. `replace: true`
@@ -334,17 +294,8 @@ function RouteComponent() {
     agent,
     identified,
   } = useLiveQuery({
-    queryKey: ordersQueryKey(shop, q, show, team, after),
-    read: (stub) =>
-      stub
-        .listOrders({
-          limit: ORDERS_PAGE_SIZE,
-          cursor: after,
-          q,
-          show,
-          team,
-        })
-        .then(decodeOrdersIndexData),
+    queryKey: ordersQueryKey(shop, input),
+    read: (stub) => stub.listOrders(input).then(decodeOrdersIndexData),
     initialData: initialOrders,
   });
 
@@ -630,7 +581,7 @@ function RouteComponent() {
    */
   const strip = (
     <Strip
-      cells={STRIP.map((key) => {
+      cells={ORDERS_STRIP.map((key) => {
         const value = key === "making" ? null : key;
         return {
           key,
