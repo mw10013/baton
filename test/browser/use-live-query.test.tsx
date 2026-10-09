@@ -63,7 +63,9 @@ const renderLive = async ({
   }
   const tree = () => (
     <QueryClientProvider client={queryClient}>
-      <ShopAgentProvider value={{ agent: socket, identified: identifiedNow }}>
+      <ShopAgentProvider
+        value={{ agent: socket, identified: identifiedNow, displaced: false }}
+      >
         <Probe />
       </ShopAgentProvider>
     </QueryClientProvider>

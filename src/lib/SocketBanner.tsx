@@ -30,10 +30,51 @@ const GRACE_MS = 4000;
  *
  * `ClientOnly` because `identified` is false during SSR — without it every
  * page would ship the warning in its HTML and then hydrate it away.
+ *
+ * A displaced socket (`displaced`, a `Domain.CONNECTION_CLOSE_DISPLACED`
+ * close: the member opened Baton on another screen past
+ * `Domain.ShopLimits.maxConnectionsPerMember`) gets its own banner at once,
+ * with no grace period, because the socket will not come back on its own.
+ * The banner slot of the copy table on `CopySlot` (`src/lib/Screen.ts`)
+ * holds its copy. Only a member is displaced; a merchant's socket never
+ * receives the code.
  */
 export function SocketBanner() {
-  const { identified } = useShopAgent();
-  return <ClientOnly>{identified ? null : <DisconnectedBanner />}</ClientOnly>;
+  const { identified, displaced } = useShopAgent();
+  return <ClientOnly>{bannerOf({ identified, displaced })}</ClientOnly>;
+}
+
+function bannerOf({
+  identified,
+  displaced,
+}: {
+  readonly identified: boolean;
+  readonly displaced: boolean;
+}) {
+  if (identified) return null;
+  if (displaced) return <DisplacedBanner />;
+  return <DisconnectedBanner />;
+}
+
+/**
+ * Reconnect opens a new socket, which displaces the member's other screen in
+ * its turn: newest wins, whichever screen the person is at.
+ */
+function DisplacedBanner() {
+  const { agent } = useShopAgent();
+  return (
+    <s-banner slot="supplemental-start" tone="warning">
+      Signed in elsewhere. Reconnect to keep working here.
+      <s-button
+        slot="secondary-actions"
+        onClick={() => {
+          agent?.reconnect();
+        }}
+      >
+        Reconnect
+      </s-button>
+    </s-banner>
+  );
 }
 
 /**

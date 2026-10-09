@@ -10,6 +10,7 @@ import { Email } from "@/lib/Email";
 import { KV } from "@/lib/KV";
 import { makeEnvLayer } from "@/lib/LayerEx";
 import { Repository } from "@/lib/Repository";
+import { ShopAgentClient } from "@/lib/ShopAgentClient";
 
 /**
  * The member-area test fixture: the service layer a `/shop/*` test needs, the
@@ -39,6 +40,7 @@ export const memberFixtureLayer = Layer.mergeAll(
       kvLayer,
       repositoryLayer,
       Layer.provide(Email.layerNoDeps, envLayer),
+      Layer.provide(ShopAgentClient.layerNoDeps, envLayer),
       envLayer,
     ),
   ),

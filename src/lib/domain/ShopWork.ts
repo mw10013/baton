@@ -2170,8 +2170,15 @@ export const actorLabel = (actor: ActorDisplay) =>
 export const actorIsMember = (actor: ActorDisplay, email: Email) =>
   actor.role === "member" && actor.email === email;
 
+/**
+ * `connectedAt` (epoch ms) is when `ShopAgent.onConnect` identified the
+ * connection, read from `Clock`. The agents SDK does not order
+ * `getConnections`, so the state carries the order that
+ * `ShopAgent.displaceConnections` needs to find a member's oldest connection.
+ */
 export const MerchantConnectionState = Schema.Struct({
   role: Schema.Literal("merchant"),
+  connectedAt: Schema.Number,
 });
 export type MerchantConnectionState = typeof MerchantConnectionState.Type;
 
@@ -2180,6 +2187,7 @@ export const MemberConnectionState = Schema.Struct({
   memberId: MemberId,
   memberEmail: Email,
   teamIds: Schema.Array(TeamId),
+  connectedAt: Schema.Number,
 });
 export type MemberConnectionState = typeof MemberConnectionState.Type;
 
@@ -2803,7 +2811,7 @@ const NOTHING: ReconcileAction = { _tag: "nothing" };
  * | 1. a pass reads the stored order, items and runs, never the caller's copy; a stored run whose item is not stored is read as an item at zero units                                                                                                                                                                                       | `RunRepository.reconcileOrder`                              | a pass reads the stored order, and a run whose item is gone closes as item removed                                                                |
  * | 2. a pass runs inside its order's write: the store and its runs commit together or not at all; reconcile all opens one transaction per order, and a reconcile all that fails partway keeps the orders it walked; the next trigger finishes the rest (rule 5)                                                                            | `OrderRepository.upsertOrder`, `RunRepository.reconcileAll` | a pass that fails leaves neither the order nor its runs                                                                                           |
  * | 3. the teams are read once before the transaction and every order in the pass sees the same teams; the workflows are read per order, by its items' tags, inside its transaction; a stream and a reconcile all may interleave, each with its own snapshot; every order ends under the newer one because each pass is idempotent (rule 5) | `ShopWorkAgent.eligibleContext`                             | every order in a pass sees the same eligible snapshot                                                                                             |
- * | 4. the usage queue is sent after a reconcile all whether or not it finished; the stream's flush is rule 12 on `syncOrder`                                                                                                                                                                                                               | `reconcileAllNow`                                           | a reconcile all sends the usage queue even when it fails                                                                                          |
+ * | 4. the usage queue is sent after a reconcile all whether or not it finished; the stream's flush is rule 13 on `syncOrder`                                                                                                                                                                                                               | `reconcileAllNow`                                           | a reconcile all sends the usage queue even when it fails                                                                                          |
  * | 5. a pass is idempotent: a second pass over the same stored order and the same snapshot writes nothing                                                                                                                                                                                                                                  | `reconcileItem`                                             | a second pass over the same stored order writes nothing; a pass guarantees stop, fit, record, create and orphan, and a second pass writes nothing |
  * | 6. no count a pass makes reaches a screen; the counts are the log line's                                                                                                                                                                                                                                                                | `ReconcileCounts`, `ReconcileAllCounts`                     | no reconcile count reaches a screen                                                                                                               |
  */

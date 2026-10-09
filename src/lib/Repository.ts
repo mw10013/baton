@@ -388,6 +388,23 @@ export class Repository extends Context.Service<
      * fail the sign-in.
      */
     readonly sweepExpiredAuth: () => Effect.Effect<void, SqlError.SqlError>;
+    /**
+     * Deletes every `Session` row of the user but `session` and the newest
+     * `keep - 1` others, by `createdAt`, and answers how many it deleted and
+     * the user's email. The rule is {@link Domain.ShopLimits.maxSessionsPerMember};
+     * the caller is `Auth`'s `session.create.after` hook, with `session` the
+     * one just created, which is kept whatever its `createdAt` because two
+     * sign-ins can read the same millisecond. Reads and writes the primary:
+     * the session it must keep was written there a moment ago.
+     */
+    readonly keepNewestSessions: (params: {
+      readonly userId: string;
+      readonly sessionId: string;
+      readonly keep: number;
+    }) => Effect.Effect<
+      { readonly deleted: number; readonly email: string | null },
+      SqlError.SqlError | RepositoryError
+    >;
   }
 >()("Repository") {
   /**
@@ -1276,6 +1293,38 @@ export class Repository extends Context.Service<
         },
       );
 
+      const keepNewestSessions = Effect.fn("Repository.keepNewestSessions")(
+        function* (params: {
+          readonly userId: string;
+          readonly sessionId: string;
+          readonly keep: number;
+        }) {
+          const others = Math.max(params.keep - 1, 0);
+          const deletedRows = yield* sqlPrimary`
+            delete from Session
+            where userId = ${params.userId}
+              and id != ${params.sessionId}
+              and id not in (
+                select id from Session
+                where userId = ${params.userId} and id != ${params.sessionId}
+                order by createdAt desc, id desc
+                limit ${others}
+              )
+            returning id
+          `;
+          const userRows =
+            yield* sqlPrimary`select email from User where id = ${params.userId}`;
+          const users = yield* decodeRepository(
+            Schema.Array(Schema.Struct({ email: Schema.String })),
+            "Invalid User email rows",
+          )(userRows);
+          return {
+            deleted: deletedRows.length,
+            email: users[0]?.email ?? null,
+          };
+        },
+      );
+
       return Repository.of({
         findShopSession,
         upsertShopSession,
@@ -1309,6 +1358,7 @@ export class Repository extends Context.Service<
         addTeamMembers,
         findMemberAccess,
         sweepExpiredAuth,
+        keepNewestSessions,
       });
     }),
   );

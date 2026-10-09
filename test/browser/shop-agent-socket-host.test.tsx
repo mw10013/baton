@@ -7,6 +7,7 @@ import { render } from "vitest-browser-react";
 import * as Domain from "@/lib/Domain";
 import { SOCKET_KEEPALIVE_MS, useShopAgent } from "@/lib/ShopAgentContext";
 import { ShopAgentSocketProvider } from "@/lib/ShopAgentSocketHost";
+import { SocketBanner } from "@/lib/SocketBanner";
 
 /**
  * `ShopAgentSocketProvider` over a fake `WebSocket`. Partysocket constructs
@@ -173,6 +174,39 @@ describe("ShopAgentSocketProvider", () => {
       code: Domain.CONNECTION_CLOSE_REVOKED,
     });
     await unmount();
+  });
+
+  /**
+   * The tab's row for `Domain.CONNECTION_CLOSE_DISPLACED`: the code is
+   * terminal to the SDK, so no new socket opens, and the banner says Signed
+   * in elsewhere with a Reconnect that opens one.
+   */
+  it("the tab stays closed on 4409 and shows signed in elsewhere", async () => {
+    expect(isTerminalCloseEvent(close(Domain.CONNECTION_CLOSE_DISPLACED))).toBe(
+      true,
+    );
+    const screen = await render(
+      <ShopAgentSocketProvider shop="shop.test" query={undefined} enabled>
+        <SocketBanner />
+      </ShopAgentSocketProvider>,
+    );
+    await expect.poll(() => FakeWebSocket.instances.length).toBe(1);
+    const [socket] = FakeWebSocket.instances;
+    await expect.poll(() => socket.readyState).toBe(FakeWebSocket.OPEN);
+    identify(socket);
+    socket.close(Domain.CONNECTION_CLOSE_DISPLACED);
+    await expect
+      .element(
+        screen.getByText(
+          "Signed in elsewhere. Reconnect to keep working here.",
+        ),
+      )
+      .toBeInTheDocument();
+    await tick();
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    await screen.getByText("Reconnect", { exact: true }).click();
+    await expect.poll(() => FakeWebSocket.instances.length).toBe(2);
+    await screen.unmount();
   });
 
   it("the keepalive sends the ping when the socket is open", async () => {

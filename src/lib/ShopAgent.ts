@@ -89,7 +89,10 @@ const connectionState = (
  * still stripped, because the gate rebuilds the request from scratch rather
  * than copying the inbound headers.
  */
-const connectionStateFromHeaders = (headers: Headers): unknown => {
+const connectionStateFromHeaders = (
+  headers: Headers,
+  connectedAt: number,
+): unknown => {
   const role = headers.get(Domain.CONNECTION_ROLE_HEADER);
   return role === "member"
     ? {
@@ -99,8 +102,9 @@ const connectionStateFromHeaders = (headers: Headers): unknown => {
         teamIds: (headers.get(Domain.CONNECTION_TEAM_IDS_HEADER) ?? "")
           .split(",")
           .filter((teamId) => teamId.length > 0),
+        connectedAt,
       }
-    : { role };
+    : { role, connectedAt };
 };
 
 /** The tag every member connection carries, so a membership change can find and close it. */
@@ -454,14 +458,22 @@ export class ShopAgent extends Agent {
    */
   override onConnect(connection: Connection, ctx: ConnectionContext) {
     const shop = this.name;
+    const displace = (memberId: string) =>
+      this.displaceConnections(connection, memberId);
     return this.runEffect(
-      Schema.decodeUnknownEffect(Domain.ConnectionState)(
-        connectionStateFromHeaders(ctx.request.headers),
-      ).pipe(
-        Effect.flatMap((state) =>
+      Clock.currentTimeMillis.pipe(
+        Effect.flatMap((connectedAt) =>
+          Schema.decodeUnknownEffect(Domain.ConnectionState)(
+            connectionStateFromHeaders(ctx.request.headers, connectedAt),
+          ),
+        ),
+        Effect.tap((state) =>
           Effect.sync(() => {
             connection.setState(state);
           }),
+        ),
+        Effect.flatMap((state) =>
+          state.role === "member" ? displace(state.memberId) : Effect.void,
         ),
         Effect.catchCause((cause) =>
           Effect.logWarning(
@@ -503,8 +515,9 @@ export class ShopAgent extends Agent {
     _connection: Connection,
     ctx: ConnectionContext,
   ): string[] {
+    // The tags never carry `connectedAt`, so any number decodes the same.
     return Option.match(
-      decodeConnectionState(connectionStateFromHeaders(ctx.request.headers)),
+      decodeConnectionState(connectionStateFromHeaders(ctx.request.headers, 0)),
       {
         onNone: () => [],
         onSome: (state) =>
@@ -599,6 +612,83 @@ export class ShopAgent extends Agent {
           }),
         ),
       { discard: true },
+    );
+  }
+
+  /**
+   * Keeps a member at {@link Domain.ShopLimits.maxConnectionsPerMember}, the
+   * rule and its reasoning: run by `onConnect` once the new connection's
+   * identity is stored, it closes every one of the member's connections but
+   * the newest `maxConnectionsPerMember` with
+   * `Domain.CONNECTION_CLOSE_DISPLACED`. The connection being identified is
+   * the newest by definition, whatever its `connectedAt`: two connects can
+   * read the same millisecond, and newest wins means the one connecting now.
+   * The others are ordered by the `connectedAt` on their state, since the
+   * agents SDK does not order `getConnections`.
+   *
+   * Best-effort like {@link closeMemberConnections}: a close that throws is
+   * logged and skipped, and the new connection is served either way.
+   */
+  private displaceConnections(newest: Connection, memberId: string) {
+    const shop = this.name;
+    const tagged = () => [
+      ...this.getConnections(memberConnectionTag(memberId)),
+    ];
+    return Effect.try({
+      try: () =>
+        tagged()
+          .filter((connection) => connection.id !== newest.id)
+          .flatMap((connection) =>
+            Option.match(connectionState(connection), {
+              onNone: () => [],
+              onSome: (state) => [{ connection, at: state.connectedAt }],
+            }),
+          )
+          .toSorted((a, b) => b.at - a.at)
+          .slice(Domain.ShopLimits.maxConnectionsPerMember - 1)
+          .map(({ connection }) => connection),
+      catch: (cause) =>
+        new ShopAgentPublishError({
+          message: "getConnections failed",
+          cause,
+        }),
+    }).pipe(
+      Effect.flatMap((displaced) =>
+        Effect.forEach(
+          displaced,
+          (connection) =>
+            Effect.try({
+              try: () => {
+                connection.close(
+                  Domain.CONNECTION_CLOSE_DISPLACED,
+                  "signed in elsewhere",
+                );
+              },
+              catch: (cause) =>
+                new ShopAgentPublishError({
+                  message: "displace close failed",
+                  cause,
+                }),
+            }).pipe(
+              Effect.andThen(
+                Effect.logInfo(
+                  `ShopAgent.displaceConnections: shop=${shop} memberId=${memberId} connectionId=${connection.id}`,
+                ).pipe(
+                  Effect.annotateLogs({
+                    shop,
+                    memberId,
+                    connectionId: connection.id,
+                  }),
+                ),
+              ),
+            ),
+          { discard: true },
+        ),
+      ),
+      Effect.ignore({
+        log: "Debug",
+        message: `ShopAgent.displaceConnections: shop=${shop} memberId=${memberId}`,
+      }),
     );
   }
 
@@ -899,10 +989,10 @@ export class ShopAgent extends Agent {
   /**
    * RPC target for the workflow, not `@callable()`: nothing browser-side calls
    * it, and it takes a URL that must only ever come from a bulk operation this
-   * shop started (rule 15 on `Domain.syncOrder`). The stream merges and the
+   * shop started (rule 16 on `Domain.syncOrder`). The stream merges and the
    * retention pass rides it (rule 9); every order carries the stream's one
-   * `syncedAt` (rule 11); the usage queue is sent once after it, whatever
-   * became of it (rule 12).
+   * `syncedAt` (rule 12); the usage queue is sent once after it, whatever
+   * became of it (rule 13).
    *
    * A step retry re-streams the whole file when the sweep or the flush
    * throws after the writes: correct under rule 7, a full second pass, and
@@ -925,6 +1015,7 @@ export class ShopAgent extends Agent {
           // that fails halfway has already counted and queued every order it
           // stored, and those events are owed whatever became of the rest.
           const counts = yield* runShopAgentOrdersStream({
+            shop,
             url,
             afterWrite: yield* reconciler,
           }).pipe(Effect.ensuring(flushUsageEvents));
@@ -1007,7 +1098,7 @@ export class ShopAgent extends Agent {
   }
 
   /**
-   * A completed sync leaves nothing behind but its rows (rule 13 on
+   * A completed sync leaves nothing behind but its rows (rule 14 on
    * `Domain.syncOrder`): the tracking row goes, which is what re-enables the
    * button. The workflow reports no result — there is nothing about the run
    * the object does not already know — so nothing is decoded.
@@ -1064,13 +1155,13 @@ export class ShopAgent extends Agent {
    * The webhook path. Not `@callable()` — it is reached only from
    * `/webhooks/orders`, after HMAC validation.
    *
-   * Rules 1, 2, 5, 9 and 12 on `Domain.syncOrder`: the order is fetched
+   * Rules 1, 2, 5, 9 and 13 on `Domain.syncOrder`: the order is fetched
    * whole and the topic decides nothing; a payload no newer than the row
    * returns without a fetch; the ceiling is read before the fetch; the
    * retention pass rides it, rate-limited; the usage queue is sent after the
    * write. A redelivery is not deduplicated: it is skipped by the version
    * check, or, for an edit, fetches and rewrites the same version, which
-   * changes nothing and publishes nothing (rule 16; the rule on `publish`).
+   * changes nothing and publishes nothing (rule 17; the rule on `publish`).
    * The upsert's own version check is what survives two paths writing at
    * once.
    *
@@ -1264,12 +1355,12 @@ export class ShopAgent extends Agent {
    * `@callable()` and it does take an argument, unlike {@link syncOpenOrders} — but
    * the id is only ever spent against this shop's own offline session, so a
    * foreign one fails at Shopify rather than reaching another shop's data
-   * (rule 15 on `Domain.syncOrder`). No staleness check: a
+   * (rule 16 on `Domain.syncOrder`). No staleness check: a
    * merchant clicking Sync from Shopify is asking for the fetch, and the
    * upsert guard still protects the row.
    *
    * Sends the usage queue afterwards ({@link flushUsageEvents}), whether or
-   * not the fetch succeeded (rule 12): the reconcile may have started the
+   * not the fetch succeeded (rule 13 on `Domain.syncOrder`): the reconcile may have started the
    * order's first run, which counts it. Answers `Domain.SyncOrderResult`, so
    * the order page can say when Shopify no longer has the order. Publishes
    * only when the write changed something (the rule on `publish`).

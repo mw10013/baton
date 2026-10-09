@@ -62,6 +62,11 @@ export type SocketQuery =
  * `Domain.CONNECTION_CLOSE_FORBIDDEN` stays closed;
  * `Domain.CONNECTION_CLOSE_REVOKED` is a 3xxx code, not terminal to it, so
  * partysocket reconnects through the gate on its own backoff.
+ * `Domain.CONNECTION_CLOSE_DISPLACED` is a 4xxx code too, so the displaced
+ * socket stays closed rather than reconnecting and displacing the newer
+ * screen back; the host holds it as `displaced` (true from that close until
+ * the socket opens again), which `SocketBanner` reads to say Signed in
+ * elsewhere and offer Reconnect. `onSocketClose` still receives the close.
  *
  * `onSocketClose` is the escape hatch for a close code the subtree cares
  * about: both `/app` and `/shop/$shop` use it for
@@ -129,6 +134,7 @@ export function ShopAgentSocketProvider({
   });
   const [agent, setAgent] = React.useState<ShopAgentSocket | null>(null);
   const [identified, setIdentified] = React.useState(false);
+  const [displaced, setDisplaced] = React.useState(false);
   React.useEffect(() => {
     if (!enabled) return;
     const client = new AgentClient<ShopAgent>({
@@ -143,17 +149,24 @@ export function ShopAgentSocketProvider({
     });
     const onSocketClosed = (event: CloseEvent) => {
       setIdentified(false);
+      setDisplaced(event.code === Domain.CONNECTION_CLOSE_DISPLACED);
       onClose(event);
     };
+    const onSocketOpened = () => {
+      setDisplaced(false);
+    };
     client.addEventListener("close", onSocketClosed);
+    client.addEventListener("open", onSocketOpened);
     // oxlint-disable-next-line react-hooks/set-state-in-effect -- the socket is the external system this effect creates; state is how the context learns it exists
     setAgent(client);
     // oxlint-disable-next-line typescript/consistent-return -- an effect returns a cleanup only when it opened something
     return () => {
       client.removeEventListener("close", onSocketClosed);
+      client.removeEventListener("open", onSocketOpened);
       client.close();
       setAgent(null);
       setIdentified(false);
+      setDisplaced(false);
     };
   }, [shop, enabled]);
   React.useEffect(() => {
@@ -192,8 +205,8 @@ export function ShopAgentSocketProvider({
     };
   }, [agent]);
   const shopAgent = React.useMemo(
-    () => ({ agent, identified }),
-    [agent, identified],
+    () => ({ agent, identified, displaced }),
+    [agent, identified, displaced],
   );
   return <ShopAgentProvider value={shopAgent}>{children}</ShopAgentProvider>;
 }

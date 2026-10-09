@@ -17,6 +17,7 @@
  * | invalidation | the one message the object sends: re-read; never the data                                                                                   | `InvalidatedMessage`, `INVALIDATION_THROTTLE_MS`   | (none)             |
  * | live         | a screen whose rows other actors change and the object re-reads on every publish: the orders index, the order page, the workflows list, the member's workflow page | `useLiveQuery`                                     | (none)             |
  * | revoke       | the object closing a connection whose identity no longer holds (membership, team, app subscription), so the tab reconnects through the gate | `CONNECTION_CLOSE_REVOKED`, `revokeAllConnections` | (none): Connecting |
+ * | displace     | the object closing a member's oldest connection because a newer one took the last of `maxConnectionsPerMember`; the screen stays closed      | `CONNECTION_CLOSE_DISPLACED`, `displaceConnections` | (none): Signed in elsewhere |
  */
 import { Schema, SchemaGetter, Struct } from "effect";
 
@@ -28,6 +29,14 @@ import { Schema, SchemaGetter, Struct } from "effect";
  */
 export const formatNumber = (value: number) =>
   value.toLocaleString("en-US", { maximumFractionDigits: 0 });
+
+/**
+ * A size in bytes as a screen prints it: whole kilobytes of 1,024 bytes,
+ * through {@link formatNumber} ("8 KB"). The Limits help page prints
+ * {@link ShopLimits.maxPropertiesBytesPerItem} with it.
+ */
+export const formatKilobytes = (bytes: number) =>
+  `${formatNumber(bytes / 1024)} KB`;
 
 export const SqliteBoolean = Schema.Number.pipe(
   Schema.decodeTo(Schema.Boolean, {
@@ -224,14 +233,19 @@ export type LoginInput = typeof LoginInput.Type;
  * promise and not a plan tier. Nothing that runs per order depends on it:
  * run creation, reconcile, the order page and the orders index's counts all
  * find workflows by an item's tags (the rule on `itemMatches` in ShopWork),
- * so their cost is the same at one workflow or a thousand. Only the
+ * so their cost is the same at one workflow or two hundred. Only the
  * workflows index reads every workflow, and it pages.
+ *
+ * 200 is what the workflows index carries: eight pages of 25 with search. A
+ * shop near it has a tag design problem (a workflow per product where one
+ * tag would do), not a size problem, so the ceiling stays a guard and is not
+ * a reason to page further.
  *
  * `maxTasks` keeps a task list a short document read and written whole, and
  * the editor's reorder a short list.
  */
 export const WorkflowLimits = {
-  maxWorkflows: 1000,
+  maxWorkflows: 200,
   maxTasks: 20,
 } as const;
 
@@ -239,28 +253,106 @@ export const WorkflowLimits = {
  * Plan-independent ceilings and retention windows for one shop's Durable
  * Object, and the batch sizes the sweeps that enforce them run at.
  *
- * Provisional in exactly the sense `Entitlements` in Billing is: working proposals,
- * nothing measured. Unlike an entitlement these are not a product promise — a
- * merchant never sees them unless something has gone wrong — so they exist to
- * bound the object's storage and per-request row counts, not to price a tier.
+ * The ceilings were set 2026-10-08 from the Cloudflare cost model (`Shop`
+ * and `EventCost` in `scripts/lib/cost.ts`) and from what the screens carry.
+ * Plan-independent because the object never sees the plan (the reasoning on
+ * `ENTITLEMENTS` in Billing): a per-plan ceiling would put plan state in the
+ * object to fall out of sync. The meters differentiate
+ * the plans; the ceilings fence the app. Unlike an entitlement these are not a
+ * product promise (a merchant never sees them unless something has gone
+ * wrong), so they exist to bound the object's single thread, its storage and
+ * its per-request row counts, not to price a tier.
  */
 export const ShopLimits = {
-  /** `Team` rows per shop. Provisional, like every ceiling here. */
+  /**
+   * `Team` rows per shop. A team is a D1 row and a name copied onto run
+   * tasks; no read is linear in teams, so the number is a screen number,
+   * not a load one. 50 is what the orders index's team filter (a select) and
+   * the member page's team checklist carry; if a shop reaches it, the UI is
+   * the thing to change (a search in the filter), not the ceiling.
+   */
   maxTeams: 50,
   /**
    * Open orders (`orderIsOpen` in Orders) stored at one moment, past which no
    * *new* order is stored until one closes. The quantity that loads the
    * object: every orders index read and every member read is linear in it,
-   * whatever cycle the orders arrived in. Provisional; enterprise fencing, not
+   * whatever cycle the orders arrived in. Enterprise fencing, not
    * a tier, and plan-independent like `maxMembers`; the first long-turnaround
    * merchant who meets it is the reason to raise it. See
    * `openOrdersAtCeiling` in Billing.
    */
   maxOpenOrders: 2500,
-  /** Members per shop on any plan; see `membersAtCeiling` in Billing. Provisional; enterprise fencing, not a tier. */
-  maxMembers: 12,
+  /**
+   * Members per shop on any plan; see `membersAtCeiling` in Billing. A
+   * member is one live screen per publish, so members load the object's
+   * single thread (one short read per live screen after every publish), not
+   * its storage. At 50 members and 5,000 orders a month the cost model puts
+   * the busiest hour at 17% busy; at 100 members and 10,000 a month, 52%,
+   * where reads queue. A Durable Object's latency is its weak point, so the
+   * fence is set where the busiest hour stays under 20%: 50, which is also
+   * two pages of the members index. Plan-independent because the object
+   * never sees the plan; seats past the plan's included count are billed,
+   * not refused, up to this.
+   */
+  maxMembers: 50,
+  /**
+   * Live connections one member may hold on the shop at once; a member's
+   * connect past it displaces the oldest (`ShopAgent.displaceConnections`,
+   * the connection table on {@link ConnectionRole}). A member is a person
+   * with at most a bench computer and a phone: each is one connection, and
+   * each connection is one live screen re-read on every publish. A sign-in
+   * shared across a floor is many connections on one member id, five seats
+   * of load for one seat of revenue; this cap, with
+   * {@link ShopLimits.maxSessionsPerMember}, is what makes a member one
+   * person. Neither cap identifies a device, so two phones sharing a sign-in
+   * look the same as one worker's phone and bench computer: the cap is the
+   * control, not detection.
+   *
+   * Newest wins: the worker who just opened the app is the one at the bench,
+   * and refusing the new connection would lock them out of the device in
+   * their hand. Merchants are not capped: Shopify's staff-account limits
+   * bound them, and a merchant has no seat to share. At {@link
+   * ShopLimits.maxMembers} this bounds the shop at 100 member connections,
+   * which the cost model puts at 25% busy at 5,000 orders a month.
+   */
+  maxConnectionsPerMember: 2,
+  /**
+   * Sign-in sessions one person may hold at once, the other half of the
+   * one-person rule on {@link ShopLimits.maxConnectionsPerMember}. A
+   * magic-link sign-in creates a better-auth session per device it is opened
+   * on; `Auth`'s `session.create.after` hook keeps the newest two
+   * (`Repository.keepNewestSessions`) and deletes the rest, so a sign-in
+   * shared across a floor signs the others out. The deleted device's open
+   * sockets are revoked on every shop the email is a member of
+   * (`ShopAgent.revokeMemberConnections`, 3401): each device reconnects
+   * through the gate, where the deleted session's cookie no longer resolves
+   * and is refused, and the kept devices come back. Without the revoke the
+   * signed-out device would keep a live socket under its old identity until
+   * it reloaded.
+   *
+   * Why the pair: a connection cap alone is beaten by taking turns (five
+   * workers, two connections, each reconnecting when a verb is needed); a
+   * session cap alone is beaten by one device with many windows, which the
+   * connection cap bounds. Why delete rather than refuse: refusing the new
+   * sign-in locks the person out of the device in their hand; deleting the
+   * oldest signs out the one they are not using. Applies to every user,
+   * operators included, since a sign-in is the same row whoever holds it.
+   */
+  maxSessionsPerMember: 2,
   /** Line items fetched per order on either path; the rest are not stored. */
   maxLineItemsPerOrder: 250,
+  /**
+   * Bytes of `properties` JSON one item keeps (8 KB), on either sync path;
+   * `capProperties` in Orders applies it. `properties` is whatever the
+   * storefront attached, and a storefront app can attach kilobytes (a design
+   * proof as a data URL would do it); it is stored on the item and copied
+   * onto every run of it, the object's row limit is 2 MB and a statement's
+   * 100 KB, and the stream holds an order whole. The properties are kept in
+   * order while the encoded JSON stays within the cap and the rest are
+   * dropped, logged once per order. Truncated, not refused: the order still
+   * syncs and the merchant still sees the properties that fit.
+   */
+  maxPropertiesBytesPerItem: 8192,
   /**
    * An order whose `processedAt` is older than this is deleted on the next
    * sweep, open or closed, with or without runs; its runs go with it, deleted
@@ -371,6 +463,8 @@ export const EpochMillis = Schema.DateFromString.pipe(
  * | a team is deleted                              | object | its members' connections closed 3401                                             | closes the sockets of everyone who was on the deleted team                                               |
  * | the shop's app subscription lapses             | object | every connection closed 3401                                                     | revokes every connection on the shop for a lapse                                                         |
  * | close 3401 (revoked)                           | tab    | reconnects through the gate on its own; close 4403 (forbidden) stays closed      | the tab reconnects on 3401 and not on 4403                                                               |
+ * | a member's connect past `maxConnectionsPerMember` | object | the member's oldest connections closed 4409 until the cap holds; the new one stays | displaces the oldest connection past the member's cap |
+ * | close 4409 (displaced)                         | tab    | stays closed; the screen says Signed in elsewhere and offers Reconnect             | the tab stays closed on 4409 and shows signed in elsewhere |
  *
  * Identity is a connect-time snapshot, persisted with the hibernatable socket
  * (`serializeAttachment`), so it survives the object hibernating but does not
@@ -415,6 +509,21 @@ export const CONNECTION_TEAM_IDS_HEADER = "x-baton-team-ids";
  */
 export const CONNECTION_CLOSE_FORBIDDEN = 4403;
 export const CONNECTION_CLOSE_REVOKED = 3401;
+
+/**
+ * The close code for a displaced connection: a member's connect took the last
+ * of {@link ShopLimits.maxConnectionsPerMember}, and the object closed the
+ * member's oldest connection to keep the cap (`ShopAgent.displaceConnections`).
+ *
+ * A 4xxx code on purpose, terminal to the socket like
+ * {@link CONNECTION_CLOSE_FORBIDDEN}: a displaced screen that reconnected on
+ * its own would displace the newer screen back, and the two would close each
+ * other in turn for as long as both were open. So the displaced screen stays
+ * closed and says so ("Signed in elsewhere"), and only the person's Reconnect
+ * opens a new socket, which displaces the other screen in its turn. 4409
+ * reads as HTTP's 409 Conflict in the private-use range, as 4403 reads 403.
+ */
+export const CONNECTION_CLOSE_DISPLACED = 4409;
 
 /**
  * The member ids whose open sockets a membership change has invalidated. Plain

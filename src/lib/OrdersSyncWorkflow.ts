@@ -55,7 +55,7 @@ class OrdersSyncWorkflowError extends Schema.TaggedError<OrdersSyncWorkflowError
 const GAVE_UP_MESSAGE = "Shopify did not finish the export in time. Try again.";
 
 /**
- * The banner's text for a failed sync (rule 14 on `Domain.syncOrder`): an
+ * The banner's text for a failed sync (rule 15 on `Domain.syncOrder`): an
  * {@link OrdersSyncWorkflowError}'s own message is already the merchant
  * sentence, so it goes bare, with no tag prefix and no `[cause]:` line; any
  * other failure (a defect) is rendered whole, since there is no sentence to

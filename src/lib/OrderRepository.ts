@@ -415,7 +415,7 @@ export class OrderRepository extends Context.Service<
     /**
      * `setSyncError`, but only when no error is
      * recorded: the Workflow's sink writes the merchant sentence first, and
-     * the SDK's error callback that follows must not overwrite it (rule 14 on
+     * the SDK's error callback that follows must not overwrite it (rule 15 on
      * `Domain.syncOrder`).
      */
     readonly setSyncErrorIfEmpty: (input: {

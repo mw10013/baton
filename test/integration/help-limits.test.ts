@@ -26,6 +26,8 @@ describe("help reference: limits and billing", () => {
       Domain.BLOCK_REASON_MAX_LENGTH,
       Domain.EMAIL_MAX_LENGTH,
       Domain.ShopLimits.maxMembers,
+      Domain.ShopLimits.maxConnectionsPerMember,
+      Domain.ShopLimits.maxSessionsPerMember,
       Domain.ShopLimits.maxTeams,
       Domain.WorkflowLimits.maxWorkflows,
       Domain.WorkflowLimits.maxTasks,
@@ -42,6 +44,9 @@ describe("help reference: limits and billing", () => {
           !new RegExp(`(?<![\\d,])${value}(?![\\d,])`, "u").test(markup),
       );
     expect(missing).toEqual([]);
+    expect(markup).toContain(
+      Domain.formatKilobytes(Domain.ShopLimits.maxPropertiesBytesPerItem),
+    );
   });
 
   it("Plans and billing prints no number", () => {

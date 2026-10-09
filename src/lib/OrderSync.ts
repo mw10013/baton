@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
 
 import * as Domain from "@/lib/Domain";
 
@@ -61,21 +61,59 @@ export const toShopOrder = ({
   syncedAt,
 });
 
-export const toOrderLineItem = (
-  orderId: string,
-  node: LineItemNode,
-): Domain.OrderLineItem => ({
-  id: node.id,
-  orderId,
-  title: node.title,
-  variantTitle: node.variantTitle,
-  sku: node.sku,
-  quantity: node.quantity,
-  currentQuantity: node.currentQuantity,
-  productTags: node.product?.tags ?? [],
+const toOrderLineItem = (orderId: string, node: LineItemNode) => {
   /** Shopify's name for the list; the domain calls it properties (see {@link Domain.LineItemProperty}). */
-  properties: node.customAttributes,
-});
+  const { kept, dropped } = Domain.capProperties(node.customAttributes);
+  return {
+    item: {
+      id: node.id,
+      orderId,
+      title: node.title,
+      variantTitle: node.variantTitle,
+      sku: node.sku,
+      quantity: node.quantity,
+      currentQuantity: node.currentQuantity,
+      productTags: node.product?.tags ?? [],
+      properties: kept,
+    } satisfies Domain.OrderLineItem,
+    dropped,
+  };
+};
+
+/**
+ * One order's items as both sync paths store them, the webhook fetch
+ * (`OrdersAgent.fetchAndUpsertOrder`) and the stream
+ * (`runShopAgentOrdersStream`), so the two cannot store different things for
+ * the same item. Each item's properties are capped by
+ * {@link Domain.capProperties} (rule 11 on `Domain.syncOrder`), and the
+ * properties dropped across the order are logged once. A run copies its
+ * item's stored properties, so the cap reaches every run.
+ */
+export const toOrderLineItems = ({
+  shop,
+  orderId,
+  nodes,
+}: {
+  readonly shop: string;
+  readonly orderId: string;
+  readonly nodes: readonly LineItemNode[];
+}) =>
+  Effect.gen(function* () {
+    const mapped = nodes.map((node) => toOrderLineItem(orderId, node));
+    const dropped = mapped.reduce((sum, { dropped }) => sum + dropped, 0);
+    if (dropped > 0)
+      yield* Effect.logWarning(
+        `OrderSync.capProperties: shop=${shop} orderId=${orderId} dropped=${String(dropped)}`,
+      ).pipe(
+        Effect.annotateLogs({
+          shop,
+          orderId,
+          dropped,
+          limit: Domain.ShopLimits.maxPropertiesBytesPerItem,
+        }),
+      );
+    return mapped.map(({ item }) => item);
+  });
 
 /**
  * The single-order fetch behind every webhook delivery and every

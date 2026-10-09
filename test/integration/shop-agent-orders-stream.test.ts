@@ -17,6 +17,8 @@ import { openTwoScreens, receivedInvalidations } from "./agent-socket.ts";
 import { reconcileContext } from "./reconcile-context.ts";
 
 const BULK_URL = "https://storage.googleapis.test/bulk-orders.jsonl";
+/** Names the shop in the stream's logs; the object under test is `runInDo`'s. */
+const STREAM_SHOP = "stream.myshopify.com";
 
 const httpClientLayer = (body: string) =>
   Layer.succeed(
@@ -121,7 +123,10 @@ describe("runShopAgentOrdersStream", () => {
     const { counts, first, second } = await runInDo(
       fixture,
       Effect.gen(function* () {
-        const counts = yield* runShopAgentOrdersStream({ url: BULK_URL });
+        const counts = yield* runShopAgentOrdersStream({
+          shop: STREAM_SHOP,
+          url: BULK_URL,
+        });
         const repository = yield* OrderRepository;
         return {
           counts,
@@ -152,7 +157,10 @@ describe("runShopAgentOrdersStream", () => {
         ),
       ),
       Effect.gen(function* () {
-        const counts = yield* runShopAgentOrdersStream({ url: BULK_URL });
+        const counts = yield* runShopAgentOrdersStream({
+          shop: STREAM_SHOP,
+          url: BULK_URL,
+        });
         return {
           counts,
           detail: yield* (yield* OrderRepository).getOrder(orderGid(1)),
@@ -173,10 +181,49 @@ describe("runShopAgentOrdersStream", () => {
     );
   });
 
+  /**
+   * Rule 11 on `Domain.syncOrder`, the write path: an item whose properties
+   * overflow `maxPropertiesBytesPerItem` stores the prefix that fits, and the
+   * order syncs.
+   */
+  it("an item's properties past 8 KB are not stored and the order syncs", async () => {
+    const kept = { key: "text", value: "Hello" };
+    const { counts, detail } = await runInDo(
+      ndjson(orderLine(1, "2026-08-01T10:00:00Z"), {
+        ...lineItemLine(1, 1),
+        customAttributes: [
+          kept,
+          {
+            key: "proof",
+            value: "x".repeat(Domain.ShopLimits.maxPropertiesBytesPerItem),
+          },
+          { key: "after", value: "small" },
+        ],
+      }),
+      Effect.gen(function* () {
+        const counts = yield* runShopAgentOrdersStream({
+          shop: STREAM_SHOP,
+          url: BULK_URL,
+        });
+        return {
+          counts,
+          detail: yield* (yield* OrderRepository).getOrder(orderGid(1)),
+        };
+      }),
+    );
+    strictEqual(counts.ordersUpserted, 1);
+    const stored = Option.getOrThrow(detail);
+    strictEqual(stored.lineItems.length, 1);
+    strictEqual(
+      JSON.stringify(stored.lineItems[0]?.properties),
+      JSON.stringify([kept]),
+    );
+  });
+
   it("fails when a line item names a parent that is not the open order", async () => {
     const message = await runInDo(
       ndjson(orderLine(1, "2026-08-01T10:00:00Z"), lineItemLine(1, 99)),
-      runShopAgentOrdersStream({ url: BULK_URL }).pipe(
+      runShopAgentOrdersStream({ shop: STREAM_SHOP, url: BULK_URL }).pipe(
         Effect.flip,
         Effect.map((error) => error.message),
       ),
@@ -190,7 +237,7 @@ describe("runShopAgentOrdersStream", () => {
   it("maps an undecodable line to a stream error", async () => {
     const message = await runInDo(
       ndjson({ __typename: "Order", id: orderGid(1) }),
-      runShopAgentOrdersStream({ url: BULK_URL }).pipe(
+      runShopAgentOrdersStream({ shop: STREAM_SHOP, url: BULK_URL }).pipe(
         Effect.flip,
         Effect.map((error) => error.message),
       ),
@@ -209,6 +256,7 @@ describe("runShopAgentOrdersStream", () => {
       Effect.gen(function* () {
         let writes = 0;
         const failed = yield* runShopAgentOrdersStream({
+          shop: STREAM_SHOP,
           url: BULK_URL,
           afterWrite: () => {
             writes += 1;
@@ -263,7 +311,10 @@ describe("runShopAgentOrdersStream", () => {
     const synced = await runInDo(
       fixture,
       Effect.gen(function* () {
-        yield* runShopAgentOrdersStream({ url: BULK_URL }).pipe(
+        yield* runShopAgentOrdersStream({
+          shop: STREAM_SHOP,
+          url: BULK_URL,
+        }).pipe(
           Effect.provide(observed),
           Effect.provideService(Clock.Clock, stepped),
         );
@@ -302,7 +353,10 @@ describe("runShopAgentOrdersStream", () => {
           lineItems: [],
         });
         return {
-          counts: yield* runShopAgentOrdersStream({ url: BULK_URL }),
+          counts: yield* runShopAgentOrdersStream({
+            shop: STREAM_SHOP,
+            url: BULK_URL,
+          }),
           detail: yield* repository.getOrder(orderGid(1)),
         };
       }),
@@ -398,10 +452,18 @@ describe("runShopAgentOrdersStream with afterWrite", () => {
         const context = yield* reconcileContext([team]);
         const afterWrite = (order: Domain.ShopOrder) =>
           runs.reconcileOrder({ ...context, orderId: order.id });
-        yield* runShopAgentOrdersStream({ url: BULK_URL, afterWrite });
+        yield* runShopAgentOrdersStream({
+          shop: STREAM_SHOP,
+          url: BULK_URL,
+          afterWrite,
+        });
         const first = yield* runs.listRunsForOrder({ orderId: orderGid(1) });
         const second = yield* runs.listRunsForOrder({ orderId: orderGid(2) });
-        yield* runShopAgentOrdersStream({ url: BULK_URL, afterWrite });
+        yield* runShopAgentOrdersStream({
+          shop: STREAM_SHOP,
+          url: BULK_URL,
+          afterWrite,
+        });
         const secondPass = yield* runs.listRunsForOrder({
           orderId: orderGid(2),
         });

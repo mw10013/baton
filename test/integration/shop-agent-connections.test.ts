@@ -10,6 +10,7 @@ import {
   memberHeaders,
   merchantHeaders,
   openAgentSocket,
+  splitConnectedAt,
 } from "./agent-socket";
 import {
   emailOf,
@@ -65,7 +66,9 @@ describe("ShopAgent connection identity", () => {
     await socket.waitForMessage((data) => data.includes("cf_agent_identity"));
     const connections = await connectionsOf(shop);
     expect(connections).toHaveLength(1);
-    expect(connections[0]?.state).toEqual({ role: "merchant" });
+    const { identity, connectedAt } = splitConnectedAt(connections[0]?.state);
+    expect(identity).toEqual({ role: "merchant" });
+    expect(connectedAt).toBeTypeOf("number");
     expect(connections[0]?.tags).toContain("merchant");
     socket.close();
   });
@@ -83,7 +86,9 @@ describe("ShopAgent connection identity", () => {
     await socket.waitForMessage((data) => data.includes("cf_agent_identity"));
     const connections = await connectionsOf(shop);
     expect(connections).toHaveLength(1);
-    expect(connections[0]?.state).toEqual({
+    const { identity, connectedAt } = splitConnectedAt(connections[0]?.state);
+    expect(connectedAt).toBeTypeOf("number");
+    expect(identity).toEqual({
       role: "member",
       memberId: "member-1",
       // Normalized by `Domain.Email` on decode, so the header's casing cannot
@@ -161,6 +166,47 @@ describe("ShopAgent connection identity", () => {
       "socket stayed open",
     );
     untouched.close();
+  });
+
+  /**
+   * The cap on `Domain.ShopLimits.maxConnectionsPerMember`: newest wins, so
+   * the connect past the cap closes the member's oldest connection with
+   * `Domain.CONNECTION_CLOSE_DISPLACED` and keeps the rest. Merchants are
+   * not capped.
+   */
+  it("displaces the oldest connection past the member's cap", async () => {
+    expect(Domain.CONNECTION_CLOSE_DISPLACED).toBe(4409);
+    const shop = "conn-displace.myshopify.com";
+    const member = {
+      memberId: "member-displaced",
+      memberEmail: "a@example.com",
+      teamIds: ["team-a"],
+    };
+    const cap = Domain.ShopLimits.maxConnectionsPerMember;
+    const sockets = [];
+    for (let index = 0; index <= cap; index += 1) {
+      const socket = await openAgentSocket(shop, memberHeaders(member));
+      await socket.waitForMessage((data) => data.includes("cf_agent_identity"));
+      sockets.push(socket);
+    }
+    const [oldest, ...kept] = sockets;
+    const { code } = await oldest.waitForClose();
+    expect(code).toBe(Domain.CONNECTION_CLOSE_DISPLACED);
+    for (const socket of kept)
+      await expect(socket.waitForClose(200)).rejects.toThrow(
+        "socket stayed open",
+      );
+    const merchants = [];
+    for (let index = 0; index <= cap; index += 1) {
+      const socket = await openAgentSocket(shop, merchantHeaders());
+      await socket.waitForMessage((data) => data.includes("cf_agent_identity"));
+      merchants.push(socket);
+    }
+    for (const socket of merchants)
+      await expect(socket.waitForClose(200)).rejects.toThrow(
+        "socket stayed open",
+      );
+    for (const socket of [...kept, ...merchants]) socket.close();
   });
 
   /**

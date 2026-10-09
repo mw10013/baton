@@ -19,10 +19,15 @@ export type ShopAgentSocket = AgentClient<ShopAgent>;
  * socket after hydration. `identified === true` implies a non-null `agent`, so
  * consumers gate every `agent` use on `identified` or on `null`. During a
  * reconnect `agent` is the same socket while `identified` is `false`.
+ *
+ * `displaced` is true from a `Domain.CONNECTION_CLOSE_DISPLACED` close until
+ * the socket opens again: the socket stays closed (the code is terminal), and
+ * `SocketBanner` says Signed in elsewhere and offers Reconnect.
  */
 interface ShopAgentContextValue {
   readonly agent: ShopAgentSocket | null;
   readonly identified: boolean;
+  readonly displaced: boolean;
 }
 
 const ShopAgentContext = React.createContext<ShopAgentContextValue | null>(

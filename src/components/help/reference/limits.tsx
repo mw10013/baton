@@ -25,8 +25,14 @@ import { ORDER_SYNC_WINDOW_DAYS } from "@/lib/orderSyncConstants";
  * editor's forms); `tagCommaError` in `src/lib/workflowShared.ts`;
  * `MEMBER_CEILING` in `src/routes/app.members.index.tsx`, the teams and
  * workflows "A shop can have N …. Delete one to add another.", the editor's
- * "A workflow can have N tasks."; `maxLineItemsPerOrder` (the rest are not
- * stored, and only a log says so); `QuotaBanners` and `openOrdersAtCeiling`;
+ * "A workflow can have N tasks."; `maxConnectionsPerMember` and
+ * `SocketBanner` (the oldest screen says “Signed in elsewhere” and offers
+ * Reconnect); `maxSessionsPerMember` (the oldest sign-in is signed out, and
+ * its next page is the sign-in page); `maxLineItemsPerOrder` (the rest are not
+ * stored, and only a log says so); `maxPropertiesBytesPerItem`, printed
+ * through `Domain.formatKilobytes` (the properties that fit are kept, the
+ * rest are not stored, and only a log says so); `QuotaBanners` and
+ * `openOrdersAtCeiling`;
  * `retentionCutoff` (the age is from `processedAt`, the date the Orders page
  * prints as Placed).
  *
@@ -102,6 +108,19 @@ export function Limits() {
               </>,
             ],
             [
+              "Screens signed in as one member",
+              n(Domain.ShopLimits.maxConnectionsPerMember),
+              <>
+                The oldest screen says “Signed in elsewhere” and offers{" "}
+                <strong>Reconnect</strong>.
+              </>,
+            ],
+            [
+              "Sign-ins as one member",
+              n(Domain.ShopLimits.maxSessionsPerMember),
+              "The oldest sign-in is signed out at its next page.",
+            ],
+            [
               "Teams",
               n(Domain.ShopLimits.maxTeams),
               <>
@@ -126,6 +145,13 @@ export function Limits() {
               "Items on an order",
               n(Domain.ShopLimits.maxLineItemsPerOrder),
               `Baton keeps ${n(Domain.ShopLimits.maxLineItemsPerOrder)} of the order's items and leaves out the rest.`,
+            ],
+            [
+              "Properties on an item",
+              Domain.formatKilobytes(
+                Domain.ShopLimits.maxPropertiesBytesPerItem,
+              ),
+              "The properties that fit are shown. The rest are not stored.",
             ],
           ]}
         />

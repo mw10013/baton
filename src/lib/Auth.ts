@@ -19,6 +19,7 @@ import { Email } from "@/lib/Email";
 import { KV } from "@/lib/KV";
 import { causeToErrorMessage, makeRunPromise } from "@/lib/LayerEx";
 import { Repository } from "@/lib/Repository";
+import { ShopAgentClient } from "@/lib/ShopAgentClient";
 
 export class AuthError extends Schema.TaggedError<AuthError>()("AuthError", {
   message: Schema.String,
@@ -52,7 +53,9 @@ const SessionContextFromAuthOutput = Schema.toType(
 );
 
 const make = Effect.gen(function* () {
-  const runPromise = yield* makeRunPromise<KV | Repository | Email>();
+  const runPromise = yield* makeRunPromise<
+    KV | Repository | Email | ShopAgentClient
+  >();
   const env = yield* CloudflareEnv;
   const config = yield* Config.all({
     baseURL: Config.nonEmptyString("BETTER_AUTH_URL"),
@@ -90,6 +93,67 @@ const make = Effect.gen(function* () {
     verification: { modelName: "Verification" },
     advanced: { ipAddress: { ipAddressHeaders: ["cf-connecting-ip"] } },
     databaseHooks: {
+      session: {
+        create: {
+          /**
+           * Holds {@link Domain.ShopLimits.maxSessionsPerMember}, which states
+           * the rule and its reasoning: keeps the session just created and the
+           * user's newest others up to the cap, deletes the rest, and, when it
+           * deleted one, revokes the member's connections on every shop the
+           * email belongs to, so the signed-out device's socket goes back
+           * through the gate and is refused there.
+           *
+           * Best-effort, logged and swallowed like the expired-auth sweep: the
+           * session row is already written when this runs, and a failure here
+           * must never be the reason a person cannot sign in.
+           */
+          after: (session) =>
+            runPromise(
+              Effect.gen(function* () {
+                const repository = yield* Repository;
+                const { deleted, email } = yield* repository.keepNewestSessions(
+                  {
+                    userId: session.userId,
+                    sessionId: session.id,
+                    keep: Domain.ShopLimits.maxSessionsPerMember,
+                  },
+                );
+                if (deleted === 0 || email === null) return;
+                yield* Effect.logInfo(
+                  `Auth.sessionCreate: email=${email} revoked=${String(deleted)}`,
+                ).pipe(Effect.annotateLogs({ email, revoked: deleted }));
+                const memberEmail = yield* Schema.decodeUnknownEffect(
+                  Domain.Email,
+                )(email);
+                const shopAgentClient = yield* ShopAgentClient;
+                const shops = yield* repository.listMemberShops(memberEmail);
+                yield* Effect.forEach(
+                  shops,
+                  (shop) =>
+                    repository.findMember({ shop, email: memberEmail }).pipe(
+                      Effect.flatMap((member) =>
+                        Option.isSome(member)
+                          ? shopAgentClient.revokeMemberConnections(shop, {
+                              memberIds: [member.value.id],
+                            })
+                          : Effect.void,
+                      ),
+                    ),
+                  { discard: true },
+                );
+              }).pipe(
+                Effect.catchCause((cause) => {
+                  const message = causeToErrorMessage(cause);
+                  return Effect.logWarning(
+                    `Auth.sessionCreate: userId=${session.userId}: session cap failed: ${message}`,
+                  ).pipe(
+                    Effect.annotateLogs({ userId: session.userId, message }),
+                  );
+                }),
+              ),
+            ),
+        },
+      },
       user: {
         create: {
           /**

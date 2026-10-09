@@ -7,7 +7,7 @@ import { OrderRepository } from "@/lib/OrderRepository";
 import {
   LineItemNode,
   OrderNode,
-  toOrderLineItem,
+  toOrderLineItems,
   toShopOrder,
 } from "@/lib/OrderSync";
 
@@ -51,7 +51,7 @@ interface OrderBuffer {
   readonly truncated: boolean;
 }
 
-/** Logged by the caller and never shown: no count a sync makes reaches a screen (rule 17 on `Domain.syncOrder`). */
+/** Logged by the caller and never shown: no count a sync makes reaches a screen (rule 18 on `Domain.syncOrder`). */
 export interface OrdersStreamCounts {
   readonly ordersSeen: number;
   readonly ordersUpserted: number;
@@ -134,17 +134,21 @@ const addLine = (
  * fresher webhook row survive a staler line in the file. Nothing is cleared
  * first for the same reason.
  *
- * Rules 10 and 11 on `Domain.syncOrder`: at most 250 items an order, and one
- * `syncedAt` for the whole stream, read before the file is fetched.
+ * Rules 10, 11 and 12 on `Domain.syncOrder`: at most 250 items an order, at
+ * most 8 KB of properties an item, and one `syncedAt` for the whole stream,
+ * read before the file is fetched.
  *
  * The Durable Object's input gate opens on every `await` inside this fetch, so
  * webhook deliveries genuinely interleave between orders — that is expected,
  * and per-order transactions plus the guard are what make it safe.
  */
 export const runShopAgentOrdersStream = <E = never>({
+  shop,
   url,
   afterWrite,
 }: {
+  /** For the logs only. */
+  readonly shop: string;
   readonly url: string;
   /** Composed into each order's upsert transaction; see `OrderUpsert.afterWrite`. */
   readonly afterWrite?: (order: Domain.ShopOrder) => Effect.Effect<unknown, E>;
@@ -212,9 +216,11 @@ export const runShopAgentOrdersStream = <E = never>({
               );
             const { written, fresh, refused } = yield* repository.upsertOrder({
               order: shopOrder,
-              lineItems: lineItems.map((item) =>
-                toOrderLineItem(order.id, item),
-              ),
+              lineItems: yield* toOrderLineItems({
+                shop,
+                orderId: order.id,
+                nodes: lineItems,
+              }),
               afterWrite: afterWrite?.(shopOrder),
             });
             return {

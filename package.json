@@ -45,6 +45,7 @@
     "typecheck": "pnpm run cf-typegen && tsc -b . test",
     "lint": "oxlint --format agent && node scripts/rules-lint.ts && node scripts/spec.ts check",
     "spec": "node scripts/spec.ts",
+    "cost": "node scripts/cost.ts",
     "vocab:audit": "node scripts/vocab-audit.ts",
     "fmt": "oxfmt . '!refs/**' '!dist/**'",
     "fmt:check": "oxfmt --check . '!refs/**' '!dist/**'",

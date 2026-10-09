@@ -44,6 +44,25 @@ export interface AgentSocket {
 
 const RPC_TIMEOUT_MS = 10_000;
 
+/**
+ * A connection's stored state split into the identity the gate forwarded and
+ * the `connectedAt` the object stamped (`Domain.ConnectionState`), so a test
+ * can compare the identity exactly while the clock reading varies.
+ */
+export const splitConnectedAt = (
+  state: unknown,
+): { readonly identity: unknown; readonly connectedAt: unknown } =>
+  typeof state === "object" && state !== null
+    ? {
+        identity: Object.fromEntries(
+          Object.entries(state).filter(([key]) => key !== "connectedAt"),
+        ),
+        connectedAt: Object.entries(state).find(
+          ([key]) => key === "connectedAt",
+        )?.[1],
+      }
+    : { identity: state, connectedAt: undefined };
+
 export const merchantHeaders = (): Record<string, string> => ({
   [Domain.CONNECTION_ROLE_HEADER]: "merchant",
 });

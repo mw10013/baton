@@ -74,7 +74,13 @@ const makeAppLayer = (
   const emailLayer = Layer.provideMerge(Email.layerNoDeps, envLayer);
   const authLayer = Layer.provideMerge(
     Auth.layerNoDeps,
-    Layer.mergeAll(kvLayer, repositoryLayer, emailLayer, envLayer),
+    Layer.mergeAll(
+      kvLayer,
+      repositoryLayer,
+      emailLayer,
+      shopAgentClientLayer,
+      envLayer,
+    ),
   );
   return Layer.mergeAll(
     repositoryLayer,

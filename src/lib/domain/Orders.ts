@@ -23,7 +23,7 @@
  */
 import { Schema } from "effect";
 
-import { retentionCutoff, SqliteBoolean } from "./Platform.ts";
+import { retentionCutoff, ShopLimits, SqliteBoolean } from "./Platform.ts";
 
 /**
  * One line item property: Shopify's `Attribute` as it appears in
@@ -37,6 +37,44 @@ export const LineItemProperty = Schema.Struct({
   value: Schema.NullOr(Schema.String),
 });
 export type LineItemProperty = typeof LineItemProperty.Type;
+
+const utf8 = new TextEncoder();
+
+/**
+ * The longest prefix of `properties` whose JSON encoding, as the item's
+ * `properties` column stores it, is at most `capBytes` UTF-8 bytes, and how
+ * many properties were dropped after it. The cap and why it truncates rather
+ * than refuses are on {@link ShopLimits.maxPropertiesBytesPerItem}; rule 11 on
+ * {@link syncOrder} says where it applies. A prefix, so the order the
+ * storefront sent survives and a later small property never jumps a larger
+ * one that did not fit.
+ */
+export const capProperties = (
+  properties: readonly LineItemProperty[],
+  capBytes: number = ShopLimits.maxPropertiesBytesPerItem,
+): {
+  readonly kept: readonly LineItemProperty[];
+  readonly dropped: number;
+} => {
+  // `[` and `]`, then each property's own JSON and a comma before every one
+  // after the first: the length of `JSON.stringify(prefix)` without
+  // re-encoding the prefix at every step.
+  let bytes = 2;
+  let count = 0;
+  for (const property of properties) {
+    const next =
+      bytes +
+      utf8.encode(JSON.stringify(property)).length +
+      (count === 0 ? 0 : 1);
+    if (next > capBytes) break;
+    bytes = next;
+    count += 1;
+  }
+  return {
+    kept: count === properties.length ? properties : properties.slice(0, count),
+    dropped: properties.length - count,
+  };
+};
 
 /**
  * One order in the shop's Durable Object SQLite. Encoded side is the row
@@ -293,7 +331,7 @@ export type SyncAction = typeof SyncAction.Type;
  * It stays a row of the pipeline table on `ShopAgentHost` only. The stream's
  * callbacks (`onOrdersStream`, `onOrdersSyncEmpty`, `onOrdersSyncError`) are
  * reached by the Workflow alone, never from a browser: the file URL is
- * accepted only from a bulk operation this shop started (rule 15).
+ * accepted only from a bulk operation this shop started (rule 16).
  *
  * What each ending of the open-orders sync leaves. `tracking row` is
  * `inserted`, `deleted`, `none` or `—`; `lastError` is `set`, `cleared` or
@@ -339,13 +377,14 @@ export type SyncAction = typeof SyncAction.Type;
  * | 8. only a new order is gated, by retention and by the order ceiling; a stored order always takes its update                                                                                                                                                                                                               | `Domain.syncOrder`                                                            | the ceiling counts open orders, not counted ones: a new order is refused at it, a stored one still updates, and a closed order makes no claim on it; an order older than retention is never stored again |
  * | 9. a sync merges and never clears: no sync deletes an order; retention does, by the order's own date, riding the open-orders sync and, rate-limited, the webhook                                                                                                                                                          | `ShopAgent.onOrdersStream`, `syncOrderWebhook`, `sweepExpiredOrders`          | leaves a fresher webhook row untouched; deletes any order older than 365 days, open or closed, with its runs                                                                   |
  * | 10. an order keeps at most 250 items on either path; the rest are not stored; on the stream a child whose parent is not the open order fails the sync                                                                                                                                                                     | `runShopAgentOrdersStream`, `addLine`, `OrdersAgent.fetchAndUpsertOrder`      | stores the first 250 line items of an order and does not fail the sync; fails when a line item names a parent that is not the open order                                       |
- * | 11. every streamed order carries the stream's one `syncedAt`, read before the file is fetched; retention and the billing cycle are resolved against it                                                                                                                                                                    | `runShopAgentOrdersStream`                                                    | every streamed order carries one syncedAt, read before the file is fetched                                                                                                     |
- * | 12. the usage queue is sent once after a stream, whatever became of it; after a one-order sync from the order page, whatever became of it; and after a webhook's write, so a failed webhook flushes on Shopify's retry                                                                                                    | `ShopAgent.onOrdersStream`, `syncOrder`, `syncOrderWebhook`                   | syncing one order sends the usage queue, even when the sync fails                                                                                                              |
- * | 13. a completed sync leaves nothing behind but its rows: the completion callback deletes the tracking row and writes nothing else                                                                                                                                                                                         | `ShopAgent.onWorkflowComplete`                                                | a completed sync deletes the tracking row and writes nothing else                                                                                                              |
- * | 14. a failed sync's banner is the merchant sentence, written by the sink; the callback that follows deletes the tracking row and never overwrites a message the sink wrote                                                                                                                                                | `ShopAgent.onOrdersSyncError`, `onWorkflowError`                              | a failed sync's banner is the merchant sentence, and the callback never overwrites it                                                                                          |
- * | 15. the stream's callbacks are reached by the Workflow alone; the file URL is accepted only from a bulk operation this shop started; the two buttons are the merchant's socket and the webhook is HMAC                                                                                                                    | `ShopAgent.onOrdersStream`, `connectionRoleGuard`, `handleWebhook`            | the stream's callbacks are not callable from a socket, and the two sync buttons refuse a member                                                                                |
- * | 16. a repeat sync of the same version changes nothing a screen shows and publishes nothing: the row is rewritten, the items replaced with the same set, and reconcile writes nothing (pass rule 5 on `reconcileItem`)                                                                                                                           | `Domain.syncOrder`, `reconcileItem`                                           | creates runs on every streamed open order that matches, however old, and a re-stream creates none                                                                              |
- * | 17. no count a sync makes reaches a screen; the orders index shows whether one runs and the last error, nothing else                                                                                                                                                                                                      | `OrdersSyncStatus`, `OrdersStreamCounts`                                      | no sync count reaches a screen: the orders index carries whether one runs and the last error                                                                                   |
+ * | 11. an item keeps at most 8 KB of properties on either path; the rest are not stored | `toOrderLineItems`, `capProperties` | keeps the properties that fit in 8 KB and drops the rest; an item's properties past 8 KB are not stored and the order syncs |
+ * | 12. every streamed order carries the stream's one `syncedAt`, read before the file is fetched; retention and the billing cycle are resolved against it                                                                                                                                                                    | `runShopAgentOrdersStream`                                                    | every streamed order carries one syncedAt, read before the file is fetched                                                                                                     |
+ * | 13. the usage queue is sent once after a stream, whatever became of it; after a one-order sync from the order page, whatever became of it; and after a webhook's write, so a failed webhook flushes on Shopify's retry                                                                                                    | `ShopAgent.onOrdersStream`, `syncOrder`, `syncOrderWebhook`                   | syncing one order sends the usage queue, even when the sync fails                                                                                                              |
+ * | 14. a completed sync leaves nothing behind but its rows: the completion callback deletes the tracking row and writes nothing else                                                                                                                                                                                         | `ShopAgent.onWorkflowComplete`                                                | a completed sync deletes the tracking row and writes nothing else                                                                                                              |
+ * | 15. a failed sync's banner is the merchant sentence, written by the sink; the callback that follows deletes the tracking row and never overwrites a message the sink wrote                                                                                                                                                | `ShopAgent.onOrdersSyncError`, `onWorkflowError`                              | a failed sync's banner is the merchant sentence, and the callback never overwrites it                                                                                          |
+ * | 16. the stream's callbacks are reached by the Workflow alone; the file URL is accepted only from a bulk operation this shop started; the two buttons are the merchant's socket and the webhook is HMAC                                                                                                                    | `ShopAgent.onOrdersStream`, `connectionRoleGuard`, `handleWebhook`            | the stream's callbacks are not callable from a socket, and the two sync buttons refuse a member                                                                                |
+ * | 17. a repeat sync of the same version changes nothing a screen shows and publishes nothing: the row is rewritten, the items replaced with the same set, and reconcile writes nothing (pass rule 5 on `reconcileItem`)                                                                                                                           | `Domain.syncOrder`, `reconcileItem`                                           | creates runs on every streamed open order that matches, however old, and a re-stream creates none                                                                              |
+ * | 18. no count a sync makes reaches a screen; the orders index shows whether one runs and the last error, nothing else                                                                                                                                                                                                      | `OrdersSyncStatus`, `OrdersStreamCounts`                                      | no sync count reaches a screen: the orders index carries whether one runs and the last error                                                                                   |
  */
 export const syncOrder = ({
   stored,
@@ -416,7 +455,7 @@ export type BulkOperation = typeof BulkOperation.Type;
  * Whether one is running now is not stored — the Agents SDK's own
  * `cf_agents_workflows` row is the only run tracker ({@link
  * OrdersSyncStatus.inFlight}) — and a completed sync leaves nothing behind
- * but its rows (rule 13 on {@link syncOrder}). Two records of the same fact
+ * but its rows (rule 14 on {@link syncOrder}). Two records of the same fact
  * drift the moment a workflow dies without reporting.
  *
  * `lastError` is the banner on the orders index and survives until the next
@@ -427,7 +466,7 @@ export const SyncState = Schema.Struct({
 });
 export type SyncState = typeof SyncState.Type;
 
-/** {@link SyncState} as `OrdersIndexData` in ShopWork carries it, plus whether a sync is tracked as running right now; only a fresh tracking row counts (`SYNC_STALE_MS` in `ShopAgent.ts` is the rule). Nothing else: no count a sync makes reaches a screen (rule 17 on {@link syncOrder}). */
+/** {@link SyncState} as `OrdersIndexData` in ShopWork carries it, plus whether a sync is tracked as running right now; only a fresh tracking row counts (`SYNC_STALE_MS` in `ShopAgent.ts` is the rule). Nothing else: no count a sync makes reaches a screen (rule 18 on {@link syncOrder}). */
 export const OrdersSyncStatus = Schema.Struct({
   inFlight: Schema.Boolean,
   ...SyncState.fields,

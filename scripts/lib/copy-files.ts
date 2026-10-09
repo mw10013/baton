@@ -34,6 +34,7 @@ export const copyFiles = (): readonly string[] => [
     (path) => !path.endsWith("PlanCache.tsx"),
   ),
   ...[
+    "SocketBanner.tsx",
     "useMemberRunActions.ts",
     "changeWarning.ts",
     "teams.ts",

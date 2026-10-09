@@ -9,7 +9,7 @@ import {
   orderSyncQuery,
   OrderSyncResponse,
   orderSyncVariables,
-  toOrderLineItem,
+  toOrderLineItems,
   toShopOrder,
 } from "@/lib/OrderSync";
 import {
@@ -106,9 +106,11 @@ const make = Effect.gen(function* () {
       });
       const upsert = yield* (yield* OrderRepository).upsertOrder({
         order: shopOrder,
-        lineItems: order.lineItems.nodes.map((node) =>
-          toOrderLineItem(order.id, node),
-        ),
+        lineItems: yield* toOrderLineItems({
+          shop,
+          orderId: order.id,
+          nodes: order.lineItems.nodes,
+        }),
         afterWrite: reconcile(shopOrder),
       });
       const { written } = upsert;

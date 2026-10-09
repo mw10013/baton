@@ -111,6 +111,45 @@ describe("Domain.orderPosition", () => {
     });
 });
 
+/**
+ * `Domain.ShopLimits.maxPropertiesBytesPerItem`: the prefix whose JSON fits is
+ * kept, in order, and everything from the first property that overflows on is
+ * dropped.
+ */
+const smallProperty = (key: string) => ({ key, value: "x".repeat(100) });
+
+describe("Domain.capProperties", () => {
+  it("keeps the properties that fit in 8 KB and drops the rest", () => {
+    const cap = Domain.ShopLimits.maxPropertiesBytesPerItem;
+    strictEqual(cap, 8192);
+    const overflowing = [
+      smallProperty("a"),
+      smallProperty("b"),
+      { key: "proof", value: "x".repeat(cap) },
+      smallProperty("c"),
+    ];
+    const capped = Domain.capProperties(overflowing);
+    deepStrictEqual(capped.kept, [smallProperty("a"), smallProperty("b")]);
+    strictEqual(capped.dropped, 2);
+    deepStrictEqual(Domain.capProperties([]), { kept: [], dropped: 0 });
+    deepStrictEqual(
+      Domain.capProperties([{ key: "proof", value: "x".repeat(cap) }]),
+      { kept: [], dropped: 1 },
+    );
+    // The cap is on the stored JSON, in UTF-8 bytes: a list that encodes to
+    // exactly the cap is kept whole, and one byte more drops its last.
+    const exact = [{ key: "k", value: "" }];
+    const base = new TextEncoder().encode(JSON.stringify(exact)).length;
+    const atCap = [{ key: "k", value: "é".repeat((cap - base) / 2) }];
+    strictEqual(new TextEncoder().encode(JSON.stringify(atCap)).length, cap);
+    deepStrictEqual(Domain.capProperties(atCap), { kept: atCap, dropped: 0 });
+    deepStrictEqual(
+      Domain.capProperties([{ key: "k", value: `${atCap[0].value}a` }]),
+      { kept: [], dropped: 1 },
+    );
+  });
+});
+
 describe("Domain.orderIssues", () => {
   it("an order with no run and no multi-match item has no issue", () => {
     deepStrictEqual(Domain.orderIssues(row(NONE)), []);

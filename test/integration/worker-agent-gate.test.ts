@@ -8,6 +8,7 @@ import { afterEach, expect } from "vitest";
 import * as Domain from "@/lib/Domain";
 import { Repository } from "@/lib/Repository";
 
+import { splitConnectedAt } from "./agent-socket";
 import {
   emailOf,
   resetMemberTables,
@@ -96,6 +97,14 @@ const connectionStatesOf = (shop: string) =>
     ),
   );
 
+/** The stored states less the object's `connectedAt` stamp. */
+const connectionIdentitiesOf = (shop: string) =>
+  connectionStatesOf(shop).pipe(
+    Effect.map((states) =>
+      states.map((state) => splitConnectedAt(state).identity),
+    ),
+  );
+
 afterEach(async () => {
   await resetMemberTables();
 });
@@ -112,7 +121,9 @@ describe("ShopAgent connect gate", () => {
           {},
         );
         strictEqual(response.status, 101);
-        expect(yield* connectionStatesOf(shop)).toEqual([{ role: "merchant" }]);
+        expect(yield* connectionIdentitiesOf(shop)).toEqual([
+          { role: "merchant" },
+        ]);
       }),
     ),
   );
@@ -149,7 +160,7 @@ describe("ShopAgent connect gate", () => {
           { cookie },
         );
         strictEqual(response.status, 101);
-        expect(yield* connectionStatesOf(shop)).toEqual([
+        expect(yield* connectionIdentitiesOf(shop)).toEqual([
           {
             role: "member",
             memberId,

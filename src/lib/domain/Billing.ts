@@ -89,11 +89,19 @@ export interface Entitlements {
  * `satisfies Record<Plan, Entitlements>` makes the lookup total by
  * construction — a new `Plan` literal fails to compile here.
  *
- * Provisional. Working proposals, not tuned figures: nothing was measured to
- * arrive at them and nothing should be derived from them. Change freely, and
- * move the Partner Dashboard plan copy (and the table in `README.md`) with
- * them. `ordersPerCycle` must equal tier 1 of the {@link USAGE_METER_ORDER}
- * meter on that plan — the **included allowance**, the band priced at $0.00 —
+ * Set 2026-10-08 against the field, not against cost. Route to Ship, the
+ * nearest competitor, publishes a ladder of $39 for 3 users and 250 orders,
+ * $99 for 10 and 1,000, and $249 for 30 and 5,000; Basic's 200 and Pro's 1,500
+ * included orders put Baton under it from 3 members and 200 orders to 25 and
+ * 2,500, at the same monthly charges. Infrastructure is cents an order and cents a seat at
+ * every size the app serves (the Cloudflare cost model, `Shop` and `EventCost`
+ * in `scripts/lib/cost.ts`, puts a 25-member, 2,500-order shop at about $19 a
+ * month), so positioning sets these numbers and the meters' rates, not cost.
+ * A change moves the Partner Dashboard plan copy and the table in `README.md`
+ * with it, in the same change.
+ *
+ * `ordersPerCycle` must equal tier 1 of the {@link USAGE_METER_ORDER} meter on
+ * that plan — the **included allowance**, the band priced at $0.00 —
  * or the merchant is billed for an order the app calls included; the same
  * holds for `membersIncluded` and tier 1 of {@link USAGE_METER_MEMBER}. It is not a
  * "free tier": the allowance is what the app subscription already paid for.
@@ -105,8 +113,8 @@ export interface Entitlements {
  * only moves the $0.00 band; nobody loses access.
  */
 const ENTITLEMENTS = {
-  basic: { ordersPerCycle: 20, membersIncluded: 3 },
-  pro: { ordersPerCycle: 30, membersIncluded: 10 },
+  basic: { ordersPerCycle: 200, membersIncluded: 3 },
+  pro: { ordersPerCycle: 1500, membersIncluded: 10 },
 } as const satisfies Record<Plan, Entitlements>;
 
 export const entitlementsOfPlan = (plan: Plan): Entitlements =>

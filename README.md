@@ -36,8 +36,7 @@ in code; the app reads the merchant's plan handle through the Partner API
 
 Two public plans, one per tier, each with two usage meters. Handles must match
 `Domain.PlanHandle`, `Domain.USAGE_METER_ORDER`, and `Domain.USAGE_METER_MEMBER` exactly
-(case-sensitive); tier 1 sizes must match `ENTITLEMENTS` in `src/lib/Domain.ts`. All numbers
-are provisional.
+(case-sensitive); tier 1 sizes must match `ENTITLEMENTS` in `src/lib/domain/Billing.ts`.
 
 | Field                 | Basic                                                | Pro                                                  |
 | --------------------- | ---------------------------------------------------- | ---------------------------------------------------- |
@@ -45,21 +44,24 @@ are provisional.
 | Display name          | Basic                                                | Pro                                                  |
 | Billing period        | Monthly                                              | Monthly                                              |
 | Monthly charge        | $29                                                  | $79                                                  |
-| Free trial            | 14 days                                              | none                                                 |
+| Free trial            | 14 days                                              | 14 days                                              |
 | Welcome link          | `/app`                                               | `/app`                                               |
 | Top features          | See below — one line per feature, 40 characters each | See below — one line per feature, 40 characters each |
 | Usage meter 1: name   | Production orders                                    | Production orders                                    |
 | Usage meter 1: handle | `production-orders`                                  | `production-orders`                                  |
 | Pricing model         | Tiered, graduated                                    | Tiered, graduated                                    |
 | Charge as             | Cost per unit                                        | Cost per unit                                        |
-| Tier 1                | Units 1 to 20 at $0.00                               | Units 1 to 30 at $0.00                               |
-| Tier 2                | Units 21 and up at $0.15                             | Units 31 and up at $0.10                             |
+| Tier 1                | Units 1 to 200 at $0.00                              | Units 1 to 1500 at $0.00                             |
+| Tier 2                | Units 201 and up at $0.12                            | Units 1501 and up at $0.05                           |
 | Usage meter 2: name   | Members                                              | Members                                              |
 | Usage meter 2: handle | `members`                                            | `members`                                            |
 | Pricing model         | Tiered, graduated                                    | Tiered, graduated                                    |
 | Charge as             | Cost per unit                                        | Cost per unit                                        |
 | Tier 1                | Units 1 to 3 at $0.00                                | Units 1 to 10 at $0.00                               |
-| Tier 2                | Units 4 and up at $15.00                             | Units 11 and up at $10.00                            |
+| Tier 2                | Units 4 and up at $12.00                             | Units 11 and up at $7.00                             |
+
+The numbers were set 2026-10-08 against Route to Ship's published ladder. A change starts at
+`ENTITLEMENTS`, the Partner Dashboard and this table together.
 
 **Top features** is not one sentence: each feature is its own field, capped at **40 characters**,
 up to eight per plan. Copy that does not fit is copy the dashboard silently truncates, so the
@@ -67,8 +69,8 @@ lines are written to the limit. Enter them in this order:
 
 | #   | Basic                                    | Pro                                      |
 | --- | ---------------------------------------- | ---------------------------------------- |
-| 1   | `20 orders included, then $0.15 each`    | `30 orders included, then $0.10 each`    |
-| 2   | `3 members included, then $15 each`      | `10 members included, then $10 each`     |
+| 1   | `200 orders included, then $0.12 each`   | `1,500 orders included, then $0.05 each` |
+| 2   | `3 members included, then $12 each`      | `10 members included, then $7 each`      |
 | 3   | `Workflows and teams at no extra charge` | `Workflows and teams at no extra charge` |
 | 4   | `Billed once work starts on an order`    | `Billed once work starts on an order`    |
 

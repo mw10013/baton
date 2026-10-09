@@ -13,6 +13,9 @@ import { Email } from "@/lib/Email";
 import { KV } from "@/lib/KV";
 import { makeEnvLayer } from "@/lib/LayerEx";
 import { Repository } from "@/lib/Repository";
+import { ShopAgentClient } from "@/lib/ShopAgentClient";
+
+import { memberHeaders, openAgentSocket } from "./agent-socket";
 
 const envLayer = makeEnvLayer(env);
 const repositoryLayer = Layer.provideMerge(
@@ -27,7 +30,13 @@ const kvLayer = Layer.provideMerge(KV.layerNoDeps, envLayer);
 const emailLayer = Layer.provide(Email.layerNoDeps, envLayer);
 const authLayer = Layer.provideMerge(
   Auth.layerNoDeps,
-  Layer.mergeAll(kvLayer, repositoryLayer, emailLayer, envLayer),
+  Layer.mergeAll(
+    kvLayer,
+    repositoryLayer,
+    emailLayer,
+    Layer.provide(ShopAgentClient.layerNoDeps, envLayer),
+    envLayer,
+  ),
 );
 const layer = Layer.mergeAll(authLayer, kvLayer, repositoryLayer);
 
@@ -243,6 +252,66 @@ describe("magic-link sign-in", () => {
         );
         strictEqual(results[0]?.verification, 0);
         strictEqual(results[0]?.session, 0);
+      }),
+    ),
+  );
+
+  /**
+   * `Domain.ShopLimits.maxSessionsPerMember`: newest wins, so a sign-in past
+   * the cap deletes the oldest session and its cookie stops resolving.
+   */
+  it.effect("a third sign-in revokes the oldest session", () =>
+    run(
+      Effect.gen(function* () {
+        const auth = yield* Auth;
+        const email = emailOf("member@example.com");
+        yield* seedMember(email);
+        const cap = Domain.ShopLimits.maxSessionsPerMember;
+        const signIns = [];
+        for (let index = 0; index <= cap; index += 1)
+          signIns.push(yield* signIn(email));
+        const { results } = yield* Effect.promise(() =>
+          env.D1.prepare("select count(*) as count from Session").all<{
+            count: number;
+          }>(),
+        );
+        strictEqual(results[0]?.count, cap);
+        const [oldest, ...kept] = signIns;
+        assertTrue(Option.isNone(yield* auth.getSession(oldest.headers)));
+        for (const { headers } of kept)
+          assertTrue(Option.isSome(yield* auth.getSession(headers)));
+      }),
+    ),
+  );
+
+  /**
+   * The other half of the session cap: the signed-out device's socket is
+   * closed 3401, so it reconnects through the gate, where its cookie no
+   * longer resolves. Observed on the member's own socket to the shop's
+   * object, opened with the headers the gate would forward.
+   */
+  it.effect("a revoked session's connections are revoked", () =>
+    run(
+      Effect.gen(function* () {
+        const email = emailOf("member@example.com");
+        yield* seedMember(email);
+        const member = yield* (yield* Repository).findMember({ shop, email });
+        assertTrue(Option.isSome(member));
+        const memberId = Option.getOrThrow(member).id;
+        const cap = Domain.ShopLimits.maxSessionsPerMember;
+        for (let index = 0; index < cap; index += 1) yield* signIn(email);
+        const socket = yield* Effect.promise(() =>
+          openAgentSocket(
+            shop,
+            memberHeaders({ memberId, memberEmail: email, teamIds: [] }),
+          ),
+        );
+        yield* Effect.promise(() =>
+          socket.waitForMessage((data) => data.includes("cf_agent_identity")),
+        );
+        yield* signIn(email);
+        const { code } = yield* Effect.promise(() => socket.waitForClose());
+        strictEqual(code, Domain.CONNECTION_CLOSE_REVOKED);
       }),
     ),
   );
