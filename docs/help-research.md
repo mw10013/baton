@@ -331,7 +331,7 @@ None are in the skeleton. The choices:
 ## Implementation shape
 
 - **The tree is data.** `src/lib/helpPages.ts`: `HELP_SECTIONS`, each `{ slug, title, description,
-pages: [{ slug, title, description }] }`, plus `findHelpSection` and `findHelpPage`. The hub, the
+  pages: [{ slug, title, description }] }`, plus `findHelpSection` and `findHelpPage`. The hub, the
   section hubs and the pages read it, so a page's breadcrumbs, its foot list and the hub's list are
   one source and cannot drift.
 - **Three routes under a layout.** `help.tsx` (layout, `Outlet`), `help.index.tsx` (the hub),
@@ -452,7 +452,7 @@ now and will be gone into in a later session. The plan is `docs/help-plan.md`.
 13. **Three levels**, held by the data shape.
 14. **Reference pages held to the vocabulary.** States and badges and Who can do what read every
     label from its constant through `src/lib/helpReference.ts`, whose row sets are `satisfies
-Record<State, …>`, so typecheck holds the sets and the existing screen-column rule of
+    Record<State, …>`, so typecheck holds the sets and the existing screen-column rule of
     `pnpm spec check` holds the labels; `test/integration/help-reference.test.ts` pins that every
     label renders. Limits reads the constants. No text rule in `scripts/lib/spec.ts`: it would be
     weaker than the type (decided 2026-10-08, `docs/help-reference-plan.md`, review 10).

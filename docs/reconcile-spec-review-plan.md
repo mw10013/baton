@@ -22,7 +22,7 @@ to change, in what order, and how to know each phase is done.
     needed, edit `initializeSchema` in place and run `pnpm dev:reset` yourself.
   - Do not commit unless the user says so. In a linked worktree, stay on its `wt-NN` branch.
 - After each phase run `pnpm typecheck`, `pnpm lint` (which runs `pnpm spec check`), `pnpm
-test`, `pnpm fmt`. Keep every file `pnpm fmt` touches.
+  test`, `pnpm fmt`. Keep every file `pnpm fmt` touches.
 - Record anything that does not go as written under
   [Deviations and issues](#deviations-and-issues) as you go: what the plan said, what you
   found, the two options you saw, and the one you took.
@@ -436,7 +436,7 @@ in the same change.
    ceiling fixture uncovered (a cancelled order with an open run at the ceiling has no row).
    Options: add ceiling rows for every `any` row, or let `any` mean every value, as the
    preamble says. Took the second; no row overlaps because both ceiling rows are `open | some |
-none`. The parser test's fixture count for the cancelled row is now `2 * 3 * 2 * 4`.
+   none`. The parser test's fixture count for the cancelled row is now `2 * 3 * 2 * 4`.
 3. **`runActions` was not total.** Units at zero had no row on a done or closed run, on a
    closed order, or on a blocked open run. Added `any` to the `units` words (`1; 0`), wrote
    `any` on the four rows where units do not matter, and added `open | open | yes | none` (no
@@ -447,7 +447,7 @@ none`. The parser test's fixture count for the cancelled row is now `2 * 3 * 2 *
    means). Options: change `-` to expand to both blockers, or keep the universe to reachable
    states. Took the second (`reachable` in `scripts/lib/spec.ts`, stated on the `taskActions`
    JSDoc). One real gap remained: a closed run on a closed order; added `closed | closed | no |
-any | -`, all blank.
+   any | -`, all blank.
 5. **The sweep asks through shop work.** 3.3 had `ShopAgent.ts` call
    `RunRepository.releaseOpenRunLimit` itself. The class otherwise reaches runs only through
    `ShopWorkAgent`, so the call is `ShopWorkAgent.sweepReleasedCeiling(runs)`; the interface

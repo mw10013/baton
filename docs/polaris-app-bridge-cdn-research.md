@@ -32,7 +32,7 @@ The same constants also feed:
 - `Link` preload / preconnect headers on HTML documents
   (`src/lib/Shopify.ts:359-368`):
   `<CDN_URL>; rel="preconnect", <APP_BRIDGE_URL>; rel="preload"; as="script",
-<POLARIS_URL>; rel="preload"; as="script"`.
+  <POLARIS_URL>; rel="preload"; as="script"`.
 - The minimal recovery documents (`renderAppBridgePage`,
   `renderExitIframePage` in `src/lib/Shopify.ts:393-449`): bare HTML with
   only the App Bridge script (plus a `window.open(..., "_top")` for

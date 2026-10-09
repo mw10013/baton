@@ -499,7 +499,7 @@ reserved-stem lint, roster, slot. Listed under "What the vocabulary work settled
 ### Reviewed 2026-09-30
 
 10. **The planner is per item, like `runActions`.** `reconcileItem(order, item, run with
-tasks or none, matched count, atCeiling)` returns an `Outcome` tagged union (`create`,
+    tasks or none, matched count, atCeiling)` returns an `Outcome` tagged union (`create`,
     `close` with its reason, `resize` with the badge flag, `nothing`). `reconcileOrder` loops
     the items, computes `matched` and the ceiling capacity, and executes each outcome. The
     four matching predicates (`workflowIsEligible`, `matchesLineItem`, `placedSince`,

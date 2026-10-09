@@ -258,7 +258,7 @@ Making on Home within the throttle window.
 - The Home picture: add a merchant `page` picture of Home on the showcase shop to the inventory
   (`src/lib/helpPictures.ts`) and its shot to `scripts/help-screenshots.ts`, placed in Installing
   where the paragraph describes the page. Take it with `pnpm help:screenshots --section
-getting-started`, look at it, then `pnpm seed`.
+  getting-started`, look at it, then `pnpm seed`.
 - `docs/help-research.md`: the screenshot spec's exceptions row drops "No Home pictures until Home
   is redesigned"; the "Home page pictures" follow-up is closed with this plan's name.
 
@@ -299,7 +299,7 @@ the options, the one taken.
   `ORDERS_PAGE_SIZE`, `ordersIndexInput` (the orders index's input from its URL keys),
   `ORDERS_ARRIVAL_INPUT` (that function with every key left out, carrying the rule's JSDoc),
   `ordersQueryKey` and `decodeOrdersIndexData`. Found: the old `ordersQueryKey(shop, q, show, team,
-after)` took the keys one by one, so Home could have built a matching input and a key that
+  after)` took the keys one by one, so Home could have built a matching input and a key that
   differed. Options: keep the five-argument key and trust both sites; or key from the input itself.
   Taken: `ordersQueryKey(shop, input)` reads the key off the `ListOrdersInput`, so one input is one
   key by construction.
@@ -353,7 +353,7 @@ after)` took the keys one by one, so Home could have built a matching input and 
     `SEARCH tm USING COVERING INDEX sqlite_autoindex_TeamMember_1 (teamId=?)`. Stops at the first
     edge.
   - Object: `SCAN Workflow` for the first subquery and `SCAN Run USING COVERING INDEX
-sqlite_autoindex_Run_2` for the second. Each `exists` stops at its first row. The `Workflow`
+    sqlite_autoindex_Run_2` for the second. Each `exists` stops at its first row. The `Workflow`
     scan reads every row when no workflow is active, at most 200 (`WorkflowLimits.maxWorkflows`),
     which the plan accepted ("no index needed"). `Run` reads one row of its smallest index.
 - **Tests** (`test/integration/setup-facts.test.ts`, six): the plan's five, titled as the rules,

@@ -104,7 +104,6 @@ create index if not exists Session_expiresAt_idx on Session (expiresAt);
 
 create table if not exists Account (
   id text primary key,
-  issuer text not null,
   accountId text not null,
   providerId text not null,
   userId text not null references User (id) on delete cascade,
@@ -120,10 +119,6 @@ create table if not exists Account (
 );
 
 create index if not exists Account_userId_idx on Account (userId);
-
--- Name and shape must match better-auth's resolved table-level index exactly:
--- the drift test diffs indexes by name (Account_issuer_accountId_uidx).
-create unique index if not exists Account_issuer_accountId_uidx on Account (issuer, accountId);
 
 create table if not exists Verification (
   id text primary key,

@@ -220,7 +220,7 @@ Two parsers beside `parseReconcileActions`, both using `nthTable(source, "reconc
 header, n)` with `n` 2 and 3:
 
 - `parseReconcileEffects`: fixed words per column, exported as `RECONCILE_EFFECT_WORDS = {
-runRow: [...], countedOrder: [...], queue: [...], ceilingFlag: [...] }`; `action` is one of
+  runRow: [...], countedOrder: [...], queue: [...], ceilingFlag: [...] }`; `action` is one of
   the five row labels (`create`, `close (any reason)`, `resize`, `nothing: declined`,
   `nothing (every other reason)`), each exactly once; `pinned by` a title or `NONE_YET`.
   Returns rows with `line` and `pinnedBy` so `checkPinned` takes them.

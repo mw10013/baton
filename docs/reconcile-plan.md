@@ -63,7 +63,7 @@ stored, never derived: `on` or `off`", `holds by` schema, `pinned by` the retitl
   with a one-line JSDoc: the vocabulary's workflow-state words, stored as written.
 - `workflowIsOn` reads `workflow.state === "on"`. It stays the one read of the switch.
 - The workflow-states table's `stored` cells become `` `on` `` and `` `off` ``. `pnpm spec
-check` holds them to the check constraint of 1.1.
+  check` holds them to the check constraint of 1.1.
 - The `Workflow` JSDoc: delete the paragraph that begins "`activatedAt` is the on/off switch
   and the coverage date in one column" through "at the moment of Turn on". In its place, one
   paragraph: a workflow that is on creates a run on every stored open order whose item it
@@ -300,12 +300,12 @@ exactly as drafted in the research under "What the spec could look like", with t
 `scripts/lib/spec.ts`:
 
 - `parseReconcileTriggers(source)`: `firstTable(source, "reconcileItem", ["trigger", "shape",
-"skipped when", "pinned by"])`; `shape` in `["reconcile", "reconcile all", "none"]`; `pinned
-by` a title or `(none yet)`. Model it on `parseTriggerTable`.
+  "skipped when", "pinned by"])`; `shape` in `["reconcile", "reconcile all", "none"]`; `pinned
+  by` a title or `(none yet)`. Model it on `parseTriggerTable`.
 - `parseReconcileOutcomes(source)`: the table after the triggers table in the same JSDoc
   (extend `firstTable` with an `after` index, or add `nthTable`); columns `order`, `paid`,
   `units`, `run on item`, `matches`, `outcome`; word lists: `order` in `cancelled | fulfilled
-| closed | open`, `paid` in `yes | no | any`, `units` in `0 | changed | same | some | any`,
+  | closed | open`, `paid` in `yes | no | any`, `units` in `0 | changed | same | some | any`,
   `run on item` in `open | open, unstarted | open, started | done or closed | none`, `matches`
   in `0 | 1 | 2+ | 1, at the ceiling | any`; `outcome` is `create`, `close <reason>`,
   `resize`, `nothing`, with free text after a colon.
