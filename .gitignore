@@ -8,9 +8,6 @@ count.txt
 .env
 .env.staging
 .env.production
-# Local cf account credential; keep only its blank example in Git.
-/.env.cf.local
-!/.env.cf.local.example
 .nitro
 .tanstack
 .wrangler

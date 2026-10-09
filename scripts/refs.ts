@@ -143,12 +143,6 @@ const REFS: readonly Ref[] = [
     version: { from: ".", dep: "wrangler" },
   },
   {
-    name: "cf",
-    repo: "cloudflare/cf",
-    tag: "cf@{v}",
-    version: { from: ".", dep: "cf" },
-  },
-  {
     name: "agents",
     repo: "cloudflare/agents",
     tag: "agents@{v}",

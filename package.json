@@ -115,7 +115,6 @@
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "5.1.2",
     "@vitest/browser-playwright": "4.1.4",
-    "cf": "1.0.0-beta.12",
     "graphql-config": "5.1.6",
     "jsonc-parser": "3.3.1",
     "oxfmt": "0.67.0",

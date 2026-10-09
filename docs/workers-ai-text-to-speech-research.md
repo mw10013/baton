@@ -126,41 +126,25 @@ Wrangler remains the app configuration authority. The existing Vite config does 
 
 Cloudflare's new programmatic format is a migration direction, but it is still in beta. We are **not migrating**. Use `cf` only for selected API/auth commands. Do not run `cf init`, `cf migrate`, `cf dev`, `cf build`, `cf deploy` (even `--dry-run`), previews, or Worker build/upload commands. Do not enable the experimental config flags or `CLOUDFLARE_VITE_FORCE_BUILD_OUTPUT`. Account-only configuration is not deployable Worker configuration.
 
-### What `.env.cf.local` means
+### Where the credential lives
 
-We use **`cf --mode cf`** for account operations and AI experiments. It selects the mode-specific env convention:
+`CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` are exported in the user's shell profile (`~/.zshrc`). The globally installed `cf` and `scripts/tts.ts` both read them from the process environment. There is no repo-local credential file, no `.env.cf*` file and no `--mode` flag. `cf` is installed globally, not as a dependency of this repo.
 
-| Invocation                      | Env-file candidates, lowest to highest file precedence |
-| ------------------------------- | ------------------------------------------------------ |
-| `pnpm exec cf …` without a mode | `.env`, `.env.local`                                   |
-| `pnpm exec cf --mode cf …`      | `.env`, `.env.local`, `.env.cf`, `.env.cf.local`       |
-
-Existing exported process values override file values. `cf` applies only its supported Cloudflare variables, including `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`, not every app secret. This is confirmed by `cf`'s dotenv code and the shared env loader. `--mode cf` does **not** mean local simulation or make remote commands safe; it is just the environment mode name.
-
-The `cf` CLI does not load `.env.cf.local` by default. The normal app's Vite development/production modes do not select that file either. The proposed speech script will load it explicitly. Mode selection is not an access-control boundary. Avoid globally exporting the operator credential or putting it in `.env.local`, which ordinary env loading also reads.
-
-Created files:
-
-- `cloudflare.config.ts`: non-secret account default, intended for version control.
-- `.env.cf.local`: ignored, owner-only (`600`), originally created with `CLOUDFLARE_API_TOKEN=`. Its current value was not inspected in this review.
-- `.env.cf.local.example`: blank template with only `CLOUDFLARE_API_TOKEN`. `.gitignore` explicitly ignores the local file and permits the example.
-
-If not already populated, put the created `cf` token's secret in the local file. Do not fill in the example. The existing `.env` stays for app development; no second AI credential or extra token metadata variables are needed. Do not add `.env.cf` or copy this credential into staging/production or temporary artifacts.
+`cloudflare.config.ts` stays as the checked-in, non-secret account default for ad hoc `cf` API commands. Process values override it. Avoid putting the operator credential in `.env` or `.env.local`, which the app's env loading also reads.
 
 ### Setup verification
 
 The following command outcomes were recorded by the 2026-10-03 research, not rerun as authenticated checks in this review. This review confirmed the checked-in config, dependency pins, ignore rules, test discovery configuration, and local credential file's existence and mode without reading its contents.
 
 - `pnpm fmt`, `pnpm typecheck`, and `pnpm lint` passed after creating the files.
-- `pnpm exec cf --mode cf accounts tokens list --dry-run` resolved the expected account ID from the setup and printed the intended GET URL without making the token-list API request.
-- `git check-ignore` confirms `.env.cf.local` is ignored and `.env.cf.local.example` is not. The local file has mode `600`.
+- `cf accounts tokens list --dry-run` resolved the expected account ID from the setup and printed the intended GET URL without making the token-list API request.
 - Wrangler type generation still used `wrangler.jsonc`. No app configuration, deployment command, or running server was changed.
 
 The dry-run verifies account resolution, not authentication. Confirm a nonblank local token value before authenticated commands; otherwise `cf` may fall back to stored OAuth credentials rather than the intended token.
 
 ### One token for account operations and AI
 
-Use **one manually created API token**, stored as `CLOUDFLARE_API_TOKEN` in `.env.cf.local`. The same secret authorizes `cf` commands and the speech REST request. The account ID selects a target; the token's permissions authorize actions. The variable name does not grant permissions. No token manager, second AI token, Global API Key, Deepgram key, or token-creation scripts are needed.
+Use **one manually created API token**, exported as `CLOUDFLARE_API_TOKEN` in the shell profile. The same secret authorizes `cf` commands and the speech REST request. The account ID selects a target; the token's permissions authorize actions. The variable name does not grant permissions. No token manager, second AI token, Global API Key, Deepgram key, or token-creation scripts are needed.
 
 For the clarified reusable operator goal, recommend an **account-owned custom token**, restricted to the existing paid account. It acts as an account-managed service principal independent of one user's continued membership. Cloudflare describes user tokens as a better fit for ad hoc scripting; a user-owned custom token on this account remains the fallback if your role cannot provision an account-owned token. Cloudflare's current compatibility matrix supports Workers, Workers AI, Workers Observability, Durable Objects, Workflows, D1, KV, R2, and DNS with account-owned tokens. Ownership does not reduce the permissions or production reach. Do not create both.
 
@@ -230,21 +214,21 @@ If the dashboard supports editing this token's policy, add scopes there when nee
 
 The installed CLI is **1.0.0-beta.12**. Its command search/help/schema confirmed these API surfaces without authenticated calls:
 
-| Task                                     | Command                                                                                                              |
-| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| List Workers                             | `pnpm exec cf --mode cf workers list`                                                                                |
-| Query stored Worker logs/traces          | `pnpm exec cf --mode cf observability telemetry query --body @<query.json>`                                          |
-| List Durable Object namespaces / objects | `pnpm exec cf --mode cf durable-objects namespaces list`; discover the objects-list command for a selected namespace |
-| List/query D1                            | `pnpm exec cf --mode cf d1 list`; `pnpm exec cf --mode cf d1 query <database-id> --sql 'select 1 as ok'`             |
-| List KV namespaces                       | `pnpm exec cf --mode cf kv namespaces list`                                                                          |
-| Inspect Workflow instances               | `pnpm exec cf --mode cf workflows instances list --help` for required workflow selection                             |
-| Inspect Aura-1's schema                  | `pnpm exec cf --mode cf ai get-model-schema --model '@cf/deepgram/aura-1'`                                           |
+| Task                                     | Command                                                                                          |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| List Workers                             | `cf workers list`                                                                                |
+| Query stored Worker logs/traces          | `cf observability telemetry query --body @<query.json>`                                          |
+| List Durable Object namespaces / objects | `cf durable-objects namespaces list`; discover the objects-list command for a selected namespace |
+| List/query D1                            | `cf d1 list`; `cf d1 query <database-id> --sql 'select 1 as ok'`                                 |
+| List KV namespaces                       | `cf kv namespaces list`                                                                          |
+| Inspect Workflow instances               | `cf workflows instances list --help` for required workflow selection                             |
+| Inspect Aura-1's schema                  | `cf ai get-model-schema --model '@cf/deepgram/aura-1'`                                           |
 
 Stored-log queries require observability to be enabled on the Worker and data to be within retention; Baton's staging/production config already enables observability. Query JSON needs an explicit bounded timeframe and query parameters; it is not a plain grep. `cf logs query` is a separate Log Explorer SQL surface, with separate datasets/availability; do not confuse it with Workers telemetry.
 
 No live Workers tail command was found in this pinned CLI's command search or generated Workers command tree. Keep the existing Wrangler-backed `pnpm tail` commands; do not replace them with `cf tunnels tail`, which streams cloudflared tunnel logs, not Worker logs. Wrangler does not automatically load `.env.cf.local`; the permission enables tail access but the existing tail command's authentication remains separate.
 
-For new tasks, use `pnpm exec cf cli search "<action and resource type>"`, then the discovered command's help and `cf schema` equivalent. Keep search queries anonymous. Preview supported commands with `--dry-run`, review account/zone/resource and payload, then obtain approval before remote writes. CLI support is not a guarantee that every service or API endpoint is exposed or that this token is authorized. In particular, `cf ai run <model> --help` and `--dry-run` with model flags can fetch the schema remotely; use a supplied `--body` to avoid that lookup. The proposed `pnpm tts --dry-run` has a stricter, fully offline contract.
+For new tasks, use `cf cli search "<action and resource type>"`, then the discovered command's help and `cf schema` equivalent. Keep search queries anonymous. Preview supported commands with `--dry-run`, review account/zone/resource and payload, then obtain approval before remote writes. CLI support is not a guarantee that every service or API endpoint is exposed or that this token is authorized. In particular, `cf ai run <model> --help` and `--dry-run` with model flags can fetch the schema remotely; use a supplied `--body` to avoid that lookup. The proposed `pnpm tts --dry-run` has a stricter, fully offline contract.
 
 ### Token setup record and remaining checks
 
@@ -255,35 +239,23 @@ Steps 1–5 describe the completed dashboard setup, not a request to create anot
 3. Use name `cf`, without a project name or date suffix. Add the confirmed policy above, including R2 and Queues and **Workers Admin at product scope**. Select **Entire Account** within this account, not all accounts. Add **no Zone permissions**. Review the resulting policy summary. The name is descriptive, not a resource restriction; creation time is available in metadata.
 4. Select **No expiration**, as ultimately requested. Leave client-IP restrictions empty unless you have a stable public egress IP; changing home/VPN addresses otherwise breaks the CLI. The reviewed setup allowed all IP addresses.
 5. The user created the token. Save its one-time secret in the password manager under that name. Record scopes, account, creation time, no-expiration choice, and token ID there—not in env variables. Never paste the secret into chat.
-6. In a local editor, put the secret in the already-created `.env.cf.local`. Its only required line is:
-
-```dotenv
-CLOUDFLARE_API_TOKEN=<the-single-token-secret>
-```
-
-Do not modify the example's empty value or add the secret to the app's `.env`. Confirm local protection without printing it:
-
-```bash
-chmod 600 .env.cf.local
-git check-ignore .env.cf.local
-```
-
-7. Use a shell with no stale exported `CLOUDFLARE_API_TOKEN` or `CLOUDFLARE_ACCOUNT_ID`: process values override mode files/config. Check for conflicting overrides without displaying secrets. Always use `--mode cf` for this credential.
+6. Export the secret in the shell profile (`~/.zshrc`) as `CLOUDFLARE_API_TOKEN`, and the account ID as `CLOUDFLARE_ACCOUNT_ID`. Never put either in a file in this repo.
+7. Confirm the exported `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` are the intended ones, without displaying secrets: process values override `cloudflare.config.ts`.
 8. Start with a read-only AI preflight, after confirming that the intended token is nonblank without printing it:
 
 ```bash
-pnpm exec cf --mode cf ai get-model-schema --model '@cf/deepgram/aura-1' --dry-run
-pnpm exec cf --mode cf ai get-model-schema --model '@cf/deepgram/aura-1'
+cf ai get-model-schema --model '@cf/deepgram/aura-1' --dry-run
+cf ai get-model-schema --model '@cf/deepgram/aura-1'
 ```
 
 If you selected the broader operator option, these additional read-only preflights are relevant; omit them for an AI-only token:
 
 ```bash
-pnpm exec cf --mode cf workers list --dry-run
-pnpm exec cf --mode cf workers list
-pnpm exec cf --mode cf d1 list
-pnpm exec cf --mode cf kv namespaces list
-pnpm exec cf --mode cf ai get-model-schema --model '@cf/deepgram/aura-1'
+cf workers list --dry-run
+cf workers list
+cf d1 list
+cf kv namespaces list
+cf ai get-model-schema --model '@cf/deepgram/aura-1'
 ```
 
 Success proves access to those operations, not every granted capability or inference. A 403 requires checking the specific permission, resource scope, and membership; a missing CLI permission option is not a reason to grant everything. The first approved speech request will verify inference. The user created the operator token and dashboard metadata confirms its saved policy; the authenticated `cf` preflights above and speech inference have not been executed as part of this review.
@@ -292,7 +264,7 @@ Success proves access to those operations, not every granted capability or infer
 
 ### Script secret handling
 
-For a real request, the proposed speech CLI will load `.env.cf.local` from the repo root and read `CLOUDFLARE_API_TOKEN` with Effect `Config.redacted`, unwrapping only for the Authorization header. It must reject missing, blank, or whitespace-only values without OAuth fallback. This uses the one selected token; if it has operator permissions, a leak exposes those powers too. Redacted configuration does not automatically sanitize a raw header embedded in an HTTP error. Map request-bearing failures to explicit safe fields before logging, and test with a sentinel token in transport errors and server messages. Never include the secret in artifact metadata or browser/deployed app variables. Do not repurpose `CLOUDFLARE_WORKERS_API_TOKEN`, reserved for the admin Durable Object explorer. If this grows into unattended production work, revisit credential separation; it is not part of this experiment.
+For a real request, the proposed speech CLI reads `CLOUDFLARE_API_TOKEN` from the process environment with Effect `Config.redacted`, unwrapping only for the Authorization header. It must reject missing, blank, or whitespace-only values without OAuth fallback. This uses the one selected token; if it has operator permissions, a leak exposes those powers too. Redacted configuration does not automatically sanitize a raw header embedded in an HTTP error. Map request-bearing failures to explicit safe fields before logging, and test with a sentinel token in transport errors and server messages. Never include the secret in artifact metadata or browser/deployed app variables. Do not repurpose `CLOUDFLARE_WORKERS_API_TOKEN`, reserved for the admin Durable Object explorer. If this grows into unattended production work, revisit credential separation; it is not part of this experiment.
 
 ## Pricing and free allocation
 
@@ -324,7 +296,6 @@ Suggested files:
 - `scripts/tts.ts`: command entry, fixed text, configuration, HTTP call, and file output. Keep it in one file initially.
 - `scripts/tts.test.ts`: mocked HTTP/filesystem tests using Node's built-in test runner; no paid API calls. Keep command startup behind a direct-entry guard so importing the module does not invoke the CLI.
 - `package.json`: proposed `tts` script: `node scripts/tts.ts`; proposed `test:tts` script: `node --test scripts/tts.test.ts`. Existing Vitest projects include only integration and browser tests, so putting a test under `scripts/` alone does not make `pnpm test` run it. Run `pnpm test:tts` explicitly and add it to CI if this experiment becomes maintained tooling.
-- `.env.cf.local.example`: existing single-token template; no new app env variables.
 - `.gitignore`: add the accepted root-only `/tmp/` ignore rule during implementation; it has not been installed yet.
 
 The project already has `effect` and `@effect/platform-node` **4.0.0-rc.112**. No extra SDK, `@effect/cli`, `@effect/platform`, TypeScript runner, or Cloudflare package is needed. Follow the existing CLI shape in `scripts/refresh-shopify-playwright-auth.ts`:
@@ -344,7 +315,7 @@ Recommended initial command surface:
 
 Keep model, speaker, MP3 encoding, test text, and a 60-second whole-request/body deadline as constants initially. The text is easy to change: edit one `TEST_TEXT` constant and preview with `--dry-run`; no protocol or credential changes are needed. Use an absolute repo-root path derived from the script location, not the shell's current directory, for config and default output. Avoid accepting arbitrary model URLs or exposing credentials as flags. Add model/voice selection only when we actually want to compare voices; validate each model's schema rather than sending one common body to every model. Fail early on missing/blank credentials, invalid account ID, or an existing destination, before inference.
 
-Parse flags before loading credentials. For a real request only, use Node's built-in `process.loadEnvFile` with the absolute `.env.cf.local` path when it exists; existing process values take precedence. A missing file is acceptable if a valid token is already supplied in the environment. Dry-run must neither require nor load the secret file and must not initialize any client that performs network work. It may read non-secret account configuration. Validate the 500-character maximum locally and include the account ID in the preview and non-secret result metadata.
+Parse flags before reading credentials. For a real request only, read the token from the process environment. Dry-run must not require the secret and must not initialize any client that performs network work. It may read non-secret account configuration. Validate the 500-character maximum locally and include the account ID in the preview and non-secret result metadata.
 
 Proposed use after implementation:
 
@@ -432,7 +403,7 @@ Settled in annotation review:
 - Aura-1 only, with short synthetic test text. No model comparison yet.
 - Small overage charges are acceptable; no large or repeated batches.
 - The proposed test sentence is fine and can be edited later.
-- One manually created token for `cf` management and AI, with only `CLOUDFLARE_API_TOKEN` in `.env.cf.local`. No token-provisioning workflow or second credential.
+- One manually created token for `cf` management and AI, with only `CLOUDFLARE_API_TOKEN` exported in the shell profile. No token-provisioning workflow or second credential.
 
 Confirmed in the 2026-10-04 discussion:
 
@@ -444,7 +415,7 @@ Confirmed in the 2026-10-04 discussion:
 
 Questions asked and resolved before token creation:
 
-Config decisions are implemented: account-only `cloudflare.config.ts`, the local credential file, and its single-key example. The local file's current value is unverified. Wrangler remains authoritative for the app. Use `cf --mode cf` for selected API operations, not to build or deploy the app.
+Config decisions are implemented: account-only `cloudflare.config.ts`. The credential is exported in the shell profile. Wrangler remains authoritative for the app. Use `cf` for selected API operations, not to build or deploy the app.
 
 | Question                                            | Recommendation and context                                                                                                                                              | Alternatives and consequences                                                                                                                                                                                                              |
 | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -457,7 +428,7 @@ Do not reopen the settled `luna` voice or test text just to proceed. Store token
 ### Recommended sequence
 
 1. Use the confirmed account-only policy, including R2 and Queues, with account-owned ownership and 180-day expiry. The remaining dashboard-dependent check is whether the form exposes Workers product-level Admin or only legacy grants; inspect the non-secret policy summary if unclear.
-2. Manually create the one token with the chosen policy, save it in the password manager, and populate `.env.cf.local` in a local editor. Never send the secret through chat. If already populated, confirm its intended scope and expiry instead of creating a duplicate.
+2. Manually create the one token with the chosen policy, save it in the password manager, and export it as `CLOUDFLARE_API_TOKEN` in the shell profile. Never send the secret through chat. If already populated, confirm its intended scope and expiry instead of creating a duplicate.
 3. With approval, verify the intended credential using read-only service preflights: Worker list, D1 list, KV namespace list, selected AI schema, and a bounded telemetry query. Check the non-secret policy summary for Workers product-level Admin. Read-only success cannot prove create/delete rights; do not mutate production to test them.
 4. After token setup, obtain approval to implement the CLI and mocked Node tests. Run `pnpm fmt`, `pnpm typecheck`, `pnpm lint`, `pnpm test:tts`, and credential-free `pnpm tts --dry-run`. Review dashboard usage and the dry-run's account, model, text, output, and estimated cost.
 5. Approve and send **one** speech request, then play the exact output path with `afplay`. Record model, voice, end-to-end time, file size, `cf-ray`, playback result, and any visible usage change. Dashboard usage may lag or include other activity; do not attribute a precise per-request charge from an account total.
@@ -501,6 +472,6 @@ Local references and implementation evidence:
 - `vitest.config.ts` and `test/integration/vitest.config.ts`: existing test projects do not discover `scripts/tts.test.ts`; the proposed Node test command must be wired explicitly.
 - `wrangler.jsonc`: existing account ID in top-level, staging, and production vars.
 - `/usr/bin/afplay -h` and `command -v afplay`: installed macOS playback utility and supported options; no audio was played.
-- Installed `pnpm exec cf --version`, semantic `cf cli search`, discovered command help, and `cf schema observability telemetry query`: AI, Workers, telemetry, D1, KV, Durable Objects, Workflows, and DNS command surfaces in beta.12. No authenticated command was executed.
+- Installed `cf --version`, semantic `cf cli search`, discovered command help, and `cf schema observability telemetry query`: AI, Workers, telemetry, D1, KV, Durable Objects, Workflows, and DNS command surfaces in beta.12. No authenticated command was executed.
 
 The original research queried Context7 for Cloudflare Workers AI and the pinned Effect version. This review queried Context7 for Workers AI's Aura-1 REST contract and used current public pages and pinned local source as primary evidence. No authenticated Cloudflare tools were called.

@@ -1,20 +1,12 @@
 #!/usr/bin/env node
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import {
-  Config,
-  ConfigProvider,
-  Console,
-  Effect,
-  Redacted,
-  Schema,
-} from "effect";
+import { Config, Console, Effect, Redacted, Schema } from "effect";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import { parse, type ParseError } from "jsonc-parser";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
-  access,
   link,
   lstat,
   mkdir,
@@ -133,21 +125,6 @@ const accountId = Effect.tryPromise({
         ),
   ),
 );
-
-const loadCredentials = Effect.tryPromise({
-  try: async () => {
-    const path = resolve(REPO_ROOT, ".env.cf.local");
-    try {
-      await access(path);
-    } catch (error) {
-      if (error instanceof Error && "code" in error && error.code === "ENOENT")
-        return;
-      throw error;
-    }
-    process.loadEnvFile(path);
-  },
-  catch: () => new SpeechError({ message: "Cannot load .env.cf.local." }),
-});
 
 /** Bound buffering while reading, not after allocating the entire response. */
 async function readAudio(response: Response): Promise<Uint8Array> {
@@ -431,17 +408,11 @@ const gen = Command.make(
       );
       return;
     }
-    yield* loadCredentials;
     const token = yield* Config.redacted("CLOUDFLARE_API_TOKEN").pipe(
-      // The CLI can initialize the default provider before dotenv is loaded.
-      Effect.provideService(
-        ConfigProvider.ConfigProvider,
-        ConfigProvider.fromEnv(),
-      ),
       Effect.mapError(
         () =>
           new SpeechError({
-            message: "Set CLOUDFLARE_API_TOKEN in .env.cf.local.",
+            message: "Set CLOUDFLARE_API_TOKEN in the environment.",
           }),
       ),
     );
