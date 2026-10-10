@@ -164,7 +164,7 @@ export type UserId = typeof UserId.Type;
 
 /**
  * Mirrors the FK-backed `UserRole` lookup table in `migrations/0001_init.sql`
- * and better-auth 1.7.2's admin-plugin defaults: without custom access control
+ * and better-auth 1.7.7's admin-plugin defaults: without custom access control
  * only `user`/`admin` exist. `admin` = site operators (us) once `/admin`
  * migrates onto better-auth in phase 2; per-shop access is always a `Member`
  * row, never a role.

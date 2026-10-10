@@ -59,7 +59,7 @@ create table if not exists TeamMember (
 -- already covers the teamId -> members direction.
 create index if not exists TeamMember_memberId_idx on TeamMember (memberId);
 
--- better-auth 1.7.2 core + admin tables (magic-link auth, no organization
+-- better-auth 1.7.7 core + admin tables (magic-link auth, no organization
 -- plugin — membership is the app-owned Member table above). Hand-written
 -- against the runtime schema definitions (getAuthTables) rather than
 -- @better-auth/cli output; the auth-schema integration test diffs this against
