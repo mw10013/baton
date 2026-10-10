@@ -26,15 +26,15 @@ export function FirstOrder() {
           order is paid and an item&apos;s product carries the tag of an active
           workflow, the workflow starts on that item. On the Orders page, the
           order&apos;s status reads <strong>Not started</strong>. The list opens
-          on Making, so press <strong>Not started</strong> on the strip to find
-          it. An order that is not paid yet reads <strong>Unpaid</strong>, and
-          its workflow starts once it is paid.
+          on Making, so press <strong>Not started</strong> at the top of the
+          list to find it. An order that is not paid yet reads{" "}
+          <strong>Unpaid</strong>, and its workflow starts once it is paid.
         </s-paragraph>
       </s-section>
       <s-section heading="A member does the work">
         <Things>
           <s-paragraph>
-            Each task whose step is current shows on the Workflows list of every
+            Each task in the first step shows on the Workflows list of every
             member on its team, and reads <strong>Ready</strong>.
           </s-paragraph>
           <HelpPicture name="findingYourWork2" />
@@ -50,10 +50,10 @@ export function FirstOrder() {
       <s-section heading="Made and fulfilled">
         <Things>
           <s-paragraph>
-            When no item&apos;s workflow is still open and at least one is done,
-            the order reads <strong>Made</strong>. Its page says every item is
-            done, with a <strong>Fulfill in Shopify</strong> link. Each item
-            shows a <strong>Done</strong> badge.
+            When every item&apos;s workflow is done or closed and at least one
+            is done, the order reads <strong>Made</strong>. Its page says every
+            item is done, with a <strong>Fulfill in Shopify</strong> link. Each
+            item shows a <strong>Done</strong> badge.
           </s-paragraph>
           <HelpPicture name="firstOrder1" />
           <s-paragraph>

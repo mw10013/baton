@@ -94,11 +94,11 @@ export function Creating() {
           workflow under <strong>Tag</strong>. The tag fills in from the name,
           in lowercase, until you type in it. What you type is kept as you typed
           it, and Baton matches it exactly. A tag has no comma, since Shopify
-          splits a product&apos;s tags on commas. How the match works is in{" "}
+          uses commas to separate tags. How the match works is in{" "}
           <s-link href="/help/workflows/matching">
             Matching items by product tag
           </s-link>
-          . How long a name or a tag can be is in{" "}
+          . How many workflows a shop can have is in{" "}
           <s-link href="/help/reference/limits">Limits</s-link>.
         </s-paragraph>
       </s-section>

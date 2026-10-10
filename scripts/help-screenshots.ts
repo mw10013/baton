@@ -724,10 +724,18 @@ const parkPointer = async (page: Page) => {
   await page.mouse.move(frame.x + 4, frame.y + 4);
 };
 
-/** A row link in the frame's index table, then its page, by the page's heading, the pointer parked after. */
+/**
+ * A row link in the frame's index table, then its page, by the page's heading,
+ * the pointer parked after. The link is clicked natively: a row at the foot of
+ * the window (#1209, the last Issues row, at about 720 px) sits in the dead
+ * band a page shot's viewport resize leaves behind ({@link openModalBy}), so
+ * Playwright's pointer click lands on nothing.
+ */
 const openRow = async (page: Page, name: string) => {
   const frame = appFrame(page);
-  await frame.getByRole("link", { name, exact: true }).click();
+  await frame.getByRole("link", { name, exact: true }).evaluate((element) => {
+    (element as HTMLElement).click();
+  });
   await frame.locator(`s-page[heading="${name}"]`).waitFor();
   await awaitNavigated(frame);
   await parkPointer(page);
@@ -1190,7 +1198,9 @@ const MERCHANT_SHOTS: readonly {
       ).getByRole("button", { name: "Cancel workflow", exact: true });
       await openModalBy(cancelWorkflow, modal);
       await modal
-        .getByText("Steps already done stay on record.", { exact: false })
+        .getByText("Steps already done still show on the order.", {
+          exact: false,
+        })
         .waitFor();
       await awaitFrameButton(modal, "Cancel workflow");
     },
@@ -1426,8 +1436,8 @@ const shootMember = (browser: Browser, shop: string, baseURL: string) =>
       await page.goto("/login");
       await awaitHydration(page);
       await page.getByLabel("Email").fill(MEMBER);
-      await page.getByRole("button", { name: "Send magic link" }).click();
-      await page.getByRole("link", { name: "Open your magic link" }).click();
+      await page.getByRole("button", { name: "Send sign-in link" }).click();
+      await page.getByRole("link", { name: "Open your sign-in link" }).click();
       await page.waitForURL(/\/shop\//u);
       await awaitHydration(page);
     });

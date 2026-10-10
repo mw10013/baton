@@ -179,7 +179,7 @@ test("adding a member past the included seats succeeds and the home tile says it
      is hidden (`rel="home"`), so there is no hoisted link back to it. */
   await gotoApp(page);
   await expect(
-    frame.getByText(/past your plan's included seats/u),
+    frame.getByText(/Extra members are billed at your plan's rate/u),
   ).toBeVisible();
   await openScreen(page, "Members");
   await expect(frame.locator('s-page[heading="Members"]')).toBeVisible();

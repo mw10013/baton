@@ -2160,9 +2160,21 @@ export const ActorDisplay = Schema.Union([
 ]);
 export type ActorDisplay = typeof ActorDisplay.Type;
 
-/** How every page spells an actor: the merchant is `Merchant`, a member is their email. */
-export const actorLabel = (actor: ActorDisplay) =>
-  actor.role === "merchant" ? "Merchant" : actor.email;
+/**
+ * How a page spells an actor, by who is looking: the merchant row in the
+ * vocabulary, "you" to the merchant and "the merchant" to a member. A member
+ * is their email whoever looks. The merchant is `You` on the merchant's own
+ * screens (the order page's task lines and block banner) and `Merchant` on a
+ * member's. Every site prints the label as a segment of a line ("Sewing · You
+ * · 2 h", "You · 3m ago", "Started by Merchant"), never inside a sentence of
+ * its own, so the merchant's form is capitalised. The member reading their
+ * own work sees "you", which is each member screen's own rule
+ * ({@link actorIsMember}), not this one.
+ */
+export const actorLabel = (actor: ActorDisplay, viewer: ConnectionRole) => {
+  if (actor.role === "member") return actor.email;
+  return viewer === "merchant" ? "You" : "Merchant";
+};
 
 /**
  * Whether a task's recorded actor is this member, by email: the durable identity, since
@@ -3080,7 +3092,7 @@ export const runRowLines = (
       return state === "started_by_you"
         ? null
         : `${TASK_STATE_LABEL.started} by you`;
-    return `${TASK_STATE_LABEL.started} by ${actorLabel(startedBy)}`;
+    return `${TASK_STATE_LABEL.started} by ${actorLabel(startedBy, "member")}`;
   };
   const block = () => {
     if (!blocked) return null;

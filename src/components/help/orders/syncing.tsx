@@ -35,8 +35,8 @@ export function Syncing() {
           <s-paragraph>
             Baton keeps its own copy of each order, and Shopify tells it when
             one changes: when an order is created, paid, cancelled, fulfilled or
-            edited. Each time, Baton reads the whole order from Shopify, so the
-            newest copy wins whichever message arrives first.
+            edited. Each time, Baton reads the whole order from Shopify, so
+            Baton always ends up with the latest version of the order.
           </s-paragraph>
           <s-paragraph>What Baton follows:</s-paragraph>
           <s-unordered-list>
@@ -49,8 +49,8 @@ export function Syncing() {
               workflow on it.
             </s-list-item>
             <s-list-item>
-              An edit in Shopify that changes an item&apos;s quantity resizes
-              its workflow. At zero, the workflow ends and the item reads{" "}
+              An edit in Shopify that changes an item&apos;s quantity changes
+              the number to make. At zero, the workflow ends and the item reads{" "}
               <strong>Removed</strong>. A refund that lowers the quantity does
               the same the next time the order is read.
             </s-list-item>

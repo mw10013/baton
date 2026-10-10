@@ -25,7 +25,8 @@ import { Things } from "@/components/screen/Things";
  * JSDoc on `Workflow` and `WorkflowTask` in `src/lib/domain/ShopWork.ts`
  * (only Apply writes the tasks in force; new items copy those), and
  * `TASK_INSTRUCTIONS_MAX_LENGTH` with `noteCountFrom` (the field counts down
- * near the limit; the number is on the Limits page, not here).
+ * near the limit; the number is on neither this page nor Limits, since the
+ * field states it).
  */
 export function Editing() {
   return (
@@ -43,9 +44,9 @@ export function Editing() {
           </s-paragraph>
           <HelpPicture name="editing1" />
           <s-paragraph>
-            Until you apply, the workflow&apos;s page shows the steps in force,
-            and new items start with those steps. Closing the editor keeps the
-            draft for next time.
+            Until you apply, the workflow&apos;s page shows the steps it has
+            now, and new items start with those steps. Closing the editor keeps
+            the draft for next time.
           </s-paragraph>
         </Things>
       </s-section>
@@ -116,8 +117,7 @@ export function Editing() {
           </s-unordered-list>
           <s-paragraph>
             Instructions have a limit, and the field counts the characters left
-            as you near it. The limit is in{" "}
-            <s-link href="/help/reference/limits">Limits</s-link>.
+            as you near it.
           </s-paragraph>
           <HelpPicture name="editing2" />
         </Things>
@@ -126,8 +126,8 @@ export function Editing() {
         <Things>
           <s-paragraph>
             <strong>Apply changes</strong> replaces the workflow&apos;s steps
-            with the draft. On an active workflow, a modal says the changes take
-            effect now, and items already on it keep the tasks they started
+            with the draft. On an active workflow, a window says the changes
+            take effect now, and items already on it keep the tasks they started
             with. Press <strong>Apply</strong>. On an inactive workflow, the
             changes apply at once. The editor then closes and the
             workflow&apos;s page shows the new steps.
@@ -139,9 +139,9 @@ export function Editing() {
             <strong>Needs a team</strong> banner names it.
           </s-paragraph>
           <s-paragraph>
-            <strong>Discard changes</strong> drops the draft. A modal says your
+            <strong>Discard changes</strong> drops the draft. A window says your
             changes will be lost. Press <strong>Discard</strong>, and the editor
-            shows the steps in force again.
+            shows the workflow&apos;s steps as they were.
           </s-paragraph>
           <s-paragraph>
             <strong>More actions</strong> in the editor has{" "}

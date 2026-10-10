@@ -50,7 +50,7 @@ export function Matching() {
           </s-paragraph>
         </Things>
       </s-section>
-      <s-section heading="What else has to hold">
+      <s-section heading="What else a workflow needs to start">
         <Things>
           <s-paragraph>
             A tag that matches starts the workflow when:
@@ -70,9 +70,9 @@ export function Matching() {
               or refunded in full, starts nothing.
             </s-list-item>
             <s-list-item>
-              The item is not on a workflow already. A match never moves an item
-              to another workflow. A workflow you cancelled on an item never
-              starts on it again by a match.
+              The item is not on a workflow already. A matching tag never moves
+              an item to another workflow. A workflow you cancelled on an item
+              never starts on it again by a matching tag.
             </s-list-item>
           </s-unordered-list>
           <s-paragraph>
@@ -87,7 +87,7 @@ export function Matching() {
             If an item carries the tags of two active workflows, neither starts.
             The order shows <strong>Multiple workflows match</strong> on the
             Orders page. On the order page, the item says more than one workflow
-            matches it, and the <strong>Workflow</strong> select lists the
+            matches it, and the <strong>Workflow</strong> menu lists the
             matching workflows first. Choose one and press{" "}
             <strong>Attach</strong>. If you turn one of the two off, delete it,
             or delete a team one of its tasks is on, the other starts on the

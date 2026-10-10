@@ -2,9 +2,9 @@ import { HelpPicture } from "@/components/screen/HelpPicture";
 import { Things } from "@/components/screen/Things";
 
 /**
- * Reading the orders list (`orders/orders-list`), a concept page: the strip
- * and the Show select, the seven positions, a row, the Team select and the
- * search. Read against `src/routes/app.orders.index.tsx` (`STRIP`, the Show
+ * Reading the orders list (`orders/orders-list`), a concept page: the counts
+ * at the top and the Show menu, the seven positions, a row, the Team menu
+ * and the search. Read against `src/routes/app.orders.index.tsx` (`STRIP`, the Show
  * select's `SHOW` order, the Team select with Any team, the search field and
  * its placeholder, the columns Order, Placed, Payment, Status, Issues, Items
  * and Shopify, the Issues cell empty when there is none, the pager, the
@@ -29,31 +29,31 @@ import { Things } from "@/components/screen/Things";
 export function OrdersList() {
   return (
     <>
-      <s-section heading="The strip and the Show select">
+      <s-section heading="The counts at the top and the Show menu">
         <Things>
           <s-paragraph>
             The Orders page lists the orders Baton has from Shopify, each with
-            where it stands. Across the top, the strip reads{" "}
+            where it stands. Across the top, the counts read{" "}
             <strong>No workflow</strong>, <strong>Not started</strong>,{" "}
             <strong>Making</strong> and <strong>Made</strong>, in the order an
             order moves through them, then <strong>Issues</strong>, which cuts
-            across them. Each cell shows how many orders are there. Press a cell
-            to list those orders.
+            across them. Each shows how many orders it has. Press one to list
+            those orders.
           </s-paragraph>
           <HelpPicture name="ordersList1" />
           <s-paragraph>
             The page opens on <strong>Making</strong>, the orders members are
-            working on now. The <strong>Show</strong> select under the strip
-            holds the same five values and five more: <strong>Open</strong>,
+            working on now. The <strong>Show</strong> menu under the counts
+            holds the same five choices and five more: <strong>Open</strong>,
             every open order, <strong>Unpaid</strong>,{" "}
             <strong>Fulfilled</strong>, <strong>Cancelled</strong> and{" "}
             <strong>All</strong>, every order Baton has, closed ones included.
-            These five have no cell on the strip. The list shows one value at a
-            time, and pressing a cell sets the Show select to it.
+            These five have no count at the top. The list shows one choice at a
+            time, and pressing a count sets the Show menu to it.
           </s-paragraph>
           <s-paragraph>
-            The strip counts open orders only. Its counts change with the{" "}
-            <strong>Team</strong> select, not with the Show select or a search.
+            The counts at the top cover open orders only. They change with the{" "}
+            <strong>Team</strong> menu, not with the Show menu or a search.
           </s-paragraph>
         </Things>
       </s-section>
@@ -98,10 +98,7 @@ export function OrdersList() {
           <s-paragraph>
             An issue is not a position. A blocked order keeps its position, and
             its row shows the issue beside it. The badges on each item are in{" "}
-            <s-link href="/help/reference/states-and-badges">
-              States and badges
-            </s-link>
-            .
+            <s-link href="/help/reference/states-and-badges">Badges</s-link>.
           </s-paragraph>
         </Things>
       </s-section>
@@ -114,7 +111,7 @@ export function OrdersList() {
             Items. The icon at the end opens the order in Shopify.
           </s-paragraph>
           <s-paragraph>
-            The Issues cell holds one red badge per issue:{" "}
+            The Issues column shows one red badge per issue:{" "}
             <strong>Multiple workflows match</strong>,{" "}
             <strong>Needs a team</strong> or <strong>Blocked</strong>. It is
             empty when the order has none. Show <strong>Issues</strong> lists
@@ -131,23 +128,22 @@ export function OrdersList() {
           </s-paragraph>
         </Things>
       </s-section>
-      <s-section heading="The Team select and search">
+      <s-section heading="The Team menu and search">
         <Things>
           <s-paragraph>
-            The <strong>Team</strong> select reads <strong>Any team</strong>{" "}
-            until you choose a team. With a team chosen, the list keeps the
-            orders waiting on that team: an item&apos;s current task is on the
-            team and the item is not blocked. A team with no members still
-            matches, so you see the orders it needs a member for. A closed order
-            waits on no team, so Fulfilled or Cancelled with a team chosen lists
-            nothing.
+            The <strong>Team</strong> menu reads <strong>Any team</strong> until
+            you choose a team. With a team chosen, the list keeps the orders
+            waiting on that team: an item&apos;s current task is on the team and
+            the item is not blocked. A team with no members still matches, so
+            you see the orders it needs a member for. A closed order waits on no
+            team, so Fulfilled or Cancelled with a team chosen lists nothing.
           </s-paragraph>
           <s-paragraph>
             To find one order, search by its number, with or without the #, or
             by the start of a word in an item&apos;s title, variant or SKU. A
             search looks through every order Baton has, closed ones too, and
-            sets the Show and Team selects aside. A line saying how many orders
-            match takes the strip&apos;s place. Press{" "}
+            ignores the Show and Team menus. A line saying how many orders match
+            takes the place of the counts at the top. Press{" "}
             <strong>Clear search</strong> to go back to the list you had.
           </s-paragraph>
         </Things>

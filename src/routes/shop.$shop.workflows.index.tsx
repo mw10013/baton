@@ -182,7 +182,7 @@ const doneActorLabel = (task: Domain.RunTask, memberEmail: Domain.Email) => {
   if (actor === null) return "";
   return Domain.actorIsMember(actor, memberEmail)
     ? "you"
-    : Domain.actorLabel(actor);
+    : Domain.actorLabel(actor, "member");
 };
 
 function RouteComponent() {

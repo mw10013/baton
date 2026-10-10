@@ -77,7 +77,7 @@ const attachResultMessage = Match.typeTags<
   WorkflowNotEligible: () =>
     "That workflow can't start: it's inactive, has no steps, or has a task with no team.",
   OrderClosed: () =>
-    "This order is cancelled or fulfilled in Shopify, so there is no work left to attach.",
+    "This order is cancelled or fulfilled in Shopify, so you can't attach a workflow to it.",
   NothingToMake: () =>
     "This item has nothing left to make, so no workflow can start on it.",
 });
@@ -756,6 +756,7 @@ function RouteComponent() {
           <s-heading>{`${run.workflowName} workflow`}</s-heading>
           <RunSteps
             tasks={tasks}
+            viewer="merchant"
             showInstructions={false}
             renderActions={(task) => {
               const can = byId.get(task.id);
@@ -991,6 +992,7 @@ function RouteComponent() {
         <ClosedLine run={run} viewer="merchant" />
         <BlockBanner
           run={run}
+          viewer="merchant"
           actions={
             /* No `slot` on the buttons, so they sit in the banner body,
                which puts no gap between children; the stack supplies it. */

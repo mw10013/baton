@@ -57,7 +57,7 @@ export function Blocking() {
             the reason, who blocked it and when. When the work can go on, press{" "}
             <strong>Unblock</strong> in the banner. Anyone on the current
             task&apos;s team can, not only who blocked it. The tasks go back to
-            the state they had.
+            how they were.
           </s-paragraph>
           <HelpPicture name="blocking2" />
           <s-paragraph>

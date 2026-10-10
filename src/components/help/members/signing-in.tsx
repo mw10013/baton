@@ -2,7 +2,7 @@ import { NumberedList } from "@/components/screen/NumberedList";
 import { Things } from "@/components/screen/Things";
 
 /**
- * Signing in (`members/signing-in`): the magic link, Your stores, Sign out,
+ * Signing in (`members/signing-in`): the sign-in link, Your stores, Sign out,
  * and the lapsed sentence. Read against `src/routes/login.tsx` (the form and
  * its "Check your email" answer, the same for an email nobody added),
  * `MAGIC_LINK_EXPIRES_IN_SECONDS` in `src/lib/Auth.ts` (five minutes),
@@ -23,7 +23,7 @@ export function SigningIn() {
             items={[
               <>
                 On the <strong>Sign in</strong> page, enter your email and press{" "}
-                <strong>Send magic link</strong>.
+                <strong>Send sign-in link</strong>.
               </>,
               <>
                 Open the email from Baton and press its <strong>Sign in</strong>{" "}
@@ -56,7 +56,7 @@ export function SigningIn() {
         <s-paragraph>
           Press <strong>Sign out</strong> at the top of any screen. On a tablet
           the whole team shares, sign out when you leave: the email at the top
-          is who every Start and Done is recorded for.
+          is the name every Start and Done shows.
         </s-paragraph>
       </s-section>
     </>

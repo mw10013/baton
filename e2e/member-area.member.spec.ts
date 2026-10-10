@@ -44,7 +44,7 @@ test("a non-member gets the same confirmation and no link", async ({
     page.locator('s-section[heading="Check your email"]'),
   ).toBeVisible();
   await expect(
-    page.getByRole("link", { name: "Open your magic link" }),
+    page.getByRole("link", { name: "Open your sign-in link" }),
   ).toBeHidden();
 });
 

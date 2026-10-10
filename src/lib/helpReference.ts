@@ -1,7 +1,7 @@
 import type * as Domain from "@/lib/Domain";
 
 /**
- * The rows of the two vocabulary reference pages, States and badges
+ * The rows of the two vocabulary reference pages, Badges
  * (`reference/states-and-badges`) and Who can do what
  * (`reference/who-can-do-what`): for each state or verb, what the page says
  * beside its label. The label itself is never here. Each body reads it from
@@ -29,8 +29,8 @@ import type * as Domain from "@/lib/Domain";
  * the route that prints it; the test cannot hold those to the code.
  *
  * Every string is screen copy in the vocabulary's screen words. The
- * retired-word lint reads `src/components/`, not `src/lib/`, so the test
- * holds these strings to `RETIRED`.
+ * retired-word lint reads this module a line at a time, and the test holds
+ * each string, whole, to `RETIRED`.
  */
 
 /**
@@ -44,37 +44,37 @@ import type * as Domain from "@/lib/Domain";
  */
 export const ORDER_POSITION_ROWS = {
   unpaid: {
-    where: "Status column and the Show select",
+    where: "Status column and the Show menu",
     meaning:
       "The order is open and not fully paid, and no item has a workflow. A matching workflow starts once it is paid.",
   },
   no_workflow: {
-    where: "Status column, the strip and the Show select",
+    where: "Status column, the counts at the top and the Show menu",
     meaning:
       "The order is open and paid, and no item has a workflow on it. Its products carry no workflow's tag, the workflow was cancelled, or Shopify removed the item.",
   },
   not_started: {
-    where: "Status column, the strip and the Show select",
+    where: "Status column, the counts at the top and the Show menu",
     meaning:
       "An item has a workflow, and nobody has started a task on the order yet.",
   },
   making: {
-    where: "Status column, the strip and the Show select",
+    where: "Status column, the counts at the top and the Show menu",
     meaning:
       "A task has been started, or one item's workflow is done while another's is still open. The Orders page opens here.",
   },
   made: {
-    where: "Status column, the strip and the Show select",
+    where: "Status column, the counts at the top and the Show menu",
     meaning:
       "No item's workflow is open, and at least one is done. The order waits to be fulfilled in Shopify.",
   },
   fulfilled: {
-    where: "Status column and the Show select",
+    where: "Status column and the Show menu",
     meaning:
       "Shopify says the order is fulfilled. A Made order moves here on its own.",
   },
   cancelled: {
-    where: "Status column and the Show select",
+    where: "Status column and the Show menu",
     meaning: "The order was cancelled in Shopify.",
   },
 } as const satisfies Record<
@@ -92,17 +92,17 @@ export const ORDER_ISSUE_ROWS = {
     meaning:
       "An item carries the tags of two or more active workflows, so none started.",
     clears:
-      "Choose a workflow in the item's Workflow select on the order's page, and press Attach.",
+      "Choose a workflow in the item's Workflow menu on the order's page, and press Attach.",
   },
   unassigned: {
     meaning:
       "A task on an item has no team, because its team was deleted. Nobody can work it.",
     clears:
-      "Choose a team in the Assign team select on the order's page, and press Assign.",
+      "Choose a team in the Assign team menu on the order's page, and press Assign.",
   },
   blocked: {
     meaning:
-      "A member on the team of the current task, or the merchant, blocked an item.",
+      "A member on the team of the current task, or you, blocked an item.",
     clears: "Press Unblock in the item's banner once the cause is dealt with.",
   },
 } as const satisfies Record<
@@ -159,7 +159,7 @@ export const ITEM_BADGE_ROWS = {
 export const TASK_STATE_ROWS = {
   ready: {
     meaning:
-      "Its step is current and nobody has started it. Anyone on its team can.",
+      "Every earlier step is done and nobody has started it. Anyone on its team can.",
   },
   started: {
     meaning:
@@ -306,14 +306,14 @@ export const WORK_VERB_ROWS = {
   },
   done: {
     what: "Say a task is done",
-    when: "A ready or started task, while the item is not blocked. A member presses it on their own team's tasks. Done without Start records the start too.",
+    when: "A ready or started task, while the item is not blocked. A member presses it on their own team's tasks. Done without Start also marks it started.",
   },
   putBack: {
     what: "Put a started task back to Ready",
     when: "A started task, while the item is not blocked. Anyone on its team can, not only who started it.",
   },
   reopen: {
-    what: "Take back a Done",
+    what: "Undo the last Done",
     when: "A done task, while no task in a later step has been started or done. Anyone on its team can. Not once the order or the item's workflow is closed.",
   },
   assign: {
@@ -322,7 +322,7 @@ export const WORK_VERB_ROWS = {
   },
   note: {
     what: "Write the item's note",
-    when: "Anyone on a team with a task on the item, at any step, and the merchant. Always, even once the order or the workflow is closed.",
+    when: "Anyone on a team with a task on the item, at any step, and you. Always, even once the order or the workflow is closed.",
   },
   block: {
     what: "Stop the work on an item",
@@ -342,7 +342,7 @@ export const WORK_VERB_ROWS = {
   },
   changeWorkflow: {
     what: "Put another workflow on an item",
-    when: "An item with something left to make, on an open order, whatever state its workflow is in. Under a closed workflow, the Workflow select does it.",
+    when: "An item with something left to make, on an open order, whether its workflow is open, done or closed. Under a closed workflow, the Workflow menu does it.",
   },
 } as const satisfies Record<
   Exclude<Domain.Verb, WorkflowVerb>,
@@ -358,7 +358,7 @@ export const WORK_VERB_ROWS = {
 export const WORKFLOW_VERB_ROWS = {
   apply: {
     on: "A workflow's draft",
-    does: "Puts the draft's steps and tasks in force for new items. Items already on the workflow keep their own copy.",
+    does: "New items start with the draft's steps and tasks. Items already on the workflow keep their own copy.",
   },
   discard: {
     on: "A workflow's draft",
@@ -392,7 +392,7 @@ export const RECORD_VERB_ROWS = {
   },
   delete: {
     on: "A team, a member or a workflow",
-    does: "It stops existing, and it cannot be undone. Items already on a deleted workflow keep going, and recorded work keeps its names.",
+    does: "It stops existing, and it cannot be undone. Items already on a deleted workflow keep going, and work already done keeps its names.",
   },
   add: {
     on: "A member, a team's members, a member's teams, or a step or task in the editor",

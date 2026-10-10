@@ -1,13 +1,17 @@
 import { HelpTable } from "@/components/screen/HelpTable";
 import { Things } from "@/components/screen/Things";
+import * as Domain from "@/lib/Domain";
 
 /**
  * Plans and billing (`reference/plans-and-billing`), a reference page. It
  * prints no plan name, price, included count, trial length or any other
- * number: those are set in the Partner Dashboard and change without a
+ * plan number: those are set in the Partner Dashboard and change without a
  * deploy, which is the home page's own rule (the JSDoc on its component in
- * `src/routes/app.index.tsx`), and `test/integration/help-limits.test.ts`
- * holds the page to no digit at all. The hard limits are on Limits.
+ * `src/routes/app.index.tsx`). The two hard limits, `ShopLimits.maxMembers`
+ * and `ShopLimits.maxOpenOrders`, are the one exception: they are constants,
+ * read here and on Limits, so they cannot drift, and a merchant reading
+ * about metering learns here where it stops.
+ * `test/integration/help-limits.test.ts` holds the page to no other digit.
  *
  * Read against the billing vocabulary on `src/lib/domain/Billing.ts` (a
  * billing cycle is one month of an app subscription; a counted order is one
@@ -54,8 +58,8 @@ export function PlansAndBilling() {
               <>
                 An order counts once, the first time a workflow starts on one of
                 its items, by a tag or by <strong>Attach</strong>. An order with
-                no workflow does not count, and cancelling a workflow does not
-                uncount its order.
+                no workflow does not count, and cancelling the workflow
+                afterwards does not take the order back off your bill.
               </>,
               "Each billing cycle starts again at zero.",
             ],
@@ -69,13 +73,17 @@ export function PlansAndBilling() {
       </s-section>
       <s-section heading="Past what your plan includes">
         <s-paragraph>
-          Baton refuses nothing for being past what your plan includes. Each
+          Going past what your plan includes never stops Baton working. Each
           extra order or member is billed at your plan&apos;s rate. On the home
-          page, <strong>Orders this billing cycle</strong> and{" "}
+          page, under <strong>Your plan</strong>,{" "}
+          <strong>Orders this billing cycle</strong> and{" "}
           <strong>Members</strong> show where you stand against what your plan
-          includes, and the orders tile says when the cycle resets. The Members
-          tile shows today&apos;s count. The only hard stops are in{" "}
-          <s-link href="/help/reference/limits">Limits</s-link>.
+          includes. Orders this billing cycle also says when the cycle resets,
+          and Members shows how many members you have today. Every plan has two
+          hard limits: {Domain.formatNumber(Domain.ShopLimits.maxMembers)}{" "}
+          members and {Domain.formatNumber(Domain.ShopLimits.maxOpenOrders)}{" "}
+          open orders. See <s-link href="/help/reference/limits">Limits</s-link>
+          .
         </s-paragraph>
       </s-section>
       <s-section heading="Changing plans">

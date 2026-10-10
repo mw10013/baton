@@ -3018,7 +3018,10 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         strictEqual(blocked.run.blockReason, "waiting on the customer");
         deepStrictEqual<unknown>(blocked.run.blockedBy, { role: "merchant" });
         strictEqual(
-          Domain.actorLabel(blocked.run.blockedBy ?? { role: "merchant" }),
+          Domain.actorLabel(
+            blocked.run.blockedBy ?? { role: "merchant" },
+            "member",
+          ),
           "Merchant",
         );
         yield* runs.unblockRun({ runId: detail.run.id });

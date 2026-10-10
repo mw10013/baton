@@ -1,195 +1,85 @@
 import { HelpTable } from "@/components/screen/HelpTable";
 import { Things } from "@/components/screen/Things";
 import * as Domain from "@/lib/Domain";
-import { ORDER_SYNC_WINDOW_DAYS } from "@/lib/orderSyncConstants";
 
 /**
- * Limits (`reference/limits`), a reference page: every number Baton holds a
- * shop to, and what the screen does there. Every number is read from its
- * constant and printed through `Domain.formatNumber`, the formatter every
- * screen uses, so 2,500 reads as the banner prints it; a changed constant
- * changes the page with no edit (decision 14 in the help research, and
- * `test/integration/help-limits.test.ts` holds it).
+ * Limits (`reference/limits`), a reference page: the limits a merchant plans
+ * around before reaching them. A limit the screen states when the merchant
+ * reaches it (a field's length, the editor's tasks per workflow) is not on
+ * the page, nor is one no small or medium shop comes near (items on an
+ * order, properties on an item) or one that only matters to someone sharing
+ * a login (connections and sign-ins per member). Those stay enforced and
+ * documented on their constants. `test/integration/help-limits.test.ts`
+ * holds the page to the five it carries.
  *
- * Read against `NAME_MAX_LENGTH`, `TEAM_NAME_MAX_LENGTH`, `TAG_MAX_LENGTH`,
- * `TASK_INSTRUCTIONS_MAX_LENGTH`, `RUN_NOTE_MAX_LENGTH`,
- * `BLOCK_REASON_MAX_LENGTH`, `noteCountFrom` and `DONE_WINDOW_MS` in
- * `src/lib/domain/ShopWork.ts`; `EMAIL_MAX_LENGTH`, `WorkflowLimits` and
- * `ShopLimits` in `src/lib/domain/Platform.ts`; `ORDER_SYNC_WINDOW_DAYS`;
- * `textLimitError` and `textLimitProps` in `src/components/screen/TextLimit.tsx`
- * ("Up to N characters" on submit, "N characters left" from `noteCountFrom`)
- * and their callers (the workflow name and tag on the Workflows page and the
- * workflow page, `WorkflowTag`, the team name on the Teams page and the
- * team's page, the email on the Members page, instructions in the editor, the
- * note and the block reason in `RunTextModals`, the task name on both of the
- * editor's forms); `tagCommaError` in `src/lib/workflowShared.ts`;
- * `MEMBER_CEILING` in `src/routes/app.members.index.tsx`, the teams and
- * workflows "A shop can have N …. Delete one to add another.", the editor's
- * "A workflow can have N tasks."; `maxConnectionsPerMember` and
- * `SocketBanner` (the oldest screen says “Signed in elsewhere” and offers
- * Reconnect); `maxSessionsPerMember` (the oldest sign-in is signed out, and
- * its next page is the sign-in page); `maxLineItemsPerOrder` (the rest are not
- * stored, and only a log says so); `maxPropertiesBytesPerItem`, printed
- * through `Domain.formatKilobytes` (the properties that fit are kept, the
- * rest are not stored, and only a log says so); `QuotaBanners` and
- * `openOrdersAtCeiling`;
- * `retentionCutoff` (the age is from `processedAt`, the date the Orders page
- * prints as Placed).
+ * Every number is read from its constant and printed through
+ * `Domain.formatNumber`, the formatter every screen uses, so a changed
+ * constant changes the page with no edit.
  *
- * Nothing here says why a limit is the number it is, and nothing names one
- * a guard or a ceiling: a limit is a number and what the screen does there.
+ * Read against `ShopLimits` in `src/lib/domain/Platform.ts` (`maxMembers`,
+ * `maxOpenOrders`, `maxTeams`, `orderRetentionDays`), `WorkflowLimits`
+ * (`maxWorkflows`), `membersAtCeiling` and `openOrdersAtCeiling` in
+ * `src/lib/domain/Billing.ts`, `retentionCutoff` (the age is from
+ * `processedAt`, the date the Orders page prints as Placed), and the
+ * create and duplicate actions on the Members, Teams and Workflows pages.
+ *
+ * The page gives no reason for a limit, names no banner and says nothing
+ * of orders per billing cycle. How Sync open orders recovers the orders
+ * not stored at the open-order limit is on Syncing from Shopify, not here.
  */
 export function Limits() {
   const n = Domain.formatNumber;
-  const countdown = (maxLength: number) =>
-    `A count of the characters left appears under the field when ${n(maxLength - Domain.noteCountFrom(maxLength))} remain. Past the limit, the field says “Up to ${n(maxLength)} characters” when you save.`;
-  const oneLine = (maxLength: number) =>
-    `The field says “Up to ${n(maxLength)} characters” when you save.`;
-  const characters = (maxLength: number) => `${n(maxLength)} characters`;
   return (
     <>
-      <s-section heading="Text">
-        <HelpTable
-          columns={["What", "Limit", "What the screen does"]}
-          rows={[
-            [
-              "Workflow name",
-              characters(Domain.NAME_MAX_LENGTH),
-              oneLine(Domain.NAME_MAX_LENGTH),
-            ],
-            [
-              "Task name",
-              characters(Domain.NAME_MAX_LENGTH),
-              oneLine(Domain.NAME_MAX_LENGTH),
-            ],
-            [
-              "Team name",
-              characters(Domain.TEAM_NAME_MAX_LENGTH),
-              oneLine(Domain.TEAM_NAME_MAX_LENGTH),
-            ],
-            [
-              "Tag",
-              `${characters(Domain.TAG_MAX_LENGTH)}, and no comma`,
-              `The field says “Up to ${n(Domain.TAG_MAX_LENGTH)} characters” or “A tag can't have a comma.” when you save.`,
-            ],
-            [
-              "Task instructions",
-              characters(Domain.TASK_INSTRUCTIONS_MAX_LENGTH),
-              countdown(Domain.TASK_INSTRUCTIONS_MAX_LENGTH),
-            ],
-            [
-              "Note on an item",
-              characters(Domain.RUN_NOTE_MAX_LENGTH),
-              countdown(Domain.RUN_NOTE_MAX_LENGTH),
-            ],
-            [
-              "Block reason",
-              characters(Domain.BLOCK_REASON_MAX_LENGTH),
-              countdown(Domain.BLOCK_REASON_MAX_LENGTH),
-            ],
-            [
-              "Member email",
-              characters(Domain.EMAIL_MAX_LENGTH),
-              oneLine(Domain.EMAIL_MAX_LENGTH),
-            ],
-          ]}
-        />
+      <s-section heading="Hard limits">
+        <Things>
+          <s-paragraph>
+            These limits are the same on every plan. Going past the orders or
+            members your plan includes is not a limit. Baton bills for the extra
+            ones, as{" "}
+            <s-link href="/help/reference/plans-and-billing">
+              Plans and billing
+            </s-link>{" "}
+            explains.
+          </s-paragraph>
+          <HelpTable
+            columns={["What", "Limit", "At the limit"]}
+            rows={[
+              [
+                "Members",
+                n(Domain.ShopLimits.maxMembers),
+                "You can't add another member.",
+              ],
+              [
+                "Open orders",
+                n(Domain.ShopLimits.maxOpenOrders),
+                "New orders don't come into Baton until some are fulfilled or cancelled.",
+              ],
+            ]}
+          />
+        </Things>
       </s-section>
-      <s-section heading="Things in the shop">
+      <s-section heading="Other limits">
         <HelpTable
           columns={["What", "Limit", "At the limit"]}
           rows={[
             [
-              "Members",
-              n(Domain.ShopLimits.maxMembers),
-              <>
-                <strong>Add member</strong> refuses another and says to contact
-                support to raise the limit.
-              </>,
-            ],
-            [
-              "Screens signed in as one member",
-              n(Domain.ShopLimits.maxConnectionsPerMember),
-              <>
-                The oldest screen says “Signed in elsewhere” and offers{" "}
-                <strong>Reconnect</strong>.
-              </>,
-            ],
-            [
-              "Sign-ins as one member",
-              n(Domain.ShopLimits.maxSessionsPerMember),
-              "The oldest sign-in is signed out at its next page.",
+              "Workflows",
+              n(Domain.WorkflowLimits.maxWorkflows),
+              "You can't create or duplicate another workflow.",
             ],
             [
               "Teams",
               n(Domain.ShopLimits.maxTeams),
-              <>
-                <strong>Create team</strong> refuses another. Delete a team to
-                add one.
-              </>,
+              "You can't create another team.",
             ],
             [
-              "Workflows",
-              n(Domain.WorkflowLimits.maxWorkflows),
-              <>
-                <strong>Create workflow</strong> and <strong>Duplicate</strong>{" "}
-                refuse another. Delete a workflow to add one.
-              </>,
-            ],
-            [
-              "Tasks in a workflow",
-              n(Domain.WorkflowLimits.maxTasks),
-              "The editor refuses another task and says how many a workflow can have.",
-            ],
-            [
-              "Items on an order",
-              n(Domain.ShopLimits.maxLineItemsPerOrder),
-              `Baton keeps ${n(Domain.ShopLimits.maxLineItemsPerOrder)} of the order's items and leaves out the rest.`,
-            ],
-            [
-              "Properties on an item",
-              Domain.formatKilobytes(
-                Domain.ShopLimits.maxPropertiesBytesPerItem,
-              ),
-              "The properties that fit are shown. The rest are not stored.",
+              "Order history",
+              `${n(Domain.ShopLimits.orderRetentionDays)} days`,
+              "Baton deletes orders older than this. Shopify still has them.",
             ],
           ]}
         />
-      </s-section>
-      <s-section heading="Orders">
-        <Things>
-          <HelpTable
-            columns={["What", "Limit", "What happens"]}
-            rows={[
-              [
-                "Open orders",
-                n(Domain.ShopLimits.maxOpenOrders),
-                "Baton stores no new order. A red banner on the home page and the Orders page says new orders stopped syncing.",
-              ],
-              [
-                "Sync open orders",
-                `${n(ORDER_SYNC_WINDOW_DAYS)} days`,
-                `It reads the open, unfulfilled orders placed in the last ${n(ORDER_SYNC_WINDOW_DAYS)} days.`,
-              ],
-              [
-                "How long Baton keeps an order",
-                `${n(Domain.ShopLimits.orderRetentionDays)} days`,
-                "An order leaves Baton that long after it was placed, with its workflows, open or not. Shopify keeps every order.",
-              ],
-              [
-                "Done or closed",
-                `${n(Domain.DONE_WINDOW_MS / 3_600_000)} hours`,
-                "A member's Done or closed list holds their teams' done tasks and ended workflows for that long.",
-              ],
-            ]}
-          />
-          <s-paragraph>
-            At the open-order limit, fulfill or cancel orders in Shopify, then
-            press <strong>Sync open orders</strong>. How it brings in the orders
-            that were not stored is in{" "}
-            <s-link href="/help/orders/syncing">Syncing from Shopify</s-link>.
-          </s-paragraph>
-        </Things>
       </s-section>
     </>
   );

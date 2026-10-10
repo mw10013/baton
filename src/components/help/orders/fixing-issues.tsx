@@ -31,9 +31,9 @@ export function FixingIssues() {
         <Things>
           <s-paragraph>
             An issue is an item on an open order that will not move until you
-            act. On the Orders page, press <strong>Issues</strong> on the strip
-            to list every open order that has one. Each row carries one red
-            badge per issue: <strong>Multiple workflows match</strong>,{" "}
+            act. On the Orders page, press <strong>Issues</strong> at the top of
+            the page to list every open order that has one. Each row carries one
+            red badge per issue: <strong>Multiple workflows match</strong>,{" "}
             <strong>Needs a team</strong> or <strong>Blocked</strong>. An order
             can have several.
           </s-paragraph>
@@ -50,13 +50,13 @@ export function FixingIssues() {
           <s-paragraph>
             The item carries the tags of two or more active workflows, so none
             started. On the order&apos;s page, the item says more than one
-            workflow matches it, and the <strong>Workflow</strong> select lists
+            workflow matches it, and the <strong>Workflow</strong> menu lists
             the matching workflows first.
           </s-paragraph>
           <NumberedList
             items={[
               <>
-                Choose one in the <strong>Workflow</strong> select.
+                Choose one in the <strong>Workflow</strong> menu.
               </>,
               <>
                 Press <strong>Attach</strong>.
@@ -80,12 +80,12 @@ export function FixingIssues() {
             A task on the item has no team, because its team was deleted. Nobody
             can work it. The order page shows no badge for it. Under the item, a
             line names the task and says to assign a team, with an{" "}
-            <strong>Assign team</strong> select beside it.
+            <strong>Assign team</strong> menu beside it.
           </s-paragraph>
           <NumberedList
             items={[
               <>
-                Choose a team in the <strong>Assign team</strong> select.
+                Choose a team in the <strong>Assign team</strong> menu.
               </>,
               <>
                 Press <strong>Assign</strong>.

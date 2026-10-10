@@ -42,8 +42,8 @@ export function TurningOnAndOff() {
                 <strong>Turn on workflow</strong>.
               </>,
               <>
-                The modal says every open order with an item that carries the
-                tag starts this workflow on that item. Press{" "}
+                A window opens and says every open order with an item that
+                carries the tag starts this workflow on that item. Press{" "}
                 <strong>Turn on</strong>.
               </>,
             ]}
@@ -77,8 +77,9 @@ export function TurningOnAndOff() {
                 <strong>Turn off workflow</strong>.
               </>,
               <>
-                The modal says new orders won&apos;t start this workflow, and
-                items already on it keep going. Press <strong>Turn off</strong>.
+                A window opens and says new orders won&apos;t start this
+                workflow, and items already on it keep going. Press{" "}
+                <strong>Turn off</strong>.
               </>,
             ]}
           />

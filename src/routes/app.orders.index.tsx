@@ -375,7 +375,7 @@ function RouteComponent() {
    */
   const emptyState = () => (
     <EmptyLine heading="No open orders" action={syncButton(false)}>
-      {`Sync open orders to pull in what is on the bench, or wait for the next order. The sync takes the open, unfulfilled orders from the last ${String(ORDER_SYNC_WINDOW_DAYS)} days. After that, order webhooks keep them current.`}
+      {`Press Sync open orders to bring in your open orders from the last ${String(ORDER_SYNC_WINDOW_DAYS)} days, or wait for the next order. After that, Baton adds each new order as it is placed.`}
     </EmptyLine>
   );
 

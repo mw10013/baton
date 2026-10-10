@@ -33,14 +33,14 @@ export function AttachingAWorkflow() {
       <s-section heading="Attach a workflow">
         <Things>
           <s-paragraph>
-            An item with no workflow on it has a <strong>Workflow</strong>{" "}
-            select on its card, on the order&apos;s page.
+            An item with no workflow on it has a <strong>Workflow</strong> menu
+            on its card, on the order&apos;s page.
           </s-paragraph>
           <NumberedList
             items={[
               <>
-                Open the <strong>Workflow</strong> select. The workflows whose
-                tag the item&apos;s product carries come first, then the other
+                Open the <strong>Workflow</strong> menu. The workflows whose tag
+                the item&apos;s product carries come first, then the other
                 active workflows.
               </>,
               <>Choose a workflow.</>,
@@ -51,12 +51,12 @@ export function AttachingAWorkflow() {
           />
           <HelpPicture name="attachingAWorkflow1" />
           <s-paragraph>
-            The item reads <strong>Not started</strong> and its tasks reach the
-            members of their teams. You can attach a workflow to an unpaid
-            order. You cannot attach one to a cancelled or fulfilled order, or
-            to an item with nothing left to make. If the shop has no active
-            workflow with a step, the item says no workflow matches it and
-            points you to the Workflows page.
+            The item reads <strong>Not started</strong> and its tasks show on
+            the Workflows list of each member on their teams. You can attach a
+            workflow to an unpaid order. You cannot attach one to a cancelled or
+            fulfilled order, or to an item with nothing left to make. If the
+            shop has no active workflow with a step, the item says no workflow
+            matches it and points you to the Workflows page.
           </s-paragraph>
           <s-paragraph>
             Attaching counts the order on your plan, as a workflow started by a
@@ -77,7 +77,7 @@ export function AttachingAWorkflow() {
                 <strong>Change workflow</strong>.
               </>,
               <>
-                Choose a workflow in the <strong>Workflow</strong> select.
+                Choose a workflow in the <strong>Workflow</strong> menu.
               </>,
               <>
                 Read what will not carry over, then press{" "}
@@ -89,15 +89,15 @@ export function AttachingAWorkflow() {
           <s-paragraph>
             The new workflow starts from its first step. Nothing carries over
             from the old one: steps done or started, a block, or a note. The
-            modal names what the item has of these. When the item has none of
-            them, the modal says nothing more, since nothing is lost.
+            window names what the item has of these. When the item has none of
+            them, the window says nothing more, since nothing is lost.
           </s-paragraph>
           <s-paragraph>
             An item whose workflow is done can be changed the same way. An item
-            whose workflow you cancelled has the <strong>Workflow</strong>{" "}
-            select under its card instead, with the cancelled workflow among the
+            whose workflow you cancelled has the <strong>Workflow</strong> menu
+            under its card instead, with the cancelled workflow among the
             choices while it is active. Choose one and press{" "}
-            <strong>Attach</strong>, with no modal, since that work is over.
+            <strong>Attach</strong>, with no window, since that work is over.
           </s-paragraph>
         </Things>
       </s-section>
@@ -110,9 +110,9 @@ export function AttachingAWorkflow() {
                 <strong>Cancel workflow</strong>.
               </>,
               <>
-                The modal names the workflow and the item. It says work on the
-                item stops, steps already done stay on record, and you can
-                attach another workflow afterwards. Press{" "}
+                A window opens and names the workflow and the item. It says work
+                on the item stops, steps already done still show on the order,
+                and you can attach another workflow afterwards. Press{" "}
                 <strong>Cancel workflow</strong>, or{" "}
                 <strong>Keep workflow</strong> to leave it.
               </>,
@@ -128,8 +128,8 @@ export function AttachingAWorkflow() {
             workflow by hand.
           </s-paragraph>
           <s-paragraph>
-            A done workflow has no Cancel workflow. To take back its last Done,
-            press <strong>Reopen</strong> on its last task in Manage.
+            A done workflow has no Cancel workflow. To undo the last Done, press{" "}
+            <strong>Reopen</strong> on its last task in Manage.
           </s-paragraph>
         </Things>
       </s-section>

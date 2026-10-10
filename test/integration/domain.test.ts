@@ -645,6 +645,20 @@ const blockOf = (
 ) =>
   Domain.runRowLines(item, { memberEmail: ME, showTeam: false, state }).block;
 
+describe("Domain.actorLabel", () => {
+  it("the merchant sees their own work as you, a member sees it as Merchant", () => {
+    const merchant: Domain.ActorDisplay = { role: "merchant" };
+    const member: Domain.ActorDisplay = {
+      role: "member",
+      email: Schema.decodeUnknownSync(Domain.Email)("ana@example.com"),
+    };
+    strictEqual(Domain.actorLabel(merchant, "merchant"), "You");
+    strictEqual(Domain.actorLabel(merchant, "member"), "Merchant");
+    strictEqual(Domain.actorLabel(member, "merchant"), "ana@example.com");
+    strictEqual(Domain.actorLabel(member, "member"), "ana@example.com");
+  });
+});
+
 describe("Domain.runRowLines", () => {
   it("a row has one line per current task, in position order", () => {
     deepStrictEqual(

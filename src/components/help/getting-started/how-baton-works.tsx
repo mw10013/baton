@@ -17,7 +17,7 @@ import { Things } from "@/components/screen/Things";
 export function HowBatonWorks() {
   return (
     <>
-      <s-section heading="The words">
+      <s-section heading="Orders, workflows and teams">
         <Things>
           <s-paragraph>
             An order comes from Shopify. Each product on it is an item.

@@ -50,7 +50,7 @@ export const Route = createFileRoute("/login-callback")({
   loaderDeps: ({ search }) => ({ error: search.error }),
   loader: ({ deps }) =>
     deps.error
-      ? { error: "This magic link has expired or was already used." }
+      ? { error: "This sign-in link has expired or was already used." }
       : resolveLoginCallback(),
   component: RouteComponent,
 });
@@ -62,7 +62,7 @@ function RouteComponent() {
       <s-section accessibilityLabel="Sign-in failed">
         <Things>
           <s-banner tone="critical">{error}</s-banner>
-          <s-link href="/login">Request a new magic link</s-link>
+          <s-link href="/login">Request a new sign-in link</s-link>
         </Things>
       </s-section>
     </s-page>

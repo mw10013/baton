@@ -23,7 +23,17 @@
  * | import, imports, importing | the word is sync: Baton's copy agreeing with Shopify; import is Shopify's word for `orderCreate`          |
  * | resync                     | the word is sync at one-order scope; the button is Sync from Shopify                                      |
  * | needs a workflow           | the fault is that more than one workflow matches; the label is Multiple workflows match                   |
- * | picker, pickers            | retired; the control is a select, named by its label (the Workflow select, the Assign team select)        |
+ * | picker, pickers            | retired; the control is a menu, named by its label (the Workflow menu, the Assign team menu)              |
+ * | verb, verbs                | a code word; copy names the button                                                                        |
+ * | strip                      | nothing on screen is named strip; "the counts at the top", or the item's name                             |
+ * | cell, cells                | a table word; copy names the column or the count                                                          |
+ * | modal, modals              | a code word; the screen word is window                                                                    |
+ * | select, selects (the noun) | the screen word is menu (the Show menu); "Select a team", the verb, stays                                 |
+ * | in force                   | say what the workflow has now                                                                             |
+ * | on record                  | say where it still shows                                                                                  |
+ * | tile, tiles                | name the heading the merchant sees (Orders this billing cycle, Members)                                   |
+ * | seat, seats                | the screen word is members                                                                                |
+ * | uncount                    | say the order stays on the bill                                                                           |
  * | Edit teams, Edit members, Edit workflows | retired; a set is edited with Add and a Remove per row, and Edit is a workflow's tasks only (the Record verbs table) |
  * | Remove …? (a heading that asks) | Remove takes a thing out of a set and has no modal; a verb that asks is Delete (the controls table on `Control`) |
  * | Saved …, Saving …, Syncing … (a sentence that starts so) | a write in flight is `loading` on the pressed button, and a page's resting state is silent (the controls table on `Control`); "Note saved", the toast's form, "stopped syncing", a fact, and a help link's text, a page title, stay |
@@ -89,6 +99,17 @@ export const RETIRED: readonly RegExp[] = [
   /\bre-?sync(?:s|ed|ing)?\b/iu,
   /\bneeds a workflow\b/iu,
   /\bpickers?\b/iu,
+  /(?<![-_/.$\w])verbs?\b(?![-_/$]|\.\w)/iu,
+  /(?<![-_/.$\w])strip\b(?![-_/$]|\.\w)/iu,
+  /(?<![-_/.$\w])cells?\b(?![-_/$]|\.\w)/iu,
+  /(?<![-_/.$\w])modals?\b(?![-_/$]|\.\w)/iu,
+  /\b(?:show|team|workflow|assign team) selects?\b/iu,
+  /\bselects\b/iu,
+  /\bin force\b/iu,
+  /\bon record\b/iu,
+  /(?<![-_/.$\w])tiles?\b(?![-_/$]|\.\w)/iu,
+  /(?<![-_/.$\w])seats?\b(?![-_/$]|\.\w)/iu,
+  /\buncount/iu,
   /\bedit (?:teams|members|workflows)\b/iu,
   /^\s*remove\b.*\?\s*$/iu,
   /^\s*(?:\u2713\s*)?sav(?:ed|ing)\b/iu,
@@ -169,7 +190,9 @@ const UNANCHORED = RETIRED.filter((pattern) => !pattern.source.startsWith("^"));
  * sentence, so it is held to the patterns that match anywhere and not to the
  * ones anchored at the start ("Syncing from Shopify" is a title; "Syncing …"
  * as a line is a write in flight). The same exemption the help tree's test
- * makes for a title.
+ * makes for a title. So is a `title:` property, a help page's title in
+ * `src/lib/helpPages.ts`. A `slug:` property is a URL segment, not copy, and
+ * is not read.
  */
 export const retiredCopyHits = (
   source: string,
@@ -180,7 +203,11 @@ export const retiredCopyHits = (
   return source.split("\n").flatMap((line, index) => {
     const text = line.trim();
     const opensHelpLink = /<s-link\b[^>]*href="\/help\//u.test(text);
-    const patterns = inHelpLink || opensHelpLink ? UNANCHORED : RETIRED;
+    if (text.startsWith("slug:")) return [];
+    const patterns =
+      inHelpLink || opensHelpLink || text.startsWith("title:")
+        ? UNANCHORED
+        : RETIRED;
     if (opensHelpLink) inHelpLink = true;
     if (text.includes("</s-link>")) inHelpLink = false;
     const wasInComment = inComment;

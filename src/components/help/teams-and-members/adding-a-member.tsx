@@ -19,7 +19,7 @@ import { Things } from "@/components/screen/Things";
  * pointer to the Teams page when the shop has no team; the Teams table with
  * Remove per row; the Details aside), the member rows of `D1_TABLES` in
  * `src/lib/D1Schema.ts`, `src/routes/login.tsx` and
- * `src/routes/login-callback.tsx` (Send magic link; one shop opens its
+ * `src/routes/login-callback.tsx` (Send sign-in link; one shop opens its
  * Workflows list, more open Your stores), and the empty list in
  * `src/routes/shop.$shop.workflows.index.tsx` for a member with no team.
  * No number is named here: Limits has them.
@@ -87,7 +87,7 @@ export function AddingAMember() {
           <s-paragraph>
             The list holds the teams they are not on yet. A member can be on
             several teams and sees the tasks of all of them. When they are on
-            every team, the modal says so. If the shop has no team yet, it
+            every team, the window says so. If the shop has no team yet, it
             points you to the Teams page. The same thing from the team&apos;s
             side is <strong>Add members</strong> on a team&apos;s page, in{" "}
             <s-link href="/help/teams-and-members/creating-a-team">

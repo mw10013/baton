@@ -43,7 +43,7 @@ export function FirstWorkflow() {
           />
           <HelpPicture name="firstWorkflow1" />
           <s-paragraph>
-            The tag is how Baton finds the items the workflow builds. Each
+            The tag is how Baton finds the items this workflow is for. Each
             workflow has its own tag.
           </s-paragraph>
         </Things>
@@ -96,8 +96,8 @@ export function FirstWorkflow() {
                 turns the workflow on in one go.
               </>,
               <>
-                The modal says every open order with an item that carries the
-                tag starts this workflow on that item. Press{" "}
+                A window opens and says every open order with an item that
+                carries the tag starts this workflow on that item. Press{" "}
                 <strong>Turn on</strong>.
               </>,
             ]}
@@ -114,9 +114,9 @@ export function FirstWorkflow() {
       </s-section>
       <s-section heading="Tag the products in Shopify">
         <s-paragraph>
-          In Shopify, add the tag to each product the workflow should build.
-          Type it exactly as the workflow has it, capital letters included. A
-          product without the tag starts nothing. How the match works is in{" "}
+          In Shopify, add the tag to each product this workflow is for. Type it
+          exactly as the workflow has it, capital letters included. A product
+          without the tag starts nothing. How the match works is in{" "}
           <s-link href="/help/workflows/matching">
             Matching items by product tag
           </s-link>

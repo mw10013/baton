@@ -62,8 +62,8 @@ export function RemovingAndDeleting() {
                 On the member&apos;s page, press <strong>Delete member</strong>.
               </>,
               <>
-                The modal names the email and says this can&apos;t be undone.
-                Press <strong>Delete</strong>.
+                A window opens, names the email and says this can&apos;t be
+                undone. Press <strong>Delete</strong>.
               </>,
             ]}
           />
@@ -86,9 +86,9 @@ export function RemovingAndDeleting() {
                 then <strong>Delete</strong>.
               </>,
               <>
-                The modal says this can&apos;t be undone. Press{" "}
-                <strong>Delete</strong>. It is disabled for a moment while the
-                page connects.
+                A window opens and says this can&apos;t be undone. Press{" "}
+                <strong>Delete</strong>. It can&apos;t be pressed for a moment
+                after the page opens.
               </>,
             ]}
           />

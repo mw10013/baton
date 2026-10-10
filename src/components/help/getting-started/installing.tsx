@@ -78,11 +78,12 @@ export function Installing() {
             workflow turned on, and an item with a workflow. Below it, the home
             page shows where your open orders stand, then{" "}
             <strong>Orders this billing cycle</strong> and{" "}
-            <strong>Members</strong>, each against what your plan includes. The
-            Members tile shows today&apos;s count. To change plans, press{" "}
-            <strong>Manage plan</strong> on the home page. A new plan applies at
-            once and starts a new billing cycle. Orders start again at zero, and
-            members start from the members you have. The details are in{" "}
+            <strong>Members</strong>, each against what your plan includes.
+            <strong>Members</strong> shows how many you have today. To change
+            plans, press <strong>Manage plan</strong> on the home page. A new
+            plan applies at once and starts a new billing cycle. Orders start
+            again at zero, and members start from the members you have. The
+            details are in{" "}
             <s-link href="/help/reference/plans-and-billing">
               Plans and billing
             </s-link>

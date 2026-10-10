@@ -53,7 +53,7 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
         slug: "first-order",
         title: "Following an order through its workflow",
         description:
-          "An item matches a tag, a member starts it, and the order reads Made.",
+          "An item's product has the tag, a member starts the work, and the order reads Made.",
       },
     ],
   },
@@ -67,7 +67,7 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
         slug: "orders-list",
         title: "Reading the orders list",
         description:
-          "The strip's positions and Issues, the Show select, the Team select and search.",
+          "The positions and Issues at the top, the Show menu, the Team menu and search.",
       },
       {
         slug: "order-page",
@@ -79,13 +79,13 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
         slug: "attaching-a-workflow",
         title: "Attaching or changing a workflow",
         description:
-          "The Workflow select on an item, Change workflow, and Cancel workflow.",
+          "The Workflow menu on an item, Change workflow, and Cancel workflow.",
       },
       {
         slug: "fixing-issues",
         title: "Fixing an issue",
         description:
-          "Multiple workflows match, Needs a team and Blocked: what each means and what clears it.",
+          "Multiple workflows match, Needs a team and Blocked: what each means and how to fix each.",
       },
       {
         slug: "syncing",
@@ -159,7 +159,7 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
     slug: "members",
     title: "For members",
     description:
-      "You were added by the merchant. Sign in, find your work and record it.",
+      "You were added by the merchant. Sign in, find your work and mark it done.",
     pages: [
       {
         slug: "signing-in",
@@ -169,11 +169,11 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
       {
         slug: "finding-your-work",
         title: "Finding your work",
-        description: "The strip's five filters, the Team select and search.",
+        description: "The five filters at the top, the Team menu and search.",
       },
       {
         slug: "recording-your-work",
-        title: "Recording your work",
+        title: "Starting and finishing tasks",
         description: "Start, Done, Put back and Undo on an item's page.",
       },
       {
@@ -187,30 +187,30 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
   {
     slug: "reference",
     title: "Reference",
-    description: "The states, the verbs, the limits and the plans, as tables.",
+    description: "What each badge means, who can do what, limits and plans.",
     pages: [
       {
         slug: "states-and-badges",
-        title: "States and badges",
+        title: "Badges",
         description:
-          "Task states, workflow states, order positions, issues and faults.",
+          "What each badge means on an order, an item, a task, a workflow, a team and a member.",
       },
       {
         slug: "who-can-do-what",
         title: "Who can do what",
-        description: "Every verb, and whether a member or the merchant has it.",
+        description: "Which buttons a member has and which you have.",
       },
       {
         slug: "limits",
         title: "Limits",
         description:
-          "Names, notes, instructions, members, teams, workflows and open orders.",
+          "Members, open orders, workflows, teams and order history.",
       },
       {
         slug: "plans-and-billing",
         title: "Plans and billing",
         description:
-          "The billing cycle, counted orders, members, what your plan includes and Manage plan.",
+          "What each plan includes, which orders and members you pay for, and changing plans.",
       },
     ],
   },

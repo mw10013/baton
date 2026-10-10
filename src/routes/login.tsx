@@ -115,7 +115,7 @@ function RouteComponent() {
     (loginMutation.isError
       ? mutationErrorMessage(
           loginMutation.error,
-          "Couldn't send the magic link.",
+          "Couldn't send the sign-in link.",
         )
       : undefined);
 
@@ -133,12 +133,11 @@ function RouteComponent() {
         <s-section heading="Check your email">
           <Things>
             <s-paragraph color="subdued">
-              If that email has access to a shop, a magic sign-in link has been
-              sent.
+              If that email has access to a shop, a sign-in link has been sent.
             </s-paragraph>
             {loginMutation.data.ok && loginMutation.data.magicLink && (
               <s-link href={loginMutation.data.magicLink}>
-                Open your magic link
+                Open your sign-in link
               </s-link>
             )}
           </Things>
@@ -148,8 +147,8 @@ function RouteComponent() {
           <Things>
             <s-paragraph color="subdued">
               {isDemoMode
-                ? "Demo mode: no emails are sent. The magic link appears here after you submit."
-                : "Enter your email to receive a magic sign-in link."}
+                ? "Demo mode: no emails are sent. The sign-in link appears here after you press Send sign-in link."
+                : "Enter your email to receive a sign-in link."}
             </s-paragraph>
             {resultError && <s-banner tone="critical">{resultError}</s-banner>}
             <form
@@ -180,7 +179,7 @@ function RouteComponent() {
                     variant="primary"
                     {...(loginMutation.isPending ? { loading: true } : {})}
                   >
-                    Send magic link
+                    Send sign-in link
                   </s-button>
                 </Inline>
               </Things>

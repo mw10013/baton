@@ -73,6 +73,7 @@ lines are written to the limit. Enter them in this order:
 | 2   | `3 members included, then $12 each`      | `10 members included, then $7 each`      |
 | 3   | `Workflows and teams at no extra charge` | `Workflows and teams at no extra charge` |
 | 4   | `Billed once work starts on an order`    | `Billed once work starts on an order`    |
+| 5   | `Up to 50 members, 2,500 open orders`    | `Up to 50 members, 2,500 open orders`    |
 
 Line 1 must agree with `ordersPerCycle` in `ENTITLEMENTS` and with the meter's tier 2 price;
 line 2 with `membersIncluded` and the member meter's tier 2 price. Line 4 states the metering rule (`OrderRepository.countOrder`): an
@@ -80,7 +81,8 @@ order is counted once, when Baton creates its first run, and never reversed — 
 only displayed, or that no workflow matches, costs the merchant nothing. Avoid "up to N orders"
 — it reads as a hard cap, and orders past the included allowance keep syncing and bill at the
 plan's rate. Avoid "a month" — the period is the billing cycle, which is what every other
-surface now says.
+surface now says. Line 5 must agree with `maxMembers` and `maxOpenOrders` in
+`Domain.ShopLimits`, which are the same on every plan.
 
 - What counts, when it is sent to Shopify, and what each event does to the counts is the
   triggers table on `ShopUsage` in `src/lib/Domain.ts`. Each meter's $0.00 first tier is the

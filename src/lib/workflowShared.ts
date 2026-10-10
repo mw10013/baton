@@ -133,7 +133,7 @@ export const turnOnBody = (tag: string) =>
  * the tag goes, in the present tense.
  */
 export const TAG_HELP =
-  "In Shopify, put this tag on the products the workflow should build.";
+  "In Shopify, put this tag on the products this workflow is for.";
 
 const taskList = (tasks: readonly Domain.TaskWithTeamName[]) =>
   tasks.map((task) => task.name).join(", ");

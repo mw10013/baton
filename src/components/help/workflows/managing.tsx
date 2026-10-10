@@ -73,9 +73,9 @@ export function Managing() {
           />
           <HelpPicture name="managing1" />
           <s-paragraph>
-            The copy has the steps in force, without any changes not yet
-            applied. It is inactive, and it opens in the editor. Duplicate is on
-            the workflow&apos;s page only, not in the editor.
+            The copy has the steps the workflow has now, without any changes not
+            yet applied. It is inactive, and it opens in the editor. Duplicate
+            is on the workflow&apos;s page only, not in the editor.
           </s-paragraph>
         </Things>
       </s-section>
@@ -88,8 +88,9 @@ export function Managing() {
                 <strong>More actions</strong>, then <strong>Delete</strong>.
               </>,
               <>
-                The modal says items already on the workflow keep going, and
-                that this can&apos;t be undone. Press <strong>Delete</strong>.
+                A window opens and says items already on the workflow keep
+                going, and that this can&apos;t be undone. Press{" "}
+                <strong>Delete</strong>.
               </>,
             ]}
           />

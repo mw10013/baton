@@ -425,7 +425,7 @@ test("the merchant marks a task done, reopens it, and blocks the run", async () 
   await expect(team).toBeHidden();
 
   /* The badge carries the state; the line under it is the team, then who. */
-  const doneByMerchant = frame.getByText(`${CUT_TEAM} \u00B7 Merchant`);
+  const doneByYou = frame.getByText(`${CUT_TEAM} \u00B7 You \u00B7 `);
   await expect(frame.getByText("Ready", { exact: true })).toBeVisible();
   await frame
     .getByRole("button", {
@@ -434,10 +434,10 @@ test("the merchant marks a task done, reopens it, and blocks the run", async () 
     })
     .first()
     .click();
-  await expect(doneByMerchant).toBeVisible();
+  await expect(doneByYou).toBeVisible();
 
   await frame.getByRole("button", { name: "Reopen" }).click();
-  await expect(doneByMerchant).toBeHidden();
+  await expect(doneByYou).toBeHidden();
   await expect(frame.getByText("Ready", { exact: true })).toBeVisible();
 
   /* Both steps done takes the run to `done`. The card says it in merchant
@@ -450,7 +450,7 @@ test("the merchant marks a task done, reopens it, and blocks the run", async () 
     })
     .first()
     .click();
-  await expect(doneByMerchant).toBeVisible();
+  await expect(doneByYou).toBeVisible();
   await frame
     .getByRole("button", {
       name: Domain.VERB_LABEL.done.merchant,
@@ -612,7 +612,7 @@ test("the merchant blocks a run with a reason, notes the run, and unblocks it", 
   const banner = item.locator('s-banner[heading="Blocked"]');
   await expect(banner).toBeVisible();
   await expect(banner.getByText("Out of walnut stock")).toBeVisible();
-  await expect(banner.getByText("Merchant", { exact: false })).toBeVisible();
+  await expect(banner.getByText(/You \u00B7 /u)).toBeVisible();
   /* The banner says why it stopped; the Now line still says where. */
   await expect(
     item.getByText("Step 1 of 1 \u00B7 Cut", { exact: true }),
@@ -912,7 +912,7 @@ test("an item matching two workflows waits for the merchant to choose, then chan
     .click();
   const cancelModal = frame.locator("s-modal#cancel-run");
   await expect(
-    cancelModal.getByText("Steps already done stay on record.", {
+    cancelModal.getByText("Steps already done still show on the order.", {
       exact: false,
     }),
   ).toBeVisible();
@@ -1243,7 +1243,7 @@ test("each count is what choosing it shows, given the team", async () => {
  * `#9702` is making with none; both have a started task, so both are listed
  * under Making, the default. The team keeps the test to its own orders.
  */
-test("the strip and the Show select hold one value", async () => {
+test("the counts at the top and the Show menu hold one value", async () => {
   const MEMBER = "e2e.combine@example.com";
   const TEAM = "E2E Combine Bench";
   await seedMembers(

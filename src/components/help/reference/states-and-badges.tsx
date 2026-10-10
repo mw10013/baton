@@ -33,7 +33,7 @@ const closedReasons = (viewer: Domain.ConnectionRole) => {
 };
 
 /**
- * States and badges (`reference/states-and-badges`), a reference page: one
+ * Badges (`reference/states-and-badges`), a reference page: one
  * table per thing that has a state, in the order a merchant meets them, and
  * the member's list filters last. Every first-column word is read from its
  * label constant and every other cell from `src/lib/helpReference.ts`, whose
@@ -68,9 +68,9 @@ export function StatesAndBadges() {
         <Things>
           <s-paragraph>
             Each order is in one position, shown as the badge in its Status
-            column on the Orders page. The <strong>Show</strong> select lists
-            each one, and the strip counts No workflow, Not started, Making and
-            Made.
+            column on the Orders page. The <strong>Show</strong> menu lists each
+            one, and the counts at the top of the page cover No workflow, Not
+            started, Making and Made.
           </s-paragraph>
           <HelpTable
             columns={["Badge", "Where", "Meaning"]}
@@ -94,12 +94,12 @@ export function StatesAndBadges() {
           <s-paragraph>
             An issue is an item on an open order that will not move until you
             act. Each one is a red badge in the Issues column on the Orders
-            page, and <strong>Issues</strong> in the strip lists every order
-            that has one. An order can have several. How to fix each is in{" "}
+            page, and <strong>Issues</strong> at the top of the page lists every
+            order that has one. An order can have several. How to fix each is in{" "}
             <s-link href="/help/orders/fixing-issues">Fixing an issue</s-link>.
           </s-paragraph>
           <HelpTable
-            columns={["Badge", "Meaning", "What clears it"]}
+            columns={["Badge", "Meaning", "How to fix it"]}
             rows={Domain.OrderIssue.literals.map((issue) => [
               <strong key="label">{Domain.ORDER_ISSUE_LABEL[issue]}</strong>,
               ORDER_ISSUE_ROWS[issue].meaning,
@@ -143,7 +143,7 @@ export function StatesAndBadges() {
           <s-paragraph>
             Each task shows its badge under Manage on the order&apos;s page and
             on a member&apos;s item page. A task in a later step has no badge
-            until its step is current.
+            until every earlier step is done.
           </s-paragraph>
           <HelpTable
             columns={["Badge", "Meaning"]}
@@ -157,8 +157,8 @@ export function StatesAndBadges() {
       <s-section heading="A workflow">
         <Things>
           <s-paragraph>
-            The Workflows page shows each workflow&apos;s state, and a second
-            badge when something stops it or is missing.
+            The Workflows page shows whether each workflow is Active or
+            Inactive, and a second badge when something stops it or is missing.
           </s-paragraph>
           <HelpTable
             columns={["Badge", "Where", "Meaning"]}
@@ -200,7 +200,7 @@ export function StatesAndBadges() {
         <Things>
           <s-paragraph>
             A member&apos;s Workflows list holds the items whose current task is
-            on one of their teams. These are the values of the strip at its top,
+            on one of their teams. These are the filters at the top of the list,
             not badges: press one to list its items.
           </s-paragraph>
           <HelpTable

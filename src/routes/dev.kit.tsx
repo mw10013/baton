@@ -406,8 +406,8 @@ function RouteComponent() {
             heading="No open orders"
             action={<s-button variant="primary">Sync open orders</s-button>}
           >
-            Sync open orders to pull in what is on the bench, or wait for the
-            next order.
+            Press Sync open orders to bring in your open orders from the last 30
+            days, or wait for the next order.
           </EmptyLine>
         </IndexSection>
         <PageNote>

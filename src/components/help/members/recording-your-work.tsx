@@ -3,7 +3,7 @@ import { NumberedList } from "@/components/screen/NumberedList";
 import { Things } from "@/components/screen/Things";
 
 /**
- * Recording your work (`members/recording-your-work`): Start, Done, Put
+ * Starting and finishing tasks (`members/recording-your-work`): Start, Done, Put
  * back and Undo on an item's page, the instructions and the properties, and
  * what Start does to the merchant's orders list. Read against
  * `src/routes/shop.$shop.workflows.$runId.tsx` (the buttons, in the order
@@ -40,7 +40,7 @@ export function RecordingYourWork() {
           <HelpPicture name="recordingYourWork1" />
           <s-paragraph>
             You can press <strong>Done</strong> without pressing Start first.
-            Baton records that you started it too. On the Workflows list, the{" "}
+            Baton marks it started too. On the Workflows list, the{" "}
             <strong>…</strong> button on a row has <strong>Start</strong> on a
             ready task, and <strong>Done</strong> and <strong>Put back</strong>{" "}
             on a started one.
@@ -65,7 +65,7 @@ export function RecordingYourWork() {
           <HelpPicture name="recordingYourWork2" />
         </Things>
       </s-section>
-      <s-section heading="Undo a Done">
+      <s-section heading="Undo Done">
         <Things>
           <s-paragraph>
             A done task shows <strong>Undo</strong>. It puts the task back to

@@ -41,8 +41,7 @@ type AddMemberInput = typeof AddMemberInput.Type;
 
 const decodeEmail = Schema.decodeUnknownEffect(Domain.Email);
 
-const MEMBER_CEILING =
-  "This store has reached the maximum number of members. Contact support to raise it.";
+const MEMBER_CEILING = `A shop can have ${String(Domain.ShopLimits.maxMembers)} members.`;
 
 /**
  * The members index's URL: the search and the page. `q` is matched anywhere

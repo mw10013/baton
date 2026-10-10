@@ -100,8 +100,8 @@ function DisconnectedBanner() {
   if (!graceElapsed) return null;
   return (
     <s-banner slot="supplemental-start" tone="warning">
-      Not connected to this shop. Live updates are paused and changes on this
-      page are disabled until the connection returns.
+      Baton lost its connection. This page won&apos;t update, and you can&apos;t
+      make changes until it reconnects.
     </s-banner>
   );
 }

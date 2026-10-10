@@ -3,7 +3,7 @@ import { Things } from "@/components/screen/Things";
 
 /**
  * Finding your work (`members/finding-your-work`): the Workflows list's five
- * filters, the Team select, search and Show more. Read against
+ * filters, the Team menu, search and Show more. Read against
  * `src/routes/shop.$shop.workflows.index.tsx` and `RunRepository.runListItems`
  * (an item is listed while its current task is on one of your teams),
  * `ShowMore` in `src/components/screen/ShowMore.tsx` ("Show n more of N"),
@@ -22,8 +22,8 @@ export function FindingYourWork() {
         <Things>
           <s-paragraph>
             The Workflows list shows the items whose current task is on one of
-            your teams. The strip at the top counts them by filter. Press a
-            filter to list its items.
+            your teams. The counts at the top show how many each filter holds.
+            Press a filter to list its items.
           </s-paragraph>
           <s-unordered-list>
             <s-list-item>
@@ -34,8 +34,8 @@ export function FindingYourWork() {
               <strong>Started by others</strong>: someone else started the task.
             </s-list-item>
             <s-list-item>
-              <strong>Ready</strong>: the task is current and nobody has started
-              it. Anyone on its team can.
+              <strong>Ready</strong>: every earlier step is done and nobody has
+              started the task. Anyone on its team can.
             </s-list-item>
             <s-list-item>
               <strong>Blocked</strong>: someone stopped the work and said why. A
@@ -50,7 +50,7 @@ export function FindingYourWork() {
           <HelpPicture name="findingYourWork1" />
           <s-paragraph>
             Each row shows the order number and the item, then the current task
-            and its state, then the workflow and its step. Press a row to open
+            and its badge, then the workflow and its step. Press a row to open
             the item&apos;s page.
           </s-paragraph>
         </Things>
@@ -58,9 +58,9 @@ export function FindingYourWork() {
       <s-section heading="Narrow the list">
         <Things>
           <s-paragraph>
-            If you are on more than one team, a <strong>Team</strong> select
-            sits under the search. Choose a team to see its work alone. The
-            strip counts that team&apos;s items.
+            If you are on more than one team, a <strong>Team</strong> menu sits
+            under the search. Choose a team to see its work alone. The counts at
+            the top cover only that team&apos;s items.
           </s-paragraph>
           <HelpPicture name="findingYourWork2" />
           <s-paragraph>

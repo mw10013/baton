@@ -73,10 +73,11 @@ export function ClosedLine({
   );
 }
 
-/** The person behind a block, as the banner's attribution line names them ("m2@m.com · 3m ago", "Merchant · 3m ago"). */
-export const blockedByLabel = (run: {
-  readonly blockedBy: Domain.ActorDisplay | null;
-}) => (run.blockedBy === null ? null : Domain.actorLabel(run.blockedBy));
+/** The person behind a block, as the banner's attribution line names them to `viewer` ("m2@m.com · 3m ago", "You · 3m ago"; {@link Domain.actorLabel}). */
+export const blockedByLabel = (
+  run: { readonly blockedBy: Domain.ActorDisplay | null },
+  viewer: Domain.ConnectionRole,
+) => (run.blockedBy === null ? null : Domain.actorLabel(run.blockedBy, viewer));
 
 /**
  * An item's properties as label / value rows rather than one joined string:
@@ -148,6 +149,7 @@ export function RunItem({ run }: { readonly run: Domain.Run }) {
  */
 export function BlockBanner({
   run,
+  viewer,
   actions,
 }: {
   readonly run: {
@@ -155,11 +157,13 @@ export function BlockBanner({
     readonly blockReason: string | null;
     readonly blockedBy: Domain.ActorDisplay | null;
   };
+  /** Who is looking, for the attribution line ({@link Domain.actorLabel}). */
+  readonly viewer: Domain.ConnectionRole;
   readonly actions?: React.ReactNode;
 }) {
   // The predicate is the gate; the null test only narrows for the time line.
   if (!Domain.runIsBlocked(run) || run.blockedAt === null) return null;
-  const actor = blockedByLabel(run);
+  const actor = blockedByLabel(run, viewer);
   return (
     <s-banner tone="critical" heading={Domain.RUN_STATE_LABEL.blocked}>
       <Lines>

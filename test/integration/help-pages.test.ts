@@ -15,8 +15,9 @@ import { RETIRED } from "../../scripts/lib/rules-lint.ts";
 
 /**
  * The help tree (`HELP_SECTIONS` in `src/lib/helpPages.ts`) and the bodies
- * registered against it. The tree lives under `src/lib/`, which the
- * retired-word lint does not read, so its copy is pinned here.
+ * registered against it. The retired-word lint reads `src/lib/helpPages.ts`
+ * a line at a time; this test reads each title and summary whole, as the
+ * screen shows it, so its copy is pinned here too.
  */
 
 const SLUG = /^[a-z0-9-]+$/u;

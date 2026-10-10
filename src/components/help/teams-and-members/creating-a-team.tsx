@@ -59,7 +59,7 @@ export function CreatingATeam() {
             its tasks wait until a member joins. No two teams share a name.
             Baton compares names exactly, so Sewing and sewing are two teams. If
             another team has the name, the screen says so under the field. How
-            long a name can be, and how many teams a shop can have, is in{" "}
+            many teams a shop can have is in{" "}
             <s-link href="/help/reference/limits">Limits</s-link>.
           </s-paragraph>
         </Things>
@@ -84,7 +84,7 @@ export function CreatingATeam() {
           <s-paragraph>
             The list holds the members you have already added to Baton who are
             not on this team yet. A member can be on several teams. When
-            everyone is on the team, the modal says so. To add someone new to
+            everyone is on the team, the window says so. To add someone new to
             Baton, see{" "}
             <s-link href="/help/teams-and-members/adding-a-member">
               Adding a member

@@ -30,6 +30,7 @@ const BADGE_TONE = {
  */
 const taskState = (
   task: RunStepTask,
+  viewer: Domain.ConnectionRole,
 ): {
   readonly text: React.ReactNode;
   readonly badge: {
@@ -51,7 +52,7 @@ const taskState = (
         <>
           {doneBy === null
             ? `${task.teamName} · `
-            : `${task.teamName} · ${Domain.actorLabel(doneBy)} · `}
+            : `${task.teamName} · ${Domain.actorLabel(doneBy, viewer)} · `}
           <LocalDateTime value={task.doneAt ?? 0} />
         </>
       ),
@@ -63,7 +64,7 @@ const taskState = (
         <>
           {startedBy === null
             ? `${task.teamName} · since `
-            : `${task.teamName} · ${Domain.actorLabel(startedBy)} · since `}
+            : `${task.teamName} · ${Domain.actorLabel(startedBy, viewer)} · since `}
           <LocalDateTime value={task.startedAt ?? 0} format="time" />
         </>
       ),
@@ -99,15 +100,18 @@ const taskState = (
  */
 export function RunSteps<T extends RunStepTask>({
   tasks,
+  viewer,
   showInstructions,
   renderActions,
 }: {
   readonly tasks: readonly T[];
+  /** Who is looking, for who started or did each task ({@link Domain.actorLabel}). */
+  readonly viewer: Domain.ConnectionRole;
   readonly showInstructions: boolean;
   readonly renderActions: (task: T) => React.ReactElement | null;
 }) {
   const renderTask = (task: T) => {
-    const state = taskState(task);
+    const state = taskState(task, viewer);
     const actions = renderActions(task);
     return (
       <Lines key={task.id}>

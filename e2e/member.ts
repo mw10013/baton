@@ -44,7 +44,7 @@ export const gotoMember = async (page: Page, path: string): Promise<void> => {
  * client-side, needing no wait at all.
  */
 export const followMagicLink = async (page: Page): Promise<void> => {
-  await page.getByRole("link", { name: "Open your magic link" }).click();
+  await page.getByRole("link", { name: "Open your sign-in link" }).click();
   await awaitHydration(page);
 };
 
@@ -55,7 +55,7 @@ export const requestMagicLink = async (
 ): Promise<void> => {
   await gotoMember(page, "/login");
   await page.getByLabel("Email").fill(email);
-  await page.getByRole("button", { name: "Send magic link" }).click();
+  await page.getByRole("button", { name: "Send sign-in link" }).click();
 };
 
 /** Sign in end to end — request the link, follow it, land where the role says. */

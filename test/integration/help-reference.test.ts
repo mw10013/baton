@@ -15,8 +15,8 @@ import { RETIRED } from "../../scripts/lib/rules-lint.ts";
  * The two vocabulary reference pages and their data module,
  * `src/lib/helpReference.ts`. The module's `satisfies Record<State, …>`
  * holds the row sets to the states; these tests hold the rendered pages to
- * the label constants, and the module's copy to the retired words, since the
- * lint does not read `src/lib/`.
+ * the label constants, and the module's copy to the retired words. The lint
+ * reads the module a line at a time; this test reads each string whole.
  */
 
 /** Every string in a value, however deep. */

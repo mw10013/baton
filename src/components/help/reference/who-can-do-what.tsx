@@ -47,10 +47,10 @@ export function WhoCanDoWhat() {
         <Things>
           <s-paragraph>
             A member presses these on the item&apos;s page and the Workflows
-            list. The merchant presses them on the order&apos;s page, most of
-            them under Manage. An open order is one not yet fulfilled or
-            cancelled in Shopify. On a fulfilled or cancelled order, only the
-            note can change.
+            list. You press them on the order&apos;s page, most of them under
+            Manage. An open order is one not yet fulfilled or cancelled in
+            Shopify. On a fulfilled or cancelled order, only the note can
+            change.
           </s-paragraph>
           <HelpTable
             columns={["What", "Member", "Merchant", "When"]}
@@ -64,17 +64,15 @@ export function WhoCanDoWhat() {
           <s-paragraph>
             <strong>{Domain.VERB_LABEL.reopen.member}</strong> and{" "}
             <strong>{Domain.VERB_LABEL.reopen.merchant}</strong> are one button
-            with two names. A task in a later step, not yet current, offers only{" "}
-            <strong>{Domain.VERB_LABEL.assign.merchant}</strong>, to the
-            merchant.
+            with two names. A task in a later step offers only{" "}
+            <strong>{Domain.VERB_LABEL.assign.merchant}</strong>, to you.
           </s-paragraph>
         </Things>
       </s-section>
       <s-section heading="Workflows, teams and members">
         <Things>
           <s-paragraph>
-            Only the merchant has these. A member&apos;s screens offer none of
-            them.
+            Only you have these. A member&apos;s screens offer none of them.
           </s-paragraph>
           <HelpTable
             columns={["Button", "On", "Does"]}
@@ -96,9 +94,9 @@ export function WhoCanDoWhat() {
       <s-section heading="What a member sees">
         <s-paragraph>
           A member sees an item only when one of their teams has a task in its
-          workflow, at any step. They read and write its note too. The merchant
-          sees every order and every item. A member on no team sees no items,
-          and their Workflows list says to ask the merchant for a team.
+          workflow, at any step. They read and write its note too. You see every
+          order and every item. A member on no team sees no items, and their
+          Workflows list tells them to ask you for a team.
         </s-paragraph>
       </s-section>
     </>

@@ -96,8 +96,8 @@ export function OrderPage() {
             it. It shows the workflow&apos;s name and each step with its tasks.
             A task reads <strong>Ready</strong>, <strong>Started</strong> or{" "}
             <strong>Done</strong>, with its team, who started or did it, and
-            when. A task in a later step has no badge yet. Your own presses read
-            Merchant, and a member&apos;s read their email.
+            when. A task in a later step has no badge yet. What you did shows
+            You. What a member did shows their email.
           </s-paragraph>
           <HelpPicture name="orderPage2" />
           <s-paragraph>
@@ -134,10 +134,10 @@ export function OrderPage() {
             was cancelled, when.
           </s-paragraph>
           <s-paragraph>
-            When the order reads <strong>Made</strong>, with no item&apos;s
-            workflow still open and at least one done, a banner at the top says
-            every item is done, with a <strong>Fulfill in Shopify</strong> link.
-            Once you fulfill the order, Baton reads it as{" "}
+            When the order reads <strong>Made</strong>, with every item&apos;s
+            workflow done or closed and at least one done, a banner at the top
+            says every item is done, with a <strong>Fulfill in Shopify</strong>{" "}
+            link. Once you fulfill the order, Baton reads it as{" "}
             <strong>Fulfilled</strong>.
           </s-paragraph>
           <s-paragraph>
@@ -145,8 +145,9 @@ export function OrderPage() {
             is still open, or you cancel a workflow, the item reads{" "}
             <strong>Closed</strong> and the line under it says why: fulfilled in
             Shopify, order cancelled in Shopify, item removed or refunded in
-            Shopify, or cancelled by you. Its tasks stay in Manage as the
-            record, without buttons. <strong>Edit note</strong> stays.
+            Shopify, or cancelled by you. Its tasks stay under Manage, without
+            buttons, so you can see who did what. <strong>Edit note</strong>{" "}
+            stays.
           </s-paragraph>
         </Things>
       </s-section>

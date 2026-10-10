@@ -705,7 +705,7 @@ const floorOrders: readonly SeedOrder[] = [
     ],
   },
   {
-    // the merchant recorded the task from the order page: "Done" over "<team> · Merchant · …"
+    // the merchant recorded the task from the order page: "Done" over "<team> · You · …"
     n: 1022,
     advance: 1,
     byMerchant: true,
@@ -717,7 +717,7 @@ const floorOrders: readonly SeedOrder[] = [
     ],
   },
   {
-    // and blocked it from the same page: "Blocked by Merchant"
+    // and blocked it from the same page: the banner reads "You · …"
     n: 1023,
     advance: 1,
     byMerchant: true,

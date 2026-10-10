@@ -285,7 +285,7 @@ function RouteComponent() {
           }))}
         />
       </s-section>
-      <s-section heading="Usage and capacity">
+      <s-section heading="Your plan">
         <Things>
           <Tiles>
             {/* Used against included, in that order: the number a merchant is
@@ -306,7 +306,7 @@ function RouteComponent() {
               limit={entitlements.membersIncluded}
               {...(membersOverBy > 0
                 ? {
-                    detail: `${formatNumber(membersOverBy)} past your plan's included seats ${membersOverBy === 1 ? "is" : "are"} billed at your plan's rate.`,
+                    detail: `${formatNumber(membersOverBy)} over. Extra members are billed at your plan's rate.`,
                   }
                 : {})}
             />

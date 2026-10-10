@@ -198,6 +198,68 @@ describe("a retired word stays off every merchant and member screen", () => {
     expect(hits(source)).toEqual([1, 2]);
   });
 
+  it("modal, cell, strip and verb are retired in screen copy", () => {
+    const source = [
+      "<s-paragraph>The modal says this can't be undone.</s-paragraph>",
+      'const a = "Each cell counts orders";',
+      "<s-paragraph>",
+      "  Press Not started on the strip.",
+      "</s-paragraph>",
+      'const b = "The states, the verbs and the plans";',
+      'import { Strip } from "@/components/screen/Strip";',
+      'const ref = React.useRef<HTMLElementTagNameMap["s-modal"]>(null);',
+      "// the strip's cells, one per position",
+    ].join("\n");
+    expect(hits(source)).toEqual([1, 2, 4, 6]);
+  });
+
+  it("select as a noun is retired in screen copy, and Select, the verb, is not", () => {
+    const source = [
+      "<s-paragraph>Choose one in the Show select.</s-paragraph>",
+      'const a = "The Team select and search";',
+      'const b = "the Assign team select";',
+      'const c = "Sets the Show and Team selects aside";',
+      'const d = "Select a team";',
+      '<s-select label="Team" />',
+      "// the Workflow select at rest",
+    ].join("\n");
+    expect(hits(source)).toEqual([1, 2, 3, 4]);
+  });
+
+  it("in force and on record are retired in screen copy", () => {
+    const source = [
+      'const a = "Steps already done stay on record.";',
+      "<s-paragraph>",
+      "  The page shows the steps in force.",
+      "</s-paragraph>",
+      'const b = "Steps already done still show on the order.";',
+    ].join("\n");
+    expect(hits(source)).toEqual([1, 3]);
+  });
+
+  it("tile, seat and uncount are retired in screen copy", () => {
+    const source = [
+      'const a = "The Members tile shows the count";',
+      'const b = "2 past your plan\'s included seats";',
+      "<s-paragraph>",
+      "  Cancelling does not uncount its order.",
+      "</s-paragraph>",
+      'import { Tiles } from "@/components/screen/Tiles";',
+      'const c = "Members";',
+    ].join("\n");
+    expect(hits(source)).toEqual([1, 2, 4]);
+  });
+
+  it("a help page's title is held to the patterns that match anywhere, and its slug is not read", () => {
+    const source = [
+      'slug: "syncing",',
+      'title: "Syncing from Shopify",',
+      'title: "The strip",',
+      'description: "Syncing orders",',
+    ].join("\n");
+    expect(hits(source, false)).toEqual([3, 4]);
+  });
+
   it("please, successfully, oops, sorry, click here and are you sure are retired in every slot", () => {
     const source = [
       'const a = "Please choose a team.";',

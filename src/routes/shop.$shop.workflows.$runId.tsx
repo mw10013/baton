@@ -324,7 +324,11 @@ function RouteComponent() {
           {actions.banner !== null && (
             <s-banner tone="critical">{actions.banner}</s-banner>
           )}
-          <BlockBanner run={run} actions={blockActions ?? reviewNote} />
+          <BlockBanner
+            run={run}
+            viewer="member"
+            actions={blockActions ?? reviewNote}
+          />
           {/* Item first: what to make is why the page was opened. No age,
               because a member cannot act on it and the workflows list
               carries it. No border, because two bordered blocks on
@@ -372,6 +376,7 @@ function RouteComponent() {
               {@link RunSteps} states their shape. */}
           <RunSteps
             tasks={page.tasks}
+            viewer="member"
             showInstructions
             renderActions={taskButtons}
           />
