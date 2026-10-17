@@ -132,6 +132,47 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 
 ### Plan review
 
+2026-10-17, lead. Checked every step against this repo at fd10b45, `refs/baton-legacy/` (`Repository.ts`, `D1Schema.ts`, `Auth.ts`, `teams.ts`, `searchParams.ts`, the four routes, `app.tsx`, the tests named), Alchemy (`SQL/D1.ts`, `Cloudflare/D1/QueryDatabase*.ts`, `Runtime/ExecutionMemo.ts`, `packages/better-auth/src/Migrate.ts`) and `@effect/sql-d1`'s `D1Client`. Outcome, names, order and steps unchanged; these are the corrected details each step is built to.
+
+General
+
+- **Shop identity.** Legacy's methods take `Domain.Shop`; this repo's shop is `ShopKey` (contract), a different brand, and the actor, the gate and `ShopSessions` all hold a `ShopKey`. `Members`' new methods take `ShopKey`, the five errors carry `shop: ShopKey`; rows decode to the domain shapes (`Member`, `Team`, `MemberSummary`, …) whose `shop` is `Domain.Shop`, so nothing converts by hand.
+- **Two `Member` schemas.** `src/contract/members.ts` already exports a `Member` (admin row, plain `id`) and `MemberExists`. The errors and procedure schemas go in that file and use the domain `Member`, so the contract `Member` is retired in favour of `src/domain/shop-work.ts`' (same four fields, branded); its importers (`MembersPage.tsx`, `Members.list`, the unit tests) move to it. `MemberExists` retires with `add`. The two `Email` schemas share the `"Email"` brand, so their types are interchangeable; payloads decode with the domain `Email` (trims, lowercases, 254 cap with `EMAIL_TOO_LONG`).
+- **Every `/app` navigation carries the raw search.** The `/app` guards read `shop`, `host`, `embedded`, `id_token` from `location.searchStr` on every navigation, so a client navigation without them is a session-token bounce. Every link and `navigate` on these pages (row links, `BackLink`s, paging, Add member's landing, Delete's return to the index, the nav) is built from the raw `searchStr` with the page's own keys (`q`, `after`, `teamsAfter`, `membersAfter`) set or removed, as `app.orders.tsx` does with `after`. `validateSearch` declares only the page's keys (`lenientSearchKey`), as `OrdersSearch` does.
+- **Per-row presses.** Remove on a member's team row and on a team's member row is an `Atom.family` keyed on the row id over `ShopActorClient.runtime.fn` (`syncOrderAtom`'s pattern; one `ShopActorClient.mutation` would interrupt a second press). Single buttons use `ShopActorClient.mutation`.
+- Legacy methods the tests call but §3 omits: `countMembers`/`countTeams` stay private helpers of `addMember`/`createTeam`; `findMember` is legacy's name for today's `find` and keeps its caller (`Auth`'s `revokeUser`); `listMembers(shop)` and `listTeams` are not ported (no production caller; `listTeams` comes with E): the ported tests read back through `listMembersPage`/`listTeamsPage` or raw SQL on the adapter, titles unchanged. `deleteShopSession` in a test is `ShopSessions`' delete over the same adapter.
+
+Step 1
+
+- **The adapter's seam is `Cloudflare.D1.QueryDatabase`, not `D1Client.layer`.** `Members` builds its client with `SQL.D1(yield* Cloudflare.D1.QueryDatabase(AuthDb))`, which only reads `.raw`. The test layer is `Layer.succeed(Cloudflare.D1.QueryDatabase, () => Effect.succeed({ raw: Effect.succeed(adapter), … }))`, and the real `Members.layer` (and `ShopSessions.layer`) run unchanged over it. `SQL.D1` memoizes the client per `Scope` (`makeExecutionMemo`), so each test runs scoped. `D1Client` calls `prepare`, `bind`, `all` (`{ results }`), `raw` and `batch`; the adapter maps booleans to 1/0 and `undefined` to null (node:sqlite refuses them, D1 converts), and `raw` uses `setReturnArrays(true)`.
+- **Better Auth's tables are not in `0001_init.sql`**: `@alchemy.run/better-auth` creates them at deploy (`Migrate.ts`, from `better-auth/db`'s `getSchema`), as `user`, `session`, `account`, `verification` (lowercase; seen on the local dev D1, dates as ISO text). So `BETTER_AUTH_TABLES` is those four (legacy's `UserRole` and capitalised names were its hand-written migration). The adapter creates them with Better Auth's own migration over the same `node:sqlite` database (`getMigrations` from `better-auth/db/migration` with the repo's Better Auth options), so the pinned test "the migrations create exactly D1_TABLES and better-auth's tables" compares `sqlite_master` (minus `sqlite_%`) to both. If Better Auth cannot migrate a `node:sqlite` handle, record it and create the four tables from `getSchema` in the test helper. SQLite names are case-insensitive, so legacy's `Session`/`Verification` SQL runs as written; keep it lowercase per AGENTS.md.
+- **`Members.layerTest` goes.** It would have to implement every new method. Unit tests that used it (`testAuth`, `dev.test.ts`, `fixture.test.ts`, `api.test.ts`) take `Members.layer` over the adapter with a seed helper that inserts each shop's `ShopSession` row (`Member.shop` references it) and the members. If the adapter fails its three cases, keep `layerTest` with the old methods plus dying stubs for the new ones and record it.
+- Retired callers: `Dev.removeMember` → `deleteMember({ shop, email })` (`MemberNotFoundError` → `{ removed: false, closed: 0 }`); `ShopAccess.member` → `findMemberAccess({ shop, email })` (`memberId`, `teamIds = teams.map(id)`); `Auth.revokeUser` → `findMember`; `add` has no caller and goes with `MemberExists`. `Members`' class JSDoc loses "whoever edits calls `ShopActors.revoke`": the actor closes sockets itself now (the fixture's `RemoveMember` still revokes through the stub).
+- Tests live at `test/unit/backend/members.test.ts`, `test/unit/backend/d1-tables.test.ts`, `test/unit/domain/billing.test.ts`; `describe("Member")` and `describe("Team")` as legacy.
+
+Step 2
+
+- **`MerchantDeleteMember` payload is `{ email }`, not `{ memberId }`**: legacy's `deleteMember` and `deleteMemberFn` are keyed by email (`MemberEmailInput`), and `deleteMember` answers the id the revoke closes. The Delete modal sends the member's email. `MemberNotFoundError` carries `member: string`, as legacy.
+- Yielding `Members` in `makeShopActor` type-checks as is: `ShopActorLive` is provided above the `Layer.mergeAll` that holds `Members.layer` (`provideBackend`). Procedure handlers already read D1 (`syncOpenOrdersFor` → `ShopSessions.find`), so a `Members` call should run as is; if it dies on a missing scope, wrap each agent method in `Effect.scoped` as `Auth`'s callbacks do, and record it.
+- `makeMembersAgent`'s `revoke` is `(memberIds: ReadonlyArray<MemberId>) => Effect<number>` over the routine the stub's `revoke` also runs; the stub keeps its `{ by, id }` shape (`ShopActorShape` unchanged).
+- Integ ceiling and team-limit cases fill a seeded shop that no other case in the file writes, adding exactly what reaches 50 (read the shop's count first); never the fixture shop the other cases share.
+
+Step 3
+
+- `memberDetail`/`teamDetail` answer `MemberDetail | null` / `TeamDetail | null` (legacy's `Option`, not JSON-plain over the binding), `null` being the page's "Member not found" / "Team not found". The "no D1 read before `ShopNotInstalled`" means no `Members` read: the `ShopSessions.find` that decides it is itself D1.
+- The Backend request schemas are strict; leniency is the route's `validateSearch` (`lenientSearchKey`, `ListSearchParam`), which hands the loader decoded values.
+
+Step 4
+
+- **Port legacy's `shopify:navigate` bridge** (`AppProvider` in legacy `app.tsx`) into the `/app` layout: App Bridge dispatches `shopify:navigate` on the hoisted `s-link`, and the bridge turns it into a router navigation. Unlike legacy's, it appends the current raw `searchStr` to the link's path (the guards need it). The Q9 check runs with the bridge in place; without it a nav click re-embeds the frame.
+- The nav's `s-link`s keep bare paths (`/app/teams`), as legacy; the bridge adds the search.
+
+Step 6
+
+- **`keepNewestSessions` answers the deleted session ids** (`returning id`, as legacy's SQL) and the user's email; legacy answered a count and revoked the member on each shop. The hook reuses `Auth`'s `revokeSession(email, id)` per deleted id, logged and swallowed as legacy (`Auth.sessionCreate: …`). A deviation from legacy's signature, recorded.
+- **`sweepExpiredAuth` goes in `sendMagicLink`** before `delivery.deliver`, failures logged and swallowed, as legacy (`Auth.sendMagicLink: email=…: expired-auth sweep failed`).
+- Legacy titles, byte for byte: "a third sign-in revokes the oldest session" and "a revoked session's connections are revoked" (two integ tests; §4's joined title is `D1_TABLES`' pinned-by cell, which names both), and "sweeps expired Session and Verification rows on the way out" (integ: a link request carries the sweep). The unit SQL tests take new titles.
+
 ### Deviations
 
 ### Issues
