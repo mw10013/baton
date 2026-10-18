@@ -30,7 +30,7 @@ import { useEffect } from "react";
  *
  * The guard's reach ends at the iframe edge: a drag that releases on the
  * admin host's own overlay is dismissed host-side via App Bridge, with no
- * click ever reaching this document (see `setModalDirty`).
+ * click ever reaching this document (see {@link setModalDirty}).
  */
 export const useModalBackdropDismissGuard = (modalId: string): void => {
   useEffect(() => {
@@ -113,7 +113,7 @@ export const setModalDirty = (modalId: string, dirty: boolean): void => {
  * document's modals, so the call rejects with "Modal with ID … not found"
  * even while the dialog is open (observed live in legacy). The element's own
  * `hideOverlay` closes the dialog in every context and still runs the `dirty`
- * check documented on `setModalDirty`.
+ * check documented on {@link setModalDirty}.
  */
 export const hideModal = (modalId: string): void => {
   document

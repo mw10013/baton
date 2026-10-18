@@ -271,6 +271,22 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 
 ### Implementation review
 
+2026-10-18, by the lead, at cc6e8aa. Re-run: `vp check` pass (346 files formatted, 288 linted and type-checked); `vp test` 63 files, 696 tests, 50.4 s; `vp run test:e2e` 49 passed, 4.2 min; the leaked integ actor directories deleted. §5 walked: sixteen workflow procedures in `MerchantRpcs`; every `createServerFn` in `workflows.ts`, `home.ts`, `dev-kit.ts` is GET; `ShopActorShape` (`tag.ts`) gained exactly the three reads; `Membership.deleteTeam` and `makeWorkflows` read `MembershipRepository` before every repository call and open no transaction themselves; no leftover `…Agent`, `Members`, `ShopSessions`, `OrdersBulkRepository` symbol (only legacy prose in `src/domain/`); no uppercase SQL in `workflow-repository.ts`; the six newest Backend entry bundles hold no `IntegRpcs` or `ShopifyFake` and do hold the workflow procedures (the hits are 2026-10-16 bundles). The glossary's Repository, Application service, Area, Handler and Workflow entries and the roadmap's §1.1 row are in. On the dev store (Playwright CLI): App Home shows "Getting started", "2 of 3 done"; the App nav lists Workflows between Orders and Teams; the index, a workflow page and its editor page render the dev fixture's workflows; `/dev/kit` answers 200 on dev.
+
+**Fixed by the lead**
+
+- `src/web/client/polaris-modal.ts`: two backticked `setModalDirty` references in JSDoc became `{@link setModalDirty}` (the symbol is in the module).
+
+**Needs a decision**
+
+1. **The editor window.** `s-app-window` passed the plan's three checks but the admin draws its title bar once and never follows later changes (Turn on stays disabled, Apply and Discard never appear), so the editor ships as a page. Decide the follow-up: move the window's actions into the frame, drop the window for good, or wait on App Bridge. Meanwhile the route still renders a `chrome=window` form nothing opens; keep it for the follow-up or remove it.
+2. **Embedded e2e hydration flakiness.** Step 2's three full e2e runs each lost one embedded spec (a different one) to `openApp`'s 10 s hydration wait under parallel load; it has not recurred since (Steps 3–7 and the lead's run are clean). Raise the wait, cut parallelism for the embedded project, or watch it.
+3. **The `/dev/kit` gate on staging** (a Website binding `DEV_KIT`, `off` there) is unverified; check `/dev/kit` answers 404 when staging is deployed.
+4. **Procedures accept excess properties.** Legacy's callables refused them; this repo's RPC server sets no `onExcessProperty`, so the legacy title is pinned on the domain schemas in unit only. Decide whether the socket's decode should refuse excess keys.
+5. **The workflows filter on a nav click.** Legacy kept `state`, `q`, `after` when the App nav's Workflows was pressed from a workflow page; here (plan and research rule) a nav click drops them. Confirm.
+6. **`ShopAgentId` and `AgentMessage`** in `src/domain/platform.ts` keep legacy's names (the review exempted the domain from §0.2). Confirm or rename with F.
+7. **Polaris's "primary-action slot" warning** is logged by every embedded page, slice C's included; nothing fails. Investigate or leave.
+
 ## 8. Out of scope
 
 - Reconcile and runs (the seam's body), the order page's Workflow select, Attach, Change and Cancel workflow, the member work list: F.
