@@ -16,7 +16,7 @@ import { Shopify } from "./shopify.ts";
 
 /**
  * The gate's refusal, as the HTTP status Baton's gate answers with. Internal to the Backend:
- * the upgrade route turns it into a close code, `BackendApi.shopSnapshot` into a typed failure.
+ * the upgrade route turns it into a close code, `BackendApi.shopAccess` into a typed failure.
  */
 export class ShopAccessDenied extends Schema.TaggedError<ShopAccessDenied>()("ShopAccessDenied", {
   status: Schema.Literals([401, 403, 404, 503]),

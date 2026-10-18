@@ -2,7 +2,7 @@ import type { FrameLocator, Page } from "playwright/test";
 import * as Schema from "effect/Schema";
 
 import { ShopFixtureData } from "../../../src/contract/fixture.ts";
-import { dev, expect, type Run, test } from "../fixtures.ts";
+import { dev, expect, type Run } from "../fixtures.ts";
 import { E2E_SHOP as shop } from "../shop-fixture.ts";
 import { appFrame } from "./app.ts";
 
@@ -14,11 +14,7 @@ import { appFrame } from "./app.ts";
  * @module
  */
 
-/** The test's own tail for names and tags: its id and its retry, so a retry adds afresh. */
-export const own = () => {
-  const { testId, retry } = test.info();
-  return `${testId.slice(-8)}${String(retry)}`;
-};
+export { own } from "../fixtures.ts";
 
 /**
  * The first of a run of order numbers of the test's own: a multiple of 100 in nine digits, so a
@@ -49,8 +45,13 @@ export const add = (backend: Run, parts: Record<string, unknown>) =>
     ),
   );
 
-/** The App nav's link to `name`, hoisted into the admin's chrome. */
-const navLink = (page: Page, name: string) => page.getByRole("link", { name, exact: true });
+/**
+ * The App nav's link to `name`, hoisted into the admin's chrome. Scoped to links into an app
+ * (`/apps/` in the href): the admin's own nav has an Orders link too, which on some stores sits
+ * beside the app's, and an unscoped name matches both.
+ */
+const navLink = (page: Page, name: string) =>
+  page.getByRole("link", { name, exact: true }).and(page.locator('a[href*="/apps/"]'));
 
 /**
  * Opens the orders index from the App nav, bare (Making, no search, page one), and returns once

@@ -438,11 +438,16 @@ test("a fresh workflow turns on from the editor, then edits go through the draft
   await expect(frame.getByText("Bake and cool")).toHaveCount(0);
 
   // Discard leaves the workflow exactly as it was. Its confirm belongs to the editor's document.
+  // The click is retried until the confirm shows: a reopened window's hoisted title bar can read
+  // enabled before App Bridge has wired it to the in-frame button, which `openEditor` says of
+  // Edit, and a click in that window is a silent no-op.
   await openEditor(page);
-  await clickHoisted(page.getByRole("button", { name: "Discard changes" }));
-  await expect(
-    editor.getByText("Your unsaved changes will be lost.", { exact: true }),
-  ).toBeVisible();
+  await expect(async () => {
+    await clickHoisted(page.getByRole("button", { name: "Discard changes" }));
+    await expect(
+      editor.getByText("Your unsaved changes will be lost.", { exact: true }),
+    ).toBeVisible({ timeout: 2000 });
+  }).toPass({ timeout: 20_000 });
   await editor.getByRole("button", { name: "Discard", exact: true }).click();
   await expect(page.getByRole("button", { name: "Discard changes" })).toHaveCount(0);
   await expect(editor.getByText("Bake", { exact: true })).toBeVisible();

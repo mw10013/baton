@@ -19,7 +19,6 @@ import {
   connectionStateAtom,
   merchantExpiredAtom,
   merchantTokenAtom,
-  notAMemberAtom,
   uninstalledAtom,
   reconnectAtom,
   retryPolicy,
@@ -28,14 +27,11 @@ import {
 import type { SetTeamMemberInput } from "../../contract/members.ts";
 import type { ShopKey } from "../../contract/shop.ts";
 import {
-  COUNT_KEY,
-  type ConnectionCaller,
   type Notice,
   NoticeFrame,
   ORDERS_KEY,
   SYNC_KEY,
   ShopActorRpcs,
-  type ShopSnapshot,
 } from "../../contract/shop-actor.ts";
 import type {
   AssignRunTaskTeamInput,
@@ -61,7 +57,7 @@ import { refreshOnFocus } from "./query.ts";
  * Notices pulled off the socket by {@link layerSocketWithNotices}; one per registry, like the
  * socket, so a test registry never sees another's. The last one is replayed to a new
  * subscriber: the first connect's refresh notice is published while {@link noticesAtom} may
- * still be subscribing, and dropping it would leave the seeded count unchecked until the next
+ * still be subscribing, and dropping it would leave a seeded read unchecked until the next
  * write.
  */
 export const noticeBus = Atom.make(() =>
@@ -157,7 +153,7 @@ const browserProtocol = (input: ProtocolInput) => {
             Effect.andThen(
               PubSub.publish(input.notices, {
                 _tag: "ShopActorNotice",
-                invalidated: [COUNT_KEY, ORDERS_KEY, SYNC_KEY],
+                invalidated: [ORDERS_KEY, SYNC_KEY],
               }),
             ),
           ),
@@ -218,46 +214,6 @@ export class ShopActorClient extends AtomRpc.Service<ShopActorClient>()("ShopAct
 }) {}
 
 /**
- * The member's count query itself, without the wrappers {@link countAtom} adds: the node
- * {@link seedShop} fills.
- */
-export const countQuery = ShopActorClient.query("MemberGetCount", undefined, {
-  serializationKey: "count",
-});
-
-/** The shop's count for a member; refetched on every notice naming {@link COUNT_KEY}. */
-export const countAtom = countQuery.pipe(Atom.withReactivity([COUNT_KEY]), refreshOnFocus);
-
-/** The merchant's count query; see {@link countQuery}. */
-export const merchantCountQuery = ShopActorClient.query("MerchantGetCount", undefined, {
-  serializationKey: "merchant-count",
-});
-
-/** The shop's count for a merchant; see {@link countAtom}. */
-export const merchantCountAtom = merchantCountQuery.pipe(
-  Atom.withReactivity([COUNT_KEY]),
-  refreshOnFocus,
-);
-
-export const incrementAtom = ShopActorClient.mutation("MemberIncrement");
-
-export const resetCountAtom = ShopActorClient.mutation("MerchantResetCount");
-
-export const activationAtom = ShopActorClient.query("MemberActivation", undefined, {
-  serializationKey: "activation",
-});
-
-/** Who the actor says this member is. */
-export const whoAmIAtom = ShopActorClient.query("MemberWhoAmI", undefined, {
-  serializationKey: "whoami",
-});
-
-/** Who the actor says this merchant is. */
-export const merchantWhoAmIAtom = ShopActorClient.query("MerchantWhoAmI", undefined, {
-  serializationKey: "merchant-whoami",
-});
-
-/**
  * Fills a query atom's node with a value the page already has, as if the query had answered.
  * The registry consumes the value when it first creates the node; a node that is already
  * there (a page left less than its idle TTL ago) is refetched instead.
@@ -285,36 +241,9 @@ export const nameSocket = (
 ) => {
   registry.set(shopKeyAtom, Option.some(key));
   registry.set(merchantTokenAtom, merchantToken);
-  registry.set(notAMemberAtom, false);
   registry.set(merchantExpiredAtom, false);
   registry.set(uninstalledAtom, false);
   registry.set(connectionStateAtom, "connecting");
-};
-
-/**
- * Seeds the socket's atoms from a shop page's loader data: the role's count, who-am-I and (for a
- * member) activation, so the page shows them at once and the socket only keeps them current.
- * Run it once, in the browser, under the socket holder that named the socket ({@link nameSocket})
- * and before the page reads any socket atom. A second run on the same registry (React's
- * StrictMode doubles a state initializer in development, and a page shown again within the idle
- * TTL) finds the nodes and refetches instead, which costs one round trip and nothing else.
- */
-export const seedShop = (
-  registry: AtomRegistry.AtomRegistry,
-  input: {
-    readonly role: ConnectionCaller["role"];
-    readonly caller: ConnectionCaller;
-    readonly snapshot: ShopSnapshot;
-  },
-) => {
-  if (input.role === "merchant") {
-    seed(registry, merchantCountQuery, input.snapshot.count);
-    seed(registry, merchantWhoAmIAtom, input.caller);
-  } else {
-    seed(registry, countQuery, input.snapshot.count);
-    seed(registry, whoAmIAtom, input.caller);
-    seed(registry, activationAtom, input.snapshot.activation);
-  }
 };
 
 /** How many orders a page of the orders index shows: the index's 25 rows. */
@@ -728,7 +657,9 @@ export const memberUnblockRunAtom = Atom.family((_key: string) =>
 /**
  * Seeds one page of the merchant orders screen from the loader, so the table shows at once and
  * the socket only keeps it current. Run it for each page the screen shows, before the screen
- * reads that page's atom; the same rules as {@link seedShop}.
+ * reads that page's atom. A second run on the same registry (React's StrictMode doubles a state
+ * initializer in development, and a page shown again within the idle TTL) finds the node and
+ * refetches instead, which costs one round trip and nothing else.
  */
 export const seedOrders = (
   registry: AtomRegistry.AtomRegistry,

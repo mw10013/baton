@@ -1,11 +1,16 @@
 import type { ListSearch, Run, TaskWithTeamName } from "../../domain/shop-work.ts";
 import {
   ORDERS_SHOW_LABEL,
+  RUN_PAGE,
   TASK_INSTRUCTIONS_MAX_LENGTH,
   VERB_LABEL,
   WORKFLOW_STATE_LABEL,
 } from "../../domain/shop-work.ts";
 import { ORDERS_STRIP } from "../client/shop-actor-client.ts";
+import { PageBody } from "./screen/PageBody.tsx";
+import { ResourceRow, RowLine } from "./screen/ResourceRow.tsx";
+import { ShowMore } from "./screen/ShowMore.tsx";
+import { STATE_LABEL, STATES } from "./workflows-list-states.ts";
 import { LocalDateTime } from "./LocalDateTime.tsx";
 import { BlockBanner, ClosedLine, RunItem, RunNote } from "./MemberRun.tsx";
 import { type RunStepTask, RunSteps } from "./RunSteps.tsx";
@@ -131,9 +136,6 @@ const RUN = {
   closedReason: "item_removed",
 } as unknown as Run;
 
-/** The five cells every strip has, with the workflows list's longest labels. */
-const STRIP_LABELS = ["Started by you", "Started by others", "Ready", "Blocked", "Done or closed"];
-
 /**
  * The home page's setup guide in each state: `done` marks the steps done, in order. The strings
  * are the home page's.
@@ -173,8 +175,7 @@ const resolveNull = () => Promise.resolve(null);
  * is reviewed against, so nobody has to walk every screen to see whether the app is consistent.
  * `width` renders it in the member's page width (`small`) or the merchant's (`large`).
  *
- * Legacy's sections whose parts are not ported yet (`ResourceRow`, `ShowMore`, the help parts)
- * come with their slices; the step flow, selectable card, fields, panel, empty aside, connector,
+ * Legacy's sections whose parts are not ported yet (the help parts) come with their slices; the step flow, selectable card, fields, panel, empty aside, connector,
  * text-limit and run sections are new here.
  */
 export function KitPage({ width }: { readonly width: "small" | "large" }) {
@@ -189,9 +190,9 @@ export function KitPage({ width }: { readonly width: "small" | "large" }) {
           head={
             <>
               <Strip
-                cells={STRIP_LABELS.map((label, index) => ({
-                  key: label,
-                  label,
+                cells={STATES.map((state, index) => ({
+                  key: state,
+                  label: STATE_LABEL[state],
                   count: index * 7,
                   chosen: index === 2,
                   onSelect: noop,
@@ -210,6 +211,51 @@ export function KitPage({ width }: { readonly width: "small" | "large" }) {
           <EmptyLine action={<s-button>Clear search</s-button>}>
             No workflow matches #9999
           </EmptyLine>
+        </IndexSection>
+        {/* The workflows list's rows: the longest piece, task, team, email and reason, a menu
+            and none, then Show more and its deepest-read sentence. */}
+        <IndexSection label="Rows">
+          <ResourceRow
+            head={{ lead: ORDER, title: `${TITLE_255} · ${VARIANT}`, trail: "×1,200" }}
+            menu={{
+              label: `Actions for ${ORDER}`,
+              disabled: false,
+              items: <s-button>{VERB_LABEL.start.member}</s-button>,
+            }}
+            href="/dev/kit"
+            onNavigate={noop}
+            accessibilityLabel={`Open ${TITLE_255} on ${ORDER}`}
+          >
+            <RowLine>
+              <Name>{TASK_64}</Name>
+              <s-text color="subdued">{` (${TEAM_32}) · Started by ${EMAIL_60}`}</s-text>
+            </RowLine>
+            <RowLine>
+              <Clamp color="subdued">{REASON_1000}</Clamp>
+            </RowLine>
+            <RowLine>
+              <Name color="subdued">{TASK_64_B}</Name>
+              <s-text color="subdued"> · Step 2 of 3</s-text>
+            </RowLine>
+          </ResourceRow>
+          <ResourceRow
+            head={{ lead: ORDER, title: TITLE_255, trail: null }}
+            menu={null}
+            href="/dev/kit"
+            onNavigate={noop}
+            accessibilityLabel={`Open ${TITLE_255} on ${ORDER}`}
+          >
+            <RowLine>
+              <ClosedLine run={RUN} viewer="member" prefix />
+            </RowLine>
+          </ResourceRow>
+          <ShowMore hidden={1075} page={RUN_PAGE} end={null} onShowMore={noop} />
+          <ShowMore
+            hidden={1075}
+            page={RUN_PAGE}
+            end="Showing 100 of 1,175. Search or choose a team to find the rest."
+            onShowMore={noop}
+          />
         </IndexSection>
         {[0, 1, 2].map((done) => (
           <SetupGuide
@@ -314,7 +360,7 @@ export function KitPage({ width }: { readonly width: "small" | "large" }) {
         </s-section>
         {/* New: the run pieces the member's workflow page and the merchant's order page share. */}
         <s-section heading="Workflow on an item">
-          <Lines>
+          <PageBody>
             <s-heading>{TITLE_255}</s-heading>
             <RunItem run={RUN} />
             <ClosedLine run={RUN} viewer="member" prefix />
@@ -332,7 +378,7 @@ export function KitPage({ width }: { readonly width: "small" | "large" }) {
                 {VERB_LABEL.block.member}
               </s-button>
             </Inline>
-          </Lines>
+          </PageBody>
           <RunNoteModal id="kit-note" note={RUN.note} pending={false} onSave={resolveNull} />
           <BlockModal id="kit-block" run={RUN} pending={false} onBlock={resolveNull} />
         </s-section>

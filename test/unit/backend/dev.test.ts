@@ -59,7 +59,7 @@ const harness = () => {
     Layer.provideMerge(
       Layer.mergeAll(
         testMembershipRepository(members),
-        ShopActors.layerTest(revoked, undefined, [], added, removedOrders),
+        ShopActors.layerTest(revoked, [], added, removedOrders),
         testShopify([session]),
       ),
     ),

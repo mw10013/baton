@@ -19,7 +19,7 @@ export const ShoutTextFromInput = Schema.Trim.pipe(Schema.decodeTo(ShoutText));
 /**
  * A method's input, declared once here and decoded on both sides of the binding: the server
  * function's validator and the Backend method read the same schema, so the two cannot drift.
- * `MagicLinkInput` and `ShopSnapshotInput` follow the same rule.
+ * `MagicLinkInput` and `ShopAccessInput` follow the same rule.
  */
 export const ShoutInput = Schema.Struct({ input: ShoutText });
 export type ShoutInput = typeof ShoutInput.Type;

@@ -18,7 +18,7 @@ import {
   AdminSession,
   AuthenticateAdminInput,
   NotAShopMember,
-  ShopSnapshotInput,
+  ShopAccessInput,
 } from "../contract/shop.ts";
 import { ShoutInput } from "../contract/playground.ts";
 import { ShopNotInstalled } from "../contract/fixture.ts";
@@ -91,7 +91,7 @@ export class SignInLimiter extends Context.Service<SignInLimiter, Cloudflare.Rat
 const decodeRequest = Schema.decodeUnknownEffect(RequestInfo);
 const decodeShout = Schema.decodeUnknownEffect(ShoutInput);
 const decodeMagicLinkInput = Schema.decodeUnknownEffect(MagicLinkInput);
-const decodeSnapshotInput = Schema.decodeUnknownEffect(ShopSnapshotInput);
+const decodeAccessInput = Schema.decodeUnknownEffect(ShopAccessInput);
 const decodeAuthenticateAdminInput = Schema.decodeUnknownEffect(AuthenticateAdminInput);
 const decodeListOrdersRequest = Schema.decodeUnknownEffect(ListOrdersRequest);
 const decodeMembersPageRequest = Schema.decodeUnknownEffect(MembersPageRequest);
@@ -117,7 +117,7 @@ const make = Effect.gen(function* () {
   const delivery = yield* MagicLinkDelivery;
   const members = yield* MembershipRepository;
   const limiter = yield* SignInLimiter;
-  const shopAccess = yield* ShopAccess;
+  const gate = yield* ShopAccess;
   const actors = yield* ShopActors;
   const shopify = yield* Shopify;
   const shopSessions = yield* ShopSessionRepository;
@@ -165,7 +165,7 @@ const make = Effect.gen(function* () {
     }
     yield* auth.api
       .signInMagicLink({
-        body: { email, callbackURL: returnTo ?? "/shop", errorCallbackURL: "/sign-in" },
+        body: { email, callbackURL: returnTo ?? "/login-callback", errorCallbackURL: "/sign-in" },
         headers: new Headers(),
       })
       .pipe(Effect.orDie);
@@ -197,18 +197,16 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * The gate, then the actor's snapshot: the shop page's first data and who the socket will
-   * say this browser is. The gate's refusal maps to the failure the page renders; an
-   * unavailable gate is a defect.
+   * The gate alone, for a shop layout's loader: who the socket will say this browser is, or why
+   * not. The gate's refusal maps to the failure the layout renders; an unavailable gate is a
+   * defect. No actor call: each page under the layout reads its own data.
    */
-  const shopSnapshot = Effect.fn("BackendApi.shopSnapshot")(
-    function* (request: RequestInfo, payload: ShopSnapshotInput) {
+  const shopAccess = Effect.fn("BackendApi.shopAccess")(
+    function* (request: RequestInfo, payload: ShopAccessInput) {
       const { cookie } = yield* decodeRequest(request).pipe(Effect.orDie);
-      const { key, sessionToken } = yield* decodeSnapshotInput(payload).pipe(Effect.orDie);
-      yield* Effect.log(`Backend.shopSnapshot: shop=${key}`); // used to count calls in the dev log
-      const caller = yield* shopAccess.resolve({ key, cookie, sessionToken });
-      const snapshot = yield* actors.snapshot(key);
-      return { caller, snapshot };
+      const { key, sessionToken } = yield* decodeAccessInput(payload).pipe(Effect.orDie);
+      yield* Effect.log(`Backend.shopAccess: shop=${key}`); // used to count calls in the dev log
+      return yield* gate.resolve({ key, cookie, sessionToken });
     },
     Effect.catchTag("ShopAccessDenied", ({ status }) =>
       Match.value(status).pipe(
@@ -393,14 +391,14 @@ const make = Effect.gen(function* () {
 
   /**
    * The member gate for the member screens' loaders (`ShopAccess.resolveMember`): the member and
-   * their teams, decoded once for the actor's run reads. Refusals as {@link shopSnapshot}'s:
+   * their teams, decoded once for the actor's run reads. Refusals as {@link shopAccess}'s:
    * 401 is `Unauthorized`, 403 `Forbidden`, 404 `NotAShopMember`, and an unavailable gate is a
    * defect; each before any actor call.
    */
   const memberOf = Effect.fn("BackendApi.memberOf")(
     function* (request: RequestInfo, key: WorkflowsListRequest["key"]) {
       const { cookie } = yield* decodeRequest(request).pipe(Effect.orDie);
-      const { caller, teams } = yield* shopAccess.resolveMember({ key, cookie });
+      const { caller, teams } = yield* gate.resolveMember({ key, cookie });
       const identity = yield* decodeMemberIdentity(caller).pipe(Effect.orDie);
       return { ...identity, teams };
     },
@@ -462,7 +460,7 @@ const make = Effect.gen(function* () {
     me,
     listMembers,
     myShops,
-    shopSnapshot,
+    shopAccess,
     authenticateAdmin,
     listOrders,
     orderDetail,

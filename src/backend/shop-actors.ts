@@ -4,7 +4,6 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type { ShopKey } from "../contract/shop.ts";
-import type { ShopSnapshot } from "../contract/shop-actor.ts";
 import type {
   GetOrderDetailInput,
   ListOrdersInput,
@@ -79,10 +78,6 @@ const make = <R>(namespace: Effect.Effect<Effect.Success<typeof ShopActor>, neve
             ),
           ),
         );
-    });
-
-    const snapshot = Effect.fn("ShopActors.snapshot")(function* (key: ShopKey) {
-      return yield* actors.getByName(key).snapshot();
     });
 
     /** Replaces the shop's work with `rows`; see `loadFixture` on {@link ShopActor}. */
@@ -233,7 +228,6 @@ const make = <R>(namespace: Effect.Effect<Effect.Success<typeof ShopActor>, neve
     return {
       destroy,
       revoke,
-      snapshot,
       loadFixture,
       addFixture,
       applyFixture,
@@ -280,7 +274,7 @@ export class ShopActors extends Context.Service<
   );
 
   /**
-   * Records each revoke and closes nothing, answers every snapshot with `snapshot`, records
+   * Records each revoke and closes nothing, records
    * each fixture load in `loaded` and each fixture add in `added`, answering the counts of its
    * rows (it never finds a clash), applies no fixture work, and records each order removal in `removedOrders`, answering
    * that there was one. Its order, workflow and sync methods and `destroy` die: a test that reaches them
@@ -288,7 +282,6 @@ export class ShopActors extends Context.Service<
    */
   static readonly layerTest = (
     revoked: Array<{ key: ShopKey; by: "member" | "session"; id: string }>,
-    snapshot: ShopSnapshot = { count: { value: 0 }, activation: { id: "test" } },
     loaded: Array<{ key: ShopKey; rows: ActorFixtureRows }> = [],
     added: Array<{ key: ShopKey; rows: ActorFixtureRows }> = [],
     removedOrders: Array<{ key: ShopKey; orderId: string }> = [],
@@ -299,7 +292,6 @@ export class ShopActors extends Context.Service<
           revoked.push({ key, by, id });
           return { closed: 0 };
         }),
-      snapshot: () => Effect.succeed(snapshot),
       loadFixture: (key, rows) =>
         Effect.sync(() => {
           loaded.push({ key, rows });

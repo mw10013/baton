@@ -12,6 +12,7 @@ import {
   CONNECTION_CLOSE_DISPLACED,
   CONNECTION_CLOSE_FORBIDDEN,
   CONNECTION_CLOSE_NOT_A_MEMBER,
+  CONNECTION_CLOSE_REVOKED,
   CONNECTION_CLOSE_UNAUTHENTICATED,
   CONNECTION_CLOSE_UNINSTALLED,
 } from "../../contract/shop-actor.ts";
@@ -33,8 +34,15 @@ export const merchantTokenAtom = Atom.make<Option.Option<Effect.Effect<string>>>
   Option.none(),
 ).pipe(Atom.keepAlive);
 
-/** Set when the gate answers that this member may not open the shop. */
-export const notAMemberAtom = Atom.make(false).pipe(Atom.keepAlive);
+/**
+ * Bumped when the socket learns that this browser's membership changed: the actor's revoke
+ * (3401, a member's teams or membership changed while connected, or the session ended), the
+ * gate's 4404 (no longer a member) or the actor's 4410 (uninstalled, its members gone). The socket comes back on its own after a 3401, through the
+ * gate, with the new membership; what it cannot refresh is the page's loader data, resolved from
+ * the old one, so the member shop layout reruns its loaders on each bump, and the loader is where
+ * a removed member finds out they are gone.
+ */
+export const membershipChangedAtom = Atom.make(0).pipe(Atom.keepAlive);
 
 /** Set when the gate no longer accepts the merchant's Shopify session token. */
 export const merchantExpiredAtom = Atom.make(false).pipe(Atom.keepAlive);
@@ -110,11 +118,12 @@ export const goToSignIn = Effect.sync(() => {
 /**
  * What a socket error means for the page. Each terminal code ({@link isTerminal}) says why the
  * browser stops: 4401 sends a member to sign-in and marks a merchant's token expired, 4404 is
- * "not a member", 4409 is displaced, 4410 is uninstalled, 4403 is forbidden. Anything else is
- * `lost`, and retried.
+ * "not a member", 4409 is displaced, 4410 is uninstalled, 4403 is forbidden. 3401 is `revoked`
+ * and anything else `lost`, and both are retried.
  */
 export type CloseOutcome =
   | "lost"
+  | "revoked"
   | "sign-in"
   | "expired"
   | "not-a-member"
@@ -123,27 +132,26 @@ export type CloseOutcome =
   | "forbidden";
 
 export const closeOutcome = (error: Socket.SocketError, merchant: boolean): CloseOutcome =>
-  Option.match(
-    Option.filter(closeCode(error), (code) => TERMINAL_CODES.has(code)),
-    {
-      onNone: (): CloseOutcome => "lost",
-      onSome: (code) =>
-        Match.value(code).pipe(
-          Match.when(CONNECTION_CLOSE_UNAUTHENTICATED, (): CloseOutcome =>
-            merchant ? "expired" : "sign-in",
-          ),
-          Match.when(CONNECTION_CLOSE_NOT_A_MEMBER, (): CloseOutcome => "not-a-member"),
-          Match.when(CONNECTION_CLOSE_DISPLACED, (): CloseOutcome => "displaced"),
-          Match.when(CONNECTION_CLOSE_UNINSTALLED, (): CloseOutcome => "uninstalled"),
-          Match.orElse((): CloseOutcome => "forbidden"),
+  Option.match(closeCode(error), {
+    onNone: (): CloseOutcome => "lost",
+    onSome: (code) =>
+      Match.value(code).pipe(
+        Match.when(CONNECTION_CLOSE_REVOKED, (): CloseOutcome => "revoked"),
+        Match.when(CONNECTION_CLOSE_UNAUTHENTICATED, (): CloseOutcome =>
+          merchant ? "expired" : "sign-in",
         ),
-    },
-  );
+        Match.when(CONNECTION_CLOSE_NOT_A_MEMBER, (): CloseOutcome => "not-a-member"),
+        Match.when(CONNECTION_CLOSE_DISPLACED, (): CloseOutcome => "displaced"),
+        Match.when(CONNECTION_CLOSE_UNINSTALLED, (): CloseOutcome => "uninstalled"),
+        Match.when(CONNECTION_CLOSE_FORBIDDEN, (): CloseOutcome => "forbidden"),
+        Match.orElse((): CloseOutcome => "lost"),
+      ),
+  });
 
 /**
  * Applies a {@link CloseOutcome} to the page's atoms. A refusal that has its own copy
- * (`not-a-member`, `expired`, `uninstalled`) also leaves the socket `forbidden`, so nothing
- * reconnects.
+ * (`expired`, `uninstalled`) also leaves the socket `forbidden`, so nothing reconnects; so does
+ * `not-a-member`, which with `revoked` bumps {@link membershipChangedAtom}.
  */
 export const applyCloseOutcome = (
   registry: AtomRegistry.AtomRegistry,
@@ -154,11 +162,15 @@ export const applyCloseOutcome = (
       if (flag !== undefined) registry.set(flag, true);
       registry.set(connectionStateAtom, state);
     });
+  const membershipChanged = Effect.sync(() => registry.update(membershipChangedAtom, (n) => n + 1));
   return Match.value(outcome).pipe(
     Match.when("sign-in", () => Effect.andThen(set("forbidden"), goToSignIn)),
     Match.when("expired", () => set("forbidden", merchantExpiredAtom)),
-    Match.when("not-a-member", () => set("forbidden", notAMemberAtom)),
-    Match.when("uninstalled", () => set("forbidden", uninstalledAtom)),
+    Match.when("not-a-member", () => Effect.andThen(set("forbidden"), membershipChanged)),
+    Match.when("revoked", () => Effect.andThen(set("lost"), membershipChanged)),
+    Match.when("uninstalled", () =>
+      Effect.andThen(set("forbidden", uninstalledAtom), membershipChanged),
+    ),
     Match.orElse((state) => set(state)),
   );
 };

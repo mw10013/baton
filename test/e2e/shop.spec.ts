@@ -1,29 +1,45 @@
 import { awaitHydration, dev, expect, nextOpenSocket, ownMember, test } from "./fixtures.ts";
 import type { Page } from "playwright/test";
-import { shell, shop, signInWithForm } from "./screens.ts";
+import { memberShop, shell, signInWithForm } from "./screens.ts";
 import { E2E_SHOP } from "./shop-fixture.ts";
+import {
+  card,
+  closeMembers,
+  openRuns,
+  rowAction,
+  rowLink,
+  rowMenu,
+  seedRuns,
+  stateCount,
+  world,
+} from "./member-screens.ts";
 
 test.use({ storageState: "playwright/.auth/member.json" });
 
-/** Every test here reads or writes the one shop's count, so they take turns. */
-test.describe.configure({ mode: "serial" });
+const path = `/shop/${E2E_SHOP}/workflows`;
 
-const path = `/shop/${E2E_SHOP}`;
+test.afterEach(closeMembers);
 
-test("an increment in one window updates the count in another", async ({ context, goto, page }) => {
-  await goto(path);
-  const other = await context.newPage();
-  await other.goto(path);
-  await awaitHydration(other);
-  await expect(shop(other).activation).toBeVisible();
-  await expect(shop(page).signedInAs("m1@m.com")).toBeVisible();
-  // Relative: the e2e stage keeps the actor's storage under `.alchemy/` across runs.
-  const before = Number(await shop(other).count.textContent());
+test("a Done in one window shows in the other window's workflows list", async ({
+  backend,
+  browser,
+}) => {
+  const w = world();
+  await seedRuns(backend, w, { cutMembers: "maker" });
+  const other = await openRuns(browser, w.MAKER, "ready");
+  await expect(rowMenu(other, w.RING_ORDER)).toBeEnabled();
+  const page = await openRuns(browser, w.MAKER, "ready");
+  await expect(card(page, w.RING_ORDER)).toBeVisible();
 
-  await shop(page).increment.click();
+  await rowAction(page, w.RING_ORDER, "Start");
+  await expect(stateCount(page, "Started by you", 1)).toBeVisible();
+  await page.goto(`${path}?state=started_by_you`);
+  await expect(rowMenu(page, w.RING_ORDER)).toBeEnabled();
+  await rowAction(page, w.RING_ORDER, "Done");
 
-  await expect(shop(other).count).toHaveText(String(before + 1));
-  await expect(shop(page).count).toHaveText(String(before + 1));
+  // The other window is never touched: the Done arrives as a notice over its own socket.
+  await expect(stateCount(other, "Done or closed", 1)).toBeVisible();
+  await expect(rowLink(other, w.RING_ORDER)).toBeHidden();
 });
 
 test("sign-out in one window sends the other to sign-in; an admin is untouched", async ({
@@ -62,7 +78,7 @@ test("a member removed while the page is open is told so", async ({ backend, bro
 
   await backend(dev((c) => c.RemoveMember({ shop: E2E_SHOP, email })));
 
-  await expect(shop(page).notAMember).toBeVisible();
+  await expect(memberShop(page).noAccess).toBeVisible();
   await context.close();
 });
 
@@ -82,14 +98,14 @@ test("a third window displaces the oldest, and Reconnect there takes it back", a
   const second = await open(await context.newPage());
   const third = await open(await context.newPage());
 
-  await expect(shop(first).signedInElsewhere).toBeVisible();
-  await expect(shop(second).signedInElsewhere).toHaveCount(0);
+  await expect(memberShop(first).signedInElsewhere).toBeVisible();
+  await expect(memberShop(second).signedInElsewhere).toHaveCount(0);
 
   const reopened = nextOpenSocket(first);
-  await shop(first).reconnect.click();
+  await memberShop(first).reconnect.click();
   await reopened;
-  await expect(shop(first).signedInElsewhere).toHaveCount(0);
-  await expect(shop(second).signedInElsewhere).toBeVisible();
-  await expect(shop(third).signedInElsewhere).toHaveCount(0);
+  await expect(memberShop(first).signedInElsewhere).toHaveCount(0);
+  await expect(memberShop(second).signedInElsewhere).toBeVisible();
+  await expect(memberShop(third).signedInElsewhere).toHaveCount(0);
   await context.close();
 });

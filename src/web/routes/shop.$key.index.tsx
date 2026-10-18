@@ -1,18 +1,13 @@
-import { createFileRoute, getRouteApi } from "@tanstack/react-router";
-import { BackLink } from "../components/screen/BackLink.tsx";
-import ShopPage from "../components/ShopPage";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
-const shopLayout = getRouteApi("/shop/$key");
-
-/** A member's shop page: the layout's snapshot, or why not, under the layout's socket. */
+/**
+ * The shop root is the member's home, and home is the workflows list. A redirect rather than the
+ * list itself, so the URL a member reads says the noun (`/shop/$key/workflows`). The search
+ * (`MemberSearch`) is carried across, so a bookmarked `/shop/<key>?state=blocked` still lands on
+ * Blocked.
+ */
 export const Route = createFileRoute("/shop/$key/")({
-  component: function MemberShopRoute() {
-    const { key } = shopLayout.useParams();
-    return (
-      <>
-        <BackLink label="Your stores" href="/shop" />
-        <ShopPage role="member" shop={key} data={shopLayout.useLoaderData()} />
-      </>
-    );
+  beforeLoad: ({ params, search }) => {
+    throw redirect({ to: "/shop/$key/workflows", params, search });
   },
 });

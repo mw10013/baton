@@ -8,6 +8,12 @@ declare module "@tanstack/react-router" {
      * so the flag needs no key.
      */
     readonly nextPage?: true;
+    /**
+     * Set on the entry a row of the workflows list pushes when it opens the member's workflow
+     * page: the entry before this one is the list as the member left it, depth and scroll
+     * included, so the page's Workflows link can be the browser's Back.
+     */
+    readonly fromWorkflowsList?: true;
   }
 }
 
@@ -18,3 +24,7 @@ declare module "@tanstack/react-router" {
  */
 export const useNextPageEntry = () =>
   useLocation({ select: (location) => location.state.nextPage === true });
+
+/** Whether the current history entry was pushed by a row of the workflows list. */
+export const useFromWorkflowsList = () =>
+  useLocation({ select: (location) => location.state.fromWorkflowsList === true });

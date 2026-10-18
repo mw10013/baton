@@ -69,7 +69,8 @@ describe("KitPage", () => {
           '[accessibilityRole="ordered-list"] > [accessibilityRole="list-item"]',
         ),
       ).toHaveLength(3);
-      expect(screen.container.querySelectorAll("s-clickable[href]")).toHaveLength(5);
+      // The home strip's five link cells and the two resource rows.
+      expect(screen.container.querySelectorAll("s-clickable[href]")).toHaveLength(7);
       expect(screen.container.querySelector('s-banner[heading="Blocked"]')).not.toBeNull();
       expect(screen.container.querySelectorAll("s-modal")).toHaveLength(2);
       await screen.unmount();

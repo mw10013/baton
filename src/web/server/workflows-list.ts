@@ -4,7 +4,7 @@ import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { Forbidden, ReturnPath, Unauthorized } from "../../contract/auth.ts";
-import { NotAShopMember } from "../../contract/shop.ts";
+import { NotAShopMember, ShopAccessInput } from "../../contract/shop.ts";
 import { MemberWorkflowPageRequest, WorkflowsListRequest } from "../../contract/workflows-list.ts";
 import { backend, requestInfo, rescue } from "./backend.ts";
 
@@ -12,8 +12,9 @@ const decodeReturnPath = Schema.decodeUnknownOption(ReturnPath);
 
 /**
  * A member loader's refusal, as the member area renders it: a member no longer signed in goes
- * to sign-in and back to `path`; anyone the gate does not admit to the shop (an admin, a
- * non-member) reads as the shop not found.
+ * to sign-in and back to `path`, as the `/shop` guard would send them; anyone the gate does not
+ * admit to the shop (an admin, a non-member, a member since removed) reads as the shop not found,
+ * which the member shop layout renders as "No access".
  */
 const memberRefusal = (path: string) =>
   rescue(Schema.Union([Unauthorized, Forbidden, NotAShopMember]), (failure) =>
@@ -31,6 +32,18 @@ const memberRefusal = (path: string) =>
         throw notFound();
       },
     }),
+  );
+
+/**
+ * The gate alone, for the member shop layout's loader: who the socket will say this browser is,
+ * or the {@link memberRefusal}. Each page under the layout reads its own data.
+ */
+export const getShopAccess = createServerFn({ method: "GET" })
+  .validator(Schema.toStandardSchemaV1(ShopAccessInput))
+  .handler(({ data }) =>
+    backend()
+      .shopAccess(requestInfo(), data)
+      .catch(memberRefusal(`/shop/${data.key}`)),
   );
 
 /**

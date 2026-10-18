@@ -3,7 +3,7 @@ import { signInWithForm } from "./screens.ts";
 
 for (const [role, email, landing] of [
   ["admin", "a@a.com", /\/admin$/],
-  ["member", "m1@m.com", /\/shop$/],
+  ["member", "m1@m.com", /\/shop\/[^/]+\/workflows$/],
 ] as const)
   setup(`sign in ${role}`, async ({ page }) => {
     await signInWithForm(page, email);

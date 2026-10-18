@@ -1,8 +1,20 @@
 import type { AnyRouter } from "@tanstack/react-router";
 import type { Role } from "../../contract/auth.ts";
+import type { ShopKey } from "../../contract/shop.ts";
 
 /** Each role has its own side of the site. */
 export const homeFor = (role: Role) => (role === "admin" ? "/admin" : "/shop");
+
+/**
+ * Where a signed-in member lands, from the shops they belong to: a member of exactly one shop
+ * lands on that shop's workflows list, because Your stores would be a page with one link on it
+ * and a bench wants the work, not a menu; none or several land on Your stores (`/shop`), which is
+ * also where a member with no shops reads why.
+ */
+export const memberLanding = (shops: ReadonlyArray<ShopKey>) => {
+  const [only] = shops;
+  return only !== undefined && shops.length === 1 ? `/shop/${only}/workflows` : "/shop";
+};
 
 /**
  * Ends the Better Auth session through the Website's auth proxy, then reruns the current

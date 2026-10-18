@@ -62,3 +62,69 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/*
+ * A resource row's line one (`ResourceRow` in `src/web/components/screen/`): the clamped title
+ * shrinks and the trail (`×n`) never does, so a long title ends in an ellipsis and the count stays
+ * at the end of its first line. `pre` keeps the trail's leading space.
+ */
+.row-head {
+  display: flex;
+  align-items: baseline;
+  min-inline-size: 0;
+}
+
+.row-head-title {
+  min-inline-size: 0;
+}
+
+.row-head-trail {
+  flex: none;
+  white-space: pre;
+}
+
+/*
+ * The menu cell of a resource row: one line of text tall, so the button sits beside line one and
+ * a one-line head leaves no gap under it. The button is taller than the line and overflows it
+ * evenly.
+ */
+.resource-row-menu {
+  display: flex;
+  align-items: center;
+  block-size: 20px;
+}
+
+/*
+ * The member area's root (`MemberArea` in `src/web/components/screen/`): an unspaced token
+ * anywhere on a member screen (an email, a SKU, a shop domain, a long word in an item title)
+ * breaks inside itself rather than widen a phone screen. `anywhere`, not `break-word`, so a grid
+ * track or flex item holding one can shrink to the screen. Inherited through Polaris's shadow
+ * roots, which take inherited properties from their host.
+ */
+.member-area {
+  overflow-wrap: anywhere;
+}
+
+/*
+ * The member's workflow page prints as a job ticket: chrome and every button go. `s-button`
+ * covers the page's own action slots too, so a control added there needs no rule of its own.
+ */
+@media print {
+  .print-hide,
+  s-button {
+    display: none !important;
+  }
+}
+
+/*
+ * A page body of plain content (`PageBody` in `src/web/components/screen/`), the member's
+ * workflow page: `s-page` insets only its heading on a phone: below 507px it pads its children
+ * 0.5rem, which suits full-width cards, and the heading 1.5rem. The extra 1rem lines the text up
+ * with the heading. The breakpoint is `s-page`'s own, measured: it has no custom property or
+ * container name to hook, so this repeats it.
+ */
+@media (width < 507px) {
+  .page-body {
+    padding-inline: 1rem;
+  }
+}

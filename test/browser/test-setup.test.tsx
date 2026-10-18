@@ -4,7 +4,15 @@ import * as AsyncResult from "effect/reactivity/AsyncResult";
 import { describe, expect, it } from "vite-plus/test";
 import { renderHookInApp, renderInApp } from "./render.tsx";
 import { shopTestRegistry } from "./shop-actor.ts";
-import { countQuery } from "../../src/web/client/shop-actor-client.ts";
+import { RUN_PAGE, type WorkflowsListData } from "../../src/domain/shop-work.ts";
+import { memberRunsQuery } from "../../src/web/client/shop-actor-client.ts";
+
+const list: WorkflowsListData = {
+  counts: { started_by_you: 0, started_by_others: 0, ready: 7, blocked: 0, done: 0 },
+  items: [],
+  recent: [],
+  matches: null,
+};
 
 describe("browser tests", () => {
   it("render a Polaris element and click it", async () => {
@@ -26,10 +34,11 @@ describe("browser tests", () => {
   });
 
   it("read an atom through a hook, backed by test handlers", async () => {
-    const registry = shopTestRegistry({ MemberGetCount: () => Effect.succeed({ value: 7 }) });
-    const { result } = await renderHookInApp(() => useAtomValue(countQuery), registry);
+    const registry = shopTestRegistry({ MemberListRuns: () => Effect.succeed(list) });
+    const query = { team: null, state: "ready", limit: RUN_PAGE, q: null } as const;
+    const { result } = await renderHookInApp(() => useAtomValue(memberRunsQuery(query)), registry);
 
     await expect.poll(() => AsyncResult.isSuccess(result.current)).toBe(true);
-    expect(AsyncResult.getOrThrow(result.current).value).toBe(7);
+    expect(AsyncResult.getOrThrow(result.current).counts.ready).toBe(7);
   });
 });

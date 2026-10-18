@@ -3,10 +3,16 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import * as Test from "alchemy/Test/Vitest";
 import * as Effect from "effect/Effect";
 import * as PubSub from "effect/PubSub";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import type { LineItemNode, OrderNode } from "../../src/backend/order-sync.ts";
 import { ShopFixtureData } from "../../src/contract/fixture.ts";
-import { type MemberCaller, ORDERS_KEY } from "../../src/contract/shop-actor.ts";
+import { SetTeamMemberInput } from "../../src/contract/members.ts";
+import {
+  CONNECTION_CLOSE_REVOKED,
+  type MemberCaller,
+  ORDERS_KEY,
+} from "../../src/contract/shop-actor.ts";
 import * as Orders from "../../src/domain/orders.ts";
 import { Email } from "../../src/domain/platform.ts";
 import * as ShopWork from "../../src/domain/shop-work.ts";
@@ -16,6 +22,7 @@ import {
   connectAs,
   dev,
   email,
+  nextCloseCode,
   openAs,
   signIn,
   storeByWebhook,
@@ -30,8 +37,8 @@ import Stack from "./stack.ts";
  * socket reads and the notices the run writes send. Each case gets an order of its own, added by
  * `AddToFixture` and brought into its state through the procedures themselves and, for the
  * order's own state, a webhook, as production reaches it: no state is written straight to the
- * actor's SQLite. "v" is not driven here: the unit matrix proves the formula for "v", and the
- * "m" cases prove each procedure reads the formula with the live inputs.
+ * actor's SQLite. "v" is driven by one case of its own (a Relay run whose current task is on
+ * another team), beside the unit matrix that proves the formula for every row.
  */
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
   providers: Cloudflare.providers(),
@@ -60,7 +67,7 @@ const SLOW = { timeout: 600_000 };
 /**
  * The shop every test starts from, after an empty load: Alice and Bob on Bench, Carol on Idle;
  * Engrave and Rush (tags `engrave`, `rush`), each Cut then Polish on Bench; Solo (tag `solo`), one
- * task on Bench.
+ * task on Bench; Relay (tag `relay`), Cut on Bench then Polish on Idle.
  */
 const WORLD = decodeFixture({
   members: [ALICE, BOB, CAROL],
@@ -86,6 +93,14 @@ const WORLD = decodeFixture({
       ],
     },
     { name: "Solo", tag: "solo", tasks: [{ name: "Engrave", team: "Bench" }] },
+    {
+      name: "Relay",
+      tag: "relay",
+      tasks: [
+        { name: "Cut", team: "Bench" },
+        { name: "Polish", team: "Idle" },
+      ],
+    },
   ],
   orders: [],
 });
@@ -842,6 +857,37 @@ test(
   }),
 );
 
+/**
+ * The "v" of `runActions`' table over a socket: Carol is on Idle, which holds Polish, step 2 of a
+ * Relay run, while Cut on Bench is current. She sees the run and writes its note, and every other
+ * run and task write refuses her, Polish's included while it waits.
+ */
+test(
+  "callables: a member whose teams hold a task of the run but no current one writes the note and nothing else",
+  Effect.gen(function* () {
+    yield* Effect.gen(function* () {
+      const w = yield* world;
+      const [n = 0] = yield* addOrders(w.backendUrl, [["relay"]]);
+      const { run, tasks } = yield* runOf(w, n);
+      const polish = tasks[1];
+      if (polish === undefined) return yield* Effect.die(new Error("task"));
+      assert.isNotNull(yield* w.carol.client.MemberGetRun(runIdInput({ runId: run.id })));
+      const noted = yield* w.carol.client.MemberSetRunNote(noteInput({ runId: run.id, note: "x" }));
+      assert.strictEqual(noted._tag, "Ok");
+      const refused = [
+        yield* w.carol.client.MemberBlockRun(blockInput({ runId: run.id, reason: null })),
+        yield* w.carol.client.MemberStartTask(taskInput({ runTaskId: polish.id })),
+        yield* w.carol.client.MemberMarkTaskDone(taskInput({ runTaskId: polish.id })),
+      ];
+      yield* w.merchant.client
+        .MerchantBlockRun(blockInput({ runId: run.id, reason: null }))
+        .pipe(Effect.flatMap(ok("block")));
+      refused.push(yield* w.carol.client.MemberUnblockRun(runIdInput({ runId: run.id })));
+      for (const answer of refused) assert.strictEqual(answer._tag, "NotAllowed");
+    }).pipe(Effect.scoped);
+  }),
+);
+
 test(
   "callables: a task on no team refuses the member's Done and takes the merchant's",
   Effect.gen(function* () {
@@ -1043,6 +1089,40 @@ test(
       const socket = yield* connectAs(w.backendUrl, SEED_SHOP, { cookie });
       const done = yield* socket.client.MemberMarkTaskDone(taskInput({ runTaskId }));
       assert.deepStrictEqual(done, { _tag: "Ok" });
+    }).pipe(Effect.scoped);
+  }),
+);
+
+/**
+ * Legacy's e2e title, here because the member's browser project has no merchant socket: the
+ * merchant takes Alice off Bench while her socket is open, the actor closes it with 3401, it
+ * reconnects through the gate with her new teams, and her open list is empty.
+ */
+test(
+  "removing a member from a team empties their open workflows list",
+  Effect.gen(function* () {
+    yield* Effect.gen(function* () {
+      const { w } = yield* soloWork;
+      const cookie = yield* signIn(w.backendUrl, email(ALICE));
+      const socket = yield* connectAs(w.backendUrl, SEED_SHOP, { cookie });
+      assert.lengthOf((yield* socket.client.MemberListRuns({ query: READY_LIST })).items, 1);
+      const me = yield* socket.client.MemberWhoAmI();
+      if (me.role !== "member") return yield* Effect.die(new Error("not a member"));
+      yield* w.merchant.client.MerchantSetTeamMember(
+        Schema.decodeUnknownSync(SetTeamMemberInput)({
+          teamId: w.bench,
+          memberId: me.memberId,
+          inTeam: false,
+        }),
+      );
+      assert.strictEqual(yield* nextCloseCode(socket.closes), CONNECTION_CLOSE_REVOKED);
+      // A read sent while the socket is down fails with the close; the next goes over the
+      // reconnect.
+      const after = yield* socket.client
+        .MemberListRuns({ query: READY_LIST })
+        .pipe(Effect.retry({ schedule: Schedule.spaced("200 millis"), times: 25 }));
+      assert.lengthOf(after.items, 0);
+      assert.strictEqual(after.counts.ready, 0);
     }).pipe(Effect.scoped);
   }),
 );

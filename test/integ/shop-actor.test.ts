@@ -18,8 +18,10 @@ import {
   CONNECTION_CLOSE_REVOKED,
   CONNECTION_CLOSE_UNAUTHENTICATED,
   CONNECTION_HEADER,
-  COUNT_KEY,
+  ORDERS_KEY,
 } from "../../src/contract/shop-actor.ts";
+import { ShopFixtureData } from "../../src/contract/fixture.ts";
+import * as ShopWork from "../../src/domain/shop-work.ts";
 import {
   authOrigin,
   type Credential,
@@ -68,6 +70,25 @@ const open = (backendUrl: string, credential: Credential) =>
 /** A merchant's Shopify session token for a shop, signed with the fake app's secret. */
 const merchantToken = (shop: ShopKey = key) => mintSessionToken({ shop });
 
+/** One page of a state of the workflows list, every team. */
+const listOf = (state: ShopWork.WorkflowsListState) => ({
+  query: Schema.decodeUnknownSync(ShopWork.RunQuery)({
+    team: null,
+    state,
+    limit: ShopWork.RUN_PAGE,
+    q: null,
+  }),
+});
+
+/** The orders index's first page, every order. */
+const EVERY_ORDER = Schema.decodeUnknownSync(ShopWork.ListOrdersInput)({
+  limit: 25,
+  cursor: null,
+  q: null,
+  show: "all",
+  team: null,
+});
+
 /** No close arrives within a moment. */
 const assertOpen = (closes: Queue.Dequeue<unknown>) =>
   Effect.gen(function* () {
@@ -79,23 +100,38 @@ test(
   "two sockets share one actor: a write on one notifies both",
   Effect.gen(function* () {
     const { backendUrl } = yield* stack;
-    const cookie = yield* signIn(backendUrl, m1);
+    // A member of its own on a team with one ready task, so the write is a run's.
+    const sharer = email("share@e2e.test");
+    yield* addToFixture(
+      backendUrl,
+      key,
+      Schema.decodeUnknownSync(ShopFixtureData)({
+        members: [sharer],
+        teams: [{ name: "Share", members: [sharer] }],
+        workflows: [{ name: "Share", tag: "share", tasks: [{ name: "Cut", team: "Share" }] }],
+        orders: [{ n: 7001, lineItems: [{ title: "Ring", quantity: 1, tags: ["share"] }] }],
+      }),
+    );
+    const cookie = yield* signIn(backendUrl, sharer);
     yield* Effect.gen(function* () {
       const a = yield* open(backendUrl, { cookie });
       const b = yield* open(backendUrl, { cookie });
-      const before = yield* a.client.MemberGetCount();
-      const after = yield* a.client.MemberIncrement();
-      assert.strictEqual(after.value, before.value + 1);
+      const ready = yield* a.client.MemberListRuns(listOf("ready"));
+      const task = ready.items[0]?.tasks[0];
+      if (task === undefined) return yield* Effect.die(new Error("no ready task"));
+      const started = yield* a.client.MemberStartTask({ runTaskId: task.id });
+      assert.deepStrictEqual(started, { _tag: "Ok" });
 
       const notice = yield* PubSub.take(b.received).pipe(Effect.timeout("5 seconds"));
-      assert.deepStrictEqual(notice, { _tag: "ShopActorNotice", invalidated: [COUNT_KEY] });
-      assert.deepStrictEqual(yield* b.client.MemberGetCount(), after);
+      assert.deepStrictEqual(notice, { _tag: "ShopActorNotice", invalidated: [ORDERS_KEY] });
+      const mine = yield* b.client.MemberListRuns(listOf("started_by_you"));
+      assert.deepStrictEqual([mine.counts.ready, mine.counts.started_by_you], [0, 1]);
     }).pipe(Effect.scoped);
   }),
 );
 
 test(
-  "roles: a merchant resets and a member may not; a member increments and a merchant may not",
+  "roles: a merchant reads the orders index and a member may not; a member reads the workflows list and a merchant may not",
   Effect.gen(function* () {
     const { backendUrl } = yield* stack;
     const cookie = yield* signIn(backendUrl, m1);
@@ -104,11 +140,12 @@ test(
       const merchant = yield* open(backendUrl, { token });
       const member = yield* open(backendUrl, { cookie });
       assert.deepStrictEqual(yield* merchant.client.MerchantWhoAmI(), { role: "merchant" });
-      assert.deepStrictEqual(yield* merchant.client.MerchantResetCount(), { value: 0 });
+      yield* merchant.client.MerchantListOrders(EVERY_ORDER);
+      yield* member.client.MemberListRuns(listOf("ready"));
       for (const error of [
-        yield* member.client.MerchantResetCount().pipe(Effect.flip),
-        yield* member.client.MerchantGetCount().pipe(Effect.flip),
-        yield* merchant.client.MemberIncrement().pipe(Effect.flip),
+        yield* member.client.MerchantListOrders(EVERY_ORDER).pipe(Effect.flip),
+        yield* member.client.MerchantWhoAmI().pipe(Effect.flip),
+        yield* merchant.client.MemberListRuns(listOf("ready")).pipe(Effect.flip),
       ])
         assert.strictEqual(error._tag, "Forbidden");
     }).pipe(Effect.scoped);
@@ -128,7 +165,7 @@ test(
       const caller = yield* socket.client.MemberWhoAmI();
       assert.strictEqual(caller.role, "member");
       assert.strictEqual(caller.role === "member" && caller.memberEmail, m1);
-      const error = yield* socket.client.MerchantGetCount().pipe(Effect.flip);
+      const error = yield* socket.client.MerchantListOrders(EVERY_ORDER).pipe(Effect.flip);
       assert.strictEqual(error._tag, "Forbidden");
     }).pipe(Effect.scoped);
   }),

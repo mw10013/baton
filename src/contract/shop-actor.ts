@@ -71,9 +71,6 @@ import {
 } from "./members.ts";
 import { OrdersSyncFailure } from "./shopify.ts";
 
-export const Count = Schema.Struct({ value: Schema.Int });
-export type Count = typeof Count.Type;
-
 /**
  * A dev aid: an id minted once per activation of the actor. The same id across calls means the
  * same activation; a new id after an idle period shows the object hibernated and was rebuilt.
@@ -93,9 +90,6 @@ export type Notice = typeof Notice.Type;
 
 /** A {@link Notice} as the JSON text frame it travels in. */
 export const NoticeFrame = Schema.fromJsonString(Notice);
-
-/** The `count` reactivity key. */
-export const COUNT_KEY = "count";
 
 /**
  * The orders' and their runs' reactivity key: an order or one of its runs changed (a write that
@@ -211,10 +205,6 @@ export const CONNECTION_CLOSE_UNINSTALLED = 4410;
 /** At most this many sockets per member (Baton's `maxConnectionsPerMember`); merchants are not capped. */
 export const MAX_CONNECTIONS_PER_MEMBER = 2;
 
-/** What `ShopActor.snapshot` returns for the Backend: the page's first data, read at once. */
-export const ShopSnapshot = Schema.Struct({ count: Count, activation: Activation });
-export type ShopSnapshot = typeof ShopSnapshot.Type;
-
 /**
  * A member's procedures, served on the socket only. Each `Require…` admits exactly its role, so
  * a read both roles may make is declared once per role, as Baton does, never with a role switch
@@ -222,8 +212,6 @@ export type ShopSnapshot = typeof ShopSnapshot.Type;
  * {@link ConnectionMiddleware} provides.
  */
 export const MemberRpcs = RpcGroup.make(
-  Rpc.make("MemberGetCount", { success: Count }),
-  Rpc.make("MemberIncrement", { success: Count }),
   Rpc.make("MemberActivation", { success: Activation }),
   Rpc.make("MemberWhoAmI", { success: ConnectionCaller }),
   Rpc.make("MemberListRuns", { payload: LiveRunsInput, success: WorkflowsListData }),
@@ -245,8 +233,6 @@ export const MemberRpcs = RpcGroup.make(
  * union's `_tag`, and a fault is a defect.
  */
 export const MerchantRpcs = RpcGroup.make(
-  Rpc.make("MerchantGetCount", { success: Count }),
-  Rpc.make("MerchantResetCount", { success: Count }),
   Rpc.make("MerchantWhoAmI", { success: ConnectionCaller }),
   Rpc.make("MerchantListOrders", { payload: ListOrdersInput, success: OrdersIndexData }),
   Rpc.make("MerchantGetOrderDetail", {

@@ -8,8 +8,8 @@ import {
   applyCloseOutcome,
   closeOutcome,
   connectionStateAtom,
+  membershipChangedAtom,
   merchantExpiredAtom,
-  notAMemberAtom,
   retryPolicy,
   uninstalledAtom,
 } from "../../../../src/web/client/actor-connection.ts";
@@ -60,7 +60,7 @@ describe("close outcome", () => {
     { code: CONNECTION_CLOSE_DISPLACED, merchant: false, outcome: "displaced" },
     { code: CONNECTION_CLOSE_UNINSTALLED, merchant: false, outcome: "uninstalled" },
     { code: CONNECTION_CLOSE_UNINSTALLED, merchant: true, outcome: "uninstalled" },
-    { code: CONNECTION_CLOSE_REVOKED, merchant: false, outcome: "lost" },
+    { code: CONNECTION_CLOSE_REVOKED, merchant: false, outcome: "revoked" },
     { code: CONNECTION_CLOSE_TRY_AGAIN, merchant: true, outcome: "lost" },
   ] as const)("$code for a merchant: $merchant is $outcome", ({ code, merchant, outcome }) => {
     assert.strictEqual(closeOutcome(closed(code), merchant), outcome);
@@ -70,47 +70,48 @@ describe("close outcome", () => {
     {
       outcome: "expired",
       state: "forbidden",
-      notAMember: false,
+      changed: 0,
       expired: true,
       uninstalled: false,
     },
     {
       outcome: "not-a-member",
       state: "forbidden",
-      notAMember: true,
+      changed: 1,
       expired: false,
       uninstalled: false,
     },
     {
       outcome: "displaced",
       state: "displaced",
-      notAMember: false,
+      changed: 0,
       expired: false,
       uninstalled: false,
     },
     {
       outcome: "uninstalled",
       state: "forbidden",
-      notAMember: false,
+      changed: 1,
       expired: false,
       uninstalled: true,
     },
     {
       outcome: "forbidden",
       state: "forbidden",
-      notAMember: false,
+      changed: 0,
       expired: false,
       uninstalled: false,
     },
-    { outcome: "lost", state: "lost", notAMember: false, expired: false, uninstalled: false },
+    { outcome: "revoked", state: "lost", changed: 1, expired: false, uninstalled: false },
+    { outcome: "lost", state: "lost", changed: 0, expired: false, uninstalled: false },
   ] as const)(
     "$outcome leaves the page $state",
-    ({ outcome, state, notAMember, expired, uninstalled }) =>
+    ({ outcome, state, changed, expired, uninstalled }) =>
       Effect.gen(function* () {
         const registry = AtomRegistry.make();
         yield* applyCloseOutcome(registry, outcome);
         assert.strictEqual(registry.get(connectionStateAtom), state);
-        assert.strictEqual(registry.get(notAMemberAtom), notAMember);
+        assert.strictEqual(registry.get(membershipChangedAtom), changed);
         assert.strictEqual(registry.get(merchantExpiredAtom), expired);
         assert.strictEqual(registry.get(uninstalledAtom), uninstalled);
         registry.dispose();

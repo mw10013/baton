@@ -222,7 +222,7 @@ describe("Fixtures.load", () => {
         Layer.mergeAll(
           ShopSessionRepository.layerTest(sessions),
           testMembershipRepository(prior),
-          ShopActors.layerTest(revoked, undefined, loaded),
+          ShopActors.layerTest(revoked, loaded),
         ),
       ),
     );

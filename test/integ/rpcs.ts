@@ -171,7 +171,11 @@ export const IntegHandlers = IntegRpcs.toLayer(
             return yield* Effect.die(new Error(`${email} is neither a user nor a member`));
           yield* auth.api
             .signInMagicLink({
-              body: { email, callbackURL: returnTo ?? "/shop", errorCallbackURL: "/sign-in" },
+              body: {
+                email,
+                callbackURL: returnTo ?? "/login-callback",
+                errorCallbackURL: "/sign-in",
+              },
               headers: new Headers(headers),
             })
             .pipe(Effect.orDie);

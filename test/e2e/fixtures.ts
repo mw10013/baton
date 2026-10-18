@@ -80,6 +80,12 @@ export const testEmail = (name: string): E2eEmail => {
   return Schema.decodeUnknownSync(E2eEmail)(`${name}-${testId}-${retry}@e2e.test`);
 };
 
+/** The test's own tail for names and tags: its id and its retry, so a retry adds afresh. */
+export const own = () => {
+  const { testId, retry } = test.info();
+  return `${testId.slice(-8)}${String(retry)}`;
+};
+
 /**
  * A member of its own: a {@link testEmail} address added to {@link E2E_SHOP} with `AddToFixture`
  * and signed in through the sign-in form, in a fresh browser context. A test that signs out, is
@@ -96,17 +102,26 @@ export const ownMember = async (browser: Browser, backend: Run, name: string) =>
       }),
     ),
   );
+  return { email, ...(await signInMember(browser, email)) };
+};
+
+/**
+ * Signs `email` in through the sign-in form in a fresh browser context and waits for the landing:
+ * a member of the e2e store alone lands on its workflows list.
+ */
+export const signInMember = async (browser: Browser, email: E2eEmail) => {
   const context = await browser.newContext({ storageState: { cookies: [], origins: [] } });
   const page = await context.newPage();
   await signInWithForm(page, email);
-  await page.waitForURL(/\/shop$/);
-  return { email, context, page };
+  await page.waitForURL(/\/shop\/[^/]+\/workflows$/u);
+  return { context, page };
 };
 
 /**
  * Resolves once the next actor socket the page opens has answered a call successfully. The
- * page refetches the count on every connect, and the actor names a socket when it accepts it,
- * so that answer means the actor holds the socket (revocable, displaceable, counted). Start it
+ * page refetches what it shows (the workflows list) on every connect, and the actor names a
+ * socket when it accepts it, so that answer means the actor holds the socket (revocable,
+ * displaceable, counted). Start it
  * before the navigation or click that opens the socket, and await it after.
  */
 export const nextOpenSocket = (page: Page) =>

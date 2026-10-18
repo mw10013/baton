@@ -1,0 +1,71 @@
+import type { WorkflowsListState } from "../../domain/shop-work.ts";
+
+/**
+ * The strip's order, left to right, answers who has the work: the member, then someone else,
+ * then nobody (ready for anyone on the member's teams), then a person holding it back (blocked),
+ * then nobody any more (done or closed). On a phone the strip is three columns (`Strip`), so its
+ * first line is Started by you, Started by others and Ready: the two Started states side by side,
+ * and the three with work in hand together. The member's own state leads because it is the one
+ * the member lands on and returns to between tasks; Blocked does not have to lead to be seen,
+ * because its count is on the strip whatever value is chosen.
+ *
+ * Presentation only. Which state a row is in, and how many of each the read counts, are the
+ * actor's (`listStateOf`, `RunQuery`): one read returns one state's rows, so the page cannot
+ * group rows it does not hold. What a state is: {@link WorkflowsListState}.
+ */
+export const STATES = [
+  "started_by_you",
+  "started_by_others",
+  "ready",
+  "blocked",
+  "done",
+] as const satisfies readonly WorkflowsListState[];
+
+/**
+ * Four of the labels are the vocabulary's state words, so the list and the member's workflow page
+ * say the same word for one fact: a row under Ready opens on a task that reads Ready.
+ *
+ * `started_by_you` and `started_by_others` read **Started by you** and **Started by others**:
+ * both hold started tasks and differ only in who started them. "Teammates" was wrong for a task
+ * the merchant started, which lands in `started_by_others` (`listStateOf`) and is nobody's
+ * teammate.
+ *
+ * `ready` reads **Ready**, the task state its rows are in (`taskStateOf`): current, and nobody
+ * has it. "Up next" read as later, which is the vocabulary's waiting, and those tasks are not
+ * listed.
+ *
+ * `blocked` reads **Blocked**: a block is the only thing it holds, and a Shopify change never
+ * lands here.
+ *
+ * `done` reads **Done or closed**, the two run- and task-state words for what it holds
+ * (`RecentItem`): "Done" alone would be wrong for a workflow Shopify closed, and a time word
+ * ("Recent") named the window and not the contents. The window is `DONE_WINDOW_MS`; the empty
+ * state says "in the last day", which is where that precision belongs.
+ *
+ * Each key is the label's words, so a URL reads as the screen does.
+ */
+export const STATE_LABEL: Record<WorkflowsListState, string> = {
+  started_by_you: "Started by you",
+  started_by_others: "Started by others",
+  ready: "Ready",
+  blocked: "Blocked",
+  done: "Done or closed",
+};
+
+/** What an empty state says, and which state it points at. */
+export const STATE_EMPTY: Record<
+  WorkflowsListState,
+  { readonly text: string; readonly goTo: WorkflowsListState | null }
+> = {
+  started_by_you: { text: "Nothing started by you.", goTo: "ready" },
+  started_by_others: { text: "Nothing started by others.", goTo: null },
+  ready: { text: "Nothing is ready.", goTo: null },
+  blocked: { text: "Nothing is blocked.", goTo: null },
+  done: { text: "Nothing done or closed in the last day.", goTo: null },
+};
+
+/**
+ * The start of a search's empty line, "Nothing matches <term>": one sentence and a Clear search
+ * button, the rule for a search with nothing matching.
+ */
+export const SEARCH_EMPTY = "Nothing matches";

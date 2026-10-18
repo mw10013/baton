@@ -6,6 +6,7 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import { ShopKey } from "../../src/contract/shop.ts";
 import { CONNECTION_CLOSE_REVOKED, type MemberCaller } from "../../src/contract/shop-actor.ts";
+import * as ShopWork from "../../src/domain/shop-work.ts";
 import {
   addToFixture,
   connectAs,
@@ -35,6 +36,17 @@ afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack));
 
 /** A seeded shop of its own, so no other file shares its actor. */
 const key = Schema.decodeUnknownSync(ShopKey)("other-shop.myshopify.com");
+
+/** One page of Ready, every team. */
+const READY = Schema.decodeUnknownSync(ShopWork.RunQuery)({
+  team: null,
+  state: "ready",
+  limit: ShopWork.RUN_PAGE,
+  q: null,
+});
+
+/** A run id no run has. */
+const missingRun = Schema.decodeUnknownSync(ShopWork.RunIdInput)({ runId: "no-such-run" }).runId;
 
 /** A member identity no sign-in produces, for the test Backend's forged-caller route. */
 const memberAs = (memberId: string, sessionExpiresAt: number): MemberCaller => ({
@@ -94,8 +106,11 @@ test(
       yield* a.client.MemberWhoAmI().pipe(Effect.forkScoped);
       assert.strictEqual(yield* nextCloseCode(a.closes), CONNECTION_CLOSE_REVOKED);
 
-      const count = yield* b.client.MemberIncrement();
-      assert.deepStrictEqual(yield* b.client.MemberGetCount(), count);
+      // A read and a write, both dispatched: the write's run is none of b's, so it answers.
+      const list = yield* b.client.MemberListRuns({ query: READY });
+      assert.strictEqual(list.counts.ready, 0);
+      const noted = yield* b.client.MemberSetRunNote({ runId: missingRun, note: null });
+      assert.deepStrictEqual(noted, { _tag: "NotFound" });
       assert.strictEqual((yield* b.client.MemberActivation()).id, before.id, "no reset");
       const c = yield* openAs(backendUrl, key, memberAs("facts-c", Date.now() + 600_000));
       assert.strictEqual(

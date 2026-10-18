@@ -26,7 +26,8 @@ export const Route = createFileRoute("/sign-in")({
   }),
   beforeLoad: async () => {
     const me = await getMe();
-    if (me !== null) throw redirect({ to: homeFor(me.role) });
+    if (me !== null)
+      throw redirect({ to: me.role === "admin" ? homeFor(me.role) : "/login-callback" });
   },
   component: function SignInRoute() {
     const { redirect, error } = Route.useSearch();

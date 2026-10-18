@@ -26,8 +26,9 @@ const EXPIRED = "Your Shopify session expired.";
  * is one people learn to skip; its copy says what being down costs.
  *
  * For a merchant it also says when the socket ended for good: the shop uninstalled Baton, or the
- * Shopify session token is no longer accepted. A member's page replaces its body with those
- * instead (`ShopPage`), so the member banner leaves them to it.
+ * Shopify session token is no longer accepted. A member's token never expires, and an uninstall
+ * reruns the member shop layout's loader instead (`membershipChangedAtom`), which then answers
+ * "No access", so the member banner leaves both to it.
  *
  * Each sentence is the banner's `heading`: Polaris puts `role="alert"` on an element inside its
  * shadow root, and only the heading is rendered inside it.

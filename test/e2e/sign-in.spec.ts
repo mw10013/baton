@@ -1,13 +1,15 @@
 import { expect, test, testEmail } from "./fixtures.ts";
-import { requestMagicLink, signIn } from "./screens.ts";
+import { memberShop, requestMagicLink, signIn } from "./screens.ts";
+import { E2E_SHOP } from "./shop-fixture.ts";
 
 // Inline delivery shows the link on the page; a deployed stage mails it instead.
 test("a member signs in with the link the page shows", async ({ goto, page }) => {
   await goto("/sign-in");
   await requestMagicLink(page, "m1@m.com");
   await signIn(page).openLink.click();
-  await page.waitForURL(/\/shop$/);
-  await expect(page.getByRole("heading", { name: "Your stores" })).toBeVisible();
+  // The e2e store's member belongs to that one store, so the link lands on its workflows list.
+  await page.waitForURL(new RegExp(`/shop/${E2E_SHOP}/workflows$`, "u"));
+  await expect(memberShop(page).workflows).toBeVisible();
 });
 
 /**

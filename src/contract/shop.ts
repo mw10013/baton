@@ -13,14 +13,14 @@ export const ShopKey = Schema.String.check(
 export type ShopKey = typeof ShopKey.Type;
 
 /**
- * `shopSnapshot`'s input, shared by both sides of the binding; see `ShoutInput`. `sessionToken`
+ * `shopAccess`'s input, shared by both sides of the binding; see `ShoutInput`. `sessionToken`
  * is a merchant's Shopify session token; its absence makes the caller a member.
  */
-export const ShopSnapshotInput = Schema.Struct({
+export const ShopAccessInput = Schema.Struct({
   key: ShopKey,
   sessionToken: Schema.optional(Schema.String),
 });
-export type ShopSnapshotInput = typeof ShopSnapshotInput.Type;
+export type ShopAccessInput = typeof ShopAccessInput.Type;
 
 /**
  * The caller is signed in, or holds a valid Shopify token, but may not open this shop: an

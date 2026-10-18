@@ -3,7 +3,7 @@ import http from "node:http";
 import { ShopKey } from "../../src/contract/shop.ts";
 import { CONNECTION_CLOSE_NOT_A_MEMBER } from "../../src/contract/shop-actor.ts";
 import { awaitHydration, expect, ownMember, test } from "./fixtures.ts";
-import { shop } from "./screens.ts";
+import { memberShop } from "./screens.ts";
 import { E2E_SHOP } from "./shop-fixture.ts";
 
 test.use({ storageState: "playwright/.auth/member.json" });
@@ -62,8 +62,8 @@ test("a visitor who is not a member sees the not-a-member page, and the gate clo
   const otherShop = Schema.decodeUnknownSync(ShopKey)("no-such-shop.myshopify.com");
   await page.goto(`/shop/${otherShop}`);
   await awaitHydration(page);
-  await expect(shop(page).notAMember).toBeVisible();
-  await expect(shop(page).count).toHaveCount(0);
+  await expect(memberShop(page).noAccess).toBeVisible();
+  await expect(memberShop(page).workflows).toHaveCount(0);
 
   const code = await page.evaluate(
     (path) =>

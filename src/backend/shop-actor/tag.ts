@@ -1,6 +1,5 @@
 import * as Cloudflare from "alchemy/Cloudflare";
 import type * as Effect from "effect/Effect";
-import type { ShopSnapshot } from "../../contract/shop-actor.ts";
 import type { OrderDetail } from "../../domain/orders.ts";
 import type {
   GetOrderDetailInput,
@@ -36,7 +35,6 @@ export interface ShopActorShape {
     readonly by: "member" | "session";
     readonly id: string;
   }) => Effect.Effect<{ closed: number }>;
-  readonly snapshot: () => Effect.Effect<ShopSnapshot>;
   readonly loadFixture: (rows: ActorFixtureRows) => Effect.Effect<ActorFixtureCounts>;
   readonly addFixture: (rows: ActorFixtureRows) => Effect.Effect<ActorFixtureAdded>;
   readonly applyFixture: (input: {

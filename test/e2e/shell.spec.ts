@@ -15,7 +15,8 @@ test.describe("as a member", () => {
     // Polaris renders the link text in a shadow root, so the links are found by accessible name.
     await expect(page.getByRole("link", { name: /\.myshopify\.com$/ })).toHaveCount(1);
     await page.getByRole("link", { name: E2E_SHOP }).click();
-    await expect(page).toHaveURL(new RegExp(`/shop/${E2E_SHOP}$`));
+    // The shop's root is its workflows list.
+    await expect(page).toHaveURL(new RegExp(`/shop/${E2E_SHOP}/workflows$`));
   });
 });
 

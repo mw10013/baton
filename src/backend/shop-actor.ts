@@ -13,7 +13,6 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
-import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
@@ -41,10 +40,8 @@ import {
   CONNECTION_CLOSE_REVOKED,
   CONNECTION_CLOSE_UNINSTALLED,
   CONNECTION_HEADER,
-  COUNT_KEY,
   ConnectionCaller,
   ConnectionMiddleware,
-  Count,
   CurrentCaller,
   MAX_CONNECTIONS_PER_MEMBER,
   NoticeFrame,
@@ -52,7 +49,6 @@ import {
   RequireMember,
   RequireMerchant,
   ShopActorRpcs,
-  type ShopSnapshot,
   SYNC_KEY,
 } from "../contract/shop-actor.ts";
 import * as ActorSocket from "./actor-socket.ts";
@@ -449,17 +445,6 @@ const makeShopActor = Effect.gen(function* () {
     const flushUsage: Effect.Effect<void> = Effect.void;
     const runRepository = makeRunRepository(sql, transaction, countOrder);
 
-    /**
-     * The count the shop page shows, in memory: an example of the socket's reads, writes and
-     * notices, not shop data. It starts at 0 on every activation, so a hibernation resets it.
-     */
-    const count = yield* Ref.make(0);
-    const readCount = Ref.get(count).pipe(Effect.map((value): Count => ({ value })));
-    const increment = Ref.updateAndGet(count, (value) => value + 1).pipe(
-      Effect.map((value): Count => ({ value })),
-    );
-    const resetCount = Ref.setAndGet(count, 0).pipe(Effect.map((value): Count => ({ value })));
-
     const sendNotice = Effect.fn("ShopActor.notify")(function* (
       invalidated: ReadonlyArray<string>,
     ) {
@@ -591,10 +576,6 @@ const makeShopActor = Effect.gen(function* () {
     );
 
     const handlers = ShopActorRpcs.toLayer({
-      MemberGetCount: () => readCount,
-      MerchantGetCount: () => readCount,
-      MemberIncrement: () => increment.pipe(Effect.tap(() => notify([COUNT_KEY]))),
-      MerchantResetCount: () => resetCount.pipe(Effect.tap(() => notify([COUNT_KEY]))),
       MemberActivation: () => Effect.succeed({ id: activationId }),
       MemberWhoAmI: () => Effect.service(CurrentCaller),
       MerchantWhoAmI: () => Effect.service(CurrentCaller),
@@ -744,15 +725,6 @@ const makeShopActor = Effect.gen(function* () {
       yield* Effect.logInfo(`ShopActor.revoke: shop=${shop} by=${input.by} closed=${closed}`);
       return { closed };
     }, Effect.provide(runtime));
-
-    /** The page's first data, for the Backend's server-rendering read. */
-    const snapshot = Effect.fn("ShopActor.snapshot")(function* () {
-      const result: ShopSnapshot = {
-        count: yield* readCount,
-        activation: { id: activationId },
-      };
-      return result;
-    });
 
     /** The shop's work rows, read back. */
     const countWork = Effect.gen(function* () {
@@ -1129,7 +1101,6 @@ const makeShopActor = Effect.gen(function* () {
 
     const stub: ShopActorShape = {
       revoke,
-      snapshot,
       loadFixture,
       addFixture,
       applyFixture,

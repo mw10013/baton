@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as AppRouteImport } from './routes/app'
+import { Route as LoginCallbackRouteImport } from './routes/login-callback'
 import { Route as ShopRouteImport } from './routes/shop'
 import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
@@ -39,6 +40,8 @@ import { Route as AppWorkflowsIndexRouteImport } from './routes/app.workflows.in
 import { Route as AppWorkflowsWorkflowIdRouteImport } from './routes/app.workflows.$workflowId'
 import { Route as ShopKeyIndexRouteImport } from './routes/shop.$key.index'
 import { Route as AppWorkflowsWorkflowIdEditRouteImport } from './routes/app.workflows.$workflowId_.edit'
+import { Route as ShopKeyWorkflowsIndexRouteImport } from './routes/shop.$key.workflows.index'
+import { Route as ShopKeyWorkflowsRunIdRouteImport } from './routes/shop.$key.workflows.$runId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -53,6 +56,11 @@ const AdminRoute = AdminRouteImport.update({
 const AppRoute = AppRouteImport.update({
   id: '/app',
   path: '/app',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LoginCallbackRoute = LoginCallbackRouteImport.update({
+  id: '/login-callback',
+  path: '/login-callback',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ShopRoute = ShopRouteImport.update({
@@ -191,11 +199,22 @@ const AppWorkflowsWorkflowIdEditRoute =
     path: '/$workflowId/edit',
     getParentRoute: () => AppWorkflowsRoute,
   } as any)
+const ShopKeyWorkflowsIndexRoute = ShopKeyWorkflowsIndexRouteImport.update({
+  id: '/workflows/',
+  path: '/workflows/',
+  getParentRoute: () => ShopKeyRoute,
+} as any)
+const ShopKeyWorkflowsRunIdRoute = ShopKeyWorkflowsRunIdRouteImport.update({
+  id: '/workflows/$runId',
+  path: '/workflows/$runId',
+  getParentRoute: () => ShopKeyRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/admin': typeof AdminRouteWithChildren
   '/app': typeof AppRouteWithChildren
+  '/login-callback': typeof LoginCallbackRoute
   '/shop': typeof ShopRouteWithChildren
   '/sign-in': typeof SignInRoute
   '/admin/members': typeof AdminMembersRoute
@@ -223,9 +242,12 @@ export interface FileRoutesByFullPath {
   '/app/workflows/': typeof AppWorkflowsIndexRoute
   '/shop/$key/': typeof ShopKeyIndexRoute
   '/app/workflows/$workflowId/edit': typeof AppWorkflowsWorkflowIdEditRoute
+  '/shop/$key/workflows/$runId': typeof ShopKeyWorkflowsRunIdRoute
+  '/shop/$key/workflows/': typeof ShopKeyWorkflowsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/login-callback': typeof LoginCallbackRoute
   '/sign-in': typeof SignInRoute
   '/admin/members': typeof AdminMembersRoute
   '/api/dev': typeof ApiDevRoute
@@ -249,12 +271,15 @@ export interface FileRoutesByTo {
   '/app/workflows': typeof AppWorkflowsIndexRoute
   '/shop/$key': typeof ShopKeyIndexRoute
   '/app/workflows/$workflowId/edit': typeof AppWorkflowsWorkflowIdEditRoute
+  '/shop/$key/workflows/$runId': typeof ShopKeyWorkflowsRunIdRoute
+  '/shop/$key/workflows': typeof ShopKeyWorkflowsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/admin': typeof AdminRouteWithChildren
   '/app': typeof AppRouteWithChildren
+  '/login-callback': typeof LoginCallbackRoute
   '/shop': typeof ShopRouteWithChildren
   '/sign-in': typeof SignInRoute
   '/admin/members': typeof AdminMembersRoute
@@ -282,6 +307,8 @@ export interface FileRoutesById {
   '/app/workflows/': typeof AppWorkflowsIndexRoute
   '/shop/$key/': typeof ShopKeyIndexRoute
   '/app/workflows/$workflowId_/edit': typeof AppWorkflowsWorkflowIdEditRoute
+  '/shop/$key/workflows/$runId': typeof ShopKeyWorkflowsRunIdRoute
+  '/shop/$key/workflows/': typeof ShopKeyWorkflowsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -289,6 +316,7 @@ export interface FileRouteTypes {
     | '/'
     | '/admin'
     | '/app'
+    | '/login-callback'
     | '/shop'
     | '/sign-in'
     | '/admin/members'
@@ -316,9 +344,12 @@ export interface FileRouteTypes {
     | '/app/workflows/'
     | '/shop/$key/'
     | '/app/workflows/$workflowId/edit'
+    | '/shop/$key/workflows/$runId'
+    | '/shop/$key/workflows/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/login-callback'
     | '/sign-in'
     | '/admin/members'
     | '/api/dev'
@@ -342,11 +373,14 @@ export interface FileRouteTypes {
     | '/app/workflows'
     | '/shop/$key'
     | '/app/workflows/$workflowId/edit'
+    | '/shop/$key/workflows/$runId'
+    | '/shop/$key/workflows'
   id:
     | '__root__'
     | '/'
     | '/admin'
     | '/app'
+    | '/login-callback'
     | '/shop'
     | '/sign-in'
     | '/admin/members'
@@ -374,12 +408,15 @@ export interface FileRouteTypes {
     | '/app/workflows/'
     | '/shop/$key/'
     | '/app/workflows/$workflowId_/edit'
+    | '/shop/$key/workflows/$runId'
+    | '/shop/$key/workflows/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdminRoute: typeof AdminRouteWithChildren
   AppRoute: typeof AppRouteWithChildren
+  LoginCallbackRoute: typeof LoginCallbackRoute
   ShopRoute: typeof ShopRouteWithChildren
   SignInRoute: typeof SignInRoute
   ApiDevRoute: typeof ApiDevRoute
@@ -412,6 +449,13 @@ declare module '@tanstack/react-router' {
       path: '/app'
       fullPath: '/app'
       preLoaderRoute: typeof AppRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/login-callback': {
+      id: '/login-callback'
+      path: '/login-callback'
+      fullPath: '/login-callback'
+      preLoaderRoute: typeof LoginCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/shop': {
@@ -603,6 +647,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppWorkflowsWorkflowIdEditRouteImport
       parentRoute: typeof AppWorkflowsRoute
     }
+    '/shop/$key/workflows/': {
+      id: '/shop/$key/workflows/'
+      path: '/workflows'
+      fullPath: '/shop/$key/workflows/'
+      preLoaderRoute: typeof ShopKeyWorkflowsIndexRouteImport
+      parentRoute: typeof ShopKeyRoute
+    }
+    '/shop/$key/workflows/$runId': {
+      id: '/shop/$key/workflows/$runId'
+      path: '/workflows/$runId'
+      fullPath: '/shop/$key/workflows/$runId'
+      preLoaderRoute: typeof ShopKeyWorkflowsRunIdRouteImport
+      parentRoute: typeof ShopKeyRoute
+    }
   }
 }
 
@@ -674,10 +732,14 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 
 interface ShopKeyRouteChildren {
   ShopKeyIndexRoute: typeof ShopKeyIndexRoute
+  ShopKeyWorkflowsRunIdRoute: typeof ShopKeyWorkflowsRunIdRoute
+  ShopKeyWorkflowsIndexRoute: typeof ShopKeyWorkflowsIndexRoute
 }
 
 const ShopKeyRouteChildren: ShopKeyRouteChildren = {
   ShopKeyIndexRoute: ShopKeyIndexRoute,
+  ShopKeyWorkflowsRunIdRoute: ShopKeyWorkflowsRunIdRoute,
+  ShopKeyWorkflowsIndexRoute: ShopKeyWorkflowsIndexRoute,
 }
 
 const ShopKeyRouteWithChildren =
@@ -699,6 +761,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdminRoute: AdminRouteWithChildren,
   AppRoute: AppRouteWithChildren,
+  LoginCallbackRoute: LoginCallbackRoute,
   ShopRoute: ShopRouteWithChildren,
   SignInRoute: SignInRoute,
   ApiDevRoute: ApiDevRoute,

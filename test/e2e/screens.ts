@@ -13,14 +13,12 @@ export const shell = (page: Page) => ({
   members: page.getByRole("link", { name: "Members" }),
 });
 
-export const shop = (page: Page) => ({
-  count: page.getByRole("status", { name: "Count" }),
-  increment: page.getByRole("button", { name: "Increment" }),
-  activation: page.getByText(/^Activation /),
-  signedInAs: (email: string) => page.getByText(`Signed in as ${email} (member)`),
+/** The member shop layout: its socket banner and its "No access" page. */
+export const memberShop = (page: Page) => ({
+  workflows: page.locator('s-section[accessibilityLabel="Workflows"]'),
   signedInElsewhere: page.getByText("Signed in elsewhere"),
   reconnect: page.getByRole("button", { name: "Reconnect" }),
-  notAMember: page.getByText("You're not a member of this shop."),
+  noAccess: page.getByText("You no longer have access to this store."),
 });
 
 /** Submits the sign-in form on a hydrated `/sign-in` and waits for the confirmation. */
@@ -41,6 +39,6 @@ export const signInWithForm = async (page: Page, email: string) => {
   await awaitHydration(page);
   await requestMagicLink(page, email);
   await signIn(page).openLink.click();
-  await page.waitForURL(/\/(?:shop|admin)$/u);
+  await page.waitForURL(/\/(?:shop(?:\/[^/]+\/workflows)?|admin)$/u);
   await awaitHydration(page);
 };

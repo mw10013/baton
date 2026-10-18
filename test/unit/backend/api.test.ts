@@ -73,7 +73,6 @@ const seedSession: ShopSessionRow = {
   planHandleExpiresAt: 4102444800000,
   planBoundaryAt: null,
 };
-const snapshot = { count: { value: 3 }, activation: { id: "activation-1" } };
 
 /** A request with only a cookie, as a server function forwards it. */
 const withCookie = (cookie: string | undefined): RequestInfo => ({ cookie, ip: undefined });
@@ -88,7 +87,7 @@ const TestBackend = ({
   gate = Effect.succeed(merchant),
   memberRows = members,
   membershipRepositoryLayer,
-  actors = ShopActors.layerTest([], snapshot),
+  actors = ShopActors.layerTest([]),
   memberGate = Effect.die("no member gate in this test"),
 }: {
   delivery?: "inline" | "mailed";
@@ -231,14 +230,14 @@ describe("BackendApi.requestMagicLink", () => {
   );
 });
 
-describe("BackendApi.shopSnapshot", () => {
+describe("BackendApi.shopAccess", () => {
   const key: ShopKey = SEED_SHOP;
 
-  it.live("answers the gate's caller and the actor's snapshot", () =>
+  it.live("answers the gate's caller", () =>
     Effect.gen(function* () {
       const api = yield* BackendApi;
-      const answer = yield* api.shopSnapshot(withCookie(undefined), { key, sessionToken: "t" });
-      assert.deepStrictEqual(answer, { caller: merchant, snapshot });
+      const answer = yield* api.shopAccess(withCookie(undefined), { key, sessionToken: "t" });
+      assert.deepStrictEqual(answer, merchant);
     }).pipe(Effect.provide(TestBackend())),
   );
 
@@ -249,7 +248,7 @@ describe("BackendApi.shopSnapshot", () => {
   ] as const)("the gate's $status is $tag", ({ status, tag }) =>
     Effect.gen(function* () {
       const api = yield* BackendApi;
-      const error = yield* api.shopSnapshot(withCookie(undefined), { key }).pipe(Effect.flip);
+      const error = yield* api.shopAccess(withCookie(undefined), { key }).pipe(Effect.flip);
       assert.strictEqual(error._tag, tag);
     }).pipe(Effect.provide(TestBackend({ gate: Effect.fail(new ShopAccessDenied({ status })) }))),
   );
@@ -257,7 +256,7 @@ describe("BackendApi.shopSnapshot", () => {
   it.live("the gate's 503 is a defect", () =>
     Effect.gen(function* () {
       const api = yield* BackendApi;
-      const exit = yield* api.shopSnapshot(withCookie(undefined), { key }).pipe(Effect.exit);
+      const exit = yield* api.shopAccess(withCookie(undefined), { key }).pipe(Effect.exit);
       assert.isTrue(Exit.isFailure(exit) && Cause.hasDies(exit.cause));
     }).pipe(
       Effect.provide(TestBackend({ gate: Effect.fail(new ShopAccessDenied({ status: 503 })) })),
@@ -323,7 +322,7 @@ describe("BackendApi orders", () => {
             }),
         };
       }),
-    ).pipe(Layer.provide(ShopActors.layerTest([], snapshot)));
+    ).pipe(Layer.provide(ShopActors.layerTest([])));
   const badToken = mintSessionToken({ shop: SEED_SHOP, apiSecret: "other-secret" });
 
   it.live("each refuses a token signed with another secret, touching nothing", () => {
@@ -418,7 +417,7 @@ describe("BackendApi run loaders", () => {
             }),
         };
       }),
-    ).pipe(Layer.provide(ShopActors.layerTest([], snapshot)));
+    ).pipe(Layer.provide(ShopActors.layerTest([])));
   const query = { key: SEED_SHOP, state: "ready", team: null, limit: 25, q: null } as const;
 
   it.live(
@@ -567,7 +566,7 @@ describe("BackendApi workflows", () => {
             }),
         };
       }),
-    ).pipe(Layer.provide(ShopActors.layerTest([], snapshot)));
+    ).pipe(Layer.provide(ShopActors.layerTest([])));
 
   /** Every loader method of the workflows screens and the App Home, on `sessionToken`. */
   const everyMethod = (
