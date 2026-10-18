@@ -47,6 +47,10 @@ Found while researching slice C (`docs/members-teams-research.md`, parked). Lega
 
 Slices B and D are unaffected (pure). Slice A's ownership is reworked by an **architecture correction** with its own research and plan, before C resumes; C's research keeps its settled answers and is revised for A2 and A3.
 
+### 0.2 Amendment: naming by role (review, 2026-10-18)
+
+Found while researching slice E (`docs/workflows-research.md` Q2). The actor's per-area modules kept legacy's `…Agent` names (`OrdersAgent`, `MembersAgent`), which came from the Cloudflare Agents SDK and read here as further objects. Decided: one actor, one module per **area** of shop work (orders, membership, workflows, runs), named by role. Storage is `<Area>Repository` (one store's SQL, nothing else); the area's **application service** (its use cases: rules across stores, the repository call, closes, reconcile, notify, the answer) takes the area's bare name (`makeOrders`, `makeMembership`, `makeWorkflows`, `makeRuns`). `Members` becomes `MembershipRepository`, `ShopSessions` `ShopSessionRepository`, `OrdersBulkRepository` `OrdersBulkOperation` (it stores nothing). "Workflow" alone is the product's; Cloudflare's is the orders sync Workflow. Lands as E's first step. Supersedes the `…Agent` names in §3's rows and slice C's Q19 (`makeMembersAgent`). The same review adds `src/domain/workflow-layout.ts` (legacy's `WorkflowLayout`) beside Q3's four context files, inside shop work.
+
 ---
 
 ## 1. Where we stand
