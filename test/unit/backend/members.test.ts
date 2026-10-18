@@ -686,3 +686,72 @@ describe("Team", () => {
     ),
   );
 });
+
+describe("Members session cap and auth sweep", () => {
+  const ISO = (ms: number) => new Date(ms).toISOString();
+
+  /** A Better Auth `user` row and its `session` rows, created at the given times, by raw SQL. */
+  const seedSessions = (db: DatabaseSync, createdAt: ReadonlyArray<number>) => {
+    db.prepare(
+      "insert into user (id, name, email, emailVerified, createdAt, updatedAt) values ('u1', 'A', 'a@x.com', 0, '', '')",
+    ).run();
+    const insert = db.prepare(
+      "insert into session (id, expiresAt, token, createdAt, updatedAt, userId) values (?, ?, ?, ?, ?, 'u1')",
+    );
+    createdAt.forEach((at, n) =>
+      insert.run(`s${String(n)}`, ISO(Date.UTC(2100, 0, 1)), `t${String(n)}`, ISO(at), ISO(at)),
+    );
+  };
+
+  const sessionIds = (db: DatabaseSync) =>
+    db
+      .prepare("select id from session order by id")
+      .all()
+      .map((row) => String(row.id));
+
+  it.effect(
+    "keepNewestSessions keeps the session just created and the newest others up to the cap, and answers the rest",
+    () =>
+      run((repo, db) =>
+        Effect.gen(function* () {
+          // s3 is the session just created; it is kept although s2 is newer by the clock.
+          seedSessions(db, [1_000, 2_000, 4_000, 3_000]);
+          const kept = yield* repo.keepNewestSessions({ userId: "u1", sessionId: "s3", keep: 2 });
+          strictEqual(kept.email, "a@x.com");
+          strictEqual([...kept.deletedIds].sort().join(","), "s0,s1");
+          strictEqual(sessionIds(db).join(","), "s2,s3");
+          const again = yield* repo.keepNewestSessions({ userId: "u1", sessionId: "s3", keep: 2 });
+          strictEqual(again.deletedIds.length, 0);
+        }),
+      ),
+  );
+
+  // Live: the sweep reads the real clock, which the test clock holds at 1970.
+  it.live(
+    "sweepExpiredAuth deletes expired session and verification rows, and keeps live ones",
+    () =>
+      run((repo, db) =>
+        Effect.gen(function* () {
+          seedSessions(db, [1_000, 2_000]);
+          db.prepare("update session set expiresAt = ? where id = 's0'").run(
+            ISO(Date.UTC(2000, 0, 1)),
+          );
+          const verification = db.prepare(
+            "insert into verification (id, identifier, value, expiresAt, createdAt, updatedAt) values (?, 'x', 'y', ?, '', '')",
+          );
+          verification.run("v-old", ISO(Date.UTC(2000, 0, 1)));
+          verification.run("v-live", ISO(Date.UTC(2100, 0, 1)));
+          yield* repo.sweepExpiredAuth();
+          strictEqual(sessionIds(db).join(","), "s1");
+          strictEqual(
+            db
+              .prepare("select id from verification")
+              .all()
+              .map((row) => String(row.id))
+              .join(","),
+            "v-live",
+          );
+        }),
+      ),
+  );
+});

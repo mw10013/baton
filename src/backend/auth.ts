@@ -11,6 +11,7 @@ import * as Schema from "effect/Schema";
 import { Email, Me, Unauthorized } from "../contract/auth.ts";
 import { MagicLinkDelivery } from "./magic-link-delivery.ts";
 import { ShopActors } from "./shop-actors.ts";
+import { ShopLimits } from "../domain/platform.ts";
 import { Members } from "./members.ts";
 
 const MAGIC_LINK_TTL_SECONDS = 300;
@@ -127,6 +128,43 @@ export const makeAuth = (options: AuthOptions = {}) =>
           },
         },
         session: {
+          create: {
+            /**
+             * Holds `ShopLimits.maxSessionsPerMember`, which states the rule and its reasoning:
+             * keeps the session just created and the user's newest others up to the cap, deletes
+             * the rest ({@link Members}' `keepNewestSessions`), and closes each deleted session's
+             * sockets on every shop the email belongs to, so the signed-out device's socket goes
+             * back through the gate and is refused there.
+             *
+             * Best-effort, logged and swallowed like the expired-auth sweep: the session row is
+             * already written when this runs, and a failure here must never be the reason a
+             * person cannot sign in.
+             */
+            after: (session) =>
+              runPromise(
+                Effect.gen(function* () {
+                  const { deletedIds, email } = yield* members.keepNewestSessions({
+                    userId: session.userId,
+                    sessionId: session.id,
+                    keep: ShopLimits.maxSessionsPerMember,
+                  });
+                  if (deletedIds.length === 0 || email === null) return;
+                  yield* Effect.logInfo(
+                    `Auth.sessionCreate: email=${email} revoked=${String(deletedIds.length)}`,
+                  ).pipe(Effect.annotateLogs({ email, revoked: deletedIds.length }));
+                  for (const id of deletedIds) yield* revokeSession(email, id);
+                }).pipe(
+                  Effect.scoped,
+                  Effect.catchCause((cause) =>
+                    Effect.logWarning(
+                      `Auth.sessionCreate: userId=${session.userId}: session cap failed`,
+                      cause,
+                    ).pipe(Effect.annotateLogs({ userId: session.userId })),
+                  ),
+                  Effect.provide(RuntimeContext.phantom),
+                ),
+              ),
+          },
           delete: {
             // Sign-out, revoke, ban, password change and account deletion all delete sessions.
             after: (session, endpoint) =>
@@ -149,7 +187,25 @@ export const makeAuth = (options: AuthOptions = {}) =>
         magicLink({
           expiresIn: MAGIC_LINK_TTL_SECONDS,
           storeToken: "hashed",
-          sendMagicLink: ({ email: to, url }) => runPromise(delivery.deliver(to, url)),
+          sendMagicLink: ({ email: to, url }) =>
+            runPromise(
+              Effect.gen(function* () {
+                // The one request that creates a `verification` row pays to trim the expired ones,
+                // and the `session` rows those sign-ins left behind. Logged and swallowed on
+                // failure: storage housekeeping must never be the reason someone cannot sign in.
+                yield* members.sweepExpiredAuth().pipe(
+                  Effect.scoped,
+                  Effect.catchCause((cause) =>
+                    Effect.logWarning(
+                      `Auth.sendMagicLink: email=${to}: expired-auth sweep failed`,
+                      cause,
+                    ).pipe(Effect.annotateLogs({ email: to })),
+                  ),
+                  Effect.provide(RuntimeContext.phantom),
+                );
+                return yield* delivery.deliver(to, url);
+              }),
+            ),
         }),
         admin(),
       ],

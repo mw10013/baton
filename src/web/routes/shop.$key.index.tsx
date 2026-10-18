@@ -10,7 +10,7 @@ export const Route = createFileRoute("/shop/$key/")({
     const { key } = shopLayout.useParams();
     return (
       <>
-        <BackLink label="Member area" href="/shop" />
+        <BackLink label="Your stores" href="/shop" />
         <ShopPage role="member" shop={key} data={shopLayout.useLoaderData()} />
       </>
     );

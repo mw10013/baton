@@ -673,6 +673,67 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
     }, Effect.orDie);
 
     /**
+     * Deletes expired `session` and `verification` rows, `ShopLimits.sweepBatch` of each. Both
+     * tables only grow on the sign-in path, so the sign-in path is where they are trimmed: no
+     * alarm, no cron, and the cost lands on the request that created the rows in the first
+     * place. Better Auth already refuses an expired row, so this frees storage and nothing else,
+     * which is why the caller is expected to log and continue on failure rather than fail the
+     * sign-in. Better Auth stores its times as ISO text, so `now` is compared as one.
+     */
+    const sweepExpiredAuth = Effect.fn("Members.sweepExpiredAuth")(function* () {
+      const now = new Date(yield* Clock.currentTimeMillis).toISOString();
+      // `in (select ... limit ?)`, not `delete ... limit`: the latter needs a SQLite compile-time
+      // flag that is not guaranteed here.
+      yield* sql`
+        delete from session where id in (
+          select id from session where expiresAt < ${now}
+          limit ${ShopLimits.sweepBatch}
+        )
+      `;
+      yield* sql`
+        delete from verification where id in (
+          select id from verification where expiresAt < ${now}
+          limit ${ShopLimits.sweepBatch}
+        )
+      `;
+    }, Effect.orDie);
+
+    /**
+     * Deletes every `session` row of the user but `sessionId` and the newest `keep - 1` others,
+     * by `createdAt`, and answers the deleted rows' ids and the user's email. The rule is
+     * `ShopLimits.maxSessionsPerMember`; the caller is `Auth`'s `session.create.after` hook, with
+     * `sessionId` the one just created, which is kept whatever its `createdAt` because two
+     * sign-ins can read the same millisecond. A delete by SQL fires no Better Auth hook, so the
+     * caller closes the deleted sessions' sockets itself.
+     */
+    const keepNewestSessions = Effect.fn("Members.keepNewestSessions")(function* (params: {
+      readonly userId: string;
+      readonly sessionId: string;
+      readonly keep: number;
+    }) {
+      const others = Math.max(params.keep - 1, 0);
+      const deletedRows = yield* sql`
+        delete from session
+        where userId = ${params.userId}
+          and id != ${params.sessionId}
+          and id not in (
+            select id from session
+            where userId = ${params.userId} and id != ${params.sessionId}
+            order by createdAt desc, id desc
+            limit ${others}
+          )
+        returning id
+      `;
+      const users = yield* decodeRows(Schema.Array(Schema.Struct({ email: Schema.String })))(
+        yield* sql`select email from user where id = ${params.userId}`,
+      );
+      return {
+        deletedIds: (yield* decodeIds(deletedRows)).map((row) => row.id),
+        email: users[0]?.email ?? null,
+      };
+    }, Effect.orDie);
+
+    /**
      * Replaces one shop's `Member`, `Team` and `TeamMember` rows with `rows`, in one D1 batch,
      * which is atomic: D1 has no transaction (`withTransaction` dies on it). Deleting the shop's
      * members and teams removes their `TeamMember` edges by cascade. Every insert is its own
@@ -770,6 +831,8 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
       setTeamMember,
       addTeamMembers,
       findMemberAccess,
+      sweepExpiredAuth,
+      keepNewestSessions,
       replaceShop,
       identityNames,
       addToShop,

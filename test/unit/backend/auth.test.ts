@@ -18,7 +18,16 @@ import { SEED_SHOP } from "../../seed-shops.ts";
 import { ShopActors } from "../../../src/backend/shop-actors.ts";
 import { BackendApi, SignInLimiter } from "../../../src/backend/api.ts";
 import { MagicLinkDelivery } from "../../../src/backend/magic-link-delivery.ts";
-import { type MemberRow, QuietLogs, TEST_ORIGIN, testAuth, testShopify } from "./layers.ts";
+import {
+  makeD1Test,
+  type MemberRow,
+  QuietLogs,
+  seedD1,
+  TEST_ORIGIN,
+  testAuth,
+  testShopify,
+} from "./layers.ts";
+import { Members } from "../../../src/backend/members.ts";
 import { Auth } from "../../../src/backend/auth.ts";
 import { SentMail } from "../../../src/backend/mailer.ts";
 import { ShopAccess } from "../../../src/backend/shop-access.ts";
@@ -53,14 +62,17 @@ const revoked: Array<{ key: ShopKey; by: "member" | "session"; id: string }> = [
 const TestBackend = ({
   delivery,
   allow = true,
+  membersLayer,
 }: {
   delivery: "inline" | "mailed";
   allow?: boolean;
+  membersLayer?: Layer.Layer<Members>;
 }) =>
   BackendApi.layer.pipe(
     Layer.provideMerge(
       testAuth({
         members,
+        ...(membersLayer === undefined ? {} : { membersLayer }),
         actors: ShopActors.layerTest(revoked),
         delivery,
         extra: Layer.mergeAll(
@@ -194,6 +206,38 @@ describe("magic-link sign-in (inline delivery)", () => {
         [{ key: SEED_SHOP, by: "session" }],
       );
     }).pipe(Effect.provide(TestBackend({ delivery: "inline" }))),
+  );
+});
+
+describe("expired-auth sweep", () => {
+  /**
+   * The link request carries the sweep: `Auth`'s `sendMagicLink` runs `sweepExpiredAuth` on D1
+   * before it delivers. Better Auth itself runs on the in-memory adapter here, so the expired
+   * rows are seeded straight into the test D1 the Backend's `Members` reads.
+   */
+  it.live("sweeps expired Session and Verification rows on the way out", () =>
+    Effect.gen(function* () {
+      const { db, raw } = yield* makeD1Test;
+      seedD1(db, { shops: [], members });
+      const expired = new Date(Date.UTC(2000, 0, 1)).toISOString();
+      db.prepare(
+        "insert into user (id, name, email, emailVerified, createdAt, updatedAt) values ('u1', 'M', 'm1@m.com', 0, '', '')",
+      ).run();
+      db.prepare(
+        "insert into session (id, expiresAt, token, createdAt, updatedAt, userId) values ('s-old', ?, 't-old', '', '', 'u1')",
+      ).run(expired);
+      db.prepare(
+        "insert into verification (id, identifier, value, expiresAt, createdAt, updatedAt) values ('v-old', 'x', 'y', ?, '', '')",
+      ).run(expired);
+      yield* Effect.gen(function* () {
+        const api = yield* BackendApi;
+        yield* api.requestMagicLink(withCookie(undefined), { email: member });
+      }).pipe(
+        Effect.provide(TestBackend({ delivery: "inline", membersLayer: Members.layerWith(raw) })),
+      );
+      assert.strictEqual(db.prepare("select count(*) as n from session").get()?.n, 0);
+      assert.strictEqual(db.prepare("select count(*) as n from verification").get()?.n, 0);
+    }),
   );
 });
 

@@ -55,6 +55,12 @@ describe("MemberHomePage", () => {
   it("says so when the member has no shop", async () => {
     const screen = await render([]);
 
-    await expect.element(screen.getByText("You are not a member of any shop.")).toBeVisible();
+    await expect
+      .element(
+        screen.getByText(
+          /^You don’t have access to any shops yet\. Ask the merchant to add your email on their Members page\.$/u,
+        ),
+      )
+      .toBeVisible();
   });
 });
