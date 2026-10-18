@@ -10,7 +10,7 @@ What our pnpm patches are, and what to do when one blows up on an upgrade.
 
 ## Current patches
 
-One patch file per package; `patches/alchemy@2.0.0-beta.81.patch` carries two changes, each retired on its own.
+One patch file per package; `patches/alchemy@2.0.0-beta.81.patch` carries two changes, each retired on its own, and `patches/@alchemy.run__cloudflare-runtime@2.0.0-beta.81.patch` one.
 
 ### `alchemy@2.0.0-beta.81`: export `RpcWebSocket`
 
@@ -43,13 +43,24 @@ One patch file per package; `patches/alchemy@2.0.0-beta.81.patch` carries two ch
 - **Why:** the orders sync Workflow binds the shop's actor by identity, `ShopActor.from(<the Backend>)` (`ShopActors.layerFrom`), because the actor yields the Workflow. That binding's `scriptName` is the Backend's own `workerName`, an `Output` that cannot resolve while the Backend itself is being precreated, and the template string threw `Cannot coerce Output<…workerName> to a string via JS coercion` on every fresh local stack (each integ file, the e2e server, a first `alchemy dev`). Only the local provider; the deployed provider is separate code.
 - **Retire it when:** Alchemy's `LocalWorkerProvider.precreate` no longer interpolates an unresolved `scriptName` for a self binding (an upstream issue was requested when the hunk landed; link it here once filed). Check: drop the hunk, then a fresh integ file (`vp test test/integ/orders-sync.test.ts`) deploys.
 
+### `@alchemy.run/cloudflare-runtime@2.0.0-beta.81`: the dev proxy truncates `Connection: close` responses
+
+- **What it changes:** `WorkerProxy`'s relay, in both `src/core/proxy/WorkerProxy.ts` and the `dist/core/node/proxy/WorkerProxy.mjs` Node loads. When the upstream (workerd) socket closes cleanly, the client socket is now `end`ed, not `destroy`ed:
+
+  ```ts
+  upstream.on("close", (hadError) => (hadError ? socket.destroy() : socket.end()));
+  ```
+
+- **Why:** `alchemy dev` serves each Worker's public port (the e2e server's `WEBSITE_PORT + 100`) through this byte pipe. A request sent with `Connection: close` has workerd close the upstream right after the last byte, while the pipe may still hold part of the body unwritten to the client. `destroy` drops it, so a large response (Vite's 780 KB `Effect` chunk) arrives short of its `Content-Length`. The Shopify CLI's proxy in front sends every request with `Connection: close` and, on that short upstream, never ends its own response, so the app frame waits forever on one module and never hydrates. That was the embedded e2e hydration flake.
+- **Retire it when:** Alchemy's `WorkerProxy` no longer destroys the client on a clean upstream close (still there in `2.0.0-beta.83`; an upstream issue is owed, link it here once filed). Check: drop the patch, start `vp run test:e2e:server`, then fetch a large prebundled dep from `127.0.0.1:<e2e port>` with `Connection: close` a few thousand times. Unpatched, a few in a thousand come back short.
+
 ## Upgrading a patched package
 
 Example for Alchemy; the same steps work for any patched package.
 
 1. **Drop the old patch.** Remove the `alchemy@…` line from `patchedDependencies` in `pnpm-workspace.yaml`, and delete its file in `patches/`. If `patchedDependencies` is now empty, remove the key.
 2. **Upgrade.** `vp add -E alchemy@<version>`, with the `@alchemy.run/*` packages at the same version.
-3. **Check whether each change is still needed.** Look for `"./Cloudflare/RpcWebSocket"` in `node_modules/alchemy/package.json`, and read `precreate` in `node_modules/alchemy/lib/Cloudflare/Workers/LocalWorkerProvider.js`. A change Alchemy now makes itself is retired; if both are, skip to step 6.
+3. **Check whether each change is still needed.** Look for `"./Cloudflare/RpcWebSocket"` in `node_modules/alchemy/package.json`, read `precreate` in `node_modules/alchemy/lib/Cloudflare/Workers/LocalWorkerProvider.js`, and read the upstream `close` handler in `node_modules/@alchemy.run/cloudflare-runtime/dist/core/node/proxy/WorkerProxy.mjs` (the runtime's patch is re-created the same way, `vp pm patch @alchemy.run/cloudflare-runtime@<version>`). A change Alchemy now makes itself is retired; if all are, skip to step 6.
 4. **Check the transport still exists.** `node_modules/alchemy/lib/Cloudflare/Workers/RpcWebSocket.js` and its `.d.ts`. If they moved or were renamed, find the module that `RpcDurableObject` imports its transport from, and point the new entry there.
 5. **Re-create the patch.**
 
