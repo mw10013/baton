@@ -49,3 +49,16 @@
 .token {
   overflow-wrap: anywhere;
 }
+
+/*
+ * Free text a person typed (`Prose` in `src/web/components/screen/`): a run note, a block reason,
+ * task instructions, an order note. Every one of them is one field, editable by anyone, last write
+ * wins and no history, so the line breaks the writer put in are the only structure the text has,
+ * and collapsing them (the HTML default) loses the dated, initialled running log people write by
+ * hand. `overflow-wrap: anywhere` is for the other half of typed-at-a-bench text: an unspaced SKU
+ * or URL must not widen a phone card past the viewport.
+ */
+.prose {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

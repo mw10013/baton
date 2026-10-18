@@ -374,6 +374,54 @@ export const addTeamMembersAtom = ShopActorClient.mutation("MerchantAddTeamMembe
 /** Delete team, on the team page. */
 export const deleteTeamAtom = ShopActorClient.mutation("MerchantDeleteTeam");
 
+/** Create workflow, on the workflows index. */
+export const createWorkflowAtom = ShopActorClient.mutation("MerchantCreateWorkflow");
+
+/** Duplicate, on the workflow page. */
+export const duplicateWorkflowAtom = ShopActorClient.mutation("MerchantDuplicateWorkflow");
+
+/** Rename, on the workflow page and in the editor. */
+export const updateWorkflowAtom = ShopActorClient.mutation("MerchantUpdateWorkflow");
+
+/** Edit tag, on the workflow page. */
+export const updateWorkflowTagAtom = ShopActorClient.mutation("MerchantUpdateWorkflowTag");
+
+/** Apply changes, in the editor. */
+export const applyDraftAtom = ShopActorClient.mutation("MerchantApplyDraft");
+
+/** Discard changes, in the editor. */
+export const discardDraftAtom = ShopActorClient.mutation("MerchantDiscardDraft");
+
+/** The switch's Turn on and Turn off, on the workflow page and in the editor. */
+export const setWorkflowStateAtom = ShopActorClient.mutation("MerchantSetWorkflowState");
+
+/** The editor's Turn on for a workflow never applied. */
+export const applyAndTurnOnAtom = ShopActorClient.mutation("MerchantApplyAndTurnOn");
+
+/** Delete, on the workflow page and in the editor. */
+export const deleteWorkflowAtom = ShopActorClient.mutation("MerchantDeleteWorkflow");
+
+/** Add step, in the editor. */
+export const addStepAtom = ShopActorClient.mutation("MerchantAddStep");
+
+/** Add task to a step, in the editor. */
+export const addTaskAtom = ShopActorClient.mutation("MerchantAddTask");
+
+/** The task panel's Save, in the editor. */
+export const updateTaskAtom = ShopActorClient.mutation("MerchantUpdateTask");
+
+/** Move earlier and Move later, in the editor's task panel. */
+export const moveTaskAtom = ShopActorClient.mutation("MerchantMoveTask");
+
+/** Move to its own step, in the editor's task panel. */
+export const separateTaskAtom = ShopActorClient.mutation("MerchantSeparateTask");
+
+/** Join the previous step, in the editor's task panel. */
+export const joinTaskAtom = ShopActorClient.mutation("MerchantJoinTask");
+
+/** The task panel's Delete, in the editor. */
+export const removeTaskAtom = ShopActorClient.mutation("MerchantRemoveTask");
+
 /**
  * Remove on one row: a member's team row on the member page, a team's member row on the team
  * page, one atom per `<teamId>/<memberId>` pair, for {@link syncOrderAtom}'s reason (a second

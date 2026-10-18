@@ -1,0 +1,134 @@
+import * as Schema from "effect/Schema";
+import * as React from "react";
+import * as ShopWork from "../../domain/shop-work.ts";
+import * as PolarisModal from "../client/polaris-modal.ts";
+import { thrownCopy } from "./form.ts";
+import { Fields } from "./screen/Fields.tsx";
+import { Inline } from "./screen/Inline.tsx";
+import { textLimitError } from "./screen/TextLimit.tsx";
+import { TAG_HELP, tagCommaError, workflowResultMessage } from "./workflow-shared.ts";
+
+/** The Edit tag dialog's id. */
+const MODAL = "workflow-tag";
+
+/**
+ * Edit tag: one field, because a workflow has exactly one tag. The write is
+ * immediate and lands on the workflow row, not the draft — the tag is the
+ * workflow's identity, the sibling of its name, and runs snapshot it at start
+ * so nothing in flight moves.
+ *
+ * The result comes back rather than a throw so `TagTaken` can be rendered
+ * under the field rather than in a banner.
+ *
+ * The button alone, no chip of the tag beside it: a tag may be 255
+ * characters and a chip cuts to one line with no way to read the rest. The
+ * workflow page prints the tag whole in the sentence above this button.
+ */
+export function WorkflowTag({
+  tag,
+  disabled,
+  onSave,
+}: {
+  readonly tag: string;
+  readonly disabled: boolean;
+  /** Resolves with the result; `TagTaken` and its siblings render under the field. */
+  readonly onSave: (tag: ShopWork.WorkflowTag) => Promise<ShopWork.WorkflowResult>;
+}) {
+  const modal = React.useRef<HTMLElementTagNameMap["s-modal"]>(null);
+  /** Null until the dialog is opened; the working text survives an unexpected dismissal, and only Cancel or a successful save discards it. */
+  const [working, setWorking] = React.useState<string | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+  const [saving, setSaving] = React.useState(false);
+  PolarisModal.useModalBackdropDismissGuard(MODAL);
+
+  const value = working ?? tag;
+  // Trimmed and kept as typed, the one rule for every tag field (`ShopWork.WorkflowTag`).
+  const folded = value.trim();
+  const busy = disabled || saving;
+  const changed = folded !== tag;
+
+  const reset = () => {
+    setWorking(null);
+    setError(null);
+  };
+
+  const save = async () => {
+    if (busy || folded === "" || !changed) return;
+    const limit = textLimitError(folded, ShopWork.TAG_MAX_LENGTH) ?? tagCommaError(folded);
+    if (limit !== null) {
+      setError(limit);
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const result = await onSave(Schema.decodeUnknownSync(ShopWork.WorkflowTag)(folded));
+      const message = workflowResultMessage(result);
+      if (message !== null) {
+        setError(message);
+        return;
+      }
+      reset();
+      modal.current?.hideOverlay();
+    } catch (error) {
+      setError(thrownCopy(error, "Couldn't save the tag. Try again."));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <>
+      <Inline>
+        <s-button
+          disabled={busy}
+          onClick={() => {
+            setWorking((current) => current ?? tag);
+            modal.current?.showOverlay();
+          }}
+        >
+          Edit tag
+        </s-button>
+      </Inline>
+      <s-modal id={MODAL} ref={modal} heading="Edit tag">
+        <Fields>
+          <s-paragraph>
+            {TAG_HELP} Products that still have the old tag stop matching until you retag them.
+          </s-paragraph>
+          <s-text-field
+            label="Tag"
+            placeholder="e.g. engraved"
+            value={value}
+            disabled={busy}
+            {...(error === null ? {} : { error })}
+            onInput={(event) => {
+              setWorking(event.currentTarget.value);
+              setError(null);
+            }}
+          />
+        </Fields>
+        <s-button
+          slot="secondary-actions"
+          disabled={saving}
+          onClick={() => {
+            reset();
+            modal.current?.hideOverlay();
+          }}
+        >
+          Cancel
+        </s-button>
+        <s-button
+          slot="primary-action"
+          variant="primary"
+          loading={saving}
+          disabled={busy || folded === "" || !changed}
+          onClick={() => {
+            void save();
+          }}
+        >
+          Save
+        </s-button>
+      </s-modal>
+    </>
+  );
+}

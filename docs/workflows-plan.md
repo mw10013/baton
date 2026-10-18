@@ -226,6 +226,12 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - 2026-10-17, Step 4: `WorkflowsPageRequest` carries `state` beside `q` and `after` (the index's filter); the three request schemas sit in `src/contract/workflows.ts` with `WORKFLOWS_PAGE_SIZE`.
 - 2026-10-17, Step 4: the integ loader cases run in file order on `OTHER_SHOP` (no team, no workflow), the only seed shop with nothing of this file's other cases on it; legacy's index title runs there from the Backend's side through `ApiWorkflowsPage`. Step 3's integ titles gain their read-back halves through `ApiWorkflowDetail` (teamName, memberCount, `null` after delete).
 - 2026-10-17, Step 4: new titles: "setupFacts on a shop with no team and no workflow holds none of the three", "setupFacts after a team with a member and an active workflow holds the first two; a run waits for runs", "the loaders refuse a token signed with another secret and a shop with no ShopSession" (integ); three `BackendApi workflows` unit cases.
+- 2026-10-17, Step 5: until the editor route exists (Step 6), Create and Duplicate land on the new workflow's page and the workflow page has no Edit button.
+- 2026-10-17, Step 5: `retainSearchParamsUnder` is not ported (review); the index's links and the workflow page's breadcrumb carry `state`, `q`, `after` through `appHref`, and `state` joins `PAGE_KEYS`.
+- 2026-10-17, Step 5: the pages follow slice C's split (a screen, and a live half once hydrated that holds the mutation atoms); `WorkflowSwitch` gates itself the same way. Legacy's `identified` gate is the hydration gate here (no socket-identified signal), so `WorkflowTag` is never disabled.
+- 2026-10-17, Step 5: file names `src/web/components/workflow-shared.ts` (legacy `workflowShared`), `src/web/client/polaris-modal.ts`; page components `WorkflowsIndexPage.tsx`, `WorkflowPage.tsx` beside the slice C pages; legacy's misplaced `copyName` JSDoc moved onto it.
+- 2026-10-17, Step 5: the e2e breadcrumb is `getByRole("button", { name: "Workflows" })`; legacy's `button[aria-label="Workflows"]` finds nothing in today's admin.
+- 2026-10-17, Step 5: new tests beside the legacy titles: the browser file `workflows.test.tsx` (SelectableCard, WorkflowSwitch, WorkflowTag) and two `workflow-shared` unit cases.
 
 ### Issues
 
@@ -234,6 +240,8 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - 2026-10-17, Step 2: the full e2e run failed one embedded spec twice in a row, a different one each time (`socket.spec.ts`, then `teams.spec.ts`), on `awaitHydration`'s 10 s wait in `openApp`; both pass run alone (5 passed, 1.3 min). Step 2 changes no Website code; recorded as parallel-load flakiness of the embedded hydration wait.
 - 2026-10-17, Step 3: `test/integ/workflows.test.ts`'s first test failed twice in the full suite with `SocketOpenError: timeout waiting for "open"` (a socket to a cold workerd as the file's first request); fixed by the HTTP warm-up above.
 - 2026-10-17, Step 3: `createDraft` has no procedure, so integ and unit start a draft with a task write (or the repository's `createDraft` in unit).
+- 2026-10-17, Step 5: every embedded page, slice C's included, logs Polaris's "Only Button elements with a `variant` of `primary` are allowed in the `primary-action` slot" warning in the e2e server log; the workflow pages add to it and nothing fails. Not investigated.
+- 2026-10-17, Step 5: one `vp check --fix | tail -1` hid 21 type errors in the new e2e and browser tests (branded fixture literals, an `s-clickable` cast); fixed before the commit by decoding the e2e fixture through `ShopFixtureData`.
 
 ### Command results
 
@@ -241,6 +249,7 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - 2026-10-17, Step 2: `vp check` pass (253 files); `vp test` 58 files, 660 tests, 55.5 s; `vp run test:e2e` 39 passed, 1 failed (hydration timeout, 3.6 min), rerun 39 passed, 1 failed, 1 did not run (3.6 min), third run 39 passed, 1 failed (3.3 min); the failing specs alone 5 passed, 1.3 min.
 - 2026-10-17, Step 3: `vp check` pass (256 files); `vp test` 60 files, 676 tests, 39.3 s (after two runs with the one socket-open failure above); `vp run test:e2e` 40 passed, 3.5 min.
 - 2026-10-17, Step 4: `vp check` pass (259 files); `vp test` 60 files, 683 tests, 42.7 s; `vp run test:e2e` 40 passed, 3.4 min.
+- 2026-10-17, Step 5: `vp check` pass (280 files); `vp test` 62 files, 692 tests, 50.8 s; `vp run test:e2e` 46 passed, 3.7 min (before the type-only test fixes; after them the browser file 6 passed and `workflows.spec.ts` 8 passed, 1.1 min).
 
 ### Human steps requested
 

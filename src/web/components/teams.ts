@@ -37,6 +37,7 @@ export const DELETE_CONFIRM = "This can't be undone.";
 export const DELETED_TOAST = {
   team: "Team deleted",
   member: "Member deleted",
+  workflow: "Workflow deleted",
 } as const;
 
 /**

@@ -19,6 +19,7 @@ import { Route as AdminMembersRouteImport } from './routes/admin.members'
 import { Route as ApiDevRouteImport } from './routes/api.dev'
 import { Route as AppIndexRouteImport } from './routes/app.index'
 import { Route as AppOrdersRouteImport } from './routes/app.orders'
+import { Route as AppWorkflowsRouteImport } from './routes/app.workflows'
 import { Route as AuthExitIframeRouteImport } from './routes/auth.exit-iframe'
 import { Route as AuthSessionTokenRouteImport } from './routes/auth.session-token'
 import { Route as ShopIndexRouteImport } from './routes/shop.index'
@@ -31,6 +32,8 @@ import { Route as AppMembersMemberIdRouteImport } from './routes/app.members.$me
 import { Route as AppOrdersFromShopifyRouteImport } from './routes/app.orders.from-shopify'
 import { Route as AppTeamsIndexRouteImport } from './routes/app.teams.index'
 import { Route as AppTeamsTeamIdRouteImport } from './routes/app.teams.$teamId'
+import { Route as AppWorkflowsIndexRouteImport } from './routes/app.workflows.index'
+import { Route as AppWorkflowsWorkflowIdRouteImport } from './routes/app.workflows.$workflowId'
 import { Route as ShopKeyIndexRouteImport } from './routes/shop.$key.index'
 
 const IndexRoute = IndexRouteImport.update({
@@ -81,6 +84,11 @@ const AppIndexRoute = AppIndexRouteImport.update({
 const AppOrdersRoute = AppOrdersRouteImport.update({
   id: '/orders',
   path: '/orders',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppWorkflowsRoute = AppWorkflowsRouteImport.update({
+  id: '/workflows',
+  path: '/workflows',
   getParentRoute: () => AppRoute,
 } as any)
 const AuthExitIframeRoute = AuthExitIframeRouteImport.update({
@@ -143,6 +151,16 @@ const AppTeamsTeamIdRoute = AppTeamsTeamIdRouteImport.update({
   path: '/teams/$teamId',
   getParentRoute: () => AppRoute,
 } as any)
+const AppWorkflowsIndexRoute = AppWorkflowsIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AppWorkflowsRoute,
+} as any)
+const AppWorkflowsWorkflowIdRoute = AppWorkflowsWorkflowIdRouteImport.update({
+  id: '/$workflowId',
+  path: '/$workflowId',
+  getParentRoute: () => AppWorkflowsRoute,
+} as any)
 const ShopKeyIndexRoute = ShopKeyIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -158,6 +176,7 @@ export interface FileRoutesByFullPath {
   '/admin/members': typeof AdminMembersRoute
   '/api/dev': typeof ApiDevRoute
   '/app/orders': typeof AppOrdersRouteWithChildren
+  '/app/workflows': typeof AppWorkflowsRouteWithChildren
   '/auth/exit-iframe': typeof AuthExitIframeRoute
   '/auth/session-token': typeof AuthSessionTokenRoute
   '/shop/$key': typeof ShopKeyRouteWithChildren
@@ -170,8 +189,10 @@ export interface FileRoutesByFullPath {
   '/app/members/$memberId': typeof AppMembersMemberIdRoute
   '/app/orders/from-shopify': typeof AppOrdersFromShopifyRoute
   '/app/teams/$teamId': typeof AppTeamsTeamIdRoute
+  '/app/workflows/$workflowId': typeof AppWorkflowsWorkflowIdRoute
   '/app/members/': typeof AppMembersIndexRoute
   '/app/teams/': typeof AppTeamsIndexRoute
+  '/app/workflows/': typeof AppWorkflowsIndexRoute
   '/shop/$key/': typeof ShopKeyIndexRoute
 }
 export interface FileRoutesByTo {
@@ -191,8 +212,10 @@ export interface FileRoutesByTo {
   '/app/members/$memberId': typeof AppMembersMemberIdRoute
   '/app/orders/from-shopify': typeof AppOrdersFromShopifyRoute
   '/app/teams/$teamId': typeof AppTeamsTeamIdRoute
+  '/app/workflows/$workflowId': typeof AppWorkflowsWorkflowIdRoute
   '/app/members': typeof AppMembersIndexRoute
   '/app/teams': typeof AppTeamsIndexRoute
+  '/app/workflows': typeof AppWorkflowsIndexRoute
   '/shop/$key': typeof ShopKeyIndexRoute
 }
 export interface FileRoutesById {
@@ -205,6 +228,7 @@ export interface FileRoutesById {
   '/admin/members': typeof AdminMembersRoute
   '/api/dev': typeof ApiDevRoute
   '/app/orders': typeof AppOrdersRouteWithChildren
+  '/app/workflows': typeof AppWorkflowsRouteWithChildren
   '/auth/exit-iframe': typeof AuthExitIframeRoute
   '/auth/session-token': typeof AuthSessionTokenRoute
   '/shop/$key': typeof ShopKeyRouteWithChildren
@@ -217,8 +241,10 @@ export interface FileRoutesById {
   '/app/members/$memberId': typeof AppMembersMemberIdRoute
   '/app/orders/from-shopify': typeof AppOrdersFromShopifyRoute
   '/app/teams/$teamId': typeof AppTeamsTeamIdRoute
+  '/app/workflows/$workflowId': typeof AppWorkflowsWorkflowIdRoute
   '/app/members/': typeof AppMembersIndexRoute
   '/app/teams/': typeof AppTeamsIndexRoute
+  '/app/workflows/': typeof AppWorkflowsIndexRoute
   '/shop/$key/': typeof ShopKeyIndexRoute
 }
 export interface FileRouteTypes {
@@ -232,6 +258,7 @@ export interface FileRouteTypes {
     | '/admin/members'
     | '/api/dev'
     | '/app/orders'
+    | '/app/workflows'
     | '/auth/exit-iframe'
     | '/auth/session-token'
     | '/shop/$key'
@@ -244,8 +271,10 @@ export interface FileRouteTypes {
     | '/app/members/$memberId'
     | '/app/orders/from-shopify'
     | '/app/teams/$teamId'
+    | '/app/workflows/$workflowId'
     | '/app/members/'
     | '/app/teams/'
+    | '/app/workflows/'
     | '/shop/$key/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -265,8 +294,10 @@ export interface FileRouteTypes {
     | '/app/members/$memberId'
     | '/app/orders/from-shopify'
     | '/app/teams/$teamId'
+    | '/app/workflows/$workflowId'
     | '/app/members'
     | '/app/teams'
+    | '/app/workflows'
     | '/shop/$key'
   id:
     | '__root__'
@@ -278,6 +309,7 @@ export interface FileRouteTypes {
     | '/admin/members'
     | '/api/dev'
     | '/app/orders'
+    | '/app/workflows'
     | '/auth/exit-iframe'
     | '/auth/session-token'
     | '/shop/$key'
@@ -290,8 +322,10 @@ export interface FileRouteTypes {
     | '/app/members/$memberId'
     | '/app/orders/from-shopify'
     | '/app/teams/$teamId'
+    | '/app/workflows/$workflowId'
     | '/app/members/'
     | '/app/teams/'
+    | '/app/workflows/'
     | '/shop/$key/'
   fileRoutesById: FileRoutesById
 }
@@ -381,6 +415,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppOrdersRouteImport
       parentRoute: typeof AppRoute
     }
+    '/app/workflows': {
+      id: '/app/workflows'
+      path: '/workflows'
+      fullPath: '/app/workflows'
+      preLoaderRoute: typeof AppWorkflowsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/auth/exit-iframe': {
       id: '/auth/exit-iframe'
       path: '/auth/exit-iframe'
@@ -465,6 +506,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppTeamsTeamIdRouteImport
       parentRoute: typeof AppRoute
     }
+    '/app/workflows/': {
+      id: '/app/workflows/'
+      path: '/'
+      fullPath: '/app/workflows/'
+      preLoaderRoute: typeof AppWorkflowsIndexRouteImport
+      parentRoute: typeof AppWorkflowsRoute
+    }
+    '/app/workflows/$workflowId': {
+      id: '/app/workflows/$workflowId'
+      path: '/$workflowId'
+      fullPath: '/app/workflows/$workflowId'
+      preLoaderRoute: typeof AppWorkflowsWorkflowIdRouteImport
+      parentRoute: typeof AppWorkflowsRoute
+    }
     '/shop/$key/': {
       id: '/shop/$key/'
       path: '/'
@@ -499,8 +554,23 @@ const AppOrdersRouteWithChildren = AppOrdersRoute._addFileChildren(
   AppOrdersRouteChildren,
 )
 
+interface AppWorkflowsRouteChildren {
+  AppWorkflowsWorkflowIdRoute: typeof AppWorkflowsWorkflowIdRoute
+  AppWorkflowsIndexRoute: typeof AppWorkflowsIndexRoute
+}
+
+const AppWorkflowsRouteChildren: AppWorkflowsRouteChildren = {
+  AppWorkflowsWorkflowIdRoute: AppWorkflowsWorkflowIdRoute,
+  AppWorkflowsIndexRoute: AppWorkflowsIndexRoute,
+}
+
+const AppWorkflowsRouteWithChildren = AppWorkflowsRoute._addFileChildren(
+  AppWorkflowsRouteChildren,
+)
+
 interface AppRouteChildren {
   AppOrdersRoute: typeof AppOrdersRouteWithChildren
+  AppWorkflowsRoute: typeof AppWorkflowsRouteWithChildren
   AppIndexRoute: typeof AppIndexRoute
   AppMembersMemberIdRoute: typeof AppMembersMemberIdRoute
   AppTeamsTeamIdRoute: typeof AppTeamsTeamIdRoute
@@ -510,6 +580,7 @@ interface AppRouteChildren {
 
 const AppRouteChildren: AppRouteChildren = {
   AppOrdersRoute: AppOrdersRouteWithChildren,
+  AppWorkflowsRoute: AppWorkflowsRouteWithChildren,
   AppIndexRoute: AppIndexRoute,
   AppMembersMemberIdRoute: AppMembersMemberIdRoute,
   AppTeamsTeamIdRoute: AppTeamsTeamIdRoute,
