@@ -19,25 +19,32 @@ import {
   ShopLimits,
 } from "../../../src/domain/platform.ts";
 import { type Team, TeamId, TeamName } from "../../../src/domain/shop-work.ts";
-import { Members } from "../../../src/backend/members.ts";
-import { ShopSessions } from "../../../src/backend/shop-sessions.ts";
+import { MembershipRepository } from "../../../src/backend/membership-repository.ts";
+import { ShopSessionRepository } from "../../../src/backend/shop-session-repository.ts";
 import { makeD1Test, seedD1 } from "./layers.ts";
 
 /**
  * Legacy `repository.test.ts`'s `Member` and `Team` blocks, titles unchanged, over the real
- * {@link Members} on a fresh in-memory D1 per test. Legacy's `listMembers`, `listTeams` and
+ * {@link MembershipRepository} on a fresh in-memory D1 per test. Legacy's `listMembers`, `listTeams` and
  * `countMembers`/`countTeams` are not ported (no production caller): the tests read back
  * through `listMembersPage`/`listTeamsPage` or raw SQL. Legacy's `deleteShopSession` is
- * `ShopSessions.remove` over the same database.
+ * `ShopSessionRepository.remove` over the same database.
  */
 const run = <A, E>(
-  body: (members: Members["Service"], db: DatabaseSync) => Effect.Effect<A, E, ShopSessions>,
+  body: (
+    members: MembershipRepository["Service"],
+    db: DatabaseSync,
+  ) => Effect.Effect<A, E, ShopSessionRepository>,
 ) =>
   Effect.gen(function* () {
     const { db, raw } = yield* makeD1Test;
     return yield* Effect.gen(function* () {
-      return yield* body(yield* Members, db);
-    }).pipe(Effect.provide(Layer.merge(Members.layerWith(raw), ShopSessions.layerWith(raw))));
+      return yield* body(yield* MembershipRepository, db);
+    }).pipe(
+      Effect.provide(
+        Layer.merge(MembershipRepository.layerWith(raw), ShopSessionRepository.layerWith(raw)),
+      ),
+    );
   });
 
 const shopOf = (s: string) => Schema.decodeUnknownSync(ShopKey)(s);
@@ -49,14 +56,14 @@ const emailOfLength = (length: number) =>
   `${"a".repeat(length - "@example.com".length)}@example.com`;
 
 /** The shop's members in email order, every page of them. */
-const listMembers = (members: Members["Service"], shop: ShopKey) =>
+const listMembers = (members: MembershipRepository["Service"], shop: ShopKey) =>
   Effect.map(
     members.listMembersPage({ shop, limit: 1000, after: null, q: null }),
     (page) => page.rows,
   );
 
 /** The shop's teams in name order with their member counts, every page of them. */
-const listTeams = (members: Members["Service"], shop: ShopKey) =>
+const listTeams = (members: MembershipRepository["Service"], shop: ShopKey) =>
   Effect.map(
     members.listTeamsPage({ shop, limit: 1000, after: null, q: null }),
     (page) => page.rows,
@@ -363,7 +370,7 @@ describe("Member", () => {
         const email = emailOf("multi@example.com");
         yield* repo.addMember({ shop: shopOf("a.myshopify.com"), email });
         yield* repo.addMember({ shop: shopOf("b.myshopify.com"), email });
-        yield* (yield* ShopSessions).remove(shopOf("a.myshopify.com"));
+        yield* (yield* ShopSessionRepository).remove(shopOf("a.myshopify.com"));
         const shops = yield* repo.listShopsOf(email);
         strictEqual(shops.length, 1);
         strictEqual(shops[0], "b.myshopify.com");
@@ -373,7 +380,7 @@ describe("Member", () => {
 });
 
 describe("Team", () => {
-  const seedTeam = (repo: Members["Service"], shop: ShopKey, name: string) =>
+  const seedTeam = (repo: MembershipRepository["Service"], shop: ShopKey, name: string) =>
     repo.createTeam({ shop, name: teamNameOf(name) });
 
   it.effect("createTeam trims, lists, and counts members", () =>
@@ -643,7 +650,7 @@ describe("Team", () => {
         const shop = shopOf("t.myshopify.com");
         seedD1(db, { shops: [shop] });
         yield* seedTeam(repo, shop, "Cut");
-        yield* (yield* ShopSessions).remove(shop);
+        yield* (yield* ShopSessionRepository).remove(shop);
         strictEqual((yield* listTeams(repo, shop)).length, 0);
       }),
     ),
@@ -687,7 +694,7 @@ describe("Team", () => {
   );
 });
 
-describe("Members session cap and auth sweep", () => {
+describe("MembershipRepository session cap and auth sweep", () => {
   const ISO = (ms: number) => new Date(ms).toISOString();
 
   /** A Better Auth `user` row and its `session` rows, created at the given times, by raw SQL. */

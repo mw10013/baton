@@ -209,9 +209,17 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 
 ### Deviations
 
+- 2026-10-17, Step 1: the "never nest" JSDoc (Step 2 review item) is written on `Transaction` in `shop-actor/transaction.ts` now, as the module moves.
+- 2026-10-17, Step 1: `membership.test.ts` renames its shop key and emails (`agent.myshopify.com`, `@agent.test` → `membership…`); no legacy title touched.
+- 2026-10-17, Step 1: locals that hold the D1 service in the Backend (`const members = yield* MembershipRepository` in `api.ts`, `auth.ts`, `dev.ts`, `fixture.ts`, `shop-access.ts`) keep their names; only the actor's locals were renamed, as the review lists.
+
 ### Issues
 
+- 2026-10-17, Step 1: the dev server was already running (`vp run dev:status` healthy) when the work started; it is left running.
+
 ### Command results
+
+- 2026-10-17, Step 1: `vp check` pass (249 files); `vp test` 56 files, 615 tests, 55.8 s; `vp run test:e2e` 40 passed, 3.1 min.
 
 ### Human steps requested
 

@@ -9,7 +9,7 @@ import * as Schema from "effect/Schema";
 import type { ShopKey } from "../contract/shop.ts";
 import type { ConnectionCaller } from "../contract/shop-actor.ts";
 import { Auth } from "./auth.ts";
-import { Members } from "./members.ts";
+import { MembershipRepository } from "./membership-repository.ts";
 import { sessionFromCookie } from "./auth.ts";
 import { AuthDb } from "./resources.ts";
 import { Shopify } from "./shopify.ts";
@@ -31,7 +31,7 @@ const denied = (status: ShopAccessDenied["status"]) =>
 
 const make = Effect.gen(function* () {
   const auth = yield* Auth;
-  const members = yield* Members;
+  const members = yield* MembershipRepository;
   const shopify = yield* Shopify;
   const d1 = yield* Cloudflare.D1.QueryDatabase(AuthDb);
   const sql = yield* SQL.D1(d1);

@@ -16,9 +16,9 @@ import {
   workflowStateOf,
 } from "../contract/fixture.ts";
 import type { ShopKey } from "../contract/shop.ts";
-import { type ShopIdentity, Members } from "./members.ts";
+import { type ShopIdentity, MembershipRepository } from "./membership-repository.ts";
 import { ShopActors } from "./shop-actors.ts";
-import { ShopSessions } from "./shop-sessions.ts";
+import { ShopSessionRepository } from "./shop-session-repository.ts";
 
 /** A task as `Workflow.tasks` stores it: its position is its index, so it is not stored. */
 const StoredTask = Schema.Struct({
@@ -194,8 +194,8 @@ export const fixtureRows = (
 };
 
 const make = Effect.gen(function* () {
-  const sessions = yield* ShopSessions;
-  const members = yield* Members;
+  const sessions = yield* ShopSessionRepository;
+  const members = yield* MembershipRepository;
   const actors = yield* ShopActors;
 
   /**

@@ -8,10 +8,10 @@ import * as Schema from "effect/Schema";
 import { TestClock } from "effect/testing";
 import { SEED_SHOP } from "../../seed-shops.ts";
 import {
-  ShopSessions,
+  ShopSessionRepository,
   ShopSessionUpsert,
   type ShopSessionRow,
-} from "../../../src/backend/shop-sessions.ts";
+} from "../../../src/backend/shop-session-repository.ts";
 import { Shopify } from "../../../src/backend/shopify.ts";
 import { mintSessionToken } from "../../shopify-session-token.ts";
 import { QuietLogs, testShopify } from "./layers.ts";
@@ -48,15 +48,15 @@ const winnerAt = (now: number) =>
 const toUpsert = Schema.decodeUnknownSync(ShopSessionUpsert);
 
 /** Stores `row` as an exchange would, from inside a stub's reply. */
-const storeAsExchange = (sessions: typeof ShopSessions.Service, row: ShopSessionRow) =>
+const storeAsExchange = (sessions: typeof ShopSessionRepository.Service, row: ShopSessionRow) =>
   Effect.runPromise(sessions.upsert(toUpsert(row)));
 
 const ensure = Effect.flatMap(Shopify, (shopify) => shopify.ensureShopSession(SEED_SHOP));
-const stored = Effect.flatMap(ShopSessions, (sessions) => sessions.find(SEED_SHOP)).pipe(
+const stored = Effect.flatMap(ShopSessionRepository, (sessions) => sessions.find(SEED_SHOP)).pipe(
   Effect.map(Option.getOrThrow),
 );
 
-const failureOf = (effect: Effect.Effect<unknown, unknown, Shopify | ShopSessions>) =>
+const failureOf = (effect: Effect.Effect<unknown, unknown, Shopify | ShopSessionRepository>) =>
   Effect.flip(effect);
 
 /** The `reason` of a {@link ReauthorizationRequired}, or the tag of any other error. */
@@ -67,7 +67,7 @@ const verdict = (error: unknown) =>
       ? String(error._tag)
       : "unknown";
 
-const assertDefect = (effect: Effect.Effect<unknown, unknown, Shopify | ShopSessions>) =>
+const assertDefect = (effect: Effect.Effect<unknown, unknown, Shopify | ShopSessionRepository>) =>
   Effect.gen(function* () {
     const exit = yield* Effect.exit(effect);
     assert.isTrue(Exit.isFailure(exit) && Cause.hasDies(exit.cause), "expected a defect");
@@ -81,7 +81,7 @@ const assertDefect = (effect: Effect.Effect<unknown, unknown, Shopify | ShopSess
 const live = (
   name: string,
   rowsFor: (now: number) => ReadonlyArray<ShopSessionRow>,
-  body: Effect.Effect<void, unknown, Shopify | ShopSessions>,
+  body: Effect.Effect<void, unknown, Shopify | ShopSessionRepository>,
   timeout = 5000,
 ) =>
   it.live(
@@ -193,7 +193,7 @@ describe("Shopify.ensureShopSession refreshing", () => {
     "a 401 with a winner in the row adopts the winner",
     (now) => [rowAt(now)],
     Effect.gen(function* () {
-      const sessions = yield* ShopSessions;
+      const sessions = yield* ShopSessionRepository;
       yield* withShopifyStub(
         () =>
           storeAsExchange(sessions, winnerAt(Date.now())).then(() =>
@@ -232,7 +232,7 @@ describe("Shopify.ensureShopSession refreshing", () => {
     "a 401 with the row gone is OfflineSessionMissing",
     (now) => [rowAt(now)],
     Effect.gen(function* () {
-      const sessions = yield* ShopSessions;
+      const sessions = yield* ShopSessionRepository;
       yield* withShopifyStub(
         () =>
           Effect.runPromise(sessions.remove(SEED_SHOP)).then(() =>
@@ -350,7 +350,7 @@ describe("Shopify.ensureShopSession refreshing", () => {
     "a lost rotateTokens adopts the stored row",
     (now) => [rowAt(now)],
     Effect.gen(function* () {
-      const sessions = yield* ShopSessions;
+      const sessions = yield* ShopSessionRepository;
       yield* withShopifyStub(
         () =>
           storeAsExchange(sessions, winnerAt(Date.now())).then(() =>
@@ -447,7 +447,7 @@ describe("Shopify.authenticateAdmin and the lease", () => {
       () => jsonResponse(500, {}),
       (calls) =>
         Effect.gen(function* () {
-          const sessions = yield* ShopSessions;
+          const sessions = yield* ShopSessionRepository;
           const now = Date.now();
           const [answer] = yield* Effect.all(
             [

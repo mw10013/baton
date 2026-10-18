@@ -4,7 +4,10 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import type * as Scope from "effect/Scope";
-import { bulkOrdersQueryText, OrdersBulkRepository } from "../../../src/backend/orders-bulk.ts";
+import {
+  bulkOrdersQueryText,
+  OrdersBulkOperation,
+} from "../../../src/backend/orders-bulk-operation.ts";
 import {
   BULK_GIVE_UP_MS,
   BULK_POLL_INTERVAL_MS,
@@ -16,7 +19,7 @@ import {
   ordersSyncBody,
 } from "../../../src/backend/orders-sync-workflow.ts";
 import { ShopActors } from "../../../src/backend/shop-actors.ts";
-import type { ShopSessionRow } from "../../../src/backend/shop-sessions.ts";
+import type { ShopSessionRow } from "../../../src/backend/shop-session-repository.ts";
 import { ReauthorizationRequired } from "../../../src/backend/shopify.ts";
 import type { ShopifyAdminError } from "../../../src/backend/shopify-admin.ts";
 import type { BulkOperation } from "../../../src/domain/orders.ts";
@@ -158,7 +161,7 @@ const runSync = (
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
-          OrdersBulkRepository.layer.pipe(Layer.provide(testShopifyAdmin(replies, run.admin))),
+          OrdersBulkOperation.layer.pipe(Layer.provide(testShopifyAdmin(replies, run.admin))),
           recordingActors(run),
           testShopify(rows),
           QuietLogs,

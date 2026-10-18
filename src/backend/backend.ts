@@ -28,15 +28,15 @@ import { Auth } from "./auth.ts";
 import { DevHandlers } from "./dev.ts";
 import { Fixtures } from "./fixture.ts";
 import { MagicLinkDelivery } from "./magic-link-delivery.ts";
-import { OrdersBulkRepository } from "./orders-bulk.ts";
+import { OrdersBulkOperation } from "./orders-bulk-operation.ts";
 import { OrdersSyncWorkflow } from "./orders-sync-workflow.ts";
 import { Mailer } from "./mailer.ts";
-import { Members } from "./members.ts";
+import { MembershipRepository } from "./membership-repository.ts";
 import { AuthDb } from "./resources.ts";
 import { ShopAccess, type ShopAccessDenied } from "./shop-access.ts";
 import { Shopify } from "./shopify.ts";
 import { ShopifyAdmin } from "./shopify-admin.ts";
-import { ShopSessions } from "./shop-sessions.ts";
+import { ShopSessionRepository } from "./shop-session-repository.ts";
 import { workerNameOf } from "./stage.ts";
 import { Webhooks } from "./webhooks.ts";
 import { ShopActorLive } from "./shop-actor.ts";
@@ -187,7 +187,9 @@ export const backendBody = Effect.gen(function* () {
   const shopAccess = yield* ShopAccess;
   const api = yield* BackendApi;
   const webhooks = yield* Webhooks;
-  const services = yield* Effect.context<Members | ShopifyAdmin | ShopActors | ShopSessions>();
+  const services = yield* Effect.context<
+    MembershipRepository | ShopifyAdmin | ShopActors | ShopSessionRepository
+  >();
   const devEndpoint = Option.isSome(yield* Config.option(Config.String("DEV_ENDPOINT")));
   // The RPC server is built per request, inside the request's scope (workerd pins I/O to
   // the request that created it).
@@ -263,14 +265,14 @@ export const provideBackend = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     Effect.provide(ShopActors.layer),
     Effect.provide(ShopActorLive),
     Effect.provide(MagicLinkDelivery.layer),
-    Effect.provide(OrdersBulkRepository.layer),
+    Effect.provide(OrdersBulkOperation.layer),
     Effect.provide(
       Layer.mergeAll(
-        Members.layer,
+        MembershipRepository.layer,
         Mailer.layer,
         signInLimiter,
         ShopifyAdmin.layer.pipe(
-          Layer.provideMerge(Shopify.layer.pipe(Layer.provideMerge(ShopSessions.layer))),
+          Layer.provideMerge(Shopify.layer.pipe(Layer.provideMerge(ShopSessionRepository.layer))),
         ),
       ),
     ),

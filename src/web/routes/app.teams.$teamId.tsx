@@ -13,7 +13,7 @@ const decodeTeamId = Schema.decodeSync(TeamId);
 
 /**
  * The team page's URL: `membersAfter` is the last email of the Members table's page before
- * (`Members.findTeamDetail`), lenient for the reason on `OrdersSearch`.
+ * (`MembershipRepository.findTeamDetail`), lenient for the reason on `OrdersSearch`.
  */
 const TeamSearch = Schema.Struct({ membersAfter: lenientSearchKey(Email) });
 

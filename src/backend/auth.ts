@@ -12,7 +12,7 @@ import { Email, Me, Unauthorized } from "../contract/auth.ts";
 import { MagicLinkDelivery } from "./magic-link-delivery.ts";
 import { ShopActors } from "./shop-actors.ts";
 import { ShopLimits } from "../domain/platform.ts";
-import { Members } from "./members.ts";
+import { MembershipRepository } from "./membership-repository.ts";
 
 const MAGIC_LINK_TTL_SECONDS = 300;
 
@@ -30,7 +30,7 @@ export interface AuthOptions {
 /**
  * Builds {@link Auth}. This is the only Promise seam with Better Auth: its callbacks run
  * inside Better Auth's promise machinery, so they run Effects with a snapshot of the
- * construction context. The collaborators ({@link Members}, {@link MagicLinkDelivery},
+ * construction context. The collaborators ({@link MembershipRepository}, {@link MagicLinkDelivery},
  * {@link ShopActors}) are services, so the same code runs in the Worker and in a test with no
  * Cloudflare binding behind it.
  */
@@ -41,7 +41,7 @@ export const makeAuth = (options: AuthOptions = {}) =>
     const authOrigin = yield* Config.option(Config.String("AUTH_ORIGIN"));
     if (globalThis.__ALCHEMY_RUNTIME__ && Option.isNone(authOrigin))
       return yield* Effect.die(new Error("AUTH_ORIGIN is not bound to the Backend"));
-    const members = yield* Members;
+    const members = yield* MembershipRepository;
     const delivery = yield* MagicLinkDelivery;
     const actors = yield* ShopActors;
     const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
@@ -132,7 +132,7 @@ export const makeAuth = (options: AuthOptions = {}) =>
             /**
              * Holds `ShopLimits.maxSessionsPerMember`, which states the rule and its reasoning:
              * keeps the session just created and the user's newest others up to the cap, deletes
-             * the rest ({@link Members}' `keepNewestSessions`), and closes each deleted session's
+             * the rest ({@link MembershipRepository}' `keepNewestSessions`), and closes each deleted session's
              * sockets on every shop the email belongs to, so the signed-out device's socket goes
              * back through the gate and is refused there.
              *

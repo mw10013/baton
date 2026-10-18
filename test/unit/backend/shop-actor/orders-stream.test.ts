@@ -6,7 +6,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { runOrdersStream } from "../../../../src/backend/shop-actor/orders-stream.ts";
-import type { OrderRepository } from "../../../../src/backend/shop-actor/orders.ts";
+import type { OrderRepository } from "../../../../src/backend/shop-actor/order-repository.ts";
 import { ShopLimits } from "../../../../src/domain/platform.ts";
 import { ActorSqliteTest, QuietLogs, testOrderRepository } from "../layers.ts";
 

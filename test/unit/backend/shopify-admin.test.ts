@@ -6,7 +6,10 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { SEED_SHOP } from "../../seed-shops.ts";
-import { ShopSessions, type ShopSessionRow } from "../../../src/backend/shop-sessions.ts";
+import {
+  ShopSessionRepository,
+  type ShopSessionRow,
+} from "../../../src/backend/shop-session-repository.ts";
 import { ShopifyAdmin } from "../../../src/backend/shopify-admin.ts";
 import { QuietLogs, testShopify } from "./layers.ts";
 import { accessTokenBody, jsonResponse, withShopifyStub } from "./shopify-stub.ts";
@@ -33,7 +36,10 @@ const ShopId = Schema.Struct({ shop: Schema.Struct({ id: Schema.String }) });
 const graphqlOk = (id: string) => jsonResponse(200, { data: { shop: { id } } });
 
 /** The real clock and a fresh row per test: the stub's replies are real promises. */
-const live = (name: string, body: Effect.Effect<void, unknown, ShopifyAdmin | ShopSessions>) =>
+const live = (
+  name: string,
+  body: Effect.Effect<void, unknown, ShopifyAdmin | ShopSessionRepository>,
+) =>
   it.live(
     name,
     () =>
@@ -115,7 +121,7 @@ describe("ShopifyAdmin", () => {
             calls.map((call) => (call.grantType === undefined ? "admin" : call.grantType)),
             ["admin", "refresh_token", "admin"],
           );
-          const row = Option.getOrThrow(yield* (yield* ShopSessions).find(SEED_SHOP));
+          const row = Option.getOrThrow(yield* (yield* ShopSessionRepository).find(SEED_SHOP));
           assert.strictEqual(row.accessToken, "shpat_new");
         }),
     ),

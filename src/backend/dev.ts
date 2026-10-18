@@ -6,19 +6,19 @@ import { DevRpcs, type ShopSessionView } from "../contract/dev.ts";
 import { ShopNotInstalled } from "../contract/fixture.ts";
 import type { ShopKey } from "../contract/shop.ts";
 import { Fixtures } from "./fixture.ts";
-import { Members } from "./members.ts";
+import { MembershipRepository } from "./membership-repository.ts";
 import { ShopActors } from "./shop-actors.ts";
-import { ShopSessions } from "./shop-sessions.ts";
+import { ShopSessionRepository } from "./shop-session-repository.ts";
 
 const devProcedures = Effect.gen(function* () {
-  const members = yield* Members;
+  const members = yield* MembershipRepository;
   const actors = yield* ShopActors;
-  const sessions = yield* ShopSessions;
+  const sessions = yield* ShopSessionRepository;
 
   const removeMember = Effect.fn("Dev.removeMember")(function* (shop: ShopKey, email: Email) {
     const removed = yield* members.deleteMember({ shop, email }).pipe(Effect.option);
     if (Option.isNone(removed)) return { removed: false, closed: 0 };
-    // Baton's rule on `Members`: the edit is followed by a revoke on the shop's actor. A failed
+    // Baton's rule on `MembershipRepository`: the edit is followed by a revoke on the shop's actor. A failed
     // revoke is logged and answers `closed: 0`, which a test sees.
     const { closed } = yield* actors.revoke(shop, "member", removed.value);
     return { removed: true, closed };

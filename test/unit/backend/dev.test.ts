@@ -12,10 +12,13 @@ import { ShopKey } from "../../../src/contract/shop.ts";
 import { SEED_SHOP } from "../../seed-shops.ts";
 import { DevHandlers } from "../../../src/backend/dev.ts";
 import { type ActorFixtureRows, Fixtures } from "../../../src/backend/fixture.ts";
-import { Members } from "../../../src/backend/members.ts";
+import { MembershipRepository } from "../../../src/backend/membership-repository.ts";
 import { ShopActors } from "../../../src/backend/shop-actors.ts";
-import { ShopSessions, type ShopSessionRow } from "../../../src/backend/shop-sessions.ts";
-import { type MemberRow, QuietLogs, testMembers, testShopify } from "./layers.ts";
+import {
+  ShopSessionRepository,
+  type ShopSessionRow,
+} from "../../../src/backend/shop-session-repository.ts";
+import { type MemberRow, QuietLogs, testMembershipRepository, testShopify } from "./layers.ts";
 
 const email = Schema.decodeUnknownSync(EmailFromInput);
 const decodeFixture = Schema.decodeUnknownSync(ShopFixtureData);
@@ -55,7 +58,7 @@ const harness = () => {
     Layer.provideMerge(Fixtures.layer),
     Layer.provideMerge(
       Layer.mergeAll(
-        testMembers(members),
+        testMembershipRepository(members),
         ShopActors.layerTest(revoked, undefined, [], added, removedOrders),
         testShopify([session]),
       ),
@@ -118,7 +121,7 @@ describe("DevRpcs", () => {
       const kept = yield* client.GetShopSession({ shop: SEED_SHOP });
       assert.isBelow(kept?.accessTokenExpiresAt ?? Infinity, before);
       assert.strictEqual(kept?.refreshTokenExpiresAt, 1_900_000_000_000);
-      const sessions = yield* ShopSessions;
+      const sessions = yield* ShopSessionRepository;
       const row = (yield* sessions.find(SEED_SHOP)).pipe(Option.getOrThrow);
       assert.strictEqual(row.refreshToken, "shprt_secret_refresh");
       yield* client.ExpireShopSession({ shop: SEED_SHOP, refreshToken: "invalidate" });
@@ -147,7 +150,7 @@ describe("AddToFixture", () => {
         orders: 0,
         lineItems: 0,
       });
-      const rows = yield* (yield* Members).list();
+      const rows = yield* (yield* MembershipRepository).list();
       assert.deepStrictEqual(
         rows.map((row) => row.email),
         ["added-a@e2e.test", "added-b@e2e.test", "m1@m.com"],
@@ -173,7 +176,7 @@ describe("AddToFixture", () => {
         .pipe(Effect.flip);
       assert.strictEqual(error._tag, "FixtureConflict");
       assert.strictEqual(error._tag === "FixtureConflict" && error.shop, SEED_SHOP);
-      assert.strictEqual((yield* (yield* Members).list()).length, 1);
+      assert.strictEqual((yield* (yield* MembershipRepository).list()).length, 1);
       assert.deepStrictEqual(added, []);
     }).pipe(Effect.provide(layer));
   });
@@ -186,7 +189,7 @@ describe("AddToFixture", () => {
         .AddToFixture({ shop: otherShop, fixture: data })
         .pipe(Effect.flip);
       assert.strictEqual(error._tag, "ShopNotInstalled");
-      assert.strictEqual((yield* (yield* Members).list()).length, 1);
+      assert.strictEqual((yield* (yield* MembershipRepository).list()).length, 1);
       assert.deepStrictEqual(added, []);
     }).pipe(Effect.provide(layer));
   });

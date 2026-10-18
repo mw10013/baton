@@ -27,7 +27,7 @@ import {
   testAuth,
   testShopify,
 } from "./layers.ts";
-import { Members } from "../../../src/backend/members.ts";
+import { MembershipRepository } from "../../../src/backend/membership-repository.ts";
 import { Auth } from "../../../src/backend/auth.ts";
 import { SentMail } from "../../../src/backend/mailer.ts";
 import { ShopAccess } from "../../../src/backend/shop-access.ts";
@@ -62,17 +62,17 @@ const revoked: Array<{ key: ShopKey; by: "member" | "session"; id: string }> = [
 const TestBackend = ({
   delivery,
   allow = true,
-  membersLayer,
+  membershipRepositoryLayer,
 }: {
   delivery: "inline" | "mailed";
   allow?: boolean;
-  membersLayer?: Layer.Layer<Members>;
+  membershipRepositoryLayer?: Layer.Layer<MembershipRepository>;
 }) =>
   BackendApi.layer.pipe(
     Layer.provideMerge(
       testAuth({
         members,
-        ...(membersLayer === undefined ? {} : { membersLayer }),
+        ...(membershipRepositoryLayer === undefined ? {} : { membershipRepositoryLayer }),
         actors: ShopActors.layerTest(revoked),
         delivery,
         extra: Layer.mergeAll(
@@ -213,7 +213,7 @@ describe("expired-auth sweep", () => {
   /**
    * The link request carries the sweep: `Auth`'s `sendMagicLink` runs `sweepExpiredAuth` on D1
    * before it delivers. Better Auth itself runs on the in-memory adapter here, so the expired
-   * rows are seeded straight into the test D1 the Backend's `Members` reads.
+   * rows are seeded straight into the test D1 the Backend's `MembershipRepository` reads.
    */
   it.live("sweeps expired Session and Verification rows on the way out", () =>
     Effect.gen(function* () {
@@ -233,7 +233,12 @@ describe("expired-auth sweep", () => {
         const api = yield* BackendApi;
         yield* api.requestMagicLink(withCookie(undefined), { email: member });
       }).pipe(
-        Effect.provide(TestBackend({ delivery: "inline", membersLayer: Members.layerWith(raw) })),
+        Effect.provide(
+          TestBackend({
+            delivery: "inline",
+            membershipRepositoryLayer: MembershipRepository.layerWith(raw),
+          }),
+        ),
       );
       assert.strictEqual(db.prepare("select count(*) as n from session").get()?.n, 0);
       assert.strictEqual(db.prepare("select count(*) as n from verification").get()?.n, 0);

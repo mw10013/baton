@@ -17,16 +17,20 @@ import type { Email } from "../../../src/contract/auth.ts";
 import type { ShopKey } from "../../../src/contract/shop.ts";
 import { ShopifyAdmin, type ShopifyAdminError } from "../../../src/backend/shopify-admin.ts";
 import type { OrdersSyncParams } from "../../../src/backend/orders-sync-workflow.ts";
-import type { OrdersSyncWorkflows } from "../../../src/backend/shop-actor/orders-agent.ts";
+import type { OrdersSyncWorkflows } from "../../../src/backend/shop-actor/orders.ts";
 import { settleDestroy, ShopActors } from "../../../src/backend/shop-actors.ts";
-import { migrations, syncTransaction } from "../../../src/backend/shop-actor.ts";
-import { makeOrderRepository } from "../../../src/backend/shop-actor/orders.ts";
-import { makeOrdersAgent } from "../../../src/backend/shop-actor/orders-agent.ts";
+import { migrations } from "../../../src/backend/shop-actor.ts";
+import { syncTransaction } from "../../../src/backend/shop-actor/transaction.ts";
+import { makeOrderRepository } from "../../../src/backend/shop-actor/order-repository.ts";
+import { makeOrders } from "../../../src/backend/shop-actor/orders.ts";
 import { Auth } from "../../../src/backend/auth.ts";
 import { MagicLinkDelivery } from "../../../src/backend/magic-link-delivery.ts";
 import { Mailer } from "../../../src/backend/mailer.ts";
-import { Members } from "../../../src/backend/members.ts";
-import { ShopSessions, type ShopSessionRow } from "../../../src/backend/shop-sessions.ts";
+import { MembershipRepository } from "../../../src/backend/membership-repository.ts";
+import {
+  ShopSessionRepository,
+  type ShopSessionRow,
+} from "../../../src/backend/shop-session-repository.ts";
 import { SHOPIFY_API_KEY, SHOPIFY_API_SECRET_FAKE, Shopify } from "../../../src/backend/shopify.ts";
 
 /** The `AUTH_ORIGIN` the test Backend's Better Auth runs under, so links resolve against it. */
@@ -42,7 +46,7 @@ export const TEST_SHOPIFY_APP = {
 } as const;
 
 /**
- * {@link Shopify} over {@link TEST_SHOPIFY_APP} and an in-memory {@link ShopSessions} holding
+ * {@link Shopify} over {@link TEST_SHOPIFY_APP} and an in-memory {@link ShopSessionRepository} holding
  * `rows`, which stays in the context so a test can read what an exchange wrote.
  */
 export const testShopify = (rows: ReadonlyArray<ShopSessionRow> = []) =>
@@ -50,7 +54,7 @@ export const testShopify = (rows: ReadonlyArray<ShopSessionRow> = []) =>
     apiKey: TEST_SHOPIFY_APP.apiKey,
     apiSecret: Redacted.make(TEST_SHOPIFY_APP.apiSecret),
     appUrl: "http://localhost",
-  }).pipe(Layer.provideMerge(ShopSessions.layerTest(rows)));
+  }).pipe(Layer.provideMerge(ShopSessionRepository.layerTest(rows)));
 
 /** A value as D1 binds it: `undefined` is null and a boolean 1 or 0, which `node:sqlite` refuses. */
 const d1Value = (value: unknown) =>
@@ -196,17 +200,17 @@ export const seedD1 = (
 };
 
 /**
- * The real {@link Members} over a fresh {@link makeD1Test} database seeded with `members` and a
+ * The real {@link MembershipRepository} over a fresh {@link makeD1Test} database seeded with `members` and a
  * `ShopSession` row for each of their shops and of `shops`.
  */
-export const testMembers = (
+export const testMembershipRepository = (
   members: ReadonlyArray<MemberRow>,
   shops: ReadonlyArray<ShopKey> = [],
 ) =>
   Layer.unwrap(
     Effect.map(makeD1Test, ({ db, raw }) => {
       seedD1(db, { shops, members });
-      return Members.layerWith(raw);
+      return MembershipRepository.layerWith(raw);
     }),
   );
 
@@ -215,21 +219,21 @@ export const QuietLogs = Layer.succeed(References.MinimumLogLevel, "Warn");
 
 /**
  * {@link Auth} over Better Auth on an in-memory database, fresh per test, with the services
- * every Backend test needs: {@link Members}, the given {@link ShopActors} fake, and the stage's
+ * every Backend test needs: {@link MembershipRepository}, the given {@link ShopActors} fake, and the stage's
  * {@link MagicLinkDelivery} over {@link Mailer.layerTest}. `extra` adds what only one test
  * needs, such as `ShopAccess`. Alchemy's runtime marker is left to the caller: a test that calls
  * Worker methods directly needs it in its context (`provideMerge`), the others only feed it.
  */
 export const testAuth = <A, E, R>({
   members,
-  membersLayer = testMembers(members),
+  membershipRepositoryLayer = testMembershipRepository(members),
   actors,
   delivery,
   extra,
 }: {
   members: ReadonlyArray<MemberRow>;
-  /** {@link Members} itself, when a test wraps it; by default {@link testMembers} of `members`. */
-  membersLayer?: Layer.Layer<Members>;
+  /** {@link MembershipRepository} itself, when a test wraps it; by default {@link testMembershipRepository} of `members`. */
+  membershipRepositoryLayer?: Layer.Layer<MembershipRepository>;
   actors: Layer.Layer<ShopActors>;
   delivery: "inline" | "mailed";
   extra: Layer.Layer<A, E, R>;
@@ -237,7 +241,7 @@ export const testAuth = <A, E, R>({
   Auth.layerWith({ secret: "test-secret-test-secret-test-secret" }).pipe(
     Layer.provideMerge(
       Layer.mergeAll(
-        membersLayer,
+        membershipRepositoryLayer,
         actors,
         extra,
         (delivery === "inline"
@@ -318,7 +322,7 @@ export interface OrderActorCalls {
 }
 
 /**
- * `ShopActors.layerTest` whose `syncOrderWebhook` runs the actor's own `OrdersAgent` for the
+ * `ShopActors.layerTest` whose `syncOrderWebhook` runs the actor's own `Orders` for the
  * shop, over the `SqlClient` in context (the actor's schema, {@link ActorSqliteTest}) and the
  * `ShopifyAdmin` in context, recording each delivery and each notice, and whose `destroy` reads
  * `stub` as the actor's answer through the real {@link settleDestroy}, each recorded in `calls`.
@@ -328,7 +332,7 @@ export const testOrderActors = (calls: OrderActorCalls, stub: Effect.Effect<void
     ShopActors,
     Effect.gen(function* () {
       const base = yield* ShopActors;
-      const sessions = yield* ShopSessions;
+      const sessions = yield* ShopSessionRepository;
       const admin = yield* ShopifyAdmin;
       const sql = yield* SqlClient.SqlClient;
       const repository = makeOrderRepository(sql, syncTransaction(sql));
@@ -341,11 +345,11 @@ export const testOrderActors = (calls: OrderActorCalls, stub: Effect.Effect<void
         syncOrderWebhook: (key, input) =>
           Effect.suspend(() => {
             calls.webhooks.push({ key, ...input });
-            return makeOrdersAgent({
+            return makeOrders({
               repository,
               transaction: syncTransaction(sql),
               admin,
-              workflows: testOrdersSyncWorkflows(),
+              ordersSync: testOrdersSyncWorkflows(),
               notify,
               shop: key,
             })

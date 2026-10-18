@@ -7,10 +7,13 @@ import { EmailFromInput } from "../../../src/contract/auth.ts";
 import { FIXTURE_ORDER_PREFIX, ShopFixtureData } from "../../../src/contract/fixture.ts";
 import { ShopKey } from "../../../src/contract/shop.ts";
 import { type ActorFixtureRows, Fixtures, fixtureRows } from "../../../src/backend/fixture.ts";
-import { Members } from "../../../src/backend/members.ts";
+import { MembershipRepository } from "../../../src/backend/membership-repository.ts";
 import { ShopActors } from "../../../src/backend/shop-actors.ts";
-import { ShopSessions, type ShopSessionRow } from "../../../src/backend/shop-sessions.ts";
-import { type MemberRow, testMembers } from "./layers.ts";
+import {
+  ShopSessionRepository,
+  type ShopSessionRow,
+} from "../../../src/backend/shop-session-repository.ts";
+import { type MemberRow, testMembershipRepository } from "./layers.ts";
 
 const shopKey = Schema.decodeUnknownSync(ShopKey);
 const email = Schema.decodeUnknownSync(EmailFromInput);
@@ -193,8 +196,8 @@ describe("Fixtures.load", () => {
     const layer = Fixtures.layer.pipe(
       Layer.provideMerge(
         Layer.mergeAll(
-          ShopSessions.layerTest(sessions),
-          testMembers(prior),
+          ShopSessionRepository.layerTest(sessions),
+          testMembershipRepository(prior),
           ShopActors.layerTest(revoked, undefined, loaded),
         ),
       ),
@@ -209,7 +212,7 @@ describe("Fixtures.load", () => {
       assert.strictEqual(error._tag, "ShopNotInstalled");
       assert.strictEqual(error.shop, shop);
       assert.strictEqual(loaded.length, 0);
-      assert.strictEqual((yield* (yield* Members).list()).length, prior.length);
+      assert.strictEqual((yield* (yield* MembershipRepository).list()).length, prior.length);
     }).pipe(Effect.provide(layer));
   });
 
@@ -224,7 +227,7 @@ describe("Fixtures.load", () => {
         orders: 2,
         lineItems: 3,
       });
-      const members = yield* Members;
+      const members = yield* MembershipRepository;
       const rows = yield* members.list();
       assert.deepStrictEqual(
         rows.filter((row) => String(row.shop) === shop).map((row) => row.email),

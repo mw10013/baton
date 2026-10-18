@@ -158,14 +158,16 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
      * A deleted member has no row and so no shops: this is the sign-in gate, and a deleted
      * email gets the same no-link response a stranger does.
      */
-    const listShopsOf = Effect.fn("Members.listShopsOf")(function* (email: Email) {
+    const listShopsOf = Effect.fn("MembershipRepository.listShopsOf")(function* (email: Email) {
       const rows = yield* decodeShops(
         yield* sql`select shop from Member where email = ${email} order by shop`,
       );
       return rows.map((row) => row.shop);
     }, Effect.orDie);
 
-    const findMember = Effect.fn("Members.findMember")(function* (member: MemberEmail) {
+    const findMember = Effect.fn("MembershipRepository.findMember")(function* (
+      member: MemberEmail,
+    ) {
       const rows =
         yield* sql`select * from Member where shop = ${member.shop} and email = ${member.email}`;
       if (rows[0] === undefined) return Option.none<Member>();
@@ -173,7 +175,7 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
     }, Effect.orDie);
 
     /** Every shop's members, for the operator's admin page. */
-    const list = Effect.fn("Members.list")(function* () {
+    const list = Effect.fn("MembershipRepository.list")(function* () {
       return yield* decodeMembers(
         yield* sql`select id, shop, email, createdAt from Member order by shop, email`,
       );
@@ -183,7 +185,7 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
      * The members index's read; see {@link Page}. `teamCount` is a correlated subquery, as
      * `memberCount` is on {@link listTeamsPage}, so a member on no team still returns a row.
      */
-    const listMembersPage = Effect.fn("Members.listMembersPage")(function* (
+    const listMembersPage = Effect.fn("MembershipRepository.listMembersPage")(function* (
       params: PageInput<Email>,
     ) {
       const rows = yield* sql`
@@ -234,7 +236,7 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
      * insert, which neither expresses "already a member is exempt" nor
      * reports which of the two conditions refused.
      */
-    const addMember = Effect.fn("Members.addMember")(
+    const addMember = Effect.fn("MembershipRepository.addMember")(
       function* (member: MemberEmail) {
         const existing = yield* sql`
         select 1 from Member where shop = ${member.shop} and email = ${member.email}
@@ -267,7 +269,7 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
      * ({@link findMemberAccess}) rejects them on the next request. Run history is untouched:
      * the member row on `D1_TABLES` and the snapshot row on the actor's data model.
      */
-    const deleteMember = Effect.fn("Members.deleteMember")(
+    const deleteMember = Effect.fn("MembershipRepository.deleteMember")(
       function* (member: MemberEmail) {
         const rows = yield* sql`
         delete from Member
@@ -287,7 +289,7 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
      * in name order, the count of every team they are on, and the shop's teams they are not
      * on.
      */
-    const findMemberDetail = Effect.fn("Members.findMemberDetail")(function* (params: {
+    const findMemberDetail = Effect.fn("MembershipRepository.findMemberDetail")(function* (params: {
       readonly shop: ShopKey;
       readonly id: MemberId;
       readonly teamsAfter: TeamName | null;
@@ -346,7 +348,7 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
      * by the join, which holds the cross-shop half of the team row on `D1_TABLES` from this
      * side.
      */
-    const addMemberTeams = Effect.fn("Members.addMemberTeams")(
+    const addMemberTeams = Effect.fn("MembershipRepository.addMemberTeams")(
       function* (params: {
         readonly shop: ShopKey;
         readonly memberId: MemberId;
@@ -376,7 +378,7 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
      * The teams index's read; see {@link Page}. `memberCount` is a correlated subquery rather
      * than a `group by` join so a team with no members still returns a row.
      */
-    const listTeamsPage = Effect.fn("Members.listTeamsPage")(function* (
+    const listTeamsPage = Effect.fn("MembershipRepository.listTeamsPage")(function* (
       params: PageInput<TeamName>,
     ) {
       const rows = yield* sql`
@@ -414,7 +416,7 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
      * unaffected: SQLite treats `or ignore` as `abort` for those, so an
      * uninstalled shop still fails loudly.
      */
-    const createTeam = Effect.fn("Members.createTeam")(
+    const createTeam = Effect.fn("MembershipRepository.createTeam")(
       function* (team: { readonly shop: ShopKey; readonly name: TeamName }) {
         // Same count-then-insert shape, and the same accepted race, as `addMember`; a team name
         // is unique per shop, so there is no "already exists" case to exempt.
@@ -440,7 +442,7 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
      * a taken name. The follow-up query disambiguates, and only runs on that
      * failure path.
      */
-    const renameTeam = Effect.fn("Members.renameTeam")(
+    const renameTeam = Effect.fn("MembershipRepository.renameTeam")(
       function* (team: { readonly shop: ShopKey; readonly id: TeamId; readonly name: TeamName }) {
         const updated = yield* sql`
         update or ignore Team set name = ${team.name}
@@ -473,7 +475,7 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
      * sockets were scoped to this team, and those connections carry the
      * team in a connect-time snapshot that the delete has just invalidated.
      */
-    const deleteTeam = Effect.fn("Members.deleteTeam")(
+    const deleteTeam = Effect.fn("MembershipRepository.deleteTeam")(
       function* (team: { readonly shop: ShopKey; readonly id: TeamId }) {
         const memberRows = yield* sql`
         select memberId from TeamMember where teamId = ${team.id}
@@ -496,7 +498,7 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
      * members dialog's candidates). The member side is scoped through
      * `Member.shop`, so an edge to another shop's member never shows.
      */
-    const findTeamDetail = Effect.fn("Members.findTeamDetail")(function* (params: {
+    const findTeamDetail = Effect.fn("MembershipRepository.findTeamDetail")(function* (params: {
       readonly shop: ShopKey;
       readonly id: TeamId;
       readonly membersAfter: Email | null;
@@ -560,7 +562,7 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
      * as one edge, and the member id came from this shop's own members.
      * Removal is unconditional and cannot fail.
      */
-    const setTeamMember = Effect.fn("Members.setTeamMember")(
+    const setTeamMember = Effect.fn("MembershipRepository.setTeamMember")(
       function* (params: {
         readonly shop: ShopKey;
         readonly teamId: TeamId;
@@ -607,7 +609,7 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
      * edge; a member id from another shop matches no source row and is
      * dropped by the join.
      */
-    const addTeamMembers = Effect.fn("Members.addTeamMembers")(
+    const addTeamMembers = Effect.fn("MembershipRepository.addTeamMembers")(
       function* (params: {
         readonly shop: ShopKey;
         readonly teamId: TeamId;
@@ -640,7 +642,9 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
      * deleted member has no row and is `Option.none()`: the gate then refuses exactly as it
      * would a stranger.
      */
-    const findMemberAccess = Effect.fn("Members.findMemberAccess")(function* (member: MemberEmail) {
+    const findMemberAccess = Effect.fn("MembershipRepository.findMemberAccess")(function* (
+      member: MemberEmail,
+    ) {
       const rows = yield* sql`
         select m.id as memberId, t.id as teamId, t.name as teamName
         from Member m
@@ -680,7 +684,7 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
      * which is why the caller is expected to log and continue on failure rather than fail the
      * sign-in. Better Auth stores its times as ISO text, so `now` is compared as one.
      */
-    const sweepExpiredAuth = Effect.fn("Members.sweepExpiredAuth")(function* () {
+    const sweepExpiredAuth = Effect.fn("MembershipRepository.sweepExpiredAuth")(function* () {
       const now = new Date(yield* Clock.currentTimeMillis).toISOString();
       // `in (select ... limit ?)`, not `delete ... limit`: the latter needs a SQLite compile-time
       // flag that is not guaranteed here.
@@ -706,13 +710,14 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
      * sign-ins can read the same millisecond. A delete by SQL fires no Better Auth hook, so the
      * caller closes the deleted sessions' sockets itself.
      */
-    const keepNewestSessions = Effect.fn("Members.keepNewestSessions")(function* (params: {
-      readonly userId: string;
-      readonly sessionId: string;
-      readonly keep: number;
-    }) {
-      const others = Math.max(params.keep - 1, 0);
-      const deletedRows = yield* sql`
+    const keepNewestSessions = Effect.fn("MembershipRepository.keepNewestSessions")(
+      function* (params: {
+        readonly userId: string;
+        readonly sessionId: string;
+        readonly keep: number;
+      }) {
+        const others = Math.max(params.keep - 1, 0);
+        const deletedRows = yield* sql`
         delete from session
         where userId = ${params.userId}
           and id != ${params.sessionId}
@@ -724,14 +729,16 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
           )
         returning id
       `;
-      const users = yield* decodeRows(Schema.Array(Schema.Struct({ email: Schema.String })))(
-        yield* sql`select email from user where id = ${params.userId}`,
-      );
-      return {
-        deletedIds: (yield* decodeIds(deletedRows)).map((row) => row.id),
-        email: users[0]?.email ?? null,
-      };
-    }, Effect.orDie);
+        const users = yield* decodeRows(Schema.Array(Schema.Struct({ email: Schema.String })))(
+          yield* sql`select email from user where id = ${params.userId}`,
+        );
+        return {
+          deletedIds: (yield* decodeIds(deletedRows)).map((row) => row.id),
+          email: users[0]?.email ?? null,
+        };
+      },
+      Effect.orDie,
+    );
 
     /**
      * Replaces one shop's `Member`, `Team` and `TeamMember` rows with `rows`, in one D1 batch,
@@ -741,7 +748,7 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
      * member ids first and counts the shop's rows last, so the answer is what D1 holds, not the
      * input.
      */
-    const replaceShop = Effect.fn("Members.replaceShop")(function* (
+    const replaceShop = Effect.fn("MembershipRepository.replaceShop")(function* (
       shop: ShopKey,
       rows: ShopIdentity,
     ) {
@@ -772,7 +779,9 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
       return replaced;
     }, Effect.orDie);
 
-    const identityNames = Effect.fn("Members.identityNames")(function* (shop: ShopKey) {
+    const identityNames = Effect.fn("MembershipRepository.identityNames")(function* (
+      shop: ShopKey,
+    ) {
       const [emails, teams] = yield* sql.batch([
         sql`select email from Member where shop = ${shop}`,
         sql`select name from Team where shop = ${shop}`,
@@ -790,7 +799,10 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
      * unique (shop, email) and (shop, name) indexes fail the whole batch on a clash, so a
      * caller reads {@link identityNames} first and treats a clash here as a defect.
      */
-    const addToShop = Effect.fn("Members.addToShop")(function* (shop: ShopKey, rows: ShopIdentity) {
+    const addToShop = Effect.fn("MembershipRepository.addToShop")(function* (
+      shop: ShopKey,
+      rows: ShopIdentity,
+    ) {
       const results = yield* sql.batch([
         ...rows.members.map(
           (member) =>
@@ -846,23 +858,24 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
  * and tears it down with the request.
  *
  * Baton's rule: a membership edit is followed by closing the sockets of the members it changed,
- * so a socket opened under the old membership does not outlive it. `Members` holds no socket:
+ * so a socket opened under the old membership does not outlive it. `MembershipRepository` holds no socket:
  * the shop's actor makes the merchant's edits and closes the sockets itself, and the fixture's
  * edits revoke through `ShopActors.revoke`.
  */
-export class Members extends Context.Service<Members, Effect.Success<ReturnType<typeof make>>>()(
-  "app/Members",
-) {
+export class MembershipRepository extends Context.Service<
+  MembershipRepository,
+  Effect.Success<ReturnType<typeof make>>
+>()("app/MembershipRepository") {
   static readonly layer = Layer.effect(
-    Members,
+    MembershipRepository,
     Effect.flatMap(Cloudflare.D1.QueryDatabase(AuthDb), (d1) => make(d1)),
   );
 
   /**
-   * {@link Members} over a `D1Database` the caller holds, rather than the bound `AuthDb`. It exists
+   * {@link MembershipRepository} over a `D1Database` the caller holds, rather than the bound `AuthDb`. It exists
    * for the unit tests' `node:sqlite` D1 adapter: the `Cloudflare.D1.QueryDatabase` binding
    * resolves `AuthDb` as a resource, which needs Alchemy's `Stack`, absent in a unit test.
    */
   static readonly layerWith = (database: D1Database) =>
-    Layer.effect(Members, make(Effect.succeed(database)));
+    Layer.effect(MembershipRepository, make(Effect.succeed(database)));
 }

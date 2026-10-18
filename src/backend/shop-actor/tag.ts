@@ -3,7 +3,7 @@ import type * as Effect from "effect/Effect";
 import type { OrdersListInput, OrdersListPage, ShopSnapshot } from "../../contract/shop-actor.ts";
 import type { OrderDetail } from "../../domain/orders.ts";
 import type { ActorFixtureAdded, ActorFixtureCounts, ActorFixtureRows } from "../fixture.ts";
-import type { OrderWebhookStatus } from "./orders-agent.ts";
+import type { OrderWebhookStatus } from "./orders.ts";
 import type { OrdersStreamCounts } from "./orders-stream.ts";
 
 /**
@@ -57,7 +57,7 @@ export interface ShopActorShape {
  * reach.
  *
  * It owns its shop, as legacy's `ShopAgent` does: it fetches an order from the Admin API itself
- * (`OrdersAgent`, over the Backend's own `ShopifyAdmin`, which refreshes the offline token when a
+ * (`Orders`, over the Backend's own `ShopifyAdmin`, which refreshes the offline token when a
  * call needs it), reads the shop's `ShopSession`, and creates the orders sync Workflow's instance
  * itself; the Workflow makes the bulk calls and calls the actor back.
  *

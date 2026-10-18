@@ -30,7 +30,7 @@ export class TeamNameTakenError extends Schema.TaggedError<TeamNameTakenError>()
 
 /**
  * No team in this shop is addressable by that id for the attempted write.
- * Membership removal never fails this way (see `Members.setTeamMember`).
+ * Membership removal never fails this way (see `MembershipRepository.setTeamMember`).
  */
 export class TeamNotFoundError extends Schema.TaggedError<TeamNotFoundError>()(
   "TeamNotFoundError",
@@ -40,7 +40,7 @@ export class TeamNotFoundError extends Schema.TaggedError<TeamNotFoundError>()(
 /**
  * No member in this shop is addressable by that email or id for the attempted
  * write; `member` is whichever the caller addressed it by. Membership removal
- * never fails this way (see `Members.setTeamMember`).
+ * never fails this way (see `MembershipRepository.setTeamMember`).
  */
 export class MemberNotFoundError extends Schema.TaggedError<MemberNotFoundError>()(
   "MemberNotFoundError",
@@ -105,7 +105,7 @@ const sessionToken = Schema.NonEmptyString;
 
 /**
  * `BackendApi.membersPage`' input: the merchant's session token, which names the shop, then the
- * members index's search and page (`Members.listMembersPage`). The route reads both leniently
+ * members index's search and page (`MembershipRepository.listMembersPage`). The route reads both leniently
  * from its URL, so a value here has already decoded.
  */
 export const MembersPageRequest = Schema.Struct({
@@ -123,7 +123,7 @@ export const MemberDetailRequest = Schema.Struct({
 });
 export type MemberDetailRequest = typeof MemberDetailRequest.Type;
 
-/** `BackendApi.teamsPage`' input: the teams index's search and page (`Members.listTeamsPage`). */
+/** `BackendApi.teamsPage`' input: the teams index's search and page (`MembershipRepository.listTeamsPage`). */
 export const TeamsPageRequest = Schema.Struct({
   sessionToken,
   q: Schema.NullOr(ListSearch),

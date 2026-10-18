@@ -2,7 +2,10 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { SEED_SHOP } from "../../seed-shops.ts";
-import { ShopSessions, type ShopSessionRow } from "../../../src/backend/shop-sessions.ts";
+import {
+  ShopSessionRepository,
+  type ShopSessionRow,
+} from "../../../src/backend/shop-session-repository.ts";
 
 const row: ShopSessionRow = {
   shop: SEED_SHOP,
@@ -27,14 +30,14 @@ const tokens = {
 };
 
 const stored = Effect.gen(function* () {
-  const sessions = yield* ShopSessions;
+  const sessions = yield* ShopSessionRepository;
   return (yield* sessions.find(SEED_SHOP)).pipe(Option.getOrThrow);
 });
 
-describe("ShopSessions refresh writes", () => {
+describe("ShopSessionRepository refresh writes", () => {
   it.effect("rotateTokens wins only with the matching token, and clears the lease", () =>
     Effect.gen(function* () {
-      const sessions = yield* ShopSessions;
+      const sessions = yield* ShopSessionRepository;
       assert.isTrue(yield* sessions.acquireRefreshLease(SEED_SHOP, 0, 10));
       assert.isTrue(yield* sessions.rotateTokens(SEED_SHOP, "shprt_a", tokens));
       const after = yield* stored;
@@ -43,51 +46,51 @@ describe("ShopSessions refresh writes", () => {
       assert.strictEqual(after.refreshTokenExpiresAt, 4_000);
       assert.strictEqual(after.refreshLeaseUntil, null);
       assert.strictEqual(after.scope, "read_orders");
-    }).pipe(Effect.provide(ShopSessions.layerTest([row]))),
+    }).pipe(Effect.provide(ShopSessionRepository.layerTest([row]))),
   );
 
   it.effect("a lost rotateTokens changes nothing", () =>
     Effect.gen(function* () {
-      const sessions = yield* ShopSessions;
+      const sessions = yield* ShopSessionRepository;
       assert.isFalse(yield* sessions.rotateTokens(SEED_SHOP, "shprt_other", tokens));
       assert.deepStrictEqual(yield* stored, row);
-    }).pipe(Effect.provide(ShopSessions.layerTest([row]))),
+    }).pipe(Effect.provide(ShopSessionRepository.layerTest([row]))),
   );
 
   it.effect("the lease is exclusive until it lapses, then re-takeable", () =>
     Effect.gen(function* () {
-      const sessions = yield* ShopSessions;
+      const sessions = yield* ShopSessionRepository;
       assert.isTrue(yield* sessions.acquireRefreshLease(SEED_SHOP, 100, 200));
       assert.isFalse(yield* sessions.acquireRefreshLease(SEED_SHOP, 150, 250));
       assert.isTrue(yield* sessions.acquireRefreshLease(SEED_SHOP, 200, 300));
       assert.strictEqual((yield* stored).refreshLeaseUntil, 300);
-    }).pipe(Effect.provide(ShopSessions.layerTest([row]))),
+    }).pipe(Effect.provide(ShopSessionRepository.layerTest([row]))),
   );
 
   it.effect("releaseRefreshLease with a stale until is a no-op", () =>
     Effect.gen(function* () {
-      const sessions = yield* ShopSessions;
+      const sessions = yield* ShopSessionRepository;
       yield* sessions.acquireRefreshLease(SEED_SHOP, 0, 200);
       yield* sessions.releaseRefreshLease(SEED_SHOP, 100);
       assert.strictEqual((yield* stored).refreshLeaseUntil, 200);
       yield* sessions.releaseRefreshLease(SEED_SHOP, 200);
       assert.strictEqual((yield* stored).refreshLeaseUntil, null);
-    }).pipe(Effect.provide(ShopSessions.layerTest([row]))),
+    }).pipe(Effect.provide(ShopSessionRepository.layerTest([row]))),
   );
 
   it.effect("clearAccessToken is conditional", () =>
     Effect.gen(function* () {
-      const sessions = yield* ShopSessions;
+      const sessions = yield* ShopSessionRepository;
       yield* sessions.clearAccessToken(SEED_SHOP, "shpat_stale");
       assert.strictEqual((yield* stored).accessToken, "shpat_a");
       yield* sessions.clearAccessToken(SEED_SHOP, "shpat_a");
       assert.strictEqual((yield* stored).accessToken, null);
-    }).pipe(Effect.provide(ShopSessions.layerTest([row]))),
+    }).pipe(Effect.provide(ShopSessionRepository.layerTest([row]))),
   );
 
   it.effect("upsert leaves an existing lease alone and inserts a new row unleased", () =>
     Effect.gen(function* () {
-      const sessions = yield* ShopSessions;
+      const sessions = yield* ShopSessionRepository;
       yield* sessions.acquireRefreshLease(SEED_SHOP, 0, 200);
       const {
         refreshLeaseUntil: _,
@@ -100,6 +103,6 @@ describe("ShopSessions refresh writes", () => {
       const after = yield* stored;
       assert.strictEqual(after.refreshLeaseUntil, 200);
       assert.strictEqual(after.accessToken, "shpat_c");
-    }).pipe(Effect.provide(ShopSessions.layerTest([row]))),
+    }).pipe(Effect.provide(ShopSessionRepository.layerTest([row]))),
   );
 });

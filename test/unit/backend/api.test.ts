@@ -25,15 +25,18 @@ import {
   QuietLogs,
   TEST_SHOPIFY_APP,
   testAuth,
-  testMembers,
+  testMembershipRepository,
   testShopify,
 } from "./layers.ts";
-import { Members } from "../../../src/backend/members.ts";
+import { MembershipRepository } from "../../../src/backend/membership-repository.ts";
 import { MemberId, TeamId } from "../../../src/domain/shop-work.ts";
 import { Auth } from "../../../src/backend/auth.ts";
 import { SentMail } from "../../../src/backend/mailer.ts";
 import { ShopAccess, ShopAccessDenied } from "../../../src/backend/shop-access.ts";
-import { ShopSessions, type ShopSessionRow } from "../../../src/backend/shop-sessions.ts";
+import {
+  ShopSessionRepository,
+  type ShopSessionRow,
+} from "../../../src/backend/shop-session-repository.ts";
 
 const email = Schema.decodeUnknownSync(EmailFromInput);
 const decodeRequested = Schema.decodeSync(MagicLinkRequested);
@@ -75,21 +78,21 @@ const TestBackend = ({
   allow = true,
   gate = Effect.succeed(merchant),
   memberRows = members,
-  membersLayer,
+  membershipRepositoryLayer,
   actors = ShopActors.layerTest([], snapshot),
 }: {
   delivery?: "inline" | "mailed";
   allow?: boolean;
   gate?: Effect.Effect<ConnectionCaller, ShopAccessDenied>;
   memberRows?: ReadonlyArray<MemberRow>;
-  membersLayer?: Layer.Layer<Members>;
+  membershipRepositoryLayer?: Layer.Layer<MembershipRepository>;
   actors?: Layer.Layer<ShopActors>;
 } = {}) =>
   BackendApi.layer.pipe(
     Layer.provideMerge(
       testAuth({
         members: memberRows,
-        ...(membersLayer === undefined ? {} : { membersLayer }),
+        ...(membershipRepositoryLayer === undefined ? {} : { membershipRepositoryLayer }),
         actors,
         delivery,
         extra: Layer.mergeAll(
@@ -259,7 +262,7 @@ describe("BackendApi.authenticateAdmin", () => {
       const sessionToken = yield* tokenFrom(TEST_SHOPIFY_APP);
       const answer = yield* api.authenticateAdmin(withCookie(undefined), { sessionToken });
       assert.deepStrictEqual(answer, { shop: SEED_SHOP, shopGid: seedSession.shopGid });
-      const row = yield* (yield* ShopSessions).find(SEED_SHOP);
+      const row = yield* (yield* ShopSessionRepository).find(SEED_SHOP);
       assert.deepStrictEqual(row, Option.some(seedSession));
     }).pipe(Effect.provide(TestBackend())),
   );
@@ -343,12 +346,12 @@ describe("BackendApi members and teams", () => {
   const memberId = Schema.decodeUnknownSync(MemberId)("mem-1");
   const teamId = Schema.decodeUnknownSync(TeamId)("team-unknown");
 
-  /** The real {@link Members} over {@link members}, recording each page or detail read. */
-  const recordingMembers = (reads: Array<string>) =>
+  /** The real {@link MembershipRepository} over {@link members}, recording each page or detail read. */
+  const recordingMembershipRepository = (reads: Array<string>) =>
     Layer.effect(
-      Members,
+      MembershipRepository,
       Effect.gen(function* () {
-        const base = yield* Members;
+        const base = yield* MembershipRepository;
         const record =
           <Args extends ReadonlyArray<unknown>, A, E>(
             name: string,
@@ -367,7 +370,7 @@ describe("BackendApi members and teams", () => {
           findTeamDetail: record("findTeamDetail", base.findTeamDetail),
         };
       }),
-    ).pipe(Layer.provide(testMembers(members)));
+    ).pipe(Layer.provide(testMembershipRepository(members)));
 
   /** The four loader reads for `sessionToken`, each settled to its answer or its failure tag. */
   const readAll = (sessionToken: string) =>
@@ -396,7 +399,11 @@ describe("BackendApi members and teams", () => {
         Array.from({ length: 4 }, () => ({ failed: "InvalidSessionToken" })),
       );
       assert.deepStrictEqual(reads, []);
-    }).pipe(Effect.provide(TestBackend({ membersLayer: recordingMembers(reads) })));
+    }).pipe(
+      Effect.provide(
+        TestBackend({ membershipRepositoryLayer: recordingMembershipRepository(reads) }),
+      ),
+    );
   });
 
   it.live("each reads the shop its token names", () => {
@@ -420,7 +427,11 @@ describe("BackendApi members and teams", () => {
         "listTeamsPage",
         "findTeamDetail",
       ]);
-    }).pipe(Effect.provide(TestBackend({ membersLayer: recordingMembers(reads) })));
+    }).pipe(
+      Effect.provide(
+        TestBackend({ membershipRepositoryLayer: recordingMembershipRepository(reads) }),
+      ),
+    );
   });
 
   it.live(
@@ -434,7 +445,11 @@ describe("BackendApi members and teams", () => {
           Array.from({ length: 4 }, () => ({ failed: "ShopNotInstalled" })),
         );
         assert.deepStrictEqual(reads, []);
-      }).pipe(Effect.provide(TestBackend({ membersLayer: recordingMembers(reads) })));
+      }).pipe(
+        Effect.provide(
+          TestBackend({ membershipRepositoryLayer: recordingMembershipRepository(reads) }),
+        ),
+      );
     },
   );
 });

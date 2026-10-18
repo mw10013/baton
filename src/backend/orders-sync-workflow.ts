@@ -8,16 +8,16 @@ import type { ShopKey } from "../contract/shop.ts";
 import { type BulkOperation, bulkOperationCompleted } from "../domain/orders.ts";
 import {
   bulkOrdersQueryText,
-  OrdersBulkRepository,
-  type OrdersBulkRepositoryError,
-} from "./orders-bulk.ts";
+  OrdersBulkOperation,
+  type OrdersBulkOperationError,
+} from "./orders-bulk-operation.ts";
 import {
   BULK_GIVE_UP_MS,
   BULK_POLL_INTERVAL_MS,
   GAVE_UP_MESSAGE,
 } from "./orders-sync-constants.ts";
 import { ShopActors } from "./shop-actors.ts";
-import { ShopSessions } from "./shop-sessions.ts";
+import { ShopSessionRepository } from "./shop-session-repository.ts";
 import type { ShopifyUnavailable } from "./shopify.ts";
 import type { ShopifyAdminError } from "./shopify-admin.ts";
 
@@ -89,7 +89,7 @@ const SHOPIFY_RETRIES = { limit: 3, delay: "2 seconds", backoff: "exponential" }
  * Submit the bulk operation, wait for Shopify, hand the file to the shop's actor. Four steps
  * and one loop; every concept the merchant could not predict — a window, a
  * first-run-versus-later rule, a reservation — lives nowhere, because the query is fixed (rule
- * 4 on `syncOrder`) and the actor is the only run tracker (`OrdersAgent.syncOpenOrders`).
+ * 4 on `syncOrder`) and the actor is the only run tracker (`Orders.syncOpenOrders`).
  *
  * Every step and sleep name is a replay key. The poll loop's are named per attempt
  * (`poll-bulk-orders-3`) because a step name is its cache key: a loop that reused one name
@@ -111,8 +111,8 @@ const SHOPIFY_RETRIES = { limit: 3, delay: "2 seconds", backoff: "exponential" }
  * whose sink itself fails, leaves the record behind, and `SYNC_STALE_MS` covers that.
  */
 export const ordersSyncBody = Effect.gen(function* () {
-  const sessions = yield* ShopSessions;
-  const bulk = yield* OrdersBulkRepository;
+  const sessions = yield* ShopSessionRepository;
+  const bulk = yield* OrdersBulkOperation;
   const actors = yield* ShopActors;
 
   return Effect.fn("OrdersSyncWorkflow.run")(
@@ -144,7 +144,7 @@ export const ordersSyncBody = Effect.gen(function* () {
       const shopifyStep = <A, R>(
         name: string,
         label: string,
-        effect: Effect.Effect<A, ShopifyAdminError | OrdersBulkRepositoryError, R>,
+        effect: Effect.Effect<A, ShopifyAdminError | OrdersBulkOperationError, R>,
       ) =>
         step(
           name,
@@ -291,7 +291,7 @@ export const ordersSyncBody = Effect.gen(function* () {
 
 /**
  * The open-orders sync: a Cloudflare Workflow in the Backend's script, one instance per press,
- * created by the shop's actor (`OrdersAgent.syncOpenOrders`) and named by the `workflowId` it
+ * created by the shop's actor (`Orders.syncOpenOrders`) and named by the `workflowId` it
  * recorded. Params `{ shop }`. The body is
  * {@link ordersSyncBody}; its services resolve in the Backend's init, which runs again in any
  * isolate an instance lands in. It reaches the actor through {@link ShopActors.layerFrom}, by

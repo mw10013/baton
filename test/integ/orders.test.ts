@@ -605,7 +605,7 @@ test(
 );
 
 /**
- * Legacy's `onOrdersStream`, `onOrdersSyncEmpty` and `onOrdersSyncError` were agent methods a
+ * Legacy's `onOrdersStream`, `onOrdersSyncEmpty` and `onOrdersSyncError` were object methods a
  * socket could name; here they are stub methods of the same names, which only the Backend's
  * Workflow holds, so no browser procedure carries them. Legacy's two sync buttons were
  * merchant-only callables; here they are the merchant procedures `MerchantSyncOpenOrders` and

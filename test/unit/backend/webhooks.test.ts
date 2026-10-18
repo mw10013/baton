@@ -10,7 +10,10 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { ShopLimits } from "../../../src/domain/platform.ts";
 import { orderSyncQuery, orderSyncVariables } from "../../../src/backend/order-sync.ts";
 import { ABORT_UNINSTALLED } from "../../../src/backend/shop-actor/tag.ts";
-import { ShopSessions, type ShopSessionRow } from "../../../src/backend/shop-sessions.ts";
+import {
+  ShopSessionRepository,
+  type ShopSessionRow,
+} from "../../../src/backend/shop-session-repository.ts";
 import { ReauthorizationRequired, Shopify } from "../../../src/backend/shopify.ts";
 import type { ShopifyAdminError } from "../../../src/backend/shopify-admin.ts";
 import { orderRef, OrdersWebhookPayload, Webhooks } from "../../../src/backend/webhooks.ts";
@@ -47,7 +50,7 @@ const session: ShopSessionRow = {
 
 /**
  * {@link Webhooks} over {@link testShopify} holding `rows`, which stays readable, and
- * {@link testOrderActors}, whose `syncOrderWebhook` runs the actor's `OrdersAgent` over a fresh
+ * {@link testOrderActors}, whose `syncOrderWebhook` runs the actor's `Orders` over a fresh
  * in-memory actor schema (readable through `testOrderRepository`) and {@link testShopifyAdmin}
  * answering `replies`, and whose destroy answers `stub`, all recording into `calls`.
  */
@@ -120,7 +123,7 @@ const serve = (request: Request) =>
   });
 
 const storedScope = Effect.gen(function* () {
-  const shopSessions = yield* ShopSessions;
+  const shopSessions = yield* ShopSessionRepository;
   return Option.map(yield* shopSessions.find(SEED_SHOP), (row) => row.scope);
 });
 

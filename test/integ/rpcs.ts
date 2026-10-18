@@ -12,7 +12,7 @@ import { Rpc, RpcGroup } from "effect/rpc";
 import { Email, ReturnPath } from "../../src/contract/auth.ts";
 import { Auth } from "../../src/backend/auth.ts";
 import { MagicLinkDelivery } from "../../src/backend/magic-link-delivery.ts";
-import { Members } from "../../src/backend/members.ts";
+import { MembershipRepository } from "../../src/backend/membership-repository.ts";
 import { InvalidSessionToken, ShopKey } from "../../src/contract/shop.ts";
 import { ListOrdersRequest } from "../../src/contract/orders.ts";
 import { BackendApi } from "../../src/backend/api.ts";
@@ -62,7 +62,7 @@ export type ShopifyFakeCall = typeof ShopifyFakeCall.Type;
  * - `ApiListOrders` is the `BackendApi` method the orders screen's loader calls, with an empty
  *   request, because integ has no Website to call it over the binding.
  * - `ShopIdentityNames` answers the emails of `shop`'s `Member` rows and the names of its `Team`
- *   rows, read from D1 alone ({@link Members}' `identityNames`), so it never reaches the actor.
+ *   rows, read from D1 alone ({@link MembershipRepository}' `identityNames`), so it never reaches the actor.
  */
 export const IntegRpcs = RpcGroup.make(
   Rpc.make("IssueMagicLink", {
@@ -106,7 +106,7 @@ export const IntegHandlers = IntegRpcs.toLayer(
     const delivery = yield* MagicLinkDelivery;
     const shopifyFake = yield* ShopifyFake;
     const actors = yield* ShopActors;
-    const members = yield* Members;
+    const members = yield* MembershipRepository;
     const api = yield* BackendApi;
     const noRequest = { cookie: undefined, ip: undefined };
 

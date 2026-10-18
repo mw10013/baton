@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import { SEED_SHOP } from "../../seed-shops.ts";
-import { ShopSessions } from "../../../src/backend/shop-sessions.ts";
+import { ShopSessionRepository } from "../../../src/backend/shop-session-repository.ts";
 import { Shopify } from "../../../src/backend/shopify.ts";
 import { mintSessionToken } from "../../shopify-session-token.ts";
 import { TEST_SHOPIFY_APP } from "./layers.ts";
@@ -14,7 +14,7 @@ const appWith = (options: { apiKey: string; apiSecret: string }) =>
     apiKey: options.apiKey,
     apiSecret: Redacted.make(options.apiSecret),
     appUrl: "http://localhost",
-  }).pipe(Layer.provide(ShopSessions.layerTest([])));
+  }).pipe(Layer.provide(ShopSessionRepository.layerTest([])));
 
 const layer = appWith(TEST_SHOPIFY_APP);
 

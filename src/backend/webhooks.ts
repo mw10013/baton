@@ -7,9 +7,9 @@ import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { EpochMillis } from "../domain/platform.ts";
-import type { OrderWebhookStatus } from "./shop-actor/orders-agent.ts";
+import type { OrderWebhookStatus } from "./shop-actor/orders.ts";
 import { ShopActors } from "./shop-actors.ts";
-import { ShopSessions } from "./shop-sessions.ts";
+import { ShopSessionRepository } from "./shop-session-repository.ts";
 import { Shopify, type ValidatedWebhook, WebhookRejected } from "./shopify.ts";
 
 /**
@@ -133,7 +133,7 @@ const compliance = Effect.succeed(ok);
 
 const make = Effect.gen(function* () {
   const shopify = yield* Shopify;
-  const shopSessions = yield* ShopSessions;
+  const shopSessions = yield* ShopSessionRepository;
   const actors = yield* ShopActors;
 
   /**
@@ -214,7 +214,7 @@ const make = Effect.gen(function* () {
    * invalidated. Retaining stale sessions risks conflicting OAuth flows on re-install, so
    * uninstall is the one teardown point for the shop's session and its actor's storage.
    *
-   * Deletes the shop's session unconditionally (`ShopSessions.remove`): a single D1 call whether
+   * Deletes the shop's session unconditionally (`ShopSessionRepository.remove`): a single D1 call whether
    * this is the first delivery or a retry after the row is already gone, where a load-then-delete
    * would cost two on the first. The delete cascades to the shop's `Member`, `Team` and
    * `TeamMember` rows; Better Auth's users stay, since a user may belong to other shops.

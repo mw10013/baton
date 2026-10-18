@@ -12,7 +12,7 @@ const PATH = "/app/teams";
 
 /**
  * The teams index's URL: the search and the page. `q` is matched anywhere in the name, ignoring
- * case, over every team; `after` is the last name of the page before (`Members.listTeamsPage`).
+ * case, over every team; `after` is the last name of the page before (`MembershipRepository.listTeamsPage`).
  * Both are lenient for the reason on `OrdersSearch`.
  */
 const TeamsSearch = Schema.Struct({

@@ -3,7 +3,7 @@ import * as SQL from "alchemy/SQL/D1";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { BETTER_AUTH_TABLES, D1_TABLES } from "../../../src/backend/d1-tables.ts";
-import { Members } from "../../../src/backend/members.ts";
+import { MembershipRepository } from "../../../src/backend/membership-repository.ts";
 import { Email } from "../../../src/domain/platform.ts";
 import { makeD1Test } from "./layers.ts";
 
@@ -69,11 +69,11 @@ describe("D1Test", () => {
 /**
  * The `schema` and `schema+app` member and team rows of the data-model table on
  * {@link D1_TABLES}, and the test that pins the table's names. Each title is the row's rule
- * verbatim. Each rule test writes the forbidden row with raw SQL, bypassing `Members`, so it
+ * verbatim. Each rule test writes the forbidden row with raw SQL, bypassing `MembershipRepository`, so it
  * proves the database refuses it and not merely that the write paths tried so far avoid it.
  *
  * "A team never crosses shops" is not here: the database does not refuse a cross-shop edge, and
- * the row is pinned by `setTeamMember refuses cross-shop pairs` in the `Members` tests.
+ * the row is pinned by `setTeamMember refuses cross-shop pairs` in the `MembershipRepository` tests.
  */
 describe("D1 data model", () => {
   const NOW = Date.UTC(2026, 0, 1);
@@ -161,8 +161,10 @@ describe("D1 data model", () => {
         // One person on two shops is one user and two members, joined by the email the sign-in
         // path reads and by nothing stored.
         const shops = yield* Effect.gen(function* () {
-          return yield* (yield* Members).listShopsOf(Schema.decodeUnknownSync(Email)("a@x.com"));
-        }).pipe(Effect.provide(Members.layerWith(raw)));
+          return yield* (yield* MembershipRepository).listShopsOf(
+            Schema.decodeUnknownSync(Email)("a@x.com"),
+          );
+        }).pipe(Effect.provide(MembershipRepository.layerWith(raw)));
         assert.deepStrictEqual(shops.toSorted(), ["a.myshopify.com", "b.myshopify.com"]);
         const pointers = ["Member", "user"].flatMap((table) =>
           db

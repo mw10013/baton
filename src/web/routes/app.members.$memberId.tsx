@@ -12,7 +12,7 @@ const decodeMemberId = Schema.decodeSync(MemberId);
 
 /**
  * The member page's URL: `teamsAfter` is the last team name of the Teams table's page before
- * (`Members.findMemberDetail`), lenient for the reason on `OrdersSearch`.
+ * (`MembershipRepository.findMemberDetail`), lenient for the reason on `OrdersSearch`.
  */
 const MemberSearch = Schema.Struct({ teamsAfter: lenientSearchKey(TeamName) });
 

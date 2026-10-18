@@ -88,7 +88,7 @@ const toOrderLineItem = (orderId: string, node: LineItemNode) => {
 
 /**
  * One order's items as both sync paths store them, the webhook fetch
- * (`OrdersAgent.fetchAndUpsertOrder`) and the stream (`runOrdersStream`), so the two
+ * (`Orders.fetchAndUpsertOrder`) and the stream (`runOrdersStream`), so the two
  * cannot store different things for the same item. Each item's properties are
  * capped by {@link capProperties} (rule 11 on `syncOrder`), and the
  * properties dropped across the order are logged once. A run copies its

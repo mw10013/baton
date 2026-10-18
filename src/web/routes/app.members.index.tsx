@@ -13,7 +13,7 @@ const PATH = "/app/members";
 /**
  * The members index's URL: the search and the page. `q` is matched anywhere in the email, over
  * every member, not only the rows on screen; `after` is the last email of the page before
- * (`Members.listMembersPage`). Both are lenient for the reason on `OrdersSearch`: a stale or
+ * (`MembershipRepository.listMembersPage`). Both are lenient for the reason on `OrdersSearch`: a stale or
  * hand-edited value reads as no search, or page one.
  */
 const MembersSearch = Schema.Struct({

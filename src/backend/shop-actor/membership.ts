@@ -12,11 +12,11 @@ import type {
 } from "../../contract/members.ts";
 import type { ShopKey } from "../../contract/shop.ts";
 import type { DeleteTeamResult, MemberId } from "../../domain/shop-work.ts";
-import type { Members } from "../members.ts";
+import type { MembershipRepository } from "../membership-repository.ts";
 
 /**
  * The merchant's member and team writes, one method per `Merchant…` procedure, as the shop's
- * actor runs them. Built once per activation over the Backend's `Members`, the actor's `revoke`
+ * actor runs them. Built once per activation over the Backend's `MembershipRepository`, the actor's `revoke`
  * (which closes every socket of each member with 3401 and answers how many it closed) and its
  * shop.
  *
@@ -31,12 +31,12 @@ import type { Members } from "../members.ts";
  * Team delete is where E's half joins, after the D1 delete and before the closes: null the
  * actor's task pointers to the team and to any team already gone from D1, reconcile, and notify.
  */
-export const makeMembersAgent = ({
-  members,
+export const makeMembership = ({
+  membershipRepository,
   revoke,
   shop,
 }: {
-  readonly members: (typeof Members)["Service"];
+  readonly membershipRepository: (typeof MembershipRepository)["Service"];
   readonly revoke: (memberIds: ReadonlyArray<MemberId>) => Effect.Effect<number>;
   readonly shop: ShopKey;
 }) => {
@@ -54,22 +54,22 @@ export const makeMembersAgent = ({
   const log = (message: string, annotations: Record<string, unknown>) =>
     Effect.logInfo(message).pipe(Effect.annotateLogs({ shop, ...annotations }));
 
-  const addMember = Effect.fn("MembersAgent.addMember")(function* ({ email }: AddMemberInput) {
-    const member = yield* members.addMember({ shop, email });
-    yield* log(`MembersAgent.addMember: shop=${shop} memberId=${member.id}: added closed=0`, {
+  const addMember = Effect.fn("Membership.addMember")(function* ({ email }: AddMemberInput) {
+    const member = yield* membershipRepository.addMember({ shop, email });
+    yield* log(`Membership.addMember: shop=${shop} memberId=${member.id}: added closed=0`, {
       memberId: member.id,
       closed: 0,
     });
     return member;
   });
 
-  const deleteMember = Effect.fn("MembersAgent.deleteMember")(function* ({
+  const deleteMember = Effect.fn("Membership.deleteMember")(function* ({
     email,
   }: DeleteMemberInput) {
-    const memberId = yield* members.deleteMember({ shop, email });
-    const closed = yield* close("MembersAgent.deleteMember", [memberId]);
+    const memberId = yield* membershipRepository.deleteMember({ shop, email });
+    const closed = yield* close("Membership.deleteMember", [memberId]);
     yield* log(
-      `MembersAgent.deleteMember: shop=${shop} memberId=${memberId}: deleted closed=${closed}`,
+      `Membership.deleteMember: shop=${shop} memberId=${memberId}: deleted closed=${closed}`,
       {
         memberId,
         closed,
@@ -77,81 +77,81 @@ export const makeMembersAgent = ({
     );
   });
 
-  const addMemberTeams = Effect.fn("MembersAgent.addMemberTeams")(function* ({
+  const addMemberTeams = Effect.fn("Membership.addMemberTeams")(function* ({
     memberId,
     teamIds,
   }: AddMemberTeamsInput) {
-    yield* members.addMemberTeams({ shop, memberId, teamIds });
-    const closed = yield* close("MembersAgent.addMemberTeams", [memberId]);
+    yield* membershipRepository.addMemberTeams({ shop, memberId, teamIds });
+    const closed = yield* close("Membership.addMemberTeams", [memberId]);
     yield* log(
-      `MembersAgent.addMemberTeams: shop=${shop} memberId=${memberId}: added teams=${teamIds.length} closed=${closed}`,
+      `Membership.addMemberTeams: shop=${shop} memberId=${memberId}: added teams=${teamIds.length} closed=${closed}`,
       { memberId, teams: teamIds.length, closed },
     );
   });
 
-  const setTeamMember = Effect.fn("MembersAgent.setTeamMember")(function* ({
+  const setTeamMember = Effect.fn("Membership.setTeamMember")(function* ({
     teamId,
     memberId,
     inTeam,
   }: SetTeamMemberInput) {
-    yield* members.setTeamMember({ shop, teamId, memberId, inTeam });
-    const closed = yield* close("MembersAgent.setTeamMember", [memberId]);
+    yield* membershipRepository.setTeamMember({ shop, teamId, memberId, inTeam });
+    const closed = yield* close("Membership.setTeamMember", [memberId]);
     const outcome = inTeam ? "added" : "removed";
     yield* log(
-      `MembersAgent.setTeamMember: shop=${shop} teamId=${teamId}: ${outcome} memberId=${memberId} closed=${closed}`,
+      `Membership.setTeamMember: shop=${shop} teamId=${teamId}: ${outcome} memberId=${memberId} closed=${closed}`,
       { teamId, memberId, outcome, closed },
     );
   });
 
-  const createTeam = Effect.fn("MembersAgent.createTeam")(function* ({ name }: CreateTeamInput) {
-    const team = yield* members.createTeam({ shop, name });
-    yield* log(`MembersAgent.createTeam: shop=${shop} teamId=${team.id}: created closed=0`, {
+  const createTeam = Effect.fn("Membership.createTeam")(function* ({ name }: CreateTeamInput) {
+    const team = yield* membershipRepository.createTeam({ shop, name });
+    yield* log(`Membership.createTeam: shop=${shop} teamId=${team.id}: created closed=0`, {
       teamId: team.id,
       closed: 0,
     });
     return team;
   });
 
-  const renameTeam = Effect.fn("MembersAgent.renameTeam")(function* ({
+  const renameTeam = Effect.fn("Membership.renameTeam")(function* ({
     teamId,
     name,
   }: RenameTeamInput) {
-    yield* members.renameTeam({ shop, id: teamId, name });
-    yield* log(`MembersAgent.renameTeam: shop=${shop} teamId=${teamId}: renamed closed=0`, {
+    yield* membershipRepository.renameTeam({ shop, id: teamId, name });
+    yield* log(`Membership.renameTeam: shop=${shop} teamId=${teamId}: renamed closed=0`, {
       teamId,
       closed: 0,
     });
   });
 
-  const addTeamMembers = Effect.fn("MembersAgent.addTeamMembers")(function* ({
+  const addTeamMembers = Effect.fn("Membership.addTeamMembers")(function* ({
     teamId,
     memberIds,
   }: AddTeamMembersInput) {
-    yield* members.addTeamMembers({ shop, teamId, memberIds });
-    const closed = yield* close("MembersAgent.addTeamMembers", memberIds);
+    yield* membershipRepository.addTeamMembers({ shop, teamId, memberIds });
+    const closed = yield* close("Membership.addTeamMembers", memberIds);
     yield* log(
-      `MembersAgent.addTeamMembers: shop=${shop} teamId=${teamId}: added members=${memberIds.length} closed=${closed}`,
+      `Membership.addTeamMembers: shop=${shop} teamId=${teamId}: added members=${memberIds.length} closed=${closed}`,
       { teamId, members: memberIds.length, closed },
     );
   });
 
   /**
    * Legacy's `deleteTeam` callable: `NotFound` is an answer, not a failure, and closes
-   * nobody; `Members.deleteTeam` reads the team's members before the edges cascade.
+   * nobody; `MembershipRepository.deleteTeam` reads the team's members before the edges cascade.
    */
-  const deleteTeam = Effect.fn("MembersAgent.deleteTeam")(function* ({ teamId }: DeleteTeamInput) {
-    const deleted = yield* members.deleteTeam({ shop, id: teamId }).pipe(
+  const deleteTeam = Effect.fn("Membership.deleteTeam")(function* ({ teamId }: DeleteTeamInput) {
+    const deleted = yield* membershipRepository.deleteTeam({ shop, id: teamId }).pipe(
       Effect.map(Option.some),
       Effect.catchTag("TeamNotFoundError", () =>
         Effect.succeed(Option.none<ReadonlyArray<MemberId>>()),
       ),
     );
     const closed = Option.isSome(deleted)
-      ? yield* close("MembersAgent.deleteTeam", deleted.value)
+      ? yield* close("Membership.deleteTeam", deleted.value)
       : 0;
     const outcome = Option.isSome(deleted) ? "deleted" : "not-found";
     yield* log(
-      `MembersAgent.deleteTeam: shop=${shop} teamId=${teamId}: ${outcome} closed=${closed}`,
+      `Membership.deleteTeam: shop=${shop} teamId=${teamId}: ${outcome} closed=${closed}`,
       {
         teamId,
         outcome,

@@ -27,7 +27,11 @@ import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import { InvalidSessionToken, ShopKey, type AdminSession } from "../contract/shop.ts";
 import { OfflineSessionMissing, ReauthorizationRequired } from "../contract/shopify.ts";
-import { ShopSessions, ShopSessionUpsert, type ShopSessionRow } from "./shop-sessions.ts";
+import {
+  ShopSessionRepository,
+  ShopSessionUpsert,
+  type ShopSessionRow,
+} from "./shop-session-repository.ts";
 
 export { OfflineSessionMissing, ReauthorizationRequired };
 
@@ -249,7 +253,7 @@ const make = (options: {
   readonly appUrl: string;
 }) =>
   Effect.gen(function* () {
-    const shopSessions = yield* ShopSessions;
+    const shopSessions = yield* ShopSessionRepository;
     // Built on first use, so planning the stack, where the bindings are absent, never builds it.
     const api = yield* Effect.cached(
       Effect.sync(() => {
@@ -712,7 +716,7 @@ const make = (options: {
  * an HS256 signature under the app's API secret (`SHOPIFY_API_SECRET`), `aud` equal to the
  * app's API key (`SHOPIFY_API_KEY`), `exp` and `nbf` with ten seconds of clock tolerance.
  * `authenticateAdmin` exchanges a session token for the shop's offline access token and keeps it
- * in {@link ShopSessions}. The key and secret are the real app's under `shopify app dev` and
+ * in {@link ShopSessionRepository}. The key and secret are the real app's under `shopify app dev` and
  * fakes elsewhere ({@link SHOPIFY_API_SECRET_FAKE}), where only a token a test signs verifies and
  * the seeded rows stand in for exchanges.
  */

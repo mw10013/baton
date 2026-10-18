@@ -15,7 +15,6 @@ import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
-import * as Scheduler from "effect/Scheduler";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -51,17 +50,14 @@ import {
 } from "../contract/shop-actor.ts";
 import * as ActorSocket from "./actor-socket.ts";
 import type { ActorFixtureAdded, ActorFixtureRows } from "./fixture.ts";
-import {
-  makeOrderRepository,
-  type OrderRepositoryError,
-  type Transaction,
-} from "./shop-actor/orders.ts";
-import { makeOrdersAgent } from "./shop-actor/orders-agent.ts";
-import { makeMembersAgent } from "./shop-actor/members-agent.ts";
-import { Members } from "./members.ts";
+import { makeOrderRepository, type OrderRepositoryError } from "./shop-actor/order-repository.ts";
+import { makeOrders } from "./shop-actor/orders.ts";
+import { makeMembership } from "./shop-actor/membership.ts";
+import { syncTransaction } from "./shop-actor/transaction.ts";
+import { MembershipRepository } from "./membership-repository.ts";
 import { OrdersSyncWorkflow } from "./orders-sync-workflow.ts";
 import ShopActor, { ABORT_UNINSTALLED, type ShopActorShape } from "./shop-actor/tag.ts";
-import { ShopSessions } from "./shop-sessions.ts";
+import { ShopSessionRepository } from "./shop-session-repository.ts";
 import type { EnsureShopSessionError } from "./shopify.ts";
 import { runOrdersStream } from "./shop-actor/orders-stream.ts";
 import { ShopifyAdmin } from "./shopify-admin.ts";
@@ -321,21 +317,6 @@ export const migrations = SqliteMigrator.fromRecord({
 });
 
 /**
- * {@link Transaction} over `sql`: `body` in one storage transaction (`storage.transaction`, rolled
- * back on failure). The transaction closes the object's input gate, behind which a timer never
- * fires, so a fiber yield scheduled on a timer inside it could wait forever; the body runs on a
- * `"sync"` scheduler instead, which yields through microtasks, as Alchemy's
- * `Drizzle.DurableObject` does. Build it once per activation.
- *
- * @see refs/alchemy/packages/alchemy/src/Drizzle/Cloudflare.ts (`DurableObject`)
- */
-export const syncTransaction = (sql: SqlClient.SqlClient): Transaction => {
-  const scheduler = new Scheduler.MixedScheduler("sync");
-  return (body) =>
-    sql.withTransaction(body).pipe(Effect.provideService(Scheduler.Scheduler, scheduler));
-};
-
-/**
  * Writes a fixture's rows, each its own insert: a statement binds at most 100 parameters. The
  * order rows carry `countedAt`, the one column the order repository never writes.
  */
@@ -400,9 +381,9 @@ const tagsOf = (caller: ConnectionCaller) =>
 const makeShopActor = Effect.gen(function* () {
   const state = yield* Cloudflare.DurableObjectState;
   const admin = yield* ShopifyAdmin;
-  const shopSessions = yield* ShopSessions;
-  const members = yield* Members;
-  const workflows = yield* OrdersSyncWorkflow;
+  const shopSessions = yield* ShopSessionRepository;
+  const membershipRepository = yield* MembershipRepository;
+  const ordersSync = yield* OrdersSyncWorkflow;
   return Effect.gen(function* () {
     // Every actor is reached by name (`getByName`), so a nameless id is a broken invariant.
     const shop = yield* Effect.fromOption(decodeShopKey(state.id.name)).pipe(Effect.orDie);
@@ -423,7 +404,7 @@ const makeShopActor = Effect.gen(function* () {
 
     /** Every multi-statement write's transaction; see {@link syncTransaction}. */
     const transaction = syncTransaction(sql);
-    const orders = makeOrderRepository(sql, transaction);
+    const orderRepository = makeOrderRepository(sql, transaction);
 
     /**
      * The count the shop page shows, in memory: an example of the socket's reads, writes and
@@ -444,17 +425,17 @@ const makeShopActor = Effect.gen(function* () {
         yield* socket.send(frame).pipe(Effect.catchDefect(() => Effect.void));
     });
 
-    const ordersAgent = makeOrdersAgent({
-      repository: orders,
+    const orders = makeOrders({
+      repository: orderRepository,
       transaction,
       admin,
-      workflows,
+      ordersSync,
       notify,
       shop,
     });
 
-    const membersAgent = makeMembersAgent({
-      members,
+    const membership = makeMembership({
+      membershipRepository,
       revoke: (memberIds) =>
         Effect.forEach(memberIds, (memberId) => closeTagged(`member:${memberId}`)).pipe(
           Effect.map((closed) => closed.reduce((sum, n) => sum + n, 0)),
@@ -466,13 +447,13 @@ const makeShopActor = Effect.gen(function* () {
     /**
      * Sync open orders, `MerchantSyncOpenOrders`: the shop's `ShopSession` read first, so a
      * row deleted while the socket stayed open is {@link OfflineSessionMissing} with nothing
-     * recorded and no instance created, then `OrdersAgent.syncOpenOrders`.
+     * recorded and no instance created, then `Orders.syncOpenOrders`.
      */
     const syncOpenOrdersFor = (operation: string) =>
       Effect.gen(function* () {
         if (Option.isNone(yield* shopSessions.find(shop)))
           return yield* new OfflineSessionMissing({ shop });
-        return yield* ordersAgent.syncOpenOrders();
+        return yield* orders.syncOpenOrders();
       }).pipe(Effect.catch(syncFailure(operation)));
 
     /**
@@ -539,20 +520,20 @@ const makeShopActor = Effect.gen(function* () {
       MemberActivation: () => Effect.succeed({ id: activationId }),
       MemberWhoAmI: () => Effect.service(CurrentCaller),
       MerchantWhoAmI: () => Effect.service(CurrentCaller),
-      MerchantListOrders: (input) => orders.listOrders(input).pipe(Effect.orDie),
+      MerchantListOrders: (input) => orderRepository.listOrders(input).pipe(Effect.orDie),
       MerchantSyncStatus: () =>
-        Clock.currentTimeMillis.pipe(Effect.flatMap(orders.getSyncStatus), Effect.orDie),
+        Clock.currentTimeMillis.pipe(Effect.flatMap(orderRepository.getSyncStatus), Effect.orDie),
       MerchantSyncOpenOrders: () => syncOpenOrdersFor("ShopActor.MerchantSyncOpenOrders"),
       MerchantSyncOrder: (input) =>
-        ordersAgent.syncOrder(input).pipe(Effect.catch(syncFailure("ShopActor.MerchantSyncOrder"))),
-      MerchantAddMember: membersAgent.addMember,
-      MerchantDeleteMember: membersAgent.deleteMember,
-      MerchantAddMemberTeams: membersAgent.addMemberTeams,
-      MerchantSetTeamMember: membersAgent.setTeamMember,
-      MerchantCreateTeam: membersAgent.createTeam,
-      MerchantRenameTeam: membersAgent.renameTeam,
-      MerchantAddTeamMembers: membersAgent.addTeamMembers,
-      MerchantDeleteTeam: membersAgent.deleteTeam,
+        orders.syncOrder(input).pipe(Effect.catch(syncFailure("ShopActor.MerchantSyncOrder"))),
+      MerchantAddMember: membership.addMember,
+      MerchantDeleteMember: membership.deleteMember,
+      MerchantAddMemberTeams: membership.addMemberTeams,
+      MerchantSetTeamMember: membership.setTeamMember,
+      MerchantCreateTeam: membership.createTeam,
+      MerchantRenameTeam: membership.renameTeam,
+      MerchantAddTeamMembers: membership.addTeamMembers,
+      MerchantDeleteTeam: membership.deleteTeam,
     });
 
     const socket = yield* ActorSocket.make({
@@ -613,7 +594,7 @@ const makeShopActor = Effect.gen(function* () {
     /**
      * Closes every open socket tagged `tag` (`member:<id>` or `session:<id>`) with
      * {@link CONNECTION_CLOSE_REVOKED} and answers how many it closed: the one close routine of
-     * the stub's {@link revoke} and the member and team writes ({@link membersAgent}).
+     * the stub's {@link revoke} and the member and team writes ({@link membership}).
      */
     const closeTagged = Effect.fn("ShopActor.closeTagged")(function* (tag: string) {
       let closed = 0;
@@ -767,7 +748,7 @@ const makeShopActor = Effect.gen(function* () {
 
     /**
      * Legacy's `ShopAgent.syncOrderWebhook`, the Backend's one call for an `orders/*` delivery
-     * whose shop it found installed: `OrdersAgent.syncOrderWebhook`. Any failure dies, which the
+     * whose shop it found installed: `Orders.syncOrderWebhook`. Any failure dies, which the
      * Backend answers non-2xx, so Shopify retries.
      */
     const syncOrderWebhook = Effect.fn("ShopActor.syncOrderWebhook")(
@@ -776,7 +757,7 @@ const makeShopActor = Effect.gen(function* () {
         readonly topic: string;
         readonly updatedAt: number | null;
       }) {
-        return yield* ordersAgent.syncOrderWebhook(input);
+        return yield* orders.syncOrderWebhook(input);
       },
       Effect.orDie,
       Effect.provide(runtime),
@@ -785,7 +766,7 @@ const makeShopActor = Effect.gen(function* () {
     /** One stored order with its items, or null. */
     const getOrder = Effect.fn("ShopActor.getOrder")(
       function* ({ orderId }: { readonly orderId: string }) {
-        return Option.getOrNull(yield* orders.getOrder(orderId));
+        return Option.getOrNull(yield* orderRepository.getOrder(orderId));
       },
       Effect.orDie,
       Effect.provide(runtime),
@@ -794,7 +775,7 @@ const makeShopActor = Effect.gen(function* () {
     /** One page of the orders list; the same read as `MerchantListOrders`. */
     const listOrders = Effect.fn("ShopActor.listOrders")(
       function* (input: OrdersListInput) {
-        const page: OrdersListPage = yield* orders.listOrders(input);
+        const page: OrdersListPage = yield* orderRepository.listOrders(input);
         return page;
       },
       Effect.orDie,
@@ -820,7 +801,7 @@ const makeShopActor = Effect.gen(function* () {
      */
     const onOrdersStream = Effect.fn("ShopActor.onOrdersStream")(
       function* ({ workflowId, url }: { readonly workflowId: string; readonly url: string }) {
-        const counts = yield* runOrdersStream({ repository: orders, shop, url }).pipe(
+        const counts = yield* runOrdersStream({ repository: orderRepository, shop, url }).pipe(
           Effect.provideService(HttpClient.HttpClient, http),
           // A stream that fails partway keeps the orders it wrote, and the failure carries no
           // counts, so the list is invalidated without knowing whether a row moved.
@@ -837,8 +818,10 @@ const makeShopActor = Effect.gen(function* () {
               limit: ShopLimits.maxOpenOrders,
             }),
           );
-        const swept = yield* orders.sweepExpiredOrders({ now: yield* Clock.currentTimeMillis });
-        yield* orders.clearSyncTracking({ workflowId });
+        const swept = yield* orderRepository.sweepExpiredOrders({
+          now: yield* Clock.currentTimeMillis,
+        });
+        yield* orderRepository.clearSyncTracking({ workflowId });
         yield* Effect.logInfo(
           `ShopActor.onOrdersStream: shop=${shop} ordersSeen=${String(counts.ordersSeen)} ordersUpserted=${String(counts.ordersUpserted)} ordersInserted=${String(counts.ordersInserted)} ordersRefused=${String(counts.ordersRefused)} lineItemsUpserted=${String(counts.lineItemsUpserted)} ordersTruncated=${String(counts.ordersTruncated)} sweptOrders=${String(swept.orders)} sweptRuns=${String(swept.runs)}`,
         ).pipe(
@@ -867,7 +850,7 @@ const makeShopActor = Effect.gen(function* () {
         yield* Effect.logInfo(
           `ShopActor.onOrdersSyncEmpty: shop=${shop} workflowId=${workflowId}`,
         ).pipe(Effect.annotateLogs({ shop, workflowId }));
-        if (yield* orders.clearSyncTracking({ workflowId })) yield* notify([SYNC_KEY]);
+        if (yield* orderRepository.clearSyncTracking({ workflowId })) yield* notify([SYNC_KEY]);
       },
       Effect.orDie,
       Effect.provide(runtime),
@@ -891,8 +874,8 @@ const makeShopActor = Effect.gen(function* () {
       }) {
         const cleared = yield* transaction(
           Effect.gen(function* () {
-            const cleared = yield* orders.clearSyncTracking({ workflowId });
-            if (cleared) yield* orders.setSyncErrorIfEmpty({ error: message });
+            const cleared = yield* orderRepository.clearSyncTracking({ workflowId });
+            if (cleared) yield* orderRepository.setSyncErrorIfEmpty({ error: message });
             return cleared;
           }),
         );

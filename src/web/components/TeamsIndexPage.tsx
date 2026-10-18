@@ -6,7 +6,7 @@ import * as Option from "effect/Option";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Schema from "effect/Schema";
 import { useState } from "react";
-import type { Page } from "../../backend/members.ts";
+import type { Page } from "../../backend/membership-repository.ts";
 import {
   type ListSearch,
   RECORD_VERB_LABEL,

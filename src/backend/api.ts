@@ -34,11 +34,11 @@ import { ListOrdersRequest } from "../contract/orders.ts";
 import { ShopActors } from "./shop-actors.ts";
 import { Auth } from "./auth.ts";
 import { MagicLinkDelivery } from "./magic-link-delivery.ts";
-import { Members } from "./members.ts";
+import { MembershipRepository } from "./membership-repository.ts";
 import { sessionFromCookie } from "./auth.ts";
 import { SignInLimit } from "./resources.ts";
 import { ShopAccess } from "./shop-access.ts";
-import { ShopSessions } from "./shop-sessions.ts";
+import { ShopSessionRepository } from "./shop-session-repository.ts";
 import { Shopify } from "./shopify.ts";
 
 /**
@@ -91,12 +91,12 @@ const make = Effect.gen(function* () {
   const authService = yield* Auth;
   const { auth, maySignIn } = authService;
   const delivery = yield* MagicLinkDelivery;
-  const members = yield* Members;
+  const members = yield* MembershipRepository;
   const limiter = yield* SignInLimiter;
   const shopAccess = yield* ShopAccess;
   const actors = yield* ShopActors;
   const shopify = yield* Shopify;
-  const shopSessions = yield* ShopSessions;
+  const shopSessions = yield* ShopSessionRepository;
 
   /** The signed-in user and session from the request's cookie; see {@link sessionFromCookie}. */
   const session = (request: RequestInfo) =>
@@ -212,7 +212,7 @@ const make = Effect.gen(function* () {
   /**
    * The shop a merchant's screen read is for: the session token verified, never exchanged, as
    * on {@link listOrders}, and a shop with no `ShopSession` refused as {@link ShopNotInstalled}
-   * before any `Members` read.
+   * before any `MembershipRepository` read.
    */
   const installedShop = Effect.fn("BackendApi.installedShop")(function* (sessionToken: string) {
     const shop = yield* shopify.sessionTokenShop(sessionToken);

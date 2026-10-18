@@ -170,8 +170,8 @@ const CancelBulkOperationResponse = Schema.Struct({
 });
 
 /** Shopify refused a bulk mutation (`userErrors`) or answered no operation. Retrying is pointless. */
-export class OrdersBulkRepositoryError extends Schema.TaggedError<OrdersBulkRepositoryError>()(
-  "OrdersBulkRepositoryError",
+export class OrdersBulkOperationError extends Schema.TaggedError<OrdersBulkOperationError>()(
+  "OrdersBulkOperationError",
   {
     message: Schema.String,
     cause: Schema.Defect(),
@@ -180,7 +180,7 @@ export class OrdersBulkRepositoryError extends Schema.TaggedError<OrdersBulkRepo
 
 const failUserError = (operation: string, userErrors: readonly (typeof UserError.Type)[]) =>
   Effect.fail(
-    new OrdersBulkRepositoryError({
+    new OrdersBulkOperationError({
       message: `${operation} failed: ${userErrors.map(({ message }) => message).join("; ")}`,
       cause: userErrors,
     }),
@@ -190,7 +190,7 @@ const make = Effect.gen(function* () {
   const admin = yield* ShopifyAdmin;
 
   /** Submits the bulk query; see {@link OrdersBulkSync} for `groupObjects`. */
-  const submit = Effect.fn("OrdersBulkRepository.submit")(function* (
+  const submit = Effect.fn("OrdersBulkOperation.submit")(function* (
     shop: ShopKey,
     queryText: string,
   ) {
@@ -204,7 +204,7 @@ const make = Effect.gen(function* () {
       return yield* failUserError("Run bulk orders query", bulkOperationRunQuery.userErrors);
     if (bulkOperationRunQuery.bulkOperation === null)
       return yield* Effect.fail(
-        new OrdersBulkRepositoryError({
+        new OrdersBulkOperationError({
           message: "Run bulk orders query returned no bulk operation",
           cause: bulkOperationRunQuery,
         }),
@@ -212,10 +212,7 @@ const make = Effect.gen(function* () {
     return bulkOperationRunQuery.bulkOperation;
   });
 
-  const findById = Effect.fn("OrdersBulkRepository.findById")(function* (
-    shop: ShopKey,
-    id: string,
-  ) {
+  const findById = Effect.fn("OrdersBulkOperation.findById")(function* (shop: ShopKey, id: string) {
     const { bulkOperation } = yield* admin.graphqlDecode(
       shop,
       GetBulkOperationResponse,
@@ -233,7 +230,7 @@ const make = Effect.gen(function* () {
    * it. `CANCELING` is not terminal, which is why nothing waits for the
    * result of this call.
    */
-  const cancel = Effect.fn("OrdersBulkRepository.cancel")(function* (shop: ShopKey, id: string) {
+  const cancel = Effect.fn("OrdersBulkOperation.cancel")(function* (shop: ShopKey, id: string) {
     const { bulkOperationCancel } = yield* admin.graphqlDecode(
       shop,
       CancelBulkOperationResponse,
@@ -250,11 +247,11 @@ const make = Effect.gen(function* () {
 
 /**
  * A shop's bulk operations over {@link ShopifyAdmin}: a call takes a shop, never a session.
- * Failures are `ShopifyAdminError` and {@link OrdersBulkRepositoryError}.
+ * Failures are `ShopifyAdminError` and {@link OrdersBulkOperationError}.
  */
-export class OrdersBulkRepository extends Context.Service<
-  OrdersBulkRepository,
+export class OrdersBulkOperation extends Context.Service<
+  OrdersBulkOperation,
   Effect.Success<typeof make>
->()("app/OrdersBulkRepository") {
-  static readonly layer = Layer.effect(OrdersBulkRepository, make);
+>()("app/OrdersBulkOperation") {
+  static readonly layer = Layer.effect(OrdersBulkOperation, make);
 }

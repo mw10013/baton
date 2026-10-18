@@ -44,7 +44,7 @@
  *
  * "A shop has exactly one object" is `schema+app`: the database refuses a
  * second shop with the same object id, but "set once and never rewritten"
- * is `ShopSessions.upsert` leaving the object id out of its update.
+ * is `ShopSessionRepository.upsert` leaving the object id out of its update.
  *
  * "A team never crosses shops" is `schema+app`, not `schema`: an edge
  * points at a `Member.id` and a `Team.id` that each belong to one shop, but

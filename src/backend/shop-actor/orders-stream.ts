@@ -10,7 +10,7 @@ import * as Stream from "effect/Stream";
 import type { ShopOrder } from "../../domain/orders.ts";
 import { ShopLimits } from "../../domain/platform.ts";
 import { LineItemNode, OrderNode, toOrderLineItems, toShopOrder } from "../order-sync.ts";
-import type { OrderRepository } from "./orders.ts";
+import type { OrderRepository } from "./order-repository.ts";
 
 export class OrdersStreamError extends Schema.TaggedError<OrdersStreamError>()(
   "OrdersStreamError",

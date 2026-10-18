@@ -2,7 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
-import type { Page } from "../../../../src/backend/members.ts";
+import type { Page } from "../../../../src/backend/membership-repository.ts";
 import { MemberCeilingError } from "../../../../src/contract/members.ts";
 import { Email } from "../../../../src/domain/platform.ts";
 import { type ListSearch, Member, MemberSummary } from "../../../../src/domain/shop-work.ts";

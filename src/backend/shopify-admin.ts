@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import type { ShopKey } from "../contract/shop.ts";
-import { ShopSessions } from "./shop-sessions.ts";
+import { ShopSessionRepository } from "./shop-session-repository.ts";
 import { ReauthorizationRequired, Shopify, type EnsureShopSessionError } from "./shopify.ts";
 
 /** The options of one Admin GraphQL call. */
@@ -16,7 +16,7 @@ export type ShopifyAdminError = EnsureShopSessionError;
 
 const make = Effect.gen(function* () {
   const shopify = yield* Shopify;
-  const shopSessions = yield* ShopSessions;
+  const shopSessions = yield* ShopSessionRepository;
 
   /**
    * One attempt: the freshly ensured session's call. A 401 clears that call's access token, only
