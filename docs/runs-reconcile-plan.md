@@ -374,6 +374,8 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - 2026-10-18, Step 2: `vp check` pass (298 files); `vp test` 67 files, 851 tests, 55.0 s; `vp run test:e2e` 44 passed, 1 failed, 4 did not run (4.3 min, hydration timeout, Issues); the spec alone 7 passed (1.2 min); second full run 49 passed, 4.4 min.
 - 2026-10-18, Step 3: `vp check` pass (301 files); `vp test` 70 files, 932 tests, 48.4 s; `vp run test:e2e` 49 passed, 4.3 min.
 - 2026-10-18, Step 4: `vp check` pass (304 files); `vp test` 71 files, 943 tests, 48.8 s; `vp run test:e2e` 49 passed, 5.1 min.
+- CHECKPOINT: Backend half done (4d2294a)
+- WAITING: the orchestrator reviews and says how Steps 5–7 run.
 
 ### Human steps requested
 
