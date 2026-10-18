@@ -242,6 +242,23 @@ CHECKPOINT: ready for staging (8af1dc1).
 
 ### Implementation review
 
+2026-10-17, lead. Re-ran at 9304f52: `vp check` green (304 files formatted, 248 linted and type-checked); `vp test` 56 files, 614 tests, 48.3 s; `vp run test:e2e` 40 passed, 3.4 min. No leaked `baton-test-…` directories remain. Walked §5: the record above holds (GET-only server functions, `tag.ts` unchanged since 4c100f5, legacy titles present, no uppercase SQL and no retired method in `members.ts`, no `__TSR_ROUTER__`, bundle clean). Read `members-agent.ts`, `Members.addMember`/`deleteMember`, `src/contract/members.ts`, `AppNav` and `appHref`; no layout outside `src/web/components/screen/`.
+
+Fixed by the lead:
+
+- Nothing in code. The plan review (4c100f5) set the shop identity, the email-keyed delete, the raw-search links, the `shopify:navigate` bridge, Better Auth's lowercase tables and the session-scoped cap; each held. Its D1 seam did not (the implementer's `layerWith` replaced it, recorded under Deviations).
+
+Needs a decision:
+
+- `AddToFixture` accepts team names up to 64 characters (`FixtureTeam.name` is `Name`), but `TeamName` caps at 32, so a fixture team past 32 breaks every page that decodes it (Step 4 Issues). Tighten the fixture schema to `TeamName`?
+- Previous page is legacy's `history.back()`, which in the admin reloads the frame and opens a new socket (the right page shows). Keep it, or page back by cursor in the URL?
+- The four loaders have no integ test (a new `IntegRpcs` would break §0), and legacy's integ sweep test runs in unit; both covered by unit and e2e. Accept, or allow `IntegRpcs` for loaders?
+- `Members` and `ShopSessions` gained `layerWith(D1Database)`, a production-code seam for the unit adapter, because the `QueryDatabase` seam needs Alchemy's `Stack`.
+- The session cap revokes the deleted sessions' sockets, not the member's on every shop as legacy did; `/shop` has no heading and no second Sign out (the member bar has both).
+- The Step 4 nav check ran on the user's already-running `vp run dev` (`dev-mw`); the slice's edits hot-reloaded into it while it ran. Nothing was started, stopped or reset there.
+- Staging is the first deployed run of D1 writes from the actor and of `s-app-nav` with the bridge; check add member, create team, add to team, delete both on `mw10013-staging-shop-00`, and one nav click with no frame reload.
+- Integ first cases timed out under load twice (Steps 2–3, other worktrees' dev servers running); green on rerun. Watch it.
+
 ## 8. Out of scope
 
 - The pointer half of team delete, the setup guide and `teamWithMemberExists` (E); team names in `MemberAccess` for the work list (F).
