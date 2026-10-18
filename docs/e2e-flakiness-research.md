@@ -143,3 +143,54 @@ Retries are off locally, so a failure is a failure.
 After the fix, `shopify app dev` repeatedly failed to start with `Could not start Cloudflare tunnel: max retries reached`. Asked directly, `POST https://api.trycloudflare.com/tunnel` answered **HTTP 429, Cloudflare error 1015**: this machine's IP was rate-limited for creating quick tunnels. Many had been created in a short time: this investigation's server restarts, plus four dev servers and main's e2e on the same machine, each restart a new tunnel. The limit is per IP, so it stops every checkout's e2e and dev restarts at once. The runs above began once the API answered 200 again. Attempts that died on tunnel creation are not counted.
 
 This is separate from hydration. If it recurs, wait for `api.trycloudflare.com` to stop answering 429. A named tunnel (`shopify app dev --tunnel-url`) would remove the dependency on quick tunnels altogether.
+
+## Second stall: `getShopifyApp` with no response head
+
+After the proxy fix was merged (e76df60), main's run 1 (15:32–15:37 EDT) lost `embedded/workflows.spec.ts` "editing the tag from the detail page writes immediately and starts no draft" at `awaitHydration`, 15.1 s in. The new report named one pending frame request, with **no response head** after 15,070 ms: the `getShopifyApp` server function, through the tunnel. This is a different signature from the proxy truncation, where a large module's head had arrived and its body stalled.
+
+### Where it stopped
+
+- **Not in the handler.** `getShopifyApp` returns two bindings (`SHOPIFY_API_KEY`, `SHOPIFY_APP_URL`). It touches no D1, no Backend and no Admin API. The `/app` route's `beforeLoad` calls it on every client load and navigation, hydration included, and hydration waits on it.
+- **Main's server log can't place it.** The Website doesn't log server-function requests, and nothing Backend-side is involved. Around 15:36:56–15:37:11, the stalled load's window, the log has no Website line and no `socket accepted`. That is consistent with a load stuck before React mounts.
+- **The timing.** The previous test ("duplicate asks for a tag…") ends with `searchWorkflows`, a client navigation that re-runs `beforeLoad`, and so issues a `getShopifyApp`. The failing test began at about 15:36:56 with a fixture add, then `gotoApp`. At **15:36:56.000** the Website log forwarded a browser `TypeError: Failed to fetch` whose stack runs through App Bridge's `fetch` wrapper into a route `loadResource`. That is a server-function fetch from the old frame, aborted as the admin navigated.
+- **Replay can't reproduce it**, against a wt-01 e2e server, 20 calls in flight:
+
+  | Target | `getShopifyApp` calls | Stalled | Max |
+  | --- | --- | --- | --- |
+  | Vite child | 3,000 | 0 | 59 ms |
+  | Alchemy `WorkerProxy` (patched) | 3,000 | 0 | 65 ms |
+  | Shopify CLI proxy | 3,000 | 0 | 84 ms |
+  | Quick tunnel | 3,000 | 0 | 400 ms |
+
+  So no hop on the server side loses it.
+
+### The mechanism: Chrome's cache lock on a same-URL GET
+
+`getShopifyApp` was `method: "GET"` with no input, so every call, from every load and every navigation, requested the **same URL**. Chrome's HTTP cache allows one transaction per URL. Another GET for that URL in the same browser context waits, **unsent**, until the first finishes, for up to about 20 s. Playwright reports such a request as issued with no response head.
+
+Measured with a local server and headless Chrome (`channel: "chrome"`, as the e2e projects use). The first `/fn` takes 8 s; the second asks for the same URL:
+
+| Second request | Waited | Reached the server |
+| --- | --- | --- |
+| GET, same URL, first still in flight in another page of the context | **7,452 ms** | only after the first finished |
+| GET, same URL, first aborted by navigating its page | 2 ms | at once |
+| GET, same URL, first's head sent and body slow | 2 ms | at once |
+| **POST**, same URL, first still in flight in another page | 2 ms | at once |
+
+That matches the signature exactly. What it doesn't establish is which request held the lock in main's run: the aborted fetch at 15:36:56.000 should have released it, and the report then listed only requests started during the load. Hence the instrumentation change below.
+
+### The fix
+
+- **`getShopifyApp` is `method: "POST"`.** Chrome never holds a POST behind another request, so no frame can sit behind a same-URL GET from any document in the context. It reads nothing, so there's nothing to cache. It is the only constant-URL server function: `authenticateApp`'s URL carries the document's `id_token`.
+- **The stall report also lists requests still pending from before the load** ("Pending since before this load"). If a load ever waits behind a holder again, the holder is named.
+
+### Run
+
+One full run on wt-01 with the change, against `mw10013-e2e-shop-01`. All 38 app loads hydrated (median 3.1 s, 90th percentile 3.9 s, max 6.3 s), every one through the POST `getShopifyApp`. The run had 51 passed, 3 failed and 13 did not run, none of it in hydration:
+
+- **2 failures, same cause.** `order-page.spec.ts:58` and `orders.spec.ts:178`, via `openOrders`: strict-mode violation on `navLink(page, "Orders")`. On this store, the admin nav shows Shopify's own Orders link beside the app's, and the locator isn't scoped to the app's nav section.
+- **1 failure.** `workflows.spec.ts:336`: the editor's "Your unsaved changes will be lost." stayed hidden.
+
+These come from slice F's specs as merged (6d61508), not from this change. They are for the slice F implementer.
+
+One run can't show the rate; main saw this stall once. The case for the fix rests on the mechanism: the exact signature, reproduced in Chrome, and gone with POST.
