@@ -1,13 +1,13 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
-import type { OrdersListPage } from "../../../../src/contract/shop-actor.ts";
 import type {
-  OrderDetail,
   OrdersSyncResult,
+  ShopOrder,
   OrdersSyncStatus,
   SyncOrderResult,
 } from "../../../../src/domain/orders.ts";
+import type { OrderRow, OrdersIndexData } from "../../../../src/domain/shop-work.ts";
 import type { AppBridge } from "../../../../src/web/client/app-bridge.ts";
 import OrdersPage, { type OrdersPageLink } from "../../../../src/web/components/OrdersPage.tsx";
 import { ShopSocket } from "../../../../src/web/components/ShopSocket.tsx";
@@ -15,7 +15,7 @@ import { renderInApp } from "../../render.tsx";
 import { shopTestRegistry } from "../../shop-actor.ts";
 import { SEED_SHOP } from "../../../seed-shops.ts";
 
-const order = (n: number, overrides: Partial<OrderDetail["order"]> = {}): OrderDetail => ({
+const order = (n: number, overrides: Partial<ShopOrder> = {}): OrderRow => ({
   order: {
     id: `gid://shopify/Order/${n}`,
     legacyId: String(n),
@@ -29,25 +29,31 @@ const order = (n: number, overrides: Partial<OrderDetail["order"]> = {}): OrderD
     syncedAt: Date.UTC(2026, 9, n),
     ...overrides,
   },
-  lineItems: [
-    {
-      id: `gid://shopify/LineItem/${n}`,
-      orderId: `gid://shopify/Order/${n}`,
-      title: "Mug",
-      variantTitle: null,
-      sku: null,
-      quantity: 3,
-      currentQuantity: 2,
-      productTags: [],
-      properties: [],
-    },
-  ],
+  itemUnits: 2,
+  runs: { open: 0, done: 0, blocked: 0, started: 0 },
+  unassigned: false,
+  multiMatchItems: 0,
 });
 
+/** The orders index's data for one page of `orders`, every order shown. */
 const pageOf = (
-  orders: ReadonlyArray<OrderDetail>,
+  orders: ReadonlyArray<OrderRow>,
   nextCursor: string | null = null,
-): OrdersListPage => ({ orders, limit: 25, nextCursor });
+): OrdersIndexData => ({
+  page: {
+    orders,
+    limit: 25,
+    nextCursor,
+    counts: { no_workflow: 0, not_started: 0, making: 0, made: 0, issues: 0 },
+    openOrders: orders.length,
+    matches: null,
+  },
+  syncState: { inFlight: false, lastError: null },
+  teams: [],
+});
+
+/** The input the route reads page one with. */
+const INPUT = { limit: 25, cursor: null, q: null, show: "all", team: null } as const;
 
 /** The route's Next page link, as a plain `href` with the cursor; clicks are recorded. */
 let pageClicks: Array<string> = [];
@@ -95,12 +101,12 @@ afterEach(() => {
 });
 
 const render = (
-  page: OrdersListPage,
+  page: OrdersIndexData,
   options: { status?: OrdersSyncStatus; presses?: Presses } = {},
 ) =>
   renderInApp(
     <ShopSocket shop={SEED_SHOP} merchantToken={Option.some(Effect.succeed("token"))}>
-      <OrdersPage cursor={null} page={page} pageLink={pageLink} />
+      <OrdersPage input={INPUT} data={page} pageLink={pageLink} />
     </ShopSocket>,
     shopTestRegistry({
       MerchantListOrders: () => Effect.succeed(page),

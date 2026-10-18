@@ -30,14 +30,21 @@ import {
   TeamDetailRequest,
   TeamsPageRequest,
 } from "../contract/members.ts";
-import { ListOrdersRequest } from "../contract/orders.ts";
+import { ListOrdersRequest, OrderDetailRequest } from "../contract/orders.ts";
+import {
+  MemberWorkflowPageRequest,
+  type MemberWorkflowPageData,
+  WorkflowsListRequest,
+  type WorkflowsListPageData,
+} from "../contract/workflows-list.ts";
 import {
   SetupFactsRequest,
   WORKFLOWS_PAGE_SIZE,
   WorkflowDetailRequest,
   WorkflowsPageRequest,
 } from "../contract/workflows.ts";
-import type { SetupFacts } from "../domain/shop-work.ts";
+import { Email } from "../domain/platform.ts";
+import { MemberId, type RunQuery, type SetupFacts, TeamId } from "../domain/shop-work.ts";
 import { ShopActors } from "./shop-actors.ts";
 import { Auth } from "./auth.ts";
 import { MagicLinkDelivery } from "./magic-link-delivery.ts";
@@ -94,6 +101,13 @@ const decodeTeamDetailRequest = Schema.decodeUnknownEffect(TeamDetailRequest);
 const decodeWorkflowsPageRequest = Schema.decodeUnknownEffect(WorkflowsPageRequest);
 const decodeWorkflowDetailRequest = Schema.decodeUnknownEffect(WorkflowDetailRequest);
 const decodeSetupFactsRequest = Schema.decodeUnknownEffect(SetupFactsRequest);
+const decodeOrderDetailRequest = Schema.decodeUnknownEffect(OrderDetailRequest);
+const decodeWorkflowsListRequest = Schema.decodeUnknownEffect(WorkflowsListRequest);
+const decodeMemberWorkflowPageRequest = Schema.decodeUnknownEffect(MemberWorkflowPageRequest);
+/** The gate's member as the actor's run reads take them; the caller's fields cross unbranded. */
+const decodeMemberIdentity = Schema.decodeUnknownEffect(
+  Schema.Struct({ memberId: MemberId, memberEmail: Email, teamIds: Schema.Array(TeamId) }),
+);
 const encodeAdminSession = Schema.encodeSync(AdminSession);
 const encodeMagicLinkRequested = Schema.encodeSync(MagicLinkRequested);
 
@@ -231,7 +245,8 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * The merchant's orders screen, its first render: one page of the shop's stored orders. The
+   * The orders index, its first render: one page of the shop's orders with their run facts,
+   * counts and sync state (`OrdersIndexData`). The
    * session token names the shop and is only verified (`Shopify.sessionTokenShop`), never
    * exchanged: the App Home's guard exchanged it when the page loaded, and a call per screen
    * read must not cost a token exchange. The request is ignored, as on
@@ -242,11 +257,9 @@ const make = Effect.gen(function* () {
     _request: RequestInfo,
     payload: ListOrdersRequest,
   ) {
-    const { sessionToken, limit, cursor } = yield* decodeListOrdersRequest(payload).pipe(
-      Effect.orDie,
-    );
+    const { sessionToken, ...input } = yield* decodeListOrdersRequest(payload).pipe(Effect.orDie);
     const shop = yield* installedShop(sessionToken);
-    return yield* actors.listOrders(shop, { limit, cursor });
+    return yield* actors.listOrders(shop, input);
   });
 
   /**
@@ -363,6 +376,85 @@ const make = Effect.gen(function* () {
     return facts;
   });
 
+  /**
+   * The order page, its first render: the order with its items, runs, matched and other
+   * workflows and the shop's teams (`OrderPageData`), or null when the order is not stored.
+   * The token is only verified, as on {@link listOrders}, and a shop with no `ShopSession` is
+   * {@link ShopNotInstalled} with no actor call.
+   */
+  const orderDetail = Effect.fn("BackendApi.orderDetail")(function* (
+    _request: RequestInfo,
+    payload: OrderDetailRequest,
+  ) {
+    const { sessionToken, legacyId } = yield* decodeOrderDetailRequest(payload).pipe(Effect.orDie);
+    const shop = yield* installedShop(sessionToken);
+    return yield* actors.getOrderDetail(shop, { legacyId });
+  });
+
+  /**
+   * The member gate for the member screens' loaders (`ShopAccess.resolveMember`): the member and
+   * their teams, decoded once for the actor's run reads. Refusals as {@link shopSnapshot}'s:
+   * 401 is `Unauthorized`, 403 `Forbidden`, 404 `NotAShopMember`, and an unavailable gate is a
+   * defect; each before any actor call.
+   */
+  const memberOf = Effect.fn("BackendApi.memberOf")(
+    function* (request: RequestInfo, key: WorkflowsListRequest["key"]) {
+      const { cookie } = yield* decodeRequest(request).pipe(Effect.orDie);
+      const { caller, teams } = yield* shopAccess.resolveMember({ key, cookie });
+      const identity = yield* decodeMemberIdentity(caller).pipe(Effect.orDie);
+      return { ...identity, teams };
+    },
+    Effect.catchTag("ShopAccessDenied", ({ status }) =>
+      Match.value(status).pipe(
+        Match.when(401, () => Effect.fail(new Unauthorized())),
+        Match.when(403, () => Effect.fail(new Forbidden())),
+        Match.when(404, () => Effect.fail(new NotAShopMember())),
+        Match.when(503, () => Effect.die(new Error("the actor gate is unavailable"))),
+        Match.exhaustive,
+      ),
+    ),
+  );
+
+  /**
+   * The workflows list, its first render. `team` is the URL's text, resolved against the
+   * member's teams: a team the member is not on reads as any team rather than an empty list.
+   * The query as resolved comes back beside the list, so its rows seed the socket query of
+   * exactly that query.
+   */
+  const workflowsList = Effect.fn("BackendApi.workflowsList")(function* (
+    request: RequestInfo,
+    payload: WorkflowsListRequest,
+  ) {
+    const { key, state, team, limit, q } = yield* decodeWorkflowsListRequest(payload).pipe(
+      Effect.orDie,
+    );
+    const { memberId, memberEmail, teamIds, teams } = yield* memberOf(request, key);
+    const query: RunQuery = {
+      team: teams.find((candidate) => candidate.id === team)?.id ?? null,
+      state,
+      limit,
+      q,
+    };
+    const list = yield* actors.listRuns(key, { teamIds, memberEmail, query });
+    const data: WorkflowsListPageData = { memberId, memberEmail, teams, query, list };
+    return data;
+  });
+
+  /**
+   * The member's workflow page, its first render: `page` is null for a run that is not there or
+   * holds no task of the member's teams, one answer for both.
+   */
+  const memberWorkflowPage = Effect.fn("BackendApi.memberWorkflowPage")(function* (
+    request: RequestInfo,
+    payload: MemberWorkflowPageRequest,
+  ) {
+    const { key, runId } = yield* decodeMemberWorkflowPageRequest(payload).pipe(Effect.orDie);
+    const { memberId, memberEmail, teamIds, teams } = yield* memberOf(request, key);
+    const page = yield* actors.getRunPage(key, { runId, teamIds });
+    const data: MemberWorkflowPageData = { memberId, memberEmail, teams, page };
+    return data;
+  });
+
   return {
     hello,
     shout,
@@ -373,6 +465,9 @@ const make = Effect.gen(function* () {
     shopSnapshot,
     authenticateAdmin,
     listOrders,
+    orderDetail,
+    workflowsList,
+    memberWorkflowPage,
     membersPage,
     memberDetail,
     teamsPage,

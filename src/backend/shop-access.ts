@@ -7,7 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type { ShopKey } from "../contract/shop.ts";
-import type { ConnectionCaller } from "../contract/shop-actor.ts";
+import type { ConnectionCaller, MemberCaller } from "../contract/shop-actor.ts";
 import { Auth } from "./auth.ts";
 import { MembershipRepository } from "./membership-repository.ts";
 import { sessionFromCookie } from "./auth.ts";
@@ -63,7 +63,7 @@ const make = Effect.gen(function* () {
     if (session.me.role === "admin") return yield* denied(403);
     const access = yield* members.findMemberAccess({ shop: key, email: session.me.email });
     if (Option.isNone(access)) return yield* denied(404);
-    return {
+    const caller: MemberCaller = {
       role: "member",
       memberId: access.value.memberId,
       memberEmail: session.me.email,
@@ -71,8 +71,17 @@ const make = Effect.gen(function* () {
       userId: session.me.id,
       sessionId: session.sessionId,
       sessionExpiresAt: session.sessionExpiresAt,
-    } satisfies ConnectionCaller;
+    };
+    return { caller, teams: access.value.teams };
   });
+
+  /**
+   * A D1 failure is a defect everywhere below; at the gate it is 503, so an outage never reads as
+   * "not yours" and the browser retries instead of giving up.
+   */
+  const unavailable = Effect.catchDefect((defect) =>
+    Effect.logError("ShopAccess: lookup failed", defect).pipe(Effect.andThen(denied(503))),
+  );
 
   const resolve = Effect.fn("ShopAccess.resolve")(
     function* (input: {
@@ -82,21 +91,28 @@ const make = Effect.gen(function* () {
     }) {
       const caller: ConnectionCaller =
         input.sessionToken === undefined
-          ? yield* member(input.key, input.cookie)
+          ? (yield* member(input.key, input.cookie)).caller
           : yield* merchant(input.key, input.sessionToken);
       return caller;
     },
-    // A D1 failure is a defect everywhere below; here it is 503, so an outage never reads as
-    // "not yours" and the browser retries instead of giving up.
-    Effect.catchDefect((defect) =>
-      Effect.logError("ShopAccess.resolve: lookup failed", defect).pipe(
-        Effect.andThen(denied(503)),
-      ),
-    ),
+    unavailable,
     Effect.provide(RuntimeContext.phantom),
   );
 
-  return { resolve };
+  /**
+   * The member gate alone, for the member screens' loaders: the caller {@link resolve} answers
+   * for a cookie, and the member's teams with their names, which the Team select names and the
+   * caller never carries (it travels in a header). Refuses as {@link resolve} does.
+   */
+  const resolveMember = Effect.fn("ShopAccess.resolveMember")(
+    function* (input: { readonly key: ShopKey; readonly cookie: string | undefined }) {
+      return yield* member(input.key, input.cookie);
+    },
+    unavailable,
+    Effect.provide(RuntimeContext.phantom),
+  );
+
+  return { resolve, resolveMember };
 });
 
 /**

@@ -5,7 +5,6 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   CONNECTION_CLOSE_DISPLACED,
   CONNECTION_CLOSE_UNINSTALLED,
-  type OrdersListPage,
 } from "../../../../src/contract/shop-actor.ts";
 import {
   applyCloseOutcome,
@@ -14,6 +13,7 @@ import {
   reconnectAtom,
   shopKeyAtom,
 } from "../../../../src/web/client/actor-connection.ts";
+import type { OrdersIndexData } from "../../../../src/domain/shop-work.ts";
 import OrdersPage from "../../../../src/web/components/OrdersPage.tsx";
 import { ShopSocket } from "../../../../src/web/components/ShopSocket.tsx";
 import { renderInApp } from "../../render.tsx";
@@ -103,14 +103,25 @@ describe("ShopSocket", () => {
    * would fail and the page would say it could not load the orders.
    */
   it("a page that seeds without a holder shows its seeded data and opens no socket", async () => {
-    const page: OrdersListPage = { orders: [], limit: 25, nextCursor: null };
+    const data: OrdersIndexData = {
+      page: {
+        orders: [],
+        limit: 25,
+        nextCursor: null,
+        counts: { no_workflow: 0, not_started: 0, making: 0, made: 0, issues: 0 },
+        openOrders: 0,
+        matches: null,
+      },
+      syncState: { inFlight: false, lastError: null },
+      teams: [],
+    };
     const registry = shopTestRegistry({
       MerchantSyncStatus: () => Effect.succeed({ inFlight: false, lastError: null }),
     });
     const screen = await renderInApp(
       <OrdersPage
-        cursor={null}
-        page={page}
+        input={{ limit: 25, cursor: null, q: null, show: "all", team: null }}
+        data={data}
         pageLink={() => ({ href: "/app/orders", onClick: () => {} })}
       />,
       registry,

@@ -7,13 +7,17 @@
  * @module
  */
 import * as Schema from "effect/Schema";
-import { OrdersListInput } from "./shop-actor.ts";
+import { GetOrderDetailInput, ListOrdersInput } from "../domain/shop-work.ts";
 
 const sessionToken = Schema.NonEmptyString;
 
-/** `BackendApi.listOrders`' input: one page of the shop's orders. */
-export const ListOrdersRequest = Schema.Struct({ sessionToken, ...OrdersListInput.fields });
+/** `BackendApi.listOrders`' input: one page of the orders index, as `ListOrdersInput` reads it. */
+export const ListOrdersRequest = Schema.Struct({ sessionToken, ...ListOrdersInput.fields });
 export type ListOrdersRequest = typeof ListOrdersRequest.Type;
+
+/** `BackendApi.orderDetail`'s input: the order page's order, by the `legacyId` its URL carries. */
+export const OrderDetailRequest = Schema.Struct({ sessionToken, ...GetOrderDetailInput.fields });
+export type OrderDetailRequest = typeof OrderDetailRequest.Type;
 
 /**
  * How far back the open-orders sync reaches. Shopify grants the last 60 days of orders

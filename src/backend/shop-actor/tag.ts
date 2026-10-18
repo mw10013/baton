@@ -1,9 +1,17 @@
 import * as Cloudflare from "alchemy/Cloudflare";
 import type * as Effect from "effect/Effect";
-import type { OrdersListInput, OrdersListPage, ShopSnapshot } from "../../contract/shop-actor.ts";
+import type { ShopSnapshot } from "../../contract/shop-actor.ts";
 import type { OrderDetail } from "../../domain/orders.ts";
 import type {
+  GetOrderDetailInput,
+  ListOrdersInput,
+  ListRunsInput,
+  OrderPageData,
+  RunPageData,
+  TeamId,
+  WorkflowsListData,
   ListWorkflowsInput,
+  OrdersIndexData,
   WorkflowPageData,
   WorkflowSetupFacts,
   WorkflowsIndexData,
@@ -31,6 +39,10 @@ export interface ShopActorShape {
   readonly snapshot: () => Effect.Effect<ShopSnapshot>;
   readonly loadFixture: (rows: ActorFixtureRows) => Effect.Effect<ActorFixtureCounts>;
   readonly addFixture: (rows: ActorFixtureRows) => Effect.Effect<ActorFixtureAdded>;
+  readonly applyFixture: (input: {
+    readonly rows: ActorFixtureRows;
+    readonly caller: "loadFixture" | "addToFixture";
+  }) => Effect.Effect<void>;
   readonly removeOrder: (input: {
     readonly orderId: string;
   }) => Effect.Effect<{ removed: boolean }>;
@@ -40,7 +52,13 @@ export interface ShopActorShape {
     readonly updatedAt: number | null;
   }) => Effect.Effect<OrderWebhookStatus>;
   readonly getOrder: (input: { readonly orderId: string }) => Effect.Effect<OrderDetail | null>;
-  readonly listOrders: (input: OrdersListInput) => Effect.Effect<OrdersListPage>;
+  readonly listOrders: (input: ListOrdersInput) => Effect.Effect<OrdersIndexData>;
+  readonly getOrderDetail: (input: GetOrderDetailInput) => Effect.Effect<OrderPageData | null>;
+  readonly listRuns: (input: ListRunsInput) => Effect.Effect<WorkflowsListData>;
+  readonly getRunPage: (input: {
+    readonly runId: string;
+    readonly teamIds: ReadonlyArray<TeamId>;
+  }) => Effect.Effect<RunPageData | null>;
   readonly listWorkflows: (input: ListWorkflowsInput) => Effect.Effect<WorkflowsIndexData>;
   readonly getWorkflowDetail: (input: {
     readonly workflowId: string;

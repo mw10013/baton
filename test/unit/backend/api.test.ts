@@ -16,7 +16,7 @@ import {
 } from "../../../src/contract/auth.ts";
 import { type ShopKey } from "../../../src/contract/shop.ts";
 import { OTHER_SHOP, SEED_SHOP } from "../../seed-shops.ts";
-import type { ConnectionCaller } from "../../../src/contract/shop-actor.ts";
+import type { ConnectionCaller, MemberCaller } from "../../../src/contract/shop-actor.ts";
 import { ShopActors } from "../../../src/backend/shop-actors.ts";
 import { BackendApi, SignInLimiter } from "../../../src/backend/api.ts";
 import { mintSessionToken } from "../../shopify-session-token.ts";
@@ -29,7 +29,16 @@ import {
   testShopify,
 } from "./layers.ts";
 import { MembershipRepository } from "../../../src/backend/membership-repository.ts";
-import { MemberId, TeamId, WorkflowName } from "../../../src/domain/shop-work.ts";
+import {
+  type ListRunsInput,
+  type MemberAccess,
+  MemberId,
+  type OrdersIndexData,
+  TeamId,
+  TeamName,
+  WorkflowName,
+  type WorkflowsListData,
+} from "../../../src/domain/shop-work.ts";
 import { Auth } from "../../../src/backend/auth.ts";
 import { SentMail } from "../../../src/backend/mailer.ts";
 import { ShopAccess, ShopAccessDenied } from "../../../src/backend/shop-access.ts";
@@ -80,6 +89,7 @@ const TestBackend = ({
   memberRows = members,
   membershipRepositoryLayer,
   actors = ShopActors.layerTest([], snapshot),
+  memberGate = Effect.die("no member gate in this test"),
 }: {
   delivery?: "inline" | "mailed";
   allow?: boolean;
@@ -87,6 +97,10 @@ const TestBackend = ({
   memberRows?: ReadonlyArray<MemberRow>;
   membershipRepositoryLayer?: Layer.Layer<MembershipRepository>;
   actors?: Layer.Layer<ShopActors>;
+  memberGate?: Effect.Effect<
+    { readonly caller: MemberCaller; readonly teams: MemberAccess["teams"] },
+    ShopAccessDenied
+  >;
 } = {}) =>
   BackendApi.layer.pipe(
     Layer.provideMerge(
@@ -97,7 +111,7 @@ const TestBackend = ({
         delivery,
         extra: Layer.mergeAll(
           SignInLimiter.layerTest(allow),
-          Layer.succeed(ShopAccess, { resolve: () => gate }),
+          Layer.succeed(ShopAccess, { resolve: () => gate, resolveMember: () => memberGate }),
           testShopify([seedSession]),
         ),
       }),
@@ -280,7 +294,20 @@ describe("BackendApi.authenticateAdmin", () => {
 });
 
 describe("BackendApi orders", () => {
-  const page = { orders: [], limit: 25, nextCursor: null };
+  const page: OrdersIndexData = {
+    page: {
+      orders: [],
+      limit: 25,
+      nextCursor: null,
+      counts: { no_workflow: 0, not_started: 0, making: 0, made: 0, issues: 0 },
+      openOrders: 0,
+      matches: null,
+    },
+    syncState: { inFlight: false, lastError: null },
+    teams: [],
+  };
+  /** The orders index's first page, every order. */
+  const input = { limit: 25, cursor: null, q: null, show: "all", team: null } as const;
   /** {@link ShopActors.layerTest} whose `listOrders` answers {@link page}, recording each shop. */
   const listingActors = (listed: Array<ShopKey>) =>
     Layer.effect(
@@ -305,7 +332,7 @@ describe("BackendApi orders", () => {
       const api = yield* BackendApi;
       const sessionToken = yield* badToken;
       const error = yield* api
-        .listOrders(withCookie(undefined), { sessionToken, limit: 25, cursor: null })
+        .listOrders(withCookie(undefined), { sessionToken, ...input })
         .pipe(Effect.flip);
       assert.strictEqual(error._tag, "InvalidSessionToken");
       assert.deepStrictEqual(listed, []);
@@ -318,7 +345,7 @@ describe("BackendApi orders", () => {
       const api = yield* BackendApi;
       const sessionToken = yield* mintSessionToken({ shop: SEED_SHOP });
       assert.deepStrictEqual(
-        yield* api.listOrders(withCookie(undefined), { sessionToken, limit: 25, cursor: null }),
+        yield* api.listOrders(withCookie(undefined), { sessionToken, ...input }),
         page,
       );
       assert.deepStrictEqual(listed, [SEED_SHOP]);
@@ -333,13 +360,179 @@ describe("BackendApi orders", () => {
         const api = yield* BackendApi;
         const sessionToken = yield* mintSessionToken({ shop: OTHER_SHOP });
         const error = yield* api
-          .listOrders(withCookie(undefined), { sessionToken, limit: 25, cursor: null })
+          .listOrders(withCookie(undefined), { sessionToken, ...input })
           .pipe(Effect.flip);
         assert.strictEqual(error._tag, "ShopNotInstalled");
         assert.deepStrictEqual(listed, []);
       }).pipe(Effect.provide(TestBackend({ actors: listingActors(listed) })));
     },
   );
+});
+
+describe("BackendApi run loaders", () => {
+  const empty: WorkflowsListData = {
+    counts: { started_by_you: 0, ready: 0, started_by_others: 0, blocked: 0, done: 0 },
+    items: [],
+    recent: [],
+    matches: null,
+  };
+  const bench = {
+    id: Schema.decodeUnknownSync(TeamId)("team-bench"),
+    name: Schema.decodeUnknownSync(TeamName)("Bench"),
+  };
+  const memberId = Schema.decodeUnknownSync(MemberId)("mem-1");
+  const memberGate = Effect.succeed({
+    caller: {
+      role: "member" as const,
+      memberId: "mem-1",
+      memberEmail: member,
+      teamIds: [bench.id],
+      userId: "user-1",
+      sessionId: "session-1",
+      sessionExpiresAt: Date.now() + 600_000,
+    },
+    teams: [bench],
+  });
+  /** {@link ShopActors.layerTest} whose three run reads answer empty, recording each call. */
+  const runActors = (calls: Array<string>) =>
+    Layer.effect(
+      ShopActors,
+      Effect.gen(function* () {
+        const base = yield* ShopActors;
+        return {
+          ...base,
+          getOrderDetail: (key: ShopKey, input: { readonly legacyId: string }) =>
+            Effect.sync(() => {
+              calls.push(`getOrderDetail ${key} ${input.legacyId}`);
+              return null;
+            }),
+          listRuns: (key: ShopKey, input: ListRunsInput) =>
+            Effect.sync(() => {
+              calls.push(`listRuns ${key} ${input.query.team ?? "any"} ${input.teamIds.join(",")}`);
+              return empty;
+            }),
+          getRunPage: (key: ShopKey, input: { readonly runId: string }) =>
+            Effect.sync(() => {
+              calls.push(`getRunPage ${key} ${input.runId}`);
+              return null;
+            }),
+        };
+      }),
+    ).pipe(Layer.provide(ShopActors.layerTest([], snapshot)));
+  const query = { key: SEED_SHOP, state: "ready", team: null, limit: 25, q: null } as const;
+
+  it.live(
+    "orderDetail refuses a token signed with another secret and a shop with no ShopSession, before any actor call",
+    () => {
+      const calls: Array<string> = [];
+      return Effect.gen(function* () {
+        const api = yield* BackendApi;
+        const bad = yield* mintSessionToken({ shop: SEED_SHOP, apiSecret: "other-secret" });
+        const refused = yield* api
+          .orderDetail(withCookie(undefined), { sessionToken: bad, legacyId: "1" })
+          .pipe(Effect.flip);
+        assert.strictEqual(refused._tag, "InvalidSessionToken");
+        const uninstalled = yield* mintSessionToken({ shop: OTHER_SHOP });
+        const missing = yield* api
+          .orderDetail(withCookie(undefined), { sessionToken: uninstalled, legacyId: "1" })
+          .pipe(Effect.flip);
+        assert.strictEqual(missing._tag, "ShopNotInstalled");
+        assert.deepStrictEqual(calls, []);
+        const good = yield* mintSessionToken({ shop: SEED_SHOP });
+        assert.isNull(
+          yield* api.orderDetail(withCookie(undefined), { sessionToken: good, legacyId: "1" }),
+        );
+        assert.deepStrictEqual(calls, [`getOrderDetail ${SEED_SHOP} 1`]);
+      }).pipe(Effect.provide(TestBackend({ actors: runActors(calls) })));
+    },
+  );
+
+  it.live(
+    "workflowsList answers the member, their teams and the list, and resolves the URL's team against the teams",
+    () => {
+      const calls: Array<string> = [];
+      return Effect.gen(function* () {
+        const api = yield* BackendApi;
+        const data = yield* api.workflowsList(withCookie("c"), { ...query, team: bench.id });
+        assert.deepStrictEqual(data, {
+          memberId,
+          memberEmail: member,
+          teams: [bench],
+          query: { state: "ready", team: bench.id, limit: 25, q: null },
+          list: empty,
+        });
+        const elsewhere = yield* api.workflowsList(withCookie("c"), { ...query, team: "gone" });
+        assert.strictEqual(elsewhere.query.team, null);
+        assert.deepStrictEqual(calls, [
+          `listRuns ${SEED_SHOP} ${bench.id} ${bench.id}`,
+          `listRuns ${SEED_SHOP} any ${bench.id}`,
+        ]);
+      }).pipe(Effect.provide(TestBackend({ actors: runActors(calls), memberGate })));
+    },
+  );
+
+  it.live("memberWorkflowPage answers the member, their teams and the page", () => {
+    const calls: Array<string> = [];
+    return Effect.gen(function* () {
+      const api = yield* BackendApi;
+      const data = yield* api.memberWorkflowPage(withCookie("c"), { key: SEED_SHOP, runId: "r" });
+      assert.deepStrictEqual(data, {
+        memberId,
+        memberEmail: member,
+        teams: [bench],
+        page: null,
+      });
+      assert.deepStrictEqual(calls, [`getRunPage ${SEED_SHOP} r`]);
+    }).pipe(Effect.provide(TestBackend({ actors: runActors(calls), memberGate })));
+  });
+
+  it.live.each([
+    { status: 401, tag: "Unauthorized" },
+    { status: 403, tag: "Forbidden" },
+    { status: 404, tag: "NotAShopMember" },
+  ] as const)(
+    "the member loaders turn the gate's $status into $tag with no actor call",
+    ({ status, tag }) => {
+      const calls: Array<string> = [];
+      return Effect.gen(function* () {
+        const api = yield* BackendApi;
+        const list = yield* api.workflowsList(withCookie("c"), query).pipe(Effect.flip);
+        const page = yield* api
+          .memberWorkflowPage(withCookie("c"), { key: SEED_SHOP, runId: "r" })
+          .pipe(Effect.flip);
+        assert.deepStrictEqual([list._tag, page._tag], [tag, tag]);
+        assert.deepStrictEqual(calls, []);
+      }).pipe(
+        Effect.provide(
+          TestBackend({
+            actors: runActors(calls),
+            memberGate: Effect.fail(new ShopAccessDenied({ status })),
+          }),
+        ),
+      );
+    },
+  );
+
+  it.live("the member loaders turn the gate's 503 into a defect with no actor call", () => {
+    const calls: Array<string> = [];
+    return Effect.gen(function* () {
+      const api = yield* BackendApi;
+      const list = yield* api.workflowsList(withCookie("c"), query).pipe(Effect.exit);
+      const page = yield* api
+        .memberWorkflowPage(withCookie("c"), { key: SEED_SHOP, runId: "r" })
+        .pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(list) && Cause.hasDies(list.cause));
+      assert.isTrue(Exit.isFailure(page) && Cause.hasDies(page.cause));
+      assert.deepStrictEqual(calls, []);
+    }).pipe(
+      Effect.provide(
+        TestBackend({
+          actors: runActors(calls),
+          memberGate: Effect.fail(new ShopAccessDenied({ status: 503 })),
+        }),
+      ),
+    );
+  });
 });
 
 describe("BackendApi workflows", () => {

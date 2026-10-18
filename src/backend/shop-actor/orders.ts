@@ -2,9 +2,12 @@ import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Match from "effect/Match";
+import * as Option from "effect/Option";
+import type * as SqlError from "effect/sql/SqlError";
 import type { ShopKey } from "../../contract/shop.ts";
-import type { OrdersSyncResult, SyncOrderResult } from "../../domain/orders.ts";
+import type { OrdersSyncResult, ShopOrder, SyncOrderResult } from "../../domain/orders.ts";
 import { ShopLimits } from "../../domain/platform.ts";
+import { type ReconcileCounts, reconcileCountsChanged } from "../../domain/shop-work.ts";
 import { ORDERS_KEY, SYNC_KEY } from "../../contract/shop-actor.ts";
 import {
   OrderSyncResponse,
@@ -16,6 +19,7 @@ import {
 import { ShopifyUnavailable } from "../shopify.ts";
 import type { ShopifyAdmin } from "../shopify-admin.ts";
 import type { OrderRepository } from "./order-repository.ts";
+import type { RunRepositoryError } from "./run-repository.ts";
 import type { Transaction } from "./transaction.ts";
 import type { OrdersSyncParams } from "../orders-sync-workflow.ts";
 
@@ -38,7 +42,9 @@ export type OrderWebhookStatus = "stale" | "refused" | "gone" | "stored";
  * Shopify's thing, fetching one from the Admin API itself and storing it, and starting the
  * open-orders sync. Built once per activation over the actor's repository and transaction, the
  * Backend's `ShopifyAdmin` (which ensures, and so refreshes, the offline session on every call),
- * the actor's handle on the sync Workflow, its `notify` and its shop.
+ * the actor's handle on the sync Workflow, its `notify` and its shop, the runs application
+ * service's `reconciler` (the per-order reconcile, loaded before the upsert's transaction opens)
+ * and the billing seam `flushUsage`.
  *
  * No Admin call runs inside the repository's transaction: the transaction closes the object's
  * input gate, behind which a timer never fires, and the refresh's retries and lease poll are
@@ -52,6 +58,8 @@ export const makeOrders = <R>({
   admin,
   ordersSync,
   notify,
+  reconciler,
+  flushUsage,
   shop,
 }: {
   readonly repository: OrderRepository;
@@ -59,6 +67,10 @@ export const makeOrders = <R>({
   readonly admin: (typeof ShopifyAdmin)["Service"];
   readonly ordersSync: OrdersSyncWorkflows;
   readonly notify: (invalidated: ReadonlyArray<string>) => Effect.Effect<void, never, R>;
+  readonly reconciler: Effect.Effect<
+    (order: ShopOrder) => Effect.Effect<ReconcileCounts, SqlError.SqlError | RunRepositoryError>
+  >;
+  readonly flushUsage: Effect.Effect<void>;
   readonly shop: ShopKey;
 }) => {
   /**
@@ -67,6 +79,11 @@ export const makeOrders = <R>({
    * deleted, and Shopify answers `null` rather than an error, so it is logged and answered as
    * `gone`, storing nothing. A page cut short by `hasNextPage` is stored as is and logged at
    * Error (the rule is on `orderSyncQuery`).
+   *
+   * `reconciler` is loaded after the fetch and before the upsert's transaction opens (its D1
+   * read cannot run inside it), and the function it yields is the upsert's `afterWrite`.
+   * `changed` is the upsert's (the order row moved) or a reconcile that wrote a run
+   * (`reconcileCountsChanged`): what the log line, the notice and `Upserted.changed` read.
    *
    * After the upsert, the retention pass, rate-limited by `lastSweepAt` rather than run on every
    * delivery (`ShopLimits.sweepIntervalMs`): a busy shop must not pay for a batch of deletes per
@@ -89,11 +106,15 @@ export const makeOrders = <R>({
         `Orders.fetchAndUpsertOrder: shop=${shop} orderId=${orderId} limit=${String(ShopLimits.maxLineItemsPerOrder)}: line items truncated`,
       ).pipe(Effect.annotateLogs({ shop, orderId, limit: ShopLimits.maxLineItemsPerOrder }));
     const { lineItems, ...node } = order;
+    const reconcile = yield* reconciler;
+    const shopOrder = toShopOrder({ node, syncedAt: yield* Clock.currentTimeMillis });
     const upsert = yield* repository.upsertOrder({
-      order: toShopOrder({ node, syncedAt: yield* Clock.currentTimeMillis }),
+      order: shopOrder,
       lineItems: yield* toOrderLineItems({ shop, orderId: node.id, nodes: lineItems.nodes }),
+      afterWrite: reconcile(shopOrder),
     });
-    const { written, fresh, changed, refused } = upsert;
+    const { written, fresh, refused } = upsert;
+    const changed = upsert.changed || Option.exists(upsert.afterWrite, reconcileCountsChanged);
     yield* Effect.logInfo(
       `Orders.fetchAndUpsertOrder: shop=${shop} orderId=${orderId} written=${String(written)} changed=${String(changed)}`,
     ).pipe(Effect.annotateLogs({ shop, orderId, written, changed, refused }));
@@ -125,7 +146,9 @@ export const makeOrders = <R>({
    * `ShopSession` before calling, so `OfflineSessionMissing` here means the row was deleted since
    * (an uninstall racing this delivery), and the retry finds no row and answers 200.
    *
-   * The billing seam: the usage flush after a webhook write goes here, after the upsert.
+   * Sends the usage queue (`flushUsage`) after the fetch path, outside the upsert's
+   * transaction: the webhook is the outbox's ordinary carrier, and a failed webhook flushes on
+   * Shopify's retry. A stale or refused delivery wrote nothing and sends nothing.
    */
   const syncOrderWebhook = Effect.fn("Orders.syncOrderWebhook")(function* ({
     orderId,
@@ -169,6 +192,7 @@ export const makeOrders = <R>({
     );
     if (status !== "fetch") return status;
     const fetched = yield* fetchAndUpsertOrder(orderId);
+    yield* flushUsage;
     return Match.value(fetched).pipe(
       Match.tagsExhaustive({
         Gone: (): OrderWebhookStatus => "gone",
@@ -187,8 +211,8 @@ export const makeOrders = <R>({
    * as legacy answered: its result knew only gone or not, and the refusal is the ceiling banner's
    * to show, not this button's.
    *
-   * The billing seam: the usage flush after a one-order sync goes here, whether or not the fetch
-   * succeeded.
+   * Sends the usage queue afterwards (`flushUsage`), whether or not the fetch succeeded (rule 13
+   * on `syncOrder`): the reconcile may have started the order's first run, which counts it.
    */
   const syncOrder = Effect.fn("Orders.syncOrder")(function* ({
     orderId,
@@ -207,7 +231,7 @@ export const makeOrders = <R>({
     ).pipe(Effect.annotateLogs({ shop, orderId, status }));
     const result: SyncOrderResult = status === "gone" ? { _tag: "Gone" } : { _tag: "Stored" };
     return result;
-  });
+  }, Effect.ensuring(flushUsage));
 
   /**
    * Sync open orders, legacy's `ShopAgent.syncOpenOrders`: the start's rules are

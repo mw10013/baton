@@ -13,6 +13,7 @@ import recorded from "../fixtures/order-sync-response.json";
 import {
   ActorSqliteTest,
   type AdminCall,
+  noReconciler,
   QuietLogs,
   testOrdersSyncWorkflows,
   testShopifyAdmin,
@@ -47,6 +48,8 @@ const withOrders = <A, E>(
       readonly notices: Array<ReadonlyArray<string>>;
       readonly repository: OrderRepository;
       readonly sql: SqlClient.SqlClient;
+      /** How many times `flushUsage`, the billing seam, ran. */
+      readonly flushes: { count: number };
     },
   ) => Effect.Effect<A, E>,
   create: Effect.Effect<void> = Effect.void,
@@ -54,6 +57,7 @@ const withOrders = <A, E>(
   const admin: Array<AdminCall> = [];
   const created: Array<{ readonly id: string; readonly params: OrdersSyncParams }> = [];
   const notices: Array<ReadonlyArray<string>> = [];
+  const flushes = { count: 0 };
   return Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const transaction = syncTransaction(sql);
@@ -67,9 +71,13 @@ const withOrders = <A, E>(
         Effect.sync(() => {
           notices.push(invalidated);
         }),
+      reconciler: noReconciler,
+      flushUsage: Effect.sync(() => {
+        flushes.count += 1;
+      }),
       shop: SEED_SHOP,
     });
-    return yield* body(orders, { admin, created, notices, repository, sql });
+    return yield* body(orders, { admin, created, notices, repository, sql, flushes });
   }).pipe(
     Effect.provide(testShopifyAdmin(replies, admin)),
     Effect.provide(ActorSqliteTest),
@@ -245,6 +253,52 @@ describe("Orders.syncOrder", () => {
         assert.strictEqual(error._tag, "ReauthorizationRequired");
         assert.isTrue(Option.isNone(yield* repository.getOrder(ORDER_GID)));
       }),
+    ),
+  );
+});
+
+/**
+ * The billing seam's call sites, legacy's: the webhook sends the usage queue after its fetch
+ * path only, and Sync from Shopify sends it whatever became of the fetch (rule 13 on
+ * `syncOrder`). `flushUsage` is a no-op in the actor until billing lands.
+ */
+describe("Orders usage flush", () => {
+  it.effect("the webhook flushes after its fetch path, never on a stale or refused delivery", () =>
+    withOrders([Effect.succeed(recorded.data)], (orders, { flushes, sql }) =>
+      Effect.gen(function* () {
+        yield* orders.syncOrderWebhook({
+          orderId: ORDER_GID,
+          topic: "ORDERS_PAID",
+          updatedAt: ORDER_UPDATED_AT,
+        });
+        assert.strictEqual(flushes.count, 1);
+        yield* orders.syncOrderWebhook({
+          orderId: ORDER_GID,
+          topic: "ORDERS_PAID",
+          updatedAt: ORDER_UPDATED_AT,
+        });
+        assert.strictEqual(flushes.count, 1, "stale");
+        yield* fillCeiling(sql);
+        yield* orders.syncOrderWebhook({
+          orderId: "gid://shopify/Order/1",
+          topic: "ORDERS_CREATE",
+          updatedAt: ORDER_UPDATED_AT,
+        });
+        assert.strictEqual(flushes.count, 1, "refused");
+      }),
+    ),
+  );
+
+  it.effect("Sync from Shopify flushes even when the fetch fails", () =>
+    withOrders(
+      [Effect.succeed(recorded.data), Effect.fail(reauthorization)],
+      (orders, { flushes }) =>
+        Effect.gen(function* () {
+          yield* orders.syncOrder({ orderId: ORDER_GID });
+          assert.strictEqual(flushes.count, 1);
+          yield* Effect.flip(orders.syncOrder({ orderId: ORDER_GID }));
+          assert.strictEqual(flushes.count, 2);
+        }),
     ),
   );
 });

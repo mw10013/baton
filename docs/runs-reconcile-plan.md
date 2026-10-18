@@ -336,13 +336,113 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 
 ### Deviations
 
+- 2026-10-18, Step 1: the matrix rows live in a new `test/unit/domain/run-actions.test.ts` (legacy's file name), with "lineItemState has one kind per layout" under `"Domain.lineItemState"` beside them; the word→value maps and the reconcile universe are built in the test (216 fixtures, asserted).
+- 2026-10-18, Step 1: JSDoc sweep: legacy tooling sentences (`pnpm spec check`, `scripts/rules-lint.ts`, `scripts/lib/spec.ts`, the controls table in `Screen.ts`, `useLiveQuery`'s throttle, "Always send the key … `onExcessProperty`") are dropped or restated as the rule alone; `initializeSchema` / `ShopAgentSchema.ts` become "the actor's data model"; `RunRepository.x` / `OrderRepository.x` become "the run (order) repository's `x`"; `ShopWorkAgent.reconcileAllNow` / `eligibleContext` become `Runs.reconcileAll` / `Runs.eligibleContext`; `ShopAgent.*` become `Orders.*`, `Runs.merchantAttachWorkflow` or the bare callback name; legacy route and file names become the screen's name. Table cells kept their padding where the row is parsed (the three matrices render unchanged).
+- 2026-10-18, Step 1: rule 14's "where" cell names `onOrdersStream`, `onOrdersSyncEmpty` (this repo has no completion callback; the stream and the empty callback clear the tracking record).
+- 2026-10-18, Step 2: `currentWhere` is `src/backend/shop-actor/current-where.ts` (review); `makeRunRepository(sql, transaction, countOrder)` positional, with a `CountOrder` type. The order repository's run-aware `listOrders` reads without a transaction, as legacy; the run-free read stays as `listOrdersRunFree` for its callers until Step 3 (review).
+- 2026-10-18, Step 2: legacy JSDoc that was false here is restated: "Durable Object SQLite refuses to nest" (on `OrderUpsert.afterWrite` too), `ShopAgent.publish`, `initializeSchema`, the two "Pinned by '… reads at most N rows …'" sentences (dropped). The order repository's module JSDoc now says what it leaves out (billing).
+- 2026-10-18, Step 2: run-repository tests port 75 of legacy's 80 titles (the five `RunRepository metering` titles are G's); the recording `countOrder` has its own describe "RunRepository countOrder" (three new titles); `seedStepped` writes its workflow straight to SQL with `instructions`; legacy `reconcile-context.ts` is a local helper. Data-model's eleven run titles are in `test/unit/backend/shop-actor/data-model.test.ts` under "data model".
+- 2026-10-18, Step 2: the order repository's eight `OrderRepository.listOrders*` describes port 20 legacy titles, none dropped (no rows-read title is in them); one new title for `getOrderByLegacyId` and `getLineItem`. Runs and tasks there are written straight to SQL. This repo's run-free "pages newest first through a keyset cursor" is replaced by legacy's own version; "the dev fixture's rows decode through the repository" reads items through `getOrder`.
+- 2026-10-18, Step 3: `makeRuns` also takes `transaction` (for the fixture's per-order reconcile) and exposes `notify` (the actor's, memos cleared first on `ORDERS_KEY`) and `applyFixture`; the actor names it `notify` and every sender uses it. `RunMember` (`Required<MemberActor>`) is the member identity the member writes take; the actor decodes it once from `CurrentCaller` (`currentMember`, Schema over `MemberId`, `Email`, `TeamId`).
+- 2026-10-18, Step 3: the orders read's consumers moved here (review): `ListOrdersRequest` spreads `ListOrdersInput`, `merchantOrdersQuery` / `merchantOrdersAtom` are keyed by the whole `ListOrdersInput` (serialization key from its five fields), `seedOrders` seeds `OrdersIndexData`; `OrdersListInput`, `OrdersListPage` and `listOrdersRunFree` are deleted.
+- 2026-10-18, Step 3: the interim orders screen reads `show: "all"` (no search, no team), so slice A's screen keeps listing every stored order until Step 6's full index (whose default is Making); its Status badge now reads the row's run counts and Items its `itemUnits`.
+- 2026-10-18, Step 3: `fixtureRows` stores each order as placed and carries `work` (per order: each item's chosen workflow id and its progress, the item's own or the order's keys without `note`, and `after`) and `members` (`{ memberId, email, teamIds }` in fixture order); `fixture.test.ts`'s two baked-row titles are renamed "gives fixture orders their prefixed ids and stores them as placed" and "builds line items by position, as placed", and a new title pins the carried work.
+- 2026-10-18, Step 3: `ShopActorShape.applyFixture({ rows, caller })` and `ShopActors.applyFixture`; `Fixtures.load` calls it after `loadFixture`, `Fixtures.add` after D1's `addToShop` (review). A Start with no `by` is recorded as the task's team's first fixture member (none: no Start); a Done, block or note with neither `by` nor `byMerchant` is the merchant's.
+- 2026-10-18, Step 3: billing seam pins for the orders service are new unit titles under "Orders usage flush" ("the webhook flushes after its fetch path, never on a stale or refused delivery", "Sync from Shopify flushes even when the fetch fails"); `noReconciler` in `test/unit/backend/layers.ts` serves tests that are not about runs.
+- 2026-10-18, Step 3: the integ tests are two files: `test/integ/runs.test.ts` (the check-first title "a webhook for an order whose item carries an active workflow's tag creates its run inside the upsert", the 14 `ShopAgent workflow run callables` titles not yet here, the 4 sync-order titles, the 4 setup-facts titles, "the seed publishes once to every screen" and the two role-refusal titles over the run procedures) and `test/integ/run-callables.test.ts` (stage `runcallables`: the 19 `callables:` rows, the three literal titles, five `member workflows list socket` titles, three publish titles and the run half of "a refused call publishes nothing"). Slice E's two setup-facts titles in `test/integ/workflows.test.ts` are removed for legacy's four. The `callables:` rows drive "M" and "m" over sockets; "v" is pinned by the unit matrix only. The setup guide titles assert `setupIsComplete` over `ApiSetupFacts`.
+- 2026-10-18, Step 3: `test/unit/backend/shop-actor/runs.test.ts` (23 tests): new titles under "Runs result mapping", "Runs gate and notices" (teams never read while a transaction is open, across reconcile all, Attach, Assign and the reconciler), "Runs usage flush"; legacy's "the list memo" (five titles, counting repository list reads instead of SQL rows; "publish" is `runs.notify([ORDERS_KEY])`; a failed lookup is a defect here), the stream title, and eight "ShopAgent seed callables" titles through `applyFixture`. Dropped: "Home and the orders index read the same listOrders input" (Step 6, `ORDERS_ARRIVAL_INPUT`), the two metering seed titles (G). "a seeded run records its `by` member as the starter and the doer": legacy's second run was the seeding member's; here its Done is the merchant's and its Start the team's first fixture member. "a reseed reconciles the orders it did not replace" arranges the untouched order with `AddToFixture` (here `LoadFixture` replaces every order).
+- 2026-10-18, Step 3: `export type Runs` is `Effect.Success<ReturnType<typeof makeRuns<never>>>` (the generic left `R` unknown).
+- 2026-10-18, Step 4: the member loaders' wire shapes are in a new `src/contract/workflows-list.ts` (`WorkflowsListRequest`, `WorkflowsListPageData`, `MemberWorkflowPageRequest`, `MemberWorkflowPageData`; legacy's loader data without `shop`); `OrderDetailRequest` joins `src/contract/orders.ts`. `ShopAccess.resolveMember({ key, cookie })` answers `{ caller, teams }` (review); `resolve` reads its `caller`. The Backend decodes the gate's member once (`MemberId`, `Email`, `TeamId`) for the actor's run reads (`memberOf`).
+- 2026-10-18, Step 4: the member server functions (`src/web/server/workflows-list.ts`, GET) turn `Unauthorized` into a sign-in redirect back to the screen and `Forbidden` / `NotAShopMember` into `notFound()`, for Step 7's "No access"; `orderDetail` (GET, `src/web/server/orders.ts`) rescues the token as the other embedded loaders do.
+- 2026-10-18, Step 4: client atoms: `merchantOrderDetailQuery` / `Atom` (by `legacyId`), `memberRunsQuery` / `Atom` (by the whole `RunQuery`), `memberRunQuery` / `Atom` (by `runId`), each with reactivity `ORDERS_KEY`, a serialization key and a `seed…`; the nine merchant and seven member writes as `Atom.family` mutation atoms keyed by the item, run or task (review).
+- 2026-10-18, Step 4: integ loader tests are a new `test/integ/run-loaders.test.ts` (stage `runloaders`): three new titles for the loaders over `AddToFixture` with progress, and legacy's "is gated by membership like the shop page" as data for the member's shop versus `NotAShopMember` for another shop (and `Unauthorized` signed out). "requireMember admits every member of a subscribed shop" moves to G (plan seats). Unit: a new describe "BackendApi run loaders" (orderDetail's refusals before any actor call; the two member loaders' answers, team resolution, and 401/403/404/503 with no actor call).
+
 ### Issues
 
+- 2026-10-18, Step 2: the first full e2e run lost `refresh.spec.ts` to `openApp`'s 10 s hydration wait (1 failed, 4 did not run, 44 passed); the spec alone passed (7 passed, 1.2 min) and a second full run was clean. Step 2 changes no Website code.
+- 2026-10-18, Step 3 check first: on workerd a webhook for an order whose item carries an active workflow's tag created its run inside the upsert's transaction through `afterWrite` (the D1 teams read before it): passed (1 test, 9.8 s). No stall; no WAITING.
+- 2026-10-18, Step 3 check first (Cache): Effect 4's `Cache.makeWith(lookup, { capacity, timeToLive: exit => … })`, `Cache.get`, `Cache.invalidateAll` hold as the review said; the memos use them with keep-successes (`Duration.zero` on failure, infinity on success) and `Data.Class` keys. Atom family keys compare structurally too (`Equal`), so the orders atom is keyed by the whole `ListOrdersInput`.
+- 2026-10-18, Step 3: while removing `OrdersListInput` / `OrdersListPage` from `src/contract/shop-actor.ts` a slice by position also cut the caller, middleware and close-code declarations between them (`MemberCaller` … `MAX_CONNECTIONS_PER_MEMBER`); caught by the diff stat before any check or commit and restored from `HEAD`.
+- 2026-10-18, Step 3: integ notes found while finishing the tests: a forged socket is not open until a call has gone over it, so a test expecting a notice calls `…WhoAmI` first; `PubSub.takeAll` waits for at least one item, so draining an empty subscription uses `takeUpTo`; `fileStage` refuses a dash (`runcallables`).
+- 2026-10-18, Step 3: test-writing helpers were cut off twice (the run ended while background forks ran, then an API session limit); their files were checked title by title, the three gaps above fixed, and the rest kept.
+
 ### Command results
+
+- 2026-10-18, Step 1, titles: `node /tmp/baton-spec/titles.ts` (legacy `ShopWork.ts`) and `node /tmp/baton-spec/titles.ts src/domain/shop-work.ts` render the same 10, 9 and 13 rows (`diff` empty, before and after the JSDoc sweep); the test's titles are that output pasted.
+- 2026-10-18, Step 1: `vp check` pass (293 files); `vp test` 65 files, 738 tests, 56.5 s; `vp run test:e2e` 49 passed, 4.2 min.
+- 2026-10-18, Step 2, check first: `runListItems`' plan on `node:sqlite` (actor DDL): `SEARCH s USING INDEX sqlite_autoindex_RunTask_2 (runId=?)`; `LIST SUBQUERY 2`; `SCAN tt VIRTUAL TABLE INDEX 1:`; `SEARCH m USING INDEX RunTask_teamId_idx (teamId=? AND doneAt=?)`; `CORRELATED SCALAR SUBQUERY 1` / `SEARCH p USING INDEX sqlite_autoindex_RunTask_2 (runId=?)`; `SEARCH r USING INDEX sqlite_autoindex_Run_1 (id=?)`; `CORRELATED SCALAR SUBQUERY 3` / `SEARCH p …`. No SCAN of s, m, r or p: legacy's title holds in unit, no integ fallback. The two `OrderRepository.listOrders query plans` titles hold on `node:sqlite` too.
+- 2026-10-18, Step 2: `vp check` pass (298 files); `vp test` 67 files, 851 tests, 55.0 s; `vp run test:e2e` 44 passed, 1 failed, 4 did not run (4.3 min, hydration timeout, Issues); the spec alone 7 passed (1.2 min); second full run 49 passed, 4.4 min.
+- 2026-10-18, Step 3: `vp check` pass (301 files); `vp test` 70 files, 932 tests, 48.4 s; `vp run test:e2e` 49 passed, 4.3 min.
+- 2026-10-18, Step 4: `vp check` pass (304 files); `vp test` 71 files, 943 tests, 48.8 s; `vp run test:e2e` 49 passed, 5.1 min.
+- CHECKPOINT: Backend half done (4d2294a)
+- WAITING: the orchestrator reviews and says how Steps 5–7 run.
 
 ### Human steps requested
 
 ### Implementation review
+
+2026-10-18, the lead, at the Backend half checkpoint (Steps 1–4, `fd2876f`).
+
+- **Suites, re-run by the lead.**
+  - `vp check`: pass (364 files formatted, 304 linted).
+  - `vp test`: 71 files, 943 tests, 48.1 s.
+  - `vp run test:e2e`, first run: the `install` setup lost `openApp`'s 10 s hydration wait, so 1 failed and 47 did not run.
+  - Second run: 48 passed and 1 failed (`embedded/home.spec.ts`, the same wait).
+  - Third run: 49 passed, 4.9 min.
+  - The flake is the one carried since the orders slice (`orders-slice-plan.md`, `workflows-plan.md` Step 2). Each run loses a different spec at `awaitHydration`, never at an assertion.
+- **§5 walked, for the Backend half.**
+  - `MerchantRpcs` gains ten procedures: nine writes and `MerchantGetOrderDetail`. `MerchantListOrders` is now on `ListOrdersInput` / `OrdersIndexData`.
+  - `MemberRpcs` gains nine.
+  - The three added `createServerFn` (`orderDetail`, `workflowsList`, `memberWorkflowPage`) are GET.
+  - `ShopActorShape` gained `getOrderDetail`, `listRuns`, `getRunPage`, `applyFixture` and the new `listOrders`.
+  - The count procedures and `snapshot` remain; they retire in Step 7, so that §5 line is owed then.
+  - `runs.ts` was read handler by handler. Every `transaction(…)` wraps a repository call alone, and the D1 `teams()` read comes before it. `flushUsage` is `ensuring` on reconcile all and Attach, and on the webhook and Sync from Shopify in `orders.ts`. Nothing is nested. `countOrder` and `flushUsage` are `Effect.void` in the actor.
+  - No uppercase SQL keyword in the run repository, the order repository or `current-where.ts`.
+  - The production Backend bundle's three newest entries hold no `IntegRpcs` / `ShopifyFake`.
+  - The copy grep waits for the screens (Steps 5–7).
+- **Titles.** Every legacy file Steps 1–4 cite was diffed title by title against `test/` with `grep -rF`. Every title the plan names is present, byte for byte. The absent ones are:
+  - billing, slice G's: five `RunRepository metering` and sixteen order-repository cycle and usage titles, plus two `countedAt` / usage-counter seed titles;
+  - "Home and the orders index read the same listOrders input" (Step 6, recorded);
+  - `member-area`'s other titles (Step 7 or out of scope);
+  - titles the plan never named:
+    - legacy's decorator-only `shop-agent-callables` titles (no decorators here);
+    - three non-run `data-model` titles;
+    - "a webhook that moves the order's updatedAt publishes even when no run moved";
+    - "the open-orders stream publishes to every screen when it finishes".
+- **Code read.**
+  - The gate-then-write pattern, the result mappers, Attach's check order, Assign's D1 team check and `applyFixture`'s order follow legacy and the review. The order is: reconcile in its own transaction, then `setRun`, progress, `after` through the reconciler, `reconcileAll` and one `notify`.
+  - `RunNotAllowedError({ teamId: "" })` from the gate is legacy's, verbatim.
+- **Cleanup.** The lead deleted the 14 `.alchemy/local/baton-test-*-ShopActor` directories its own `vp test` leaked. The 36 older ones predate this slice's runs.
+
+**Fixed by the lead**
+
+- Nothing in code. The plan review's corrections (6e51e68) were built to as written.
+
+**Needs a decision**
+
+1. **How Steps 5–7 run** (the WAITING line): the same implementer, one step per commit, with the lead verifying at the end of Step 7.
+2. **The embedded hydration flake.** In this slice it hit 3 of about 9 full e2e runs, each time a different spec at `openApp`'s 10 s `awaitHydration`. Steps 5–7 add many embedded and member specs, which will raise the odds. Options:
+   - raise the wait (e.g. 20 s);
+   - give embedded specs one Playwright retry;
+   - investigate the slow loads in `.logs/e2e`.
+3. **Fixture actors with no seeding member.** A Start with no `by` is recorded as the task team's first fixture member. A Done, block or note with neither `by` nor `byMerchant` is recorded as the merchant. This is legacy's rule with the seeding member replaced (review). Confirm, or name a different default.
+4. **The interim orders screen** shows every stored order (`show: "all"`) until Step 6 brings the full index, whose default is Making. Fine as an interim step; no action unless Steps 5–7 are split across sessions.
+5. **The `callables:` rows' third case** (a member who sees the run but holds no current task) is pinned by the unit matrix only. Integ drives the merchant and the member on the task's team. Accept, or add one integ row.
+
+**Decisions** (2026-10-18; the orchestrator's answers, which the user agreed):
+
+1. Steps 5–7 go to the same implementer, on `main`, one step per commit; the lead verifies at the end of Step 7. No worktree split. The run stops at Step 8's `CHECKPOINT: ready for staging`.
+2. **The hydration flake gets no fix in this slice.** A separate thread investigates it in wt-01.
+   - Do not change `awaitHydration`, `prepareApp`, timeouts or retries.
+   - A failure counts as the known flake only if all three hold:
+     - it fails at `awaitHydration`, never at an assertion;
+     - the spec passes alone;
+     - a full re-run passes.
+   - Log each occurrence under Command results: the spec, the run and the time, for matching against `.logs/e2e`.
+   - The lead's two occurrences at this checkpoint: run 1 ended about 12:31, at `install.setup.ts`; run 2 ran about 12:31–12:36, at `embedded/home.spec.ts`. Neither spec was re-run alone; the third full run passed.
+3. Fixture actors with no seeding member: confirmed as built.
+4. The interim orders screen: no action; Step 6 brings the full index.
+5. Step 7 adds one integration `callables:` row: a member who sees the run but holds no current task.
 
 ## 8. Out of scope
 
