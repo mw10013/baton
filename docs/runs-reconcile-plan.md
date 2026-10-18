@@ -151,6 +151,189 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 
 ### Plan review
 
+2026-10-18, by the lead, read-only against this repo, `refs/baton-legacy/` and `refs/effect/`. Each item says what is wrong or missing, then the detail the step is built to. The steps above stand; where an item corrects one, the item wins.
+
+**Plan-wide**
+
+- **The orders-read reshape is one step, Step 3.** As written, Step 2 deletes the run-free `listOrders` and Step 3 deletes `OrdersListInput` / `OrdersListPage`, but their consumers move in Step 4. Neither step could end green. The consumers are:
+  - `ListOrdersRequest` in `src/contract/orders.ts`, and `src/web/server/orders.ts`
+  - `tag.ts`, `shop-actors.ts`, `api.ts`
+  - `IntegRpcs` `ListOrders` / `ApiListOrders`, with their uses in `test/integ/orders.test.ts` and `orders-sync.test.ts`
+  - `merchantOrdersQuery` / `merchantOrdersAtom` / `seedOrders` in `shop-actor-client.ts`
+  - `OrdersPage.tsx` and the browser tests `OrdersPage.test.tsx` and `ShopSocket.test.tsx`
+  - `api.test.ts`'s "BackendApi orders"
+
+  **Build to:**
+  - **Step 2** adds the run-aware `listOrders` and keeps the run-free read, renamed `listOrdersRunFree`, for its callers.
+  - **Step 3** moves every consumer and deletes the old shapes and `listOrdersRunFree`. That covers `MerchantListOrders`, the stub, `ListOrdersRequest` (gaining `q`, `show`, `team`, `cursor`), the two existing `IntegRpcs` rows, the client query keyed by the whole `ListOrdersInput`, the minimal `OrdersPage` (`data.page.orders[i].order`, `.itemUnits`, `data.page.nextCursor`) and the tests.
+  - **Step 4** adds only the new loaders. The wire key is `cursor` (`ListOrdersInput.cursor`); `after` is the URL key only.
+
+- **`ShopActorShape` changes**, which correct §5:
+  - It gains `getOrderDetail`, `listRuns`, `getRunPage` and `applyFixture` (see Step 3).
+  - `listOrders` changes shape.
+  - It **loses `snapshot`** (Step 7).
+- **The counter's retirement is wider than §3 lists**, and in part narrower.
+  - **These go too:** `ShopSnapshot`, `ShopActorShape.snapshot` / `ShopActors.snapshot` (`layerTest`'s positional `snapshot` argument shifts `dev.test.ts`'s and `fixture.test.ts`'s arguments), `getShopSnapshot` / `ShopPageData`, `test/browser/test-setup.test.tsx`'s count handler (re-anchor the harness guard on `MemberListRuns`), `test/e2e/screens.ts` `shop()`, and `fixtures.ts`'s `nextOpenSocket` JSDoc.
+  - **`BackendApi.shopSnapshot`** becomes the gate-only `shopAccess`, answering the caller.
+  - **These stay:**
+    - `MemberActivation`, because `socket-facts.test.ts`'s hibernation test reads it.
+    - `MemberWhoAmI` and `MerchantWhoAmI`, socket-ready probes in about eleven integ files.
+    - `Activation`.
+- **Paths.** `changeWarning.ts`, `orderLinks.ts`, `ordersIndexQuery.ts`, `useMemberRunActions.ts`, `workflowsListStates.ts`, `polarisModal.ts`, `format.ts` and `searchParams.ts` are in legacy `src/lib/`. `MemberRun`, `RunSteps`, `RunTextModals` and `LocalDateTime` are in `src/components/`; the parts are in `src/components/screen/`. Here `polaris-modal.ts` is `src/web/client/polaris-modal.ts`. The home page is `src/web/routes/app.index.tsx`; `HomePage.tsx` is the public landing.
+- **Pattern precedent.** Only slice A's orders and sync screens are seeded or live atoms (`merchantOrdersAtom`, `seedOrders`). C's and E's screens are loader data plus `router.invalidate()`. Copy A.
+- **Mutation atoms for row verbs** (workflows list, order page):
+  - **Why:** `ShopActorClient.mutation` interrupts its first call on a second press (`syncOrderAtom`'s JSDoc).
+  - **Build to:** `Atom.family` keyed by `runTaskId` or `runId`, as `syncOrderAtom`.
+- **One `<s-page>` alive.** The implementation to copy is `WorkflowEditorPage.tsx`'s `useEditorPresses` plus `usePressWaiting` (`press-waiting.ts`): idle presses before hydration, one screen at one position. `WorkflowPage.tsx` and today's `OrdersPage.tsx` still swap components (`hydrated ? <Live…/> : <…Screen/>`); do not copy them. The rule applies to the new orders index, the order page and the home strip.
+
+**Step 1**
+
+- **Where the declarations come from.** `ReconcileCounts { created, resized, closed, multiMatch }`, `ReconcileAllCounts { orders, created, multiMatch }` and `reconcileCountsChanged` (created, resized or closed above 0) come from legacy `src/lib/RunRepository.ts` (≈ lines 99–132), with their per-field JSDoc. "The run half of the signal `ShopAgent`'s `publish` gates on" becomes the `changed` of `makeOrders`' `fetchAndUpsertOrder`. `{@link Domain.x}` becomes `{@link x}`.
+- **Titles, two renderers.** `runActions` and `taskActions` titles are `Spec.renderRow(name, row)`; the `reconcileItem` action titles are `row.text` (cells joined `" | "`). Keep legacy's describes: `"Domain.runActions matrix"`, `"Domain.taskActions matrix"`, `"Domain.reconcileItem actions"`, `"Domain.reconcileItem post-condition"`.
+  - **The command** (read-only; the script lives outside the repo and refs, imports legacy's `scripts/lib/spec.ts` by absolute path, and resolves `effect` from the repo): `node /tmp/baton-spec/titles.ts [path to ShopWork.ts or src/domain/shop-work.ts]`. The ported `shop-work.ts` renders the same 10, 9 and 13 rows as legacy.
+  - Recreate the script if `/tmp` was cleared: `Spec.parse(source, "runActions" | "taskActions")` then `Spec.renderRow`, and `Spec.parseReconcileActions(source)` then `.text`, unwrapping `Result` by hand (`_tag === "Success"`).
+- **Cells as data.** Follow `test/unit/domain/orders.test.ts`'s `SYNC_ROWS`: each row carries its words and cells, and a word→value map expands them. The post-condition is the cartesian product of the action table's column words, built in the test (legacy's `reconcileActionUniverse` gives 216).
+- **Missing pure title.** Port "lineItemState has one kind per layout" (legacy `test/integration/run-actions.test.ts`, describe `"Domain.lineItemState"`), adapted to the five-argument `lineItemState`.
+- **The JSDoc sweep covers both `shop-work.ts` and `orders.ts`.** The legacy names to rewrite are more than the step lists:
+  - `ShopAgentSchema.ts`, `ShopAgentClient`, `ShopAgentHost`
+  - `OrderRepository.countOrder` (now the run repository's `countOrder` argument), `OrderRepository.markSeedOrdersCounted` (gone)
+  - `currentWhere.ts`, `useLiveQuery`, `Screen.ts`, `scripts/lib/spec.ts`
+  - "Agents SDK"
+  - legacy route and file names (`app.orders.tsx`, `shop.$shop…`, `workflowsListStates.ts`, `api.dev.seed.ts`, `ShopAgent.seedWorkflows`)
+  - three dead `{@link initializeSchema}`
+
+**Step 2**
+
+- **`makeRunRepository(sql, transaction, countOrder)` is positional**, as `makeOrderRepository(sql, transaction)`, with `type RunRepository = ReturnType<…>` (§3's object form is dropped).
+- **`currentWhere` is shared, not private.** Legacy's orders-index team filter uses it too (`OrderRepository.listOrders`, `currentWhere("s")`), and its JSDoc names three readers that must agree. Build it as `src/backend/shop-actor/current-where.ts` (`currentWhere(alias)`), imported by both repositories.
+- **Eleven `sql.withTransaction` sites, not ten:** `reconcileAll` (per order), `setRun`, `cancelRun`, `reopenTask`, `putBackTask`, `startTask`, `markTaskDone`, `setRunNote`, `blockRun`, `unblockRun`, `assignRunTaskTeam`.
+- **`countOrder`'s test is wrong as written.** Legacy `insertRun` calls `countOrder(order.id, now)` once per inserted run, **a second item's run on the same order included** (once-per-order is `countOrder`'s own body, G). The recording test asserts:
+  - one call `(orderId, now)` per created run, including a manual attach and a replace;
+  - none for a resize, a close, a no-op second pass, a conflicting insert, or `setRun`'s `None`.
+- **`listOrders` takes `ListOrdersInput & { teams }`.** `unassigned` is derived against the live D1 teams (legacy input `{ …, teams: EligibleContext["teams"] }`). Port its module constants: `openAs`, `OPEN_RUN`, `DONE_RUN`, `STARTED_RUN`, `BLOCKED_RUN`, `RUN_FOR_ITEM`, `ITEM_MATCHES` (exported; it uses `json_extract`, which is fine), `MULTI_MATCH_ITEM`, `MULTI_MATCH`, `COUNT_FACT`. Also port `detailOf`, shared by `getOrder` and `getOrderByLegacyId`. `getLineItem` → `Option<{ order, lineItem }>`. Legacy reads without a transaction; either is allowed, record the choice.
+- **Legacy JSDoc that is false here is not ported verbatim:**
+  - "Durable Object SQLite refuses to nest". `Transaction` here says nothing refuses; fix the same sentence already on `OrderUpsert.afterWrite`.
+  - `ShopAgent.publish`, `initializeSchema`, "`ShopOrder_open_idx` in `ShopAgent.ts`".
+  - The two "Pinned by '… reads at most N rows …'" sentences, whose titles are dropped (Q14).
+- **Tests.**
+  - `seedStepped`'s test-local insert must take `instructions` (Artwork carries "300 dpi"). E's `insertWorkflows` hard-codes null and is local to its file.
+  - Port legacy `test/integration/reconcile-context.ts` as a local helper.
+  - 75 of `run-repository.test.ts`'s 80 titles port. The five `RunRepository metering` titles are G's.
+  - The run-free test "pages newest first through a keyset cursor" is legacy's own title under `"OrderRepository.listOrders"`, so it becomes legacy's.
+- **Query-plan capture.** Legacy's `runInRepositoryCountingRows` / `planOf` is not here, and the `"OrderRepository.listOrders query plans"` statements are dynamic. Capture the compiled statements with `Statement.CurrentTransformer` (`refs/effect/packages/effect/src/sql/Statement.ts`, `self => Effect.sync(() => (captured.push(self.compile()), self))`), then ``sql.unsafe(`explain query plan ${q}`, params)``. The lead's reviewer verified this on `@effect/sql-sqlite-node`.
+- **Check-first result** (verified read-only on `node:sqlite` 3.53.4 against the actor's DDL): `runListItems`' plan has `SEARCH m USING INDEX RunTask_teamId_idx (teamId=? AND doneAt=?)` and no `SCAN` of `s|m|r|p`. Legacy's title holds in unit, and no integ fallback is expected. The implementer still records the plan text.
+
+**Step 3**
+
+- **The fixture stores `after` already applied** (`fixtureRows` writes `after`'s `cancelledAt`, `fulfillmentStatus` and `currentQuantity`). Reconcile would then never see the placed order.
+  - **Build to:** `fixtureRows` stores the order as placed. `ActorFixtureRows` carries, per order, its `after`, the progress (per item, or the order's keys without `note`) and each item's chosen workflow as the minted `WorkflowRow.id`.
+  - Change `fixture.test.ts`'s two baked-row titles ("gives fixture orders their prefixed ids and applies `after`", "builds line items by position, with `after`'s quantity last") and record the change.
+- **`by` needs the fixture's members inside the actor.** Legacy `memberActorOf` reads the seed's member list in order, `{ memberId, email, teamIds }`, never D1; "that team's first member" is the first in that list on the task's team. `fixtureRows` derives the list from `data.members` order and `identity.teamMembers` and passes it in `ActorFixtureRows`. Progress with neither `by` nor `byMerchant` is recorded as the merchant (legacy used the seeding member, which has no counterpart here); record it.
+- **`AddToFixture` would reconcile against no teams.** `Fixtures.add` calls `actors.addFixture` before `members.addToShop` (D1), so every fixture workflow would read as not eligible.
+  - **Build to:** split the actor call. `addFixture` inserts and checks conflicts as today; D1 `addToShop` runs; then a new stub method `applyFixture(rows)` applies the work and reconciles all. `Fixtures.load` calls `applyFixture` after `replaceShop` too, so both share one path.
+  - Writing D1 first is refused: an actor `Conflict` would leave D1 rows behind.
+- **Building `notify` and `makeRuns`.** Build `makeRuns({ …, notify: rawNotify })` right after the repositories. It returns an Effect, because `Cache` construction is effectful. It exposes `runs.notify`, which clears both memos when the keys name `ORDERS_KEY` and then calls `rawNotify`. Every other sender takes `runs.notify`: `makeOrders`, `makeMembership`, `makeWorkflows`, `removeOrder`, `onOrdersStream` (and its `onError`), the fixture and the sync sinks.
+- **`runs.reconcileAll(caller, id)` has error `never`** (the seam's type): `Effect.ensuring(flushUsage)` then `Effect.orDie`.
+- **`makeOrders` also takes `flushUsage`.** There are three billing sentences:
+  - The webhook flushes with a plain `yield*` after its fetch path only (not on stale or refused).
+  - `syncOrder` is wrapped in `ensuring`.
+  - `onOrdersStream` puts `ensuring` on the stream call.
+
+  `fetchAndUpsertOrder` loads `yield* reconciler` after the Admin fetch and the null check, before the upsert. The combined `changed` drives the log line, the notice and `Upserted.changed`. Widen `syncFailure`'s parameter type.
+
+- **Cache (check first, done by the lead's reviewer; the implementer confirms):**
+  - Use `Cache.makeWith(lookup, { capacity: 32, timeToLive: exit => Exit.isFailure(exit) ? Duration.zero : Duration.infinity })` (legacy `keepSuccesses`; `Cache.make` has one fixed TTL), with `Cache.get` and `Cache.invalidateAll`.
+  - Keys are `Data.Class` instances: orders `{ limit, cursor, q, show, team, teams }` and runs `{ teamIds: sorted }`.
+  - The memo covers `listOrders`' page and `runListItems` only. `syncState` and `listRecent` are read live.
+  - Memo reads stay outside transactions, because the lookup forks.
+- **Log lines are legacy's, with the prefix `Runs.`.** Legacy has none for Attach or `memberUnblockRun`: keep none. Drop legacy's `instrumentationIsOn` timing lines (no such switch here). Formats:
+  - `runId=` for cancel, note and block or unblock;
+  - `task=` for done, reopen and put back;
+  - `task= teamId=` for assign;
+  - member lines add `memberId=`;
+  - `reconcileOrder`: `orderId= created= resized= closed= multiMatch=`;
+  - `reconcileAll`: `caller= id= orders= created= multiMatch=`.
+- **Member identity in handlers.** `CurrentCaller` is the `ConnectionCaller` union: narrow on `role === "member"`. `MemberCaller`'s fields are unbranded, while `MemberActor` needs `MemberId`, `TeamId` and the domain `Email`. Decode once with Schema in one helper; do not cast.
+- **Attach's check order:** line item, then workflow eligible (D1 teams read first), then order open, then units, then `setRun` `None` → `AlreadyExists`, then notify, then `Ok { run, replaced }`; `ensuring(flushUsage)`. **Assign:** `requireTaskAction`, then `teamExists` (D1, read before the write's transaction) → `TeamNotFound`, then the write. **`runResult`:** `RunNotFoundError` → `NotFound`; Terminal, Blocked, OrderClosed, NotAllowed, NotBlocked and TaskNotReady → `NotAllowed`.
+- **Titles.**
+  - The 19 `callables:` titles are templates: `` `callables: ${renderRow(…)}` ``. Render them with Step 1's command plus the prefix.
+  - The seed titles are under legacy's `"ShopAgent seed callables"`. Add "the seed publishes once to every screen" and "a seeded order is placed placedDaysAgo days before now, in the order given"; the two metering seed titles are G's.
+  - "a refused call publishes nothing" already exists (`test/integ/workflows.test.ts`). The run half is a second test with the same title, in `runs.test.ts`.
+  - E's title to replace is "setupFacts after a team with a member and an active workflow holds the first two; a run waits for runs". Its sibling "setupFacts on a shop with no team and no workflow holds none of the three" is replaced by legacy's "each step is undone on an empty shop and done once its fact holds".
+  - `memberAs` in `socket-facts.test.ts` is local with `teamIds: []`; `runs.test.ts` needs its own with real team ids.
+- **Stale JSDoc to fix in Step 3:** `shop-actor.ts`'s no-op `reconcileAll`, `workflows.ts`'s seam note, `order-repository.ts`'s "Nothing passes one yet", `contract/shop-actor.ts`'s `teamIds` "nothing reads it yet", `fixture.ts`'s two.
+
+**Step 4**
+
+- **Team names are not on the gate's caller.** `ShopAccess.member` drops `MemberAccess.teams`' names, keeping only `teamIds`.
+  - **Build to:** add `ShopAccess.resolveMember({ key, cookie })` → `{ caller: MemberCaller, teams }` for the member loaders. Never put names on `MemberCaller`, which travels in a header.
+  - The `api.test.ts` fake grows the same way.
+- **The member loaders answer legacy's loader data.**
+  - `workflowsList(request, { key, state, team, limit, q })` → `{ memberId, memberEmail, teams, query, list }`. `team` is free text in the URL (≤ `TEAM_SEARCH_MAX`); the Backend resolves it against the member's teams, so an unknown team is `null`, and builds the `RunQuery`.
+  - `memberWorkflowPage(request, { key, runId })` → `{ memberId, memberEmail, teams, page }`.
+  - Every method takes `(request, payload)`, so `orderDetail(request, { sessionToken, legacyId })`.
+- **Unit refusals.** `ShopNotInstalled` applies to `orderDetail` and `listOrders` only. The member loaders test 401 → `Unauthorized`, 403 → `Forbidden`, 404 → `NotAShopMember` and 503 → defect, each with no actor call, as `shopSnapshot`'s tests do.
+- **`ApiWorkflowsList` and `ApiMemberWorkflowPage` carry a `cookie`** in their payload and pass `{ cookie, ip: undefined }`, because `IntegHandlers`' `noRequest` has no cookie. `ApiOrderDetail` follows `ApiWorkflowsPage`.
+- **`member-area.test.ts`.** "is gated by membership like the shop page" becomes data versus `NotAShopMember` for another shop. "requireMember admits every member of a subscribed shop" needs plan seats, so it is G: listed as moved.
+
+**Steps 5–6**
+
+- **Legacy names that are not separate parts.** `StripCell` is a type, `RowHead` an interface, and `TextModal` is private to `RunTextModals`. `MemberRun` also exports `blockedByLabel`. Import `closedReasonText` from the domain (`shop-work.ts`).
+- **`Screen.ts` rows** go into each part's JSDoc as the existing parts carry them: a markdown table `part | job | component | fixes | used on | never` (see `SearchLine.tsx`). `Name`, `Clamp` and `ClampedProse` carry legacy's text rows ("capped name", "Shopify text", "free text").
+- **Missing helpers to port:**
+  - `formatDate`, `formatTime`, `formatRelative` and `formatStatus` (legacy `src/lib/format.ts`; `formatNumber` is already in `platform.ts`)
+  - `changeWarning`, `cancelHeading`, `CANCEL_WARNING` into `src/web/components/change-warning.ts`, with the test at `test/unit/web/components/change-warning.test.ts`
+  - `ANY_OPTION_VALUE` ("any")
+  - `ORDERS_ARRIVAL_INPUT` and `ORDERS_STRIP`, beside `ORDERS_PAGE_SIZE` in `shop-actor-client.ts`
+
+  `RUN_PAGE`, `RUN_LIMIT_MAX`, `clampRunLimit` and `DONE_WINDOW_MS` already exist.
+
+- **Result messages are per screen.** The merchant `attachResultMessage`, `assignResultMessage` and `runResultMessage` live in the order page's module; NotFound reads "That workflow is no longer on this item". The member `runResultMessage` lives in the member run actions; NotFound reads "This workflow no longer exists". Do not share them. Port `errorMessage`. Legacy's `textOrNull` trims by hand, so here it is an Effect Schema decode.
+- **`appHref` cannot carry `show` or `team`.** Add both to `PAGE_KEYS` in `-app-search.ts`.
+- **`app.orders.tsx` becomes a layout** (`<Outlet />`, `lenientSearchKey` for `q`, `show`, `team`, `after`) and its loader moves to `app.orders.index.tsx`, both as `app.workflows.tsx` and `app.workflows.index.tsx` do. Paging is `s-table` `paginate`, as `MembersIndexPage.tsx`. `from-shopify`: a missing or empty `id` goes to `/app/orders`.
+- **The home strip** lives in `<s-section heading="Orders">` with `<SocketBanner />` (legacy). Cells take `{ href, onClick }` (`useNavigateOnClick` and `appHref`), because `/dev/kit` is outside the admin.
+- **`search-params.test.ts`'s two non-flag titles** test `lenientSearchKey` itself over a generic key: "an unreadable value reads as absent, as an explicit undefined that replaces the raw text" and "a readable value decodes, and an absent key stays absent".
+- **e2e: a real test order can never get a run.** `createTestOrder` makes a custom line item with no product, and reconcile matches product tags. Real orders serve only "orders screen syncs open orders and lists them" and "the orders index links each order to Shopify"; every run title arranges through `AddToFixture`. Legacy's fixed order numbers become per-test numbers. Title 11's "No workflow … only the unnarrowed counts see it" cannot be exact on a shared store: assert its own orders and record it. The two home strip titles drop `Issues, 1` for the same reason.
+- **Specs the plan does not name that break, adapted in Step 6:**
+  - Slice A's three `orders.spec.ts` titles: the default Show is Making, so open with `?show=all` or search by name.
+  - `orders-pages.spec.ts`'s two titles: their orders have no items, so use `?show=all`; "Next page" becomes the table's pager.
+  - `home.spec.ts`'s guide title asserts "2 of 3 done" and "Not done" on the shared store, which breaks once any spec creates a run. Assert the first two facts only, leave the third to integ, and record it.
+
+**Step 7**
+
+- **Landing is decided in three places, not one.** They are `BackendApi.requestMagicLink`'s `callbackURL: returnTo ?? "/shop"` (and `IntegRpcs.IssueMagicLink`'s copy), `sign-in.tsx`'s `redirect({ to: homeFor(me.role) })`, and `homeFor` in `src/web/client/session.ts`.
+  - **Build to:** legacy's `/login-callback` route (`refs/baton-legacy/src/routes/login-callback.tsx`) as `src/web/routes/login-callback.tsx`: one shop goes to `/shop/<key>/workflows`, otherwise `/shop`. It is the default `callbackURL` and sign-in's signed-in redirect for a member; `returnTo` still wins. Port its title "sends a one-shop member to their workflows list and a two-shop member to /shop".
+  - Never put the landing in `/shop`'s index loader. That breaks `http.spec.ts`, `shell.spec.ts` and Your stores.
+  - **Update the e2e waits** to the landing: `auth.setup.ts`, `screens.ts` `signInWithForm`, `fixtures.ts` `ownMember`, `sign-in.spec.ts`, and `shell.spec.ts`'s "the member home lists the member's one shop and opens it".
+- **What `shop.$key.tsx` also needs from legacy `shop.$shop.tsx`:**
+  - `search.middlewares: [retainSearchParams(["state","team","q"]), stripSearchParams({ state: DEFAULT_WORKFLOWS_LIST_STATE, limit: RUN_PAGE })]`
+  - the `HistoryState.fromWorkflowsList` augmentation beside `nextPage`
+  - refusals thrown: `notFound()`, and `redirect` for 401
+
+  Port legacy's CSS: `.row-head*`, `.resource-row-menu`, `.page-body`, `.member-area`, and the print rule `.print-hide, s-button { display: none }`. The bar gains `print-hide`. `BackLink` gains an `onNavigate` for `history.back()`.
+
+- **3401 has no hook.** `closeOutcome` maps it to `"lost"`, which retries. Add an `onRevoked` signal from `retryPolicy`'s `onError` that the layout turns into `router.invalidate()`. Invalidate on 4404 as well, so the loader renders "No access" once `ShopPage` (which rendered `notAMemberAtom`) is gone.
+- **The bar.** `MemberBar` is rendered by `shop.tsx` with `TopBar({ title, to })`. Inside `$key`, it reads the key (`useParams({ strict: false })`) and names the shop; its mark opens `/shop/<key>/workflows`.
+- **Counts.** `member-area.member.spec.ts` has five titles, none lapsed.
+  - "a non-member gets the same confirmation and no link" already exists in `sign-in.spec.ts`.
+  - "an anonymous visitor is bounced from the member area to /login" is covered by `shell.spec.ts`'s sign-in bounce (`/sign-in` here).
+  - That leaves three to port; list the mapping.
+- **"removing a member from a team empties their open workflows list"** cannot be arranged in the member (chromium) project: no merchant socket, and no new `DevRpcs`. It moves to integ (merchant removes the team member, then the member's `MemberListRuns` is empty after the 3401 reconnect) under the same title; list it as moved.
+- **Other specs to update:**
+  - `actor-upgrade.spec.ts`'s not-a-member title, which uses `ShopPage` copy and the count.
+  - `shop.spec.ts`'s removal title: the copy becomes "You no longer have access to this store.". Drop its `mode: "serial"`.
+
+**Step 8 and §5**
+
+- **The glossary has four rows, not three.**
+  - **live:** the Meaning names four screens; it becomes five (the home strip). Its symbol is `useLiveQuery`.
+  - **memo:** "the Cache values in ShopWorkAgent" becomes `makeRuns`' memos.
+  - **reconcile all:** `Runs.reconcileAll` and the run repository's `reconcileAll`.
+  - **reconcile:** `reconcileItem` and the run repository's `reconcileOrder`.
+- **Roadmap §1.1:** the actor tables row and the "Per-shop actor" row ("Procedures are a demo counter.").
+- **The bundle check reads the newest entries only:** `ls -t .alchemy/bundles/Backend/_distilled_worker-entry__virtual_alchemy-entry_worker-*.js | head -3 | xargs grep -c "IntegRpcs\|ShopifyFake"`.
+- **The "run" copy grep** becomes `grep -rniE "/runs|\bruns?\b" src/web/routes src/web/components src/web/client`. Read only the string and JSX hits.
+
 ### Deviations
 
 ### Issues
