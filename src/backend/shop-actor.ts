@@ -54,6 +54,8 @@ import { makeOrderRepository, type OrderRepositoryError } from "./shop-actor/ord
 import { makeOrders } from "./shop-actor/orders.ts";
 import { makeMembership } from "./shop-actor/membership.ts";
 import { syncTransaction } from "./shop-actor/transaction.ts";
+import { makeWorkflowRepository } from "./shop-actor/workflow-repository.ts";
+import { makeWorkflows } from "./shop-actor/workflows.ts";
 import { MembershipRepository } from "./membership-repository.ts";
 import { OrdersSyncWorkflow } from "./orders-sync-workflow.ts";
 import ShopActor, { ABORT_UNINSTALLED, type ShopActorShape } from "./shop-actor/tag.ts";
@@ -405,6 +407,12 @@ const makeShopActor = Effect.gen(function* () {
     /** Every multi-statement write's transaction; see {@link syncTransaction}. */
     const transaction = syncTransaction(sql);
     const orderRepository = makeOrderRepository(sql, transaction);
+    const workflowRepository = makeWorkflowRepository(sql, transaction);
+    /**
+     * Legacy's `reconcileAllNow`, the seam the workflow and team writes call where legacy
+     * reconciles every stored order: runs do not exist yet, so there is nothing to reconcile.
+     */
+    const reconcileAll = (): Effect.Effect<void> => Effect.void;
 
     /**
      * The count the shop page shows, in memory: an example of the socket's reads, writes and
@@ -436,11 +444,22 @@ const makeShopActor = Effect.gen(function* () {
 
     const membership = makeMembership({
       membershipRepository,
+      workflowRepository,
+      reconcileAll,
+      notify,
       revoke: (memberIds) =>
         Effect.forEach(memberIds, (memberId) => closeTagged(`member:${memberId}`)).pipe(
           Effect.map((closed) => closed.reduce((sum, n) => sum + n, 0)),
           Effect.provide(runtime),
         ),
+      shop,
+    });
+
+    const workflows = makeWorkflows({
+      repository: workflowRepository,
+      membershipRepository,
+      reconcileAll,
+      notify,
       shop,
     });
 
@@ -534,6 +553,22 @@ const makeShopActor = Effect.gen(function* () {
       MerchantRenameTeam: membership.renameTeam,
       MerchantAddTeamMembers: membership.addTeamMembers,
       MerchantDeleteTeam: membership.deleteTeam,
+      MerchantCreateWorkflow: workflows.createWorkflow,
+      MerchantDuplicateWorkflow: workflows.duplicateWorkflow,
+      MerchantUpdateWorkflow: workflows.updateWorkflow,
+      MerchantUpdateWorkflowTag: workflows.updateWorkflowTag,
+      MerchantApplyDraft: workflows.applyDraft,
+      MerchantDiscardDraft: workflows.discardDraft,
+      MerchantSetWorkflowState: workflows.setWorkflowState,
+      MerchantApplyAndTurnOn: workflows.applyAndTurnOn,
+      MerchantDeleteWorkflow: workflows.deleteWorkflow,
+      MerchantAddStep: workflows.addStep,
+      MerchantAddTask: workflows.addTask,
+      MerchantUpdateTask: workflows.updateTask,
+      MerchantMoveTask: workflows.moveTask,
+      MerchantSeparateTask: workflows.separateTask,
+      MerchantJoinTask: workflows.joinTask,
+      MerchantRemoveTask: workflows.removeTask,
     });
 
     const socket = yield* ActorSocket.make({

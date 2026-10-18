@@ -9,11 +9,33 @@ import {
   SyncOrderResult,
 } from "../domain/orders.ts";
 import {
+  AddStepInput,
+  AddTaskInput,
+  ApplyAndTurnOnInput,
+  ApplyDraftInput,
+  ApplyResult,
+  CreateWorkflowInput,
   DeleteTeamResult,
+  DeleteWorkflowInput,
+  DeleteWorkflowResult,
+  DiscardDraftInput,
+  DiscardResult,
+  DuplicateWorkflowInput,
+  JoinTaskInput,
   ListOrdersInput,
   Member,
+  MoveTaskInput,
   OrdersCursor,
+  SeparateTaskInput,
+  SetWorkflowStateInput,
+  SwitchResult,
+  TaskIdInput,
+  TaskResult,
   Team,
+  UpdateTaskInput,
+  UpdateWorkflowInput,
+  UpdateWorkflowTagInput,
+  WorkflowResult,
 } from "../domain/shop-work.ts";
 import { Email, Forbidden } from "./auth.ts";
 import {
@@ -209,7 +231,11 @@ export const MemberRpcs = RpcGroup.make(
   .middleware(RequireMember)
   .middleware(ConnectionMiddleware);
 
-/** A merchant's procedures; see {@link MemberRpcs} for the role rule. */
+/**
+ * A merchant's procedures; see {@link MemberRpcs} for the role rule. The workflow writes answer
+ * legacy's result unions as their success and declare no error: the screens switch on the
+ * union's `_tag`, and a fault is a defect.
+ */
 export const MerchantRpcs = RpcGroup.make(
   Rpc.make("MerchantGetCount", { success: Count }),
   Rpc.make("MerchantResetCount", { success: Count }),
@@ -241,6 +267,31 @@ export const MerchantRpcs = RpcGroup.make(
   }),
   Rpc.make("MerchantAddTeamMembers", { payload: AddTeamMembersInput, error: TeamNotFoundError }),
   Rpc.make("MerchantDeleteTeam", { payload: DeleteTeamInput, success: DeleteTeamResult }),
+  Rpc.make("MerchantCreateWorkflow", { payload: CreateWorkflowInput, success: WorkflowResult }),
+  Rpc.make("MerchantDuplicateWorkflow", {
+    payload: DuplicateWorkflowInput,
+    success: WorkflowResult,
+  }),
+  Rpc.make("MerchantUpdateWorkflow", { payload: UpdateWorkflowInput, success: WorkflowResult }),
+  Rpc.make("MerchantUpdateWorkflowTag", {
+    payload: UpdateWorkflowTagInput,
+    success: WorkflowResult,
+  }),
+  Rpc.make("MerchantApplyDraft", { payload: ApplyDraftInput, success: ApplyResult }),
+  Rpc.make("MerchantDiscardDraft", { payload: DiscardDraftInput, success: DiscardResult }),
+  Rpc.make("MerchantSetWorkflowState", { payload: SetWorkflowStateInput, success: SwitchResult }),
+  Rpc.make("MerchantApplyAndTurnOn", { payload: ApplyAndTurnOnInput, success: SwitchResult }),
+  Rpc.make("MerchantDeleteWorkflow", {
+    payload: DeleteWorkflowInput,
+    success: DeleteWorkflowResult,
+  }),
+  Rpc.make("MerchantAddStep", { payload: AddStepInput, success: TaskResult }),
+  Rpc.make("MerchantAddTask", { payload: AddTaskInput, success: TaskResult }),
+  Rpc.make("MerchantUpdateTask", { payload: UpdateTaskInput, success: TaskResult }),
+  Rpc.make("MerchantMoveTask", { payload: MoveTaskInput, success: TaskResult }),
+  Rpc.make("MerchantSeparateTask", { payload: SeparateTaskInput, success: TaskResult }),
+  Rpc.make("MerchantJoinTask", { payload: JoinTaskInput, success: TaskResult }),
+  Rpc.make("MerchantRemoveTask", { payload: TaskIdInput, success: TaskResult }),
 )
   .middleware(RequireMerchant)
   .middleware(ConnectionMiddleware);

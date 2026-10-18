@@ -11,8 +11,10 @@ import type {
   SetTeamMemberInput,
 } from "../../contract/members.ts";
 import type { ShopKey } from "../../contract/shop.ts";
+import { ORDERS_KEY } from "../../contract/shop-actor.ts";
 import type { DeleteTeamResult, MemberId } from "../../domain/shop-work.ts";
 import type { MembershipRepository } from "../membership-repository.ts";
+import type { WorkflowRepository } from "./workflow-repository.ts";
 
 /**
  * The merchant's member and team writes, one method per `Merchant…` procedure, as the shop's
@@ -28,15 +30,21 @@ import type { MembershipRepository } from "../membership-repository.ts";
  * not names). A refusal writes nothing and closes nothing. The close is best effort: a failure
  * is logged and the write stands.
  *
- * Team delete is where E's half joins, after the D1 delete and before the closes: null the
- * actor's task pointers to the team and to any team already gone from D1, reconcile, and notify.
+ * Team delete also nulls the actor's task pointers (`deleteTeam`), over the actor's
+ * workflow repository, then runs the reconcile seam (a no-op until runs) and notifies.
  */
-export const makeMembership = ({
+export const makeMembership = <R>({
   membershipRepository,
+  workflowRepository,
+  reconcileAll,
+  notify,
   revoke,
   shop,
 }: {
   readonly membershipRepository: (typeof MembershipRepository)["Service"];
+  readonly workflowRepository: WorkflowRepository;
+  readonly reconcileAll: (caller: string, id: string) => Effect.Effect<void, never, R>;
+  readonly notify: (invalidated: ReadonlyArray<string>) => Effect.Effect<void, never, R>;
   readonly revoke: (memberIds: ReadonlyArray<MemberId>) => Effect.Effect<number>;
   readonly shop: ShopKey;
 }) => {
@@ -138,6 +146,24 @@ export const makeMembership = ({
   /**
    * Legacy's `deleteTeam` callable: `NotFound` is an answer, not a failure, and closes
    * nobody; `MembershipRepository.deleteTeam` reads the team's members before the edges cascade.
+   *
+   * Delete a team and its tasks become unassigned. Two stores, two writes, D1 first: the two
+   * cannot share a transaction, and the order is what closes the race with a concurrent
+   * `addStep` / `updateTask` pointing at this team. Its `teamExists` check reads D1; if that
+   * read lands after the D1 delete the write is refused, and if it lands before but the task
+   * write lands before the nulling, the nulling catches it. The reverse order would let a task
+   * written between the nulling and the D1 delete validate fine and dangle forever. What
+   * remains is the nulling failing after the D1 row is gone; every read already treats an id
+   * no team carries as unassigned, so that state is self-healing, and a retry of this call
+   * (which answers `NotFound` for the row but still runs the nulling) repairs it. So does the
+   * next delete of any team in the shop: it also nulls every pointer to a team gone from D1.
+   * The actor's ids in use are read before the shop's teams, so a team created between the
+   * two reads, and a task pointed at it, is not among the candidates and is never nulled.
+   * Nothing is refused for being in use: the merchant decides.
+   *
+   * Then the reconcile seam (a workflow whose task lost its team stops being eligible), the
+   * closes, and a notice on both answers: a `NotFound` still nulled pointers, which the lists
+   * show.
    */
   const deleteTeam = Effect.fn("Membership.deleteTeam")(function* ({ teamId }: DeleteTeamInput) {
     const deleted = yield* membershipRepository.deleteTeam({ shop, id: teamId }).pipe(
@@ -146,18 +172,29 @@ export const makeMembership = ({
         Effect.succeed(Option.none<ReadonlyArray<MemberId>>()),
       ),
     );
+    const inUse = yield* workflowRepository.teamIdsInUse().pipe(Effect.orDie);
+    const live = new Set<string>(
+      (yield* membershipRepository.listTeams(shop)).map((team) => team.id),
+    );
+    const gone = new Set<string>([teamId, ...inUse.filter((candidate) => !live.has(candidate))]);
+    yield* Effect.forEach(gone, (goneId) => workflowRepository.unassignTeam({ teamId: goneId }), {
+      discard: true,
+    }).pipe(Effect.orDie);
+    yield* reconcileAll("deleteTeam", teamId);
     const closed = Option.isSome(deleted)
       ? yield* close("Membership.deleteTeam", deleted.value)
       : 0;
     const outcome = Option.isSome(deleted) ? "deleted" : "not-found";
     yield* log(
-      `Membership.deleteTeam: shop=${shop} teamId=${teamId}: ${outcome} closed=${closed}`,
+      `Membership.deleteTeam: shop=${shop} teamId=${teamId}: ${outcome} closed=${closed} unassigned=${gone.size}`,
       {
         teamId,
         outcome,
         closed,
+        unassigned: gone.size,
       },
     );
+    yield* notify([ORDERS_KEY]);
     const result: DeleteTeamResult = Option.isSome(deleted)
       ? { _tag: "Deleted" }
       : { _tag: "NotFound" };

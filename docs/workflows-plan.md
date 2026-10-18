@@ -217,17 +217,26 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - 2026-10-17, Step 2: legacy's typed `sql<…>` reads (`workflowIdOfTask`, `teamIdsInUse`) decode through Schema here, as the order repository does.
 - 2026-10-17, Step 2: "callable inputs reject excess properties" (Step 3 by the review) lands with the domain schema tests in `test/unit/domain/shop-work.test.ts`.
 - 2026-10-17, Step 2: `membership-repository.test.ts`'s setup-fact cases build `SetupFacts` with the object's half false and assert through `setupFactHolds`.
+- 2026-10-17, Step 3: `makeWorkflows` takes `repository` (§3) and `membershipRepository` (review); `makeMembership` takes `workflowRepository`, `reconcileAll`, `notify`. The mappers `orDie` the repository's `SqlError | WorkflowRepositoryError`, so every method answers `Effect<Result, never, R>`.
+- 2026-10-17, Step 3: `Membership.deleteTeam`'s log line gains `unassigned=<n>` (the ids it nulled).
+- 2026-10-17, Step 3: integ has no detail read until Step 4, so the legacy integ titles assert on the procedures' answers (Turn on's `TaskUnassigned` stands in for `teamName: null`); the read-back halves are unit tests over `makeWorkflows` (`membership.test.ts` reads through `getWorkflowDetail` and `listWorkflows`).
+- 2026-10-17, Step 3: the refused-call publish test's positive half is an Edit tag (legacy's was `markTaskDone`, F), and it ends with a second Edit tag whose notice must be the next one queued.
+- 2026-10-17, Step 3: new tests beside the legacy titles: "the editor's task writes answer Ok on the draft, NotFound for a task or step no draft holds" and "a member is refused every workflow procedure with Forbidden" (integ); the reconcile-sites and notice-on-Ok unit tests.
+- 2026-10-17, Step 3: the integ file's `merchant` helper makes one HTTP call (`ShopIdentityNames`) before each socket, as `members.test.ts` does before its first.
 
 ### Issues
 
 - 2026-10-17, Step 1: the dev server was already running (`vp run dev:status` healthy) when the work started; it is left running.
 - 2026-10-17, Step 2 check first: `node:sqlite` runs the `json_each` / `json_extract` queries (`workflowIdOfTask`, `unassignTeam`, `teamIdsInUse`, `stepCount`) as the DO does; the three named tests and all 30 repository tests passed with no change. No integ fallback needed.
 - 2026-10-17, Step 2: the full e2e run failed one embedded spec twice in a row, a different one each time (`socket.spec.ts`, then `teams.spec.ts`), on `awaitHydration`'s 10 s wait in `openApp`; both pass run alone (5 passed, 1.3 min). Step 2 changes no Website code; recorded as parallel-load flakiness of the embedded hydration wait.
+- 2026-10-17, Step 3: `test/integ/workflows.test.ts`'s first test failed twice in the full suite with `SocketOpenError: timeout waiting for "open"` (a socket to a cold workerd as the file's first request); fixed by the HTTP warm-up above.
+- 2026-10-17, Step 3: `createDraft` has no procedure, so integ and unit start a draft with a task write (or the repository's `createDraft` in unit).
 
 ### Command results
 
 - 2026-10-17, Step 1: `vp check` pass (249 files); `vp test` 56 files, 615 tests, 55.8 s; `vp run test:e2e` 40 passed, 3.1 min.
 - 2026-10-17, Step 2: `vp check` pass (253 files); `vp test` 58 files, 660 tests, 55.5 s; `vp run test:e2e` 39 passed, 1 failed (hydration timeout, 3.6 min), rerun 39 passed, 1 failed, 1 did not run (3.6 min), third run 39 passed, 1 failed (3.3 min); the failing specs alone 5 passed, 1.3 min.
+- 2026-10-17, Step 3: `vp check` pass (256 files); `vp test` 60 files, 676 tests, 39.3 s (after two runs with the one socket-open failure above); `vp run test:e2e` 40 passed, 3.5 min.
 
 ### Human steps requested
 
