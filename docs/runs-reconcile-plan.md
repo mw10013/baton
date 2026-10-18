@@ -381,6 +381,54 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 
 ### Implementation review
 
+2026-10-18, the lead, at the Backend half checkpoint (Steps 1–4, `fd2876f`).
+
+- **Suites, re-run by the lead.**
+  - `vp check`: pass (364 files formatted, 304 linted).
+  - `vp test`: 71 files, 943 tests, 48.1 s.
+  - `vp run test:e2e`, first run: the `install` setup lost `openApp`'s 10 s hydration wait, so 1 failed and 47 did not run.
+  - Second run: 48 passed and 1 failed (`embedded/home.spec.ts`, the same wait).
+  - Third run: 49 passed, 4.9 min.
+  - The flake is the one carried since the orders slice (`orders-slice-plan.md`, `workflows-plan.md` Step 2). Each run loses a different spec at `awaitHydration`, never at an assertion.
+- **§5 walked, for the Backend half.**
+  - `MerchantRpcs` gains ten procedures: nine writes and `MerchantGetOrderDetail`. `MerchantListOrders` is now on `ListOrdersInput` / `OrdersIndexData`.
+  - `MemberRpcs` gains nine.
+  - The three added `createServerFn` (`orderDetail`, `workflowsList`, `memberWorkflowPage`) are GET.
+  - `ShopActorShape` gained `getOrderDetail`, `listRuns`, `getRunPage`, `applyFixture` and the new `listOrders`.
+  - The count procedures and `snapshot` remain; they retire in Step 7, so that §5 line is owed then.
+  - `runs.ts` was read handler by handler. Every `transaction(…)` wraps a repository call alone, and the D1 `teams()` read comes before it. `flushUsage` is `ensuring` on reconcile all and Attach, and on the webhook and Sync from Shopify in `orders.ts`. Nothing is nested. `countOrder` and `flushUsage` are `Effect.void` in the actor.
+  - No uppercase SQL keyword in the run repository, the order repository or `current-where.ts`.
+  - The production Backend bundle's three newest entries hold no `IntegRpcs` / `ShopifyFake`.
+  - The copy grep waits for the screens (Steps 5–7).
+- **Titles.** Every legacy file Steps 1–4 cite was diffed title by title against `test/` with `grep -rF`. Every title the plan names is present, byte for byte. The absent ones are:
+  - billing, slice G's: five `RunRepository metering` and sixteen order-repository cycle and usage titles, plus two `countedAt` / usage-counter seed titles;
+  - "Home and the orders index read the same listOrders input" (Step 6, recorded);
+  - `member-area`'s other titles (Step 7 or out of scope);
+  - titles the plan never named:
+    - legacy's decorator-only `shop-agent-callables` titles (no decorators here);
+    - three non-run `data-model` titles;
+    - "a webhook that moves the order's updatedAt publishes even when no run moved";
+    - "the open-orders stream publishes to every screen when it finishes".
+- **Code read.**
+  - The gate-then-write pattern, the result mappers, Attach's check order, Assign's D1 team check and `applyFixture`'s order follow legacy and the review. The order is: reconcile in its own transaction, then `setRun`, progress, `after` through the reconciler, `reconcileAll` and one `notify`.
+  - `RunNotAllowedError({ teamId: "" })` from the gate is legacy's, verbatim.
+- **Cleanup.** The lead deleted the 14 `.alchemy/local/baton-test-*-ShopActor` directories its own `vp test` leaked. The 36 older ones predate this slice's runs.
+
+**Fixed by the lead**
+
+- Nothing in code. The plan review's corrections (6e51e68) were built to as written.
+
+**Needs a decision**
+
+1. **How Steps 5–7 run** (the WAITING line): the same implementer, one step per commit, with the lead verifying at the end of Step 7.
+2. **The embedded hydration flake.** In this slice it hit 3 of about 9 full e2e runs, each time a different spec at `openApp`'s 10 s `awaitHydration`. Steps 5–7 add many embedded and member specs, which will raise the odds. Options:
+   - raise the wait (e.g. 20 s);
+   - give embedded specs one Playwright retry;
+   - investigate the slow loads in `.logs/e2e`.
+3. **Fixture actors with no seeding member.** A Start with no `by` is recorded as the task team's first fixture member. A Done, block or note with neither `by` nor `byMerchant` is recorded as the merchant. This is legacy's rule with the seeding member replaced (review). Confirm, or name a different default.
+4. **The interim orders screen** shows every stored order (`show: "all"`) until Step 6 brings the full index, whose default is Making. Fine as an interim step; no action unless Steps 5–7 are split across sessions.
+5. **The `callables:` rows' third case** (a member who sees the run but holds no current task) is pinned by the unit matrix only. Integ drives the merchant and the member on the task's team. Accept, or add one integ row.
+
 ## 8. Out of scope
 
 - Billing (G): `countOrder`'s body, the cycle, the usage outbox and flush, the metering titles, `QuotaBanners`, the lapsed page and the plan half of member access, the home page's plan tiles and Manage plan.
