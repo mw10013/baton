@@ -59,11 +59,19 @@ describe("SetupGuide", () => {
 });
 
 describe("KitPage", () => {
-  it("renders every part at both widths without an error", async () => {
+  it("renders every part and run piece at both widths without an error", async () => {
     for (const width of ["small", "large"] as const) {
       const screen = await render(<KitPage width={width} />);
       expect(screen.container.querySelector('s-page[heading="Kit"]')).not.toBeNull();
       expect(screen.container.querySelectorAll("s-section").length).toBeGreaterThan(5);
+      expect(
+        screen.container.querySelectorAll(
+          '[accessibilityRole="ordered-list"] > [accessibilityRole="list-item"]',
+        ),
+      ).toHaveLength(3);
+      expect(screen.container.querySelectorAll("s-clickable[href]")).toHaveLength(5);
+      expect(screen.container.querySelector('s-banner[heading="Blocked"]')).not.toBeNull();
+      expect(screen.container.querySelectorAll("s-modal")).toHaveLength(2);
       await screen.unmount();
     }
   });

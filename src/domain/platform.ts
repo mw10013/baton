@@ -87,6 +87,13 @@ export const formatNumber = (value: number) =>
  */
 export const formatKilobytes = (bytes: number) => `${formatNumber(bytes / 1024)} KB`;
 
+/**
+ * A Shopify status enum as the admin prints it: `PARTIALLY_REFUNDED` → `Partially refunded`.
+ * Shopify's own UI never shows the raw constant.
+ */
+export const formatStatus = (value: string) =>
+  value.charAt(0) + value.slice(1).toLowerCase().replaceAll("_", " ");
+
 export const SqliteBoolean = Schema.Number.pipe(
   Schema.decodeTo(Schema.Boolean, {
     decode: SchemaGetter.transform((n) => n === 1),

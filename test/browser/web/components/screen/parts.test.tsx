@@ -2,8 +2,10 @@ import { describe, expect, it } from "vite-plus/test";
 import { render } from "vitest-browser-react";
 import "../../../../../src/web/styles.css";
 import type { ListSearch } from "../../../../../src/domain/shop-work.ts";
+import { ClampedProse } from "../../../../../src/web/components/screen/ClampedProse.tsx";
 import { ListSearchField } from "../../../../../src/web/components/screen/ListSearchField.tsx";
 import { SearchLine } from "../../../../../src/web/components/screen/SearchLine.tsx";
+import { Strip } from "../../../../../src/web/components/screen/Strip.tsx";
 import {
   textLimitError,
   textLimitProps,
@@ -75,5 +77,89 @@ describe("TextLimit", () => {
     expect(textLimitProps("a".repeat(900), 1000)).toStrictEqual({
       details: "100 characters left",
     });
+  });
+});
+
+describe("Strip", () => {
+  const LABELS = ["Started by you", "Started by others", "Ready", "Blocked", "Done or closed"];
+
+  it("fills the chosen cell, says so to a screen reader, and a press selects its value", async () => {
+    const selected: string[] = [];
+    const screen = await render(
+      <Strip
+        cells={LABELS.map((label, index) => ({
+          key: label,
+          label,
+          count: index === 4 ? 1200 : index,
+          chosen: index === 2,
+          onSelect: () => selected.push(label),
+        }))}
+      />,
+    );
+    const cells = [...screen.container.querySelectorAll<HTMLElement>("s-clickable")];
+    expect(cells.map((cell) => cell.getAttribute("background"))).toStrictEqual([
+      "transparent",
+      "transparent",
+      "subdued",
+      "transparent",
+      "transparent",
+    ]);
+    expect(cells.map((cell) => cell.getAttribute("accessibilityLabel"))).toStrictEqual([
+      "Started by you, 0",
+      "Started by others, 1",
+      "Ready, 2, selected",
+      "Blocked, 3",
+      "Done or closed, 1,200",
+    ]);
+    cells[3]?.click();
+    await expect.poll(() => selected).toStrictEqual(["Blocked"]);
+  });
+
+  it("link cells carry their href and click handler, and none is chosen", async () => {
+    const clicked: string[] = [];
+    const screen = await render(
+      <Strip
+        cells={LABELS.map((label, index) => ({
+          key: label,
+          label,
+          count: index,
+          href: `/app/orders?show=${String(index)}`,
+          onClick: (event: Event) => {
+            event.preventDefault();
+            clicked.push(label);
+          },
+        }))}
+      />,
+    );
+    const cells = [...screen.container.querySelectorAll<HTMLElement>("s-clickable")];
+    expect(cells.map((cell) => cell.getAttribute("href"))).toStrictEqual(
+      LABELS.map((_, index) => `/app/orders?show=${String(index)}`),
+    );
+    expect(cells.every((cell) => cell.getAttribute("background") === "transparent")).toBe(true);
+    expect(cells[0]?.getAttribute("accessibilityLabel")).toBe("Started by you, 0");
+    await screen.getByRole("link", { name: "Ready, 2" }).click();
+    await expect.poll(() => clicked).toStrictEqual(["Ready"]);
+  });
+});
+
+describe("ClampedProse", () => {
+  it("a text that fits draws no toggle", async () => {
+    const screen = await render(<ClampedProse>Waiting on artwork</ClampedProse>);
+    await expect.element(screen.getByText("Waiting on artwork")).toBeVisible();
+    expect(screen.container.querySelector("s-link")).toBeNull();
+  });
+
+  it("a text cut at three lines offers Show more, which uncuts it, then Show less", async () => {
+    const screen = await render(
+      <div style={{ width: "200px" }}>
+        <ClampedProse>{"The crest fills in at this depth. ".repeat(20)}</ClampedProse>
+      </div>,
+    );
+    const paragraph = screen.container.querySelector("s-paragraph");
+    await screen.getByText("Show more").click();
+    await expect.poll(() => paragraph?.getAttribute("lineClamp") ?? null).toBeNull();
+    await screen.getByText("Show less").click();
+    await expect.poll(() => paragraph?.getAttribute("lineClamp")).toBe("3");
+    await expect.element(screen.getByText("Show more")).toBeVisible();
   });
 });

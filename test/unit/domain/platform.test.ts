@@ -5,10 +5,18 @@ import {
   BoundedId,
   formatKilobytes,
   formatNumber,
+  formatStatus,
   retentionCutoff,
   ShopLimits,
   userIsAdmin,
 } from "../../../src/domain/platform.ts";
+
+describe("formatStatus", () => {
+  it("prints a Shopify status enum as the admin does", () => {
+    strictEqual(formatStatus("PARTIALLY_REFUNDED"), "Partially refunded");
+    strictEqual(formatStatus("PAID"), "Paid");
+  });
+});
 
 describe("formatNumber", () => {
   it("groups digits the en-US way and prints no fraction", () => {

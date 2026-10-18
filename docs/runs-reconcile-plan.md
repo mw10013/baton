@@ -356,6 +356,10 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - 2026-10-18, Step 4: the member server functions (`src/web/server/workflows-list.ts`, GET) turn `Unauthorized` into a sign-in redirect back to the screen and `Forbidden` / `NotAShopMember` into `notFound()`, for Step 7's "No access"; `orderDetail` (GET, `src/web/server/orders.ts`) rescues the token as the other embedded loaders do.
 - 2026-10-18, Step 4: client atoms: `merchantOrderDetailQuery` / `Atom` (by `legacyId`), `memberRunsQuery` / `Atom` (by the whole `RunQuery`), `memberRunQuery` / `Atom` (by `runId`), each with reactivity `ORDERS_KEY`, a serialization key and a `seed…`; the nine merchant and seven member writes as `Atom.family` mutation atoms keyed by the item, run or task (review).
 - 2026-10-18, Step 4: integ loader tests are a new `test/integ/run-loaders.test.ts` (stage `runloaders`): three new titles for the loaders over `AddToFixture` with progress, and legacy's "is gated by membership like the shop page" as data for the member's shop versus `NotAShopMember` for another shop (and `Unauthorized` signed out). "requireMember admits every member of a subscribed shop" moves to G (plan seats). Unit: a new describe "BackendApi run loaders" (orderDetail's refusals before any actor call; the two member loaders' answers, team resolution, and 401/403/404/503 with no actor call).
+- 2026-10-18, Step 5: `RunTextModals`' `textOrNull` is a Schema decode (`RunNote`, `BlockReason`; a blank text is null); `TextModal` is generic over the decoded value, so `onSave` / `onBlock` receive `RunNote | null` / `BlockReason | null` and callers trim nothing. The cap is checked before the decode.
+- 2026-10-18, Step 5: `Strip` link cells take `{ href, onClick }` (`useNavigateOnClick`'s shape; the review); `StripCell` is a type. `FramedList` is its own part file beside `StepList`. `Clamp`'s JSDoc points to `ClampedProse` for the free-text row; the existing `Prose` row is unchanged. No layout constant added (this repo's equivalent of legacy's `layout.ts` covers these parts).
+- 2026-10-18, Step 5: `formatStatus` lives in `src/domain/platform.ts` beside `formatNumber`; `formatDate`, `formatTime`, `formatRelative` are private to `LocalDateTime`. `ClosedLine`, `RunItem` and `BlockBanner` take a `Pick<Run, …>` of the fields they read; `LineItemProperties` keys a pair by index and key.
+- 2026-10-18, Step 5: the kit's orders strip and workflows-list labels are local constants until Steps 6 and 7 bring `ORDERS_STRIP` and the list's states; the kit test is renamed "renders every part and run piece at both widths without an error". Browser titles are new (`test/browser/web/components/run.test.tsx`), plus a unit title for `formatStatus`.
 
 ### Issues
 
@@ -376,6 +380,7 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - 2026-10-18, Step 4: `vp check` pass (304 files); `vp test` 71 files, 943 tests, 48.8 s; `vp run test:e2e` 49 passed, 5.1 min.
 - CHECKPOINT: Backend half done (4d2294a)
 - WAITING: the orchestrator reviews and says how Steps 5–7 run.
+- 2026-10-18, Step 5: `vp check` pass (314 files); `vp test` 72 files, 957 tests, 61.8 s; `vp run test:e2e` 49 passed, 4.7 min (13:09–13:14).
 
 ### Human steps requested
 
