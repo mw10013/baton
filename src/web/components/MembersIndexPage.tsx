@@ -2,6 +2,7 @@ import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { useForm } from "@tanstack/react-form";
 import { useHydrated } from "@tanstack/react-router";
 import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Schema from "effect/Schema";
 import { useState } from "react";
@@ -38,7 +39,8 @@ const AddMemberForm = schemaForm(
   }),
 );
 
-const decodeEmail = Schema.decodeSync(Email);
+/** The typed field to the email Add sends; a blank field, which the trim empties, is none. */
+const decodeEmail = Schema.decodeUnknownOption(Email);
 
 /** A link's `href` and the click that navigates to it, as the route builds them. */
 export interface PageLink {
@@ -79,7 +81,9 @@ function MembersIndexScreen(
     defaultValues: { email: "" },
     ...AddMemberForm.options,
     onSubmit: async ({ value }) => {
-      setBanner(await props.addMember(decodeEmail(AddMemberForm.decode(value).email)));
+      const email = decodeEmail(AddMemberForm.decode(value).email);
+      if (Option.isNone(email)) return setEmailError("Enter an email");
+      setBanner(await props.addMember(email.value));
     },
   });
 

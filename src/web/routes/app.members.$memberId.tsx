@@ -19,7 +19,8 @@ const MemberSearch = Schema.Struct({ teamsAfter: lenientSearchKey(TeamName) });
 /**
  * One member's page under the App Home: the loader reads the member from D1 through the Backend
  * (`memberDetail`, `null` for a stale id). Every link and navigation keeps the raw search
- * Shopify sent ({@link appHref}); paging is the members index's.
+ * Shopify sent ({@link appHref}) but the breadcrumb, a bare path (`MemberPage`'s
+ * `membersLink`); paging is the members index's.
  */
 export const Route = createFileRoute("/app/members/$memberId")({
   validateSearch: Schema.toStandardSchemaV1(MemberSearch),

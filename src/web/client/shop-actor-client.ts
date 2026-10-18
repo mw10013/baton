@@ -362,6 +362,18 @@ export const deleteMemberAtom = ShopActorClient.mutation("MerchantDeleteMember")
 /** Add to teams, on the member page. */
 export const addMemberTeamsAtom = ShopActorClient.mutation("MerchantAddMemberTeams");
 
+/** Create team, on the teams index. */
+export const createTeamAtom = ShopActorClient.mutation("MerchantCreateTeam");
+
+/** Rename, on the team page. */
+export const renameTeamAtom = ShopActorClient.mutation("MerchantRenameTeam");
+
+/** Add members, on the team page. */
+export const addTeamMembersAtom = ShopActorClient.mutation("MerchantAddTeamMembers");
+
+/** Delete team, on the team page. */
+export const deleteTeamAtom = ShopActorClient.mutation("MerchantDeleteTeam");
+
 /**
  * Remove on one row: a member's team row on the member page, a team's member row on the team
  * page, one atom per `<teamId>/<memberId>` pair, for {@link syncOrderAtom}'s reason (a second
