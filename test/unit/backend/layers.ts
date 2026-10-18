@@ -222,11 +222,14 @@ export const QuietLogs = Layer.succeed(References.MinimumLogLevel, "Warn");
  */
 export const testAuth = <A, E, R>({
   members,
+  membersLayer = testMembers(members),
   actors,
   delivery,
   extra,
 }: {
   members: ReadonlyArray<MemberRow>;
+  /** {@link Members} itself, when a test wraps it; by default {@link testMembers} of `members`. */
+  membersLayer?: Layer.Layer<Members>;
   actors: Layer.Layer<ShopActors>;
   delivery: "inline" | "mailed";
   extra: Layer.Layer<A, E, R>;
@@ -234,7 +237,7 @@ export const testAuth = <A, E, R>({
   Auth.layerWith({ secret: "test-secret-test-secret-test-secret" }).pipe(
     Layer.provideMerge(
       Layer.mergeAll(
-        testMembers(members),
+        membersLayer,
         actors,
         extra,
         (delivery === "inline"

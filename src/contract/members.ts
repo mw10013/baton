@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 import { Email, ShopLimits } from "../domain/platform.ts";
-import { MemberId, TeamId, TeamName } from "../domain/shop-work.ts";
+import { ListSearch, MemberId, TeamId, TeamName } from "../domain/shop-work.ts";
 import { ShopKey } from "./shop.ts";
 
 /**
@@ -91,3 +91,50 @@ export type AddTeamMembersInput = typeof AddTeamMembersInput.Type;
 /** `MerchantDeleteTeam`'s payload. */
 export const DeleteTeamInput = Schema.Struct({ teamId: TeamId });
 export type DeleteTeamInput = typeof DeleteTeamInput.Type;
+
+/**
+ * Rows per page of a merchant table, the controls table's "a merchant table
+ * with more rows than its page" row (`Control` in legacy's `Screen.ts`): 25 on an
+ * index, 10 on a details page. The Backend's page reads use them, and the screens'
+ * paging reads the page they answer.
+ */
+export const INDEX_PAGE_SIZE = 25;
+export const DETAILS_PAGE_SIZE = 10;
+
+const sessionToken = Schema.NonEmptyString;
+
+/**
+ * `BackendApi.membersPage`' input: the merchant's session token, which names the shop, then the
+ * members index's search and page (`Members.listMembersPage`). The route reads both leniently
+ * from its URL, so a value here has already decoded.
+ */
+export const MembersPageRequest = Schema.Struct({
+  sessionToken,
+  q: Schema.NullOr(ListSearch),
+  after: Schema.NullOr(Email),
+});
+export type MembersPageRequest = typeof MembersPageRequest.Type;
+
+/** `BackendApi.memberDetail`' input: the member, and the Teams table's page. */
+export const MemberDetailRequest = Schema.Struct({
+  sessionToken,
+  memberId: MemberId,
+  teamsAfter: Schema.NullOr(TeamName),
+});
+export type MemberDetailRequest = typeof MemberDetailRequest.Type;
+
+/** `BackendApi.teamsPage`' input: the teams index's search and page (`Members.listTeamsPage`). */
+export const TeamsPageRequest = Schema.Struct({
+  sessionToken,
+  q: Schema.NullOr(ListSearch),
+  after: Schema.NullOr(TeamName),
+});
+export type TeamsPageRequest = typeof TeamsPageRequest.Type;
+
+/** `BackendApi.teamDetail`' input: the team, and the Members table's page. */
+export const TeamDetailRequest = Schema.Struct({
+  sessionToken,
+  teamId: TeamId,
+  membersAfter: Schema.NullOr(Email),
+});
+export type TeamDetailRequest = typeof TeamDetailRequest.Type;

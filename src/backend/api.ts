@@ -22,6 +22,14 @@ import {
 } from "../contract/shop.ts";
 import { ShoutInput } from "../contract/playground.ts";
 import { ShopNotInstalled } from "../contract/fixture.ts";
+import {
+  DETAILS_PAGE_SIZE,
+  INDEX_PAGE_SIZE,
+  MemberDetailRequest,
+  MembersPageRequest,
+  TeamDetailRequest,
+  TeamsPageRequest,
+} from "../contract/members.ts";
 import { ListOrdersRequest } from "../contract/orders.ts";
 import { ShopActors } from "./shop-actors.ts";
 import { Auth } from "./auth.ts";
@@ -72,6 +80,10 @@ const decodeMagicLinkInput = Schema.decodeUnknownEffect(MagicLinkInput);
 const decodeSnapshotInput = Schema.decodeUnknownEffect(ShopSnapshotInput);
 const decodeAuthenticateAdminInput = Schema.decodeUnknownEffect(AuthenticateAdminInput);
 const decodeListOrdersRequest = Schema.decodeUnknownEffect(ListOrdersRequest);
+const decodeMembersPageRequest = Schema.decodeUnknownEffect(MembersPageRequest);
+const decodeMemberDetailRequest = Schema.decodeUnknownEffect(MemberDetailRequest);
+const decodeTeamsPageRequest = Schema.decodeUnknownEffect(TeamsPageRequest);
+const decodeTeamDetailRequest = Schema.decodeUnknownEffect(TeamDetailRequest);
 const encodeAdminSession = Schema.encodeSync(AdminSession);
 const encodeMagicLinkRequested = Schema.encodeSync(MagicLinkRequested);
 
@@ -198,6 +210,17 @@ const make = Effect.gen(function* () {
   });
 
   /**
+   * The shop a merchant's screen read is for: the session token verified, never exchanged, as
+   * on {@link listOrders}, and a shop with no `ShopSession` refused as {@link ShopNotInstalled}
+   * before any `Members` read.
+   */
+  const installedShop = Effect.fn("BackendApi.installedShop")(function* (sessionToken: string) {
+    const shop = yield* shopify.sessionTokenShop(sessionToken);
+    if (Option.isNone(yield* shopSessions.find(shop))) return yield* new ShopNotInstalled({ shop });
+    return shop;
+  });
+
+  /**
    * The merchant's orders screen, its first render: one page of the shop's stored orders. The
    * session token names the shop and is only verified (`Shopify.sessionTokenShop`), never
    * exchanged: the App Home's guard exchanged it when the page loaded, and a call per screen
@@ -212,9 +235,70 @@ const make = Effect.gen(function* () {
     const { sessionToken, limit, cursor } = yield* decodeListOrdersRequest(payload).pipe(
       Effect.orDie,
     );
-    const shop = yield* shopify.sessionTokenShop(sessionToken);
-    if (Option.isNone(yield* shopSessions.find(shop))) return yield* new ShopNotInstalled({ shop });
+    const shop = yield* installedShop(sessionToken);
     return yield* actors.listOrders(shop, { limit, cursor });
+  });
+
+  /**
+   * The members index's first render: one page of the shop's members, read from D1 here
+   * without waking the actor, as legacy's loader read it in the Worker. The request is
+   * ignored; the session token is the credential ({@link installedShop}).
+   */
+  const membersPage = Effect.fn("BackendApi.membersPage")(function* (
+    _request: RequestInfo,
+    payload: MembersPageRequest,
+  ) {
+    const { sessionToken, q, after } = yield* decodeMembersPageRequest(payload).pipe(Effect.orDie);
+    const shop = yield* installedShop(sessionToken);
+    return yield* members.listMembersPage({ shop, limit: INDEX_PAGE_SIZE, after, q });
+  });
+
+  /** The member page's first render, as {@link membersPage}; `null` is no such member. */
+  const memberDetail = Effect.fn("BackendApi.memberDetail")(function* (
+    _request: RequestInfo,
+    payload: MemberDetailRequest,
+  ) {
+    const { sessionToken, memberId, teamsAfter } = yield* decodeMemberDetailRequest(payload).pipe(
+      Effect.orDie,
+    );
+    const shop = yield* installedShop(sessionToken);
+    return Option.getOrNull(
+      yield* members.findMemberDetail({
+        shop,
+        id: memberId,
+        teamsAfter,
+        limit: DETAILS_PAGE_SIZE,
+      }),
+    );
+  });
+
+  /** The teams index's first render, as {@link membersPage}. */
+  const teamsPage = Effect.fn("BackendApi.teamsPage")(function* (
+    _request: RequestInfo,
+    payload: TeamsPageRequest,
+  ) {
+    const { sessionToken, q, after } = yield* decodeTeamsPageRequest(payload).pipe(Effect.orDie);
+    const shop = yield* installedShop(sessionToken);
+    return yield* members.listTeamsPage({ shop, limit: INDEX_PAGE_SIZE, after, q });
+  });
+
+  /** The team page's first render, as {@link membersPage}; `null` is no such team. */
+  const teamDetail = Effect.fn("BackendApi.teamDetail")(function* (
+    _request: RequestInfo,
+    payload: TeamDetailRequest,
+  ) {
+    const { sessionToken, teamId, membersAfter } = yield* decodeTeamDetailRequest(payload).pipe(
+      Effect.orDie,
+    );
+    const shop = yield* installedShop(sessionToken);
+    return Option.getOrNull(
+      yield* members.findTeamDetail({
+        shop,
+        id: teamId,
+        membersAfter,
+        limit: DETAILS_PAGE_SIZE,
+      }),
+    );
   });
 
   return {
@@ -227,6 +311,10 @@ const make = Effect.gen(function* () {
     shopSnapshot,
     authenticateAdmin,
     listOrders,
+    membersPage,
+    memberDetail,
+    teamsPage,
+    teamDetail,
   };
 });
 

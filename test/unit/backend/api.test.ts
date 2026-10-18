@@ -20,7 +20,16 @@ import type { ConnectionCaller } from "../../../src/contract/shop-actor.ts";
 import { ShopActors } from "../../../src/backend/shop-actors.ts";
 import { BackendApi, SignInLimiter } from "../../../src/backend/api.ts";
 import { mintSessionToken } from "../../shopify-session-token.ts";
-import { type MemberRow, QuietLogs, TEST_SHOPIFY_APP, testAuth, testShopify } from "./layers.ts";
+import {
+  type MemberRow,
+  QuietLogs,
+  TEST_SHOPIFY_APP,
+  testAuth,
+  testMembers,
+  testShopify,
+} from "./layers.ts";
+import { Members } from "../../../src/backend/members.ts";
+import { MemberId, TeamId } from "../../../src/domain/shop-work.ts";
 import { Auth } from "../../../src/backend/auth.ts";
 import { SentMail } from "../../../src/backend/mailer.ts";
 import { ShopAccess, ShopAccessDenied } from "../../../src/backend/shop-access.ts";
@@ -66,18 +75,21 @@ const TestBackend = ({
   allow = true,
   gate = Effect.succeed(merchant),
   memberRows = members,
+  membersLayer,
   actors = ShopActors.layerTest([], snapshot),
 }: {
   delivery?: "inline" | "mailed";
   allow?: boolean;
   gate?: Effect.Effect<ConnectionCaller, ShopAccessDenied>;
   memberRows?: ReadonlyArray<MemberRow>;
+  membersLayer?: Layer.Layer<Members>;
   actors?: Layer.Layer<ShopActors>;
 } = {}) =>
   BackendApi.layer.pipe(
     Layer.provideMerge(
       testAuth({
         members: memberRows,
+        ...(membersLayer === undefined ? {} : { membersLayer }),
         actors,
         delivery,
         extra: Layer.mergeAll(
@@ -323,6 +335,106 @@ describe("BackendApi orders", () => {
         assert.strictEqual(error._tag, "ShopNotInstalled");
         assert.deepStrictEqual(listed, []);
       }).pipe(Effect.provide(TestBackend({ actors: listingActors(listed) })));
+    },
+  );
+});
+
+describe("BackendApi members and teams", () => {
+  const memberId = Schema.decodeUnknownSync(MemberId)("mem-1");
+  const teamId = Schema.decodeUnknownSync(TeamId)("team-unknown");
+
+  /** The real {@link Members} over {@link members}, recording each page or detail read. */
+  const recordingMembers = (reads: Array<string>) =>
+    Layer.effect(
+      Members,
+      Effect.gen(function* () {
+        const base = yield* Members;
+        const record =
+          <Args extends ReadonlyArray<unknown>, A, E>(
+            name: string,
+            read: (...args: Args) => Effect.Effect<A, E>,
+          ) =>
+          (...args: Args) =>
+            Effect.suspend(() => {
+              reads.push(name);
+              return read(...args);
+            });
+        return {
+          ...base,
+          listMembersPage: record("listMembersPage", base.listMembersPage),
+          findMemberDetail: record("findMemberDetail", base.findMemberDetail),
+          listTeamsPage: record("listTeamsPage", base.listTeamsPage),
+          findTeamDetail: record("findTeamDetail", base.findTeamDetail),
+        };
+      }),
+    ).pipe(Layer.provide(testMembers(members)));
+
+  /** The four loader reads for `sessionToken`, each settled to its answer or its failure tag. */
+  const readAll = (sessionToken: string) =>
+    Effect.gen(function* () {
+      const api = yield* BackendApi;
+      const request = withCookie(undefined);
+      const settle = <A, E extends { readonly _tag: string }>(read: Effect.Effect<A, E>) =>
+        read.pipe(
+          Effect.map((value) => ({ ok: value as unknown })),
+          Effect.catch((error) => Effect.succeed({ failed: error._tag })),
+        );
+      return [
+        yield* settle(api.membersPage(request, { sessionToken, q: null, after: null })),
+        yield* settle(api.memberDetail(request, { sessionToken, memberId, teamsAfter: null })),
+        yield* settle(api.teamsPage(request, { sessionToken, q: null, after: null })),
+        yield* settle(api.teamDetail(request, { sessionToken, teamId, membersAfter: null })),
+      ];
+    });
+
+  it.live("each refuses a token signed with another secret, reading no member or team", () => {
+    const reads: Array<string> = [];
+    return Effect.gen(function* () {
+      const sessionToken = yield* mintSessionToken({ shop: SEED_SHOP, apiSecret: "other-secret" });
+      assert.deepStrictEqual(
+        yield* readAll(sessionToken),
+        Array.from({ length: 4 }, () => ({ failed: "InvalidSessionToken" })),
+      );
+      assert.deepStrictEqual(reads, []);
+    }).pipe(Effect.provide(TestBackend({ membersLayer: recordingMembers(reads) })));
+  });
+
+  it.live("each reads the shop its token names", () => {
+    const reads: Array<string> = [];
+    return Effect.gen(function* () {
+      const sessionToken = yield* mintSessionToken({ shop: SEED_SHOP });
+      const [membersPage, memberDetail, teamsPage, teamDetail] = yield* readAll(sessionToken);
+      const page = membersPage as { ok: { rows: ReadonlyArray<{ email: string }> } };
+      assert.deepStrictEqual(
+        page.ok.rows.map((row) => row.email),
+        ["m1@m.com"],
+      );
+      const detail = memberDetail as { ok: { member: { email: string }; teamCount: number } };
+      assert.strictEqual(detail.ok.member.email, "m1@m.com");
+      assert.strictEqual(detail.ok.teamCount, 0);
+      assert.deepStrictEqual(teamsPage, { ok: { rows: [], nextCursor: null, matches: null } });
+      assert.deepStrictEqual(teamDetail, { ok: null });
+      assert.deepStrictEqual(reads, [
+        "listMembersPage",
+        "findMemberDetail",
+        "listTeamsPage",
+        "findTeamDetail",
+      ]);
+    }).pipe(Effect.provide(TestBackend({ membersLayer: recordingMembers(reads) })));
+  });
+
+  it.live(
+    "each for a shop with no ShopSession is ShopNotInstalled and reads no member or team",
+    () => {
+      const reads: Array<string> = [];
+      return Effect.gen(function* () {
+        const sessionToken = yield* mintSessionToken({ shop: OTHER_SHOP });
+        assert.deepStrictEqual(
+          yield* readAll(sessionToken),
+          Array.from({ length: 4 }, () => ({ failed: "ShopNotInstalled" })),
+        );
+        assert.deepStrictEqual(reads, []);
+      }).pipe(Effect.provide(TestBackend({ membersLayer: recordingMembers(reads) })));
     },
   );
 });
