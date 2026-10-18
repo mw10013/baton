@@ -73,7 +73,7 @@ export const makeAuth = (options: AuthOptions = {}) =>
       const email = decodeEmail(address);
       if (Option.isNone(email)) return;
       for (const shop of yield* members.listShopsOf(email.value)) {
-        const member = yield* members.find(shop, email.value);
+        const member = yield* members.findMember({ shop, email: email.value });
         if (Option.isSome(member)) yield* actors.revoke(shop, "member", member.value.id);
       }
     });

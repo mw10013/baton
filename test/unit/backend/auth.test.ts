@@ -13,13 +13,12 @@ import {
   ReturnPath,
   type RequestInfo,
 } from "../../../src/contract/auth.ts";
-import { type Member } from "../../../src/contract/members.ts";
 import { type ShopKey } from "../../../src/contract/shop.ts";
 import { SEED_SHOP } from "../../seed-shops.ts";
 import { ShopActors } from "../../../src/backend/shop-actors.ts";
 import { BackendApi, SignInLimiter } from "../../../src/backend/api.ts";
 import { MagicLinkDelivery } from "../../../src/backend/magic-link-delivery.ts";
-import { QuietLogs, TEST_ORIGIN, testAuth, testShopify } from "./layers.ts";
+import { type MemberRow, QuietLogs, TEST_ORIGIN, testAuth, testShopify } from "./layers.ts";
 import { Auth } from "../../../src/backend/auth.ts";
 import { SentMail } from "../../../src/backend/mailer.ts";
 import { ShopAccess } from "../../../src/backend/shop-access.ts";
@@ -37,7 +36,7 @@ const member = email("m1@m.com");
 const stranger = email("nobody@example.com");
 const member2 = email("m2@m.com");
 /** Baton's `Member` rows. The admin has none: it is a user row with the role `admin`. */
-const members: ReadonlyArray<Member> = [
+const members: ReadonlyArray<MemberRow> = [
   { id: "mem-1", shop: SEED_SHOP, email: member, createdAt: 1 },
   { id: "mem-2", shop: SEED_SHOP, email: member2, createdAt: 2 },
 ];

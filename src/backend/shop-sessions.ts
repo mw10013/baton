@@ -60,23 +60,23 @@ const decodeWon = Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ shop: 
 /** Rows of the `ShopSession` table. A row that does not decode is a broken invariant, so it dies. */
 const decodeRows = Schema.decodeUnknownEffect(Schema.Array(ShopSessionRow));
 
-const make = Effect.gen(function* () {
-  const d1 = yield* Cloudflare.D1.QueryDatabase(AuthDb);
-  const sql = yield* SQL.D1(d1);
+const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
+  Effect.gen(function* () {
+    const sql = yield* SQL.D1(database);
 
-  const find = Effect.fn("ShopSessions.find")(function* (shop: ShopKey) {
-    const [row] = yield* decodeRows(yield* sql`SELECT * FROM ShopSession WHERE shop = ${shop}`);
-    return Option.fromUndefinedOr(row);
-  }, Effect.orDie);
+    const find = Effect.fn("ShopSessions.find")(function* (shop: ShopKey) {
+      const [row] = yield* decodeRows(yield* sql`SELECT * FROM ShopSession WHERE shop = ${shop}`);
+      return Option.fromUndefinedOr(row);
+    }, Effect.orDie);
 
-  /**
-   * Baton's `upsertShopSession`. The conflict branch leaves `shopActorId` out of the `SET` list:
-   * it never changes after insert, and SQLite rewrites an index for every column named in `SET`,
-   * whether its value changed or not, so naming it would rewrite its unique index on every
-   * re-exchange, which D1 bills as a written row.
-   */
-  const upsert = Effect.fn("ShopSessions.upsert")(function* (row: ShopSessionUpsert) {
-    yield* sql`INSERT INTO ShopSession (shop, shopGid, shopActorId, scope, accessTokenExpiresAt, accessToken, refreshToken, refreshTokenExpiresAt)
+    /**
+     * Baton's `upsertShopSession`. The conflict branch leaves `shopActorId` out of the `SET` list:
+     * it never changes after insert, and SQLite rewrites an index for every column named in `SET`,
+     * whether its value changed or not, so naming it would rewrite its unique index on every
+     * re-exchange, which D1 bills as a written row.
+     */
+    const upsert = Effect.fn("ShopSessions.upsert")(function* (row: ShopSessionUpsert) {
+      yield* sql`INSERT INTO ShopSession (shop, shopGid, shopActorId, scope, accessTokenExpiresAt, accessToken, refreshToken, refreshTokenExpiresAt)
       VALUES (${row.shop}, ${row.shopGid}, ${row.shopActorId}, ${row.scope}, ${row.accessTokenExpiresAt}, ${row.accessToken}, ${row.refreshToken}, ${row.refreshTokenExpiresAt})
       ON CONFLICT (shop) DO UPDATE SET
         shopGid = excluded.shopGid,
@@ -85,32 +85,32 @@ const make = Effect.gen(function* () {
         accessToken = excluded.accessToken,
         refreshToken = excluded.refreshToken,
         refreshTokenExpiresAt = excluded.refreshTokenExpiresAt`;
-  }, Effect.orDie);
+    }, Effect.orDie);
 
-  /**
-   * Clears the access token only while it is still `accessToken`, the one that got a 401, so a
-   * token a concurrent refresh or exchange stored since is not thrown away.
-   */
-  const clearAccessToken = Effect.fn("ShopSessions.clearAccessToken")(function* (
-    shop: ShopKey,
-    accessToken: string,
-  ) {
-    yield* sql`UPDATE ShopSession SET accessToken = NULL WHERE shop = ${shop} AND accessToken = ${accessToken}`;
-  }, Effect.orDie);
+    /**
+     * Clears the access token only while it is still `accessToken`, the one that got a 401, so a
+     * token a concurrent refresh or exchange stored since is not thrown away.
+     */
+    const clearAccessToken = Effect.fn("ShopSessions.clearAccessToken")(function* (
+      shop: ShopKey,
+      accessToken: string,
+    ) {
+      yield* sql`UPDATE ShopSession SET accessToken = NULL WHERE shop = ${shop} AND accessToken = ${accessToken}`;
+    }, Effect.orDie);
 
-  /**
-   * A refresh's write: compare-and-swap on `presented`, the refresh token the grant used. It
-   * rewrites the four token columns, releases the lease, and answers whether it won. It loses
-   * when anything else (an exchange, another refresh) replaced the refresh token first, whose
-   * pair is then the live one.
-   */
-  const rotateTokens = Effect.fn("ShopSessions.rotateTokens")(function* (
-    shop: ShopKey,
-    presented: string,
-    tokens: ShopSessionTokens,
-  ) {
-    const won = yield* decodeWon(
-      yield* sql`UPDATE ShopSession SET
+    /**
+     * A refresh's write: compare-and-swap on `presented`, the refresh token the grant used. It
+     * rewrites the four token columns, releases the lease, and answers whether it won. It loses
+     * when anything else (an exchange, another refresh) replaced the refresh token first, whose
+     * pair is then the live one.
+     */
+    const rotateTokens = Effect.fn("ShopSessions.rotateTokens")(function* (
+      shop: ShopKey,
+      presented: string,
+      tokens: ShopSessionTokens,
+    ) {
+      const won = yield* decodeWon(
+        yield* sql`UPDATE ShopSession SET
         accessToken = ${tokens.accessToken},
         accessTokenExpiresAt = ${tokens.accessTokenExpiresAt},
         refreshToken = ${tokens.refreshToken},
@@ -118,83 +118,91 @@ const make = Effect.gen(function* () {
         refreshLeaseUntil = NULL
       WHERE shop = ${shop} AND refreshToken = ${presented}
       RETURNING shop`,
-    );
-    return won.length > 0;
-  }, Effect.orDie);
+      );
+      return won.length > 0;
+    }, Effect.orDie);
 
-  /** Takes the shop's refresh lease until `until` if none is live at `now`; answers whether it did. */
-  const acquireRefreshLease = Effect.fn("ShopSessions.acquireRefreshLease")(function* (
-    shop: ShopKey,
-    now: number,
-    until: number,
-  ) {
-    const won = yield* decodeWon(
-      yield* sql`UPDATE ShopSession SET refreshLeaseUntil = ${until}
+    /** Takes the shop's refresh lease until `until` if none is live at `now`; answers whether it did. */
+    const acquireRefreshLease = Effect.fn("ShopSessions.acquireRefreshLease")(function* (
+      shop: ShopKey,
+      now: number,
+      until: number,
+    ) {
+      const won = yield* decodeWon(
+        yield* sql`UPDATE ShopSession SET refreshLeaseUntil = ${until}
       WHERE shop = ${shop} AND (refreshLeaseUntil IS NULL OR refreshLeaseUntil <= ${now})
       RETURNING shop`,
-    );
-    return won.length > 0;
-  }, Effect.orDie);
+      );
+      return won.length > 0;
+    }, Effect.orDie);
 
-  /**
-   * Releases the lease taken until `until`. Matching on `until` means a holder whose lease
-   * lapsed never releases one somebody else took after.
-   */
-  const releaseRefreshLease = Effect.fn("ShopSessions.releaseRefreshLease")(function* (
-    shop: ShopKey,
-    until: number,
-  ) {
-    yield* sql`UPDATE ShopSession SET refreshLeaseUntil = NULL WHERE shop = ${shop} AND refreshLeaseUntil = ${until}`;
-  }, Effect.orDie);
+    /**
+     * Releases the lease taken until `until`. Matching on `until` means a holder whose lease
+     * lapsed never releases one somebody else took after.
+     */
+    const releaseRefreshLease = Effect.fn("ShopSessions.releaseRefreshLease")(function* (
+      shop: ShopKey,
+      until: number,
+    ) {
+      yield* sql`UPDATE ShopSession SET refreshLeaseUntil = NULL WHERE shop = ${shop} AND refreshLeaseUntil = ${until}`;
+    }, Effect.orDie);
 
-  /**
-   * Test control's way to age a session: the access token expires at `accessTokenExpiresAt`, and
-   * `refreshToken`, when given, replaces the stored one. Test-only in purpose; nothing in the
-   * product calls it.
-   */
-  const expireAccessToken = Effect.fn("ShopSessions.expireAccessToken")(function* (
-    shop: ShopKey,
-    accessTokenExpiresAt: number,
-    refreshToken: string | undefined,
-  ) {
-    yield* sql`UPDATE ShopSession SET
+    /**
+     * Test control's way to age a session: the access token expires at `accessTokenExpiresAt`, and
+     * `refreshToken`, when given, replaces the stored one. Test-only in purpose; nothing in the
+     * product calls it.
+     */
+    const expireAccessToken = Effect.fn("ShopSessions.expireAccessToken")(function* (
+      shop: ShopKey,
+      accessTokenExpiresAt: number,
+      refreshToken: string | undefined,
+    ) {
+      yield* sql`UPDATE ShopSession SET
         accessTokenExpiresAt = ${accessTokenExpiresAt},
         refreshToken = COALESCE(${refreshToken ?? null}, refreshToken)
       WHERE shop = ${shop}`;
-  }, Effect.orDie);
+    }, Effect.orDie);
 
-  const updateScope = Effect.fn("ShopSessions.updateScope")(function* (
-    shop: ShopKey,
-    scope: string | null,
-  ) {
-    yield* sql`UPDATE ShopSession SET scope = ${scope} WHERE shop = ${shop}`;
-  }, Effect.orDie);
+    const updateScope = Effect.fn("ShopSessions.updateScope")(function* (
+      shop: ShopKey,
+      scope: string | null,
+    ) {
+      yield* sql`UPDATE ShopSession SET scope = ${scope} WHERE shop = ${shop}`;
+    }, Effect.orDie);
 
-  const remove = Effect.fn("ShopSessions.remove")(function* (shop: ShopKey) {
-    yield* sql`DELETE FROM ShopSession WHERE shop = ${shop}`;
-  }, Effect.orDie);
+    const remove = Effect.fn("ShopSessions.remove")(function* (shop: ShopKey) {
+      yield* sql`DELETE FROM ShopSession WHERE shop = ${shop}`;
+    }, Effect.orDie);
 
-  return {
-    find,
-    upsert,
-    clearAccessToken,
-    rotateTokens,
-    acquireRefreshLease,
-    releaseRefreshLease,
-    expireAccessToken,
-    updateScope,
-    remove,
-  };
-});
+    return {
+      find,
+      upsert,
+      clearAccessToken,
+      rotateTokens,
+      acquireRefreshLease,
+      releaseRefreshLease,
+      expireAccessToken,
+      updateScope,
+      remove,
+    };
+  });
 
 /**
  * Baton's `ShopSession` repository: one offline Admin API session per installed shop, written by
  * token exchange. The layer is built once at Worker init, as `Members`' is.
  */
-export class ShopSessions extends Context.Service<ShopSessions, Effect.Success<typeof make>>()(
-  "app/ShopSessions",
-) {
-  static readonly layer = Layer.effect(ShopSessions, make);
+export class ShopSessions extends Context.Service<
+  ShopSessions,
+  Effect.Success<ReturnType<typeof make>>
+>()("app/ShopSessions") {
+  static readonly layer = Layer.effect(
+    ShopSessions,
+    Effect.flatMap(Cloudflare.D1.QueryDatabase(AuthDb), (d1) => make(d1)),
+  );
+
+  /** {@link ShopSessions} over a `D1Database` the caller holds, rather than the bound `AuthDb`. */
+  static readonly layerWith = (database: D1Database) =>
+    Layer.effect(ShopSessions, make(Effect.succeed(database)));
 
   /** `ShopSession` rows in memory, for tests. Every write edits the layer's own copy. */
   static readonly layerTest = (seed: ReadonlyArray<ShopSessionRow>) =>

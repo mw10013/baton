@@ -8,7 +8,6 @@ import * as Schema from "effect/Schema";
 import { EmailFromInput } from "../../../src/contract/auth.ts";
 import { DevRpcs } from "../../../src/contract/dev.ts";
 import { ShopFixtureData } from "../../../src/contract/fixture.ts";
-import { type Member } from "../../../src/contract/members.ts";
 import { ShopKey } from "../../../src/contract/shop.ts";
 import { SEED_SHOP } from "../../seed-shops.ts";
 import { DevHandlers } from "../../../src/backend/dev.ts";
@@ -16,7 +15,7 @@ import { type ActorFixtureRows, Fixtures } from "../../../src/backend/fixture.ts
 import { Members } from "../../../src/backend/members.ts";
 import { ShopActors } from "../../../src/backend/shop-actors.ts";
 import { ShopSessions, type ShopSessionRow } from "../../../src/backend/shop-sessions.ts";
-import { QuietLogs, testShopify } from "./layers.ts";
+import { type MemberRow, QuietLogs, testMembers, testShopify } from "./layers.ts";
 
 const email = Schema.decodeUnknownSync(EmailFromInput);
 const decodeFixture = Schema.decodeUnknownSync(ShopFixtureData);
@@ -40,7 +39,7 @@ const session: ShopSessionRow = {
   planHandleExpiresAt: null,
   planBoundaryAt: null,
 };
-const members: ReadonlyArray<Member> = [
+const members: ReadonlyArray<MemberRow> = [
   { id: "mem-1", shop: SEED_SHOP, email: member, createdAt: 1 },
 ];
 
@@ -56,7 +55,7 @@ const harness = () => {
     Layer.provideMerge(Fixtures.layer),
     Layer.provideMerge(
       Layer.mergeAll(
-        Members.layerTest(members),
+        testMembers(members),
         ShopActors.layerTest(revoked, undefined, [], added, removedOrders),
         testShopify([session]),
       ),

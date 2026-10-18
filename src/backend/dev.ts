@@ -16,7 +16,7 @@ const devProcedures = Effect.gen(function* () {
   const sessions = yield* ShopSessions;
 
   const removeMember = Effect.fn("Dev.removeMember")(function* (shop: ShopKey, email: Email) {
-    const removed = yield* members.remove(shop, email);
+    const removed = yield* members.deleteMember({ shop, email }).pipe(Effect.option);
     if (Option.isNone(removed)) return { removed: false, closed: 0 };
     // Baton's rule on `Members`: the edit is followed by a revoke on the shop's actor. A failed
     // revoke is logged and answers `closed: 0`, which a test sees.

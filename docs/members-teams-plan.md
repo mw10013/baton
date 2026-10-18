@@ -175,9 +175,24 @@ Step 6
 
 ### Deviations
 
+- 2026-10-17 [Step 1] The D1 test seam is a `layerWith(database: D1Database)` on `Members` and `ShopSessions`, not a `Cloudflare.D1.QueryDatabase` layer: `Cloudflare.D1.QueryDatabase(AuthDb)` evaluates the `AuthDb` resource, which needs Alchemy's `Stack` service (`Service not found: Stack` in a unit test). Each service's `make` now takes the `D1Database` source; `layer` passes the bound `AuthDb` client, `layerWith` a `D1Database` the caller holds. The adapter (`makeD1Test` in `test/unit/backend/layers.ts`) answers `{ db, raw }`: the `node:sqlite` handle for raw SQL and the `D1Database` over it. `seedD1` inserts bare `ShopSession` rows and members; `testMembers(members, shops)` is `Members.layerWith` over a seeded database.
+- 2026-10-17 [Step 1] Better Auth migrated the `node:sqlite` handle itself (`getMigrations` from `better-auth/db/migration`, the Backend's `admin()` and `magicLink()` plugins), so no hand-made tables.
+- 2026-10-17 [Step 1] `PageInput`, `Page` and the private `toPage` live beside `Members` in `src/backend/members.ts` (legacy had them in `Repository.ts`). `countMembers`/`countTeams` are private helpers. New `MemberEmail` (`{ shop: ShopKey, email }`) is the addressing shape of `findMember`, `addMember`, `deleteMember`, `findMemberAccess`.
+- 2026-10-17 [Step 1] Storage failures die per method (`Effect.orDie` on reads, `Effect.catchTag("SqlError", Effect.die)` on the methods with typed errors, decoders that die), as the file did.
+- 2026-10-17 [Step 1] `findMemberAccess` decodes its answer through `MemberAccess` (the shop given as a `ShopKey` decodes to the domain `Shop`), legacy's SQL unchanged.
+- 2026-10-17 [Step 1] `D1_TABLES` (`src/backend/d1-tables.ts`): legacy's table and JSDoc, the shop/member/team rows verbatim (titles included, "object" kept); the `User` row is now `user`, "created by its own migration at deploy", pinned by "the migrations create exactly D1_TABLES and better-auth's tables" (legacy's pinned "hand-written migration matches better-auth's runtime expectations" has no counterpart: Better Auth migrates itself here); the `Session` rows wait for Step 6; the `pnpm spec check` sentence and the orphan-page clause are dropped (neither exists here); `{@link initializeSchema}` became "the actor's data model". `BETTER_AUTH_TABLES` = `user`, `session`, `account`, `verification`.
+- 2026-10-17 [Step 1] Retired: `Members.find` → `findMember` (`Auth.revokeUser`), `teamIdsOf` and `find` in `ShopAccess.member` → `findMemberAccess`, `remove` → `deleteMember` (`Dev.removeMember`, `MemberNotFoundError` read as `{ removed: false, closed: 0 }`), `add` and `MemberExists` (no caller), `Members.layerTest`, the contract `Member` (`MembersPage.tsx` imports the domain one). No unit test named a retired method, so no rename. `ShopAccess`'s one SQL line is lowercase too.
+- 2026-10-17 [Step 1] Tests: `test/unit/backend/members.test.ts` (`describe("Member")` 12, `describe("Team")` 13, legacy titles byte for byte; `listMembers`/`listTeams` read back through the page reads, `countMembers` through raw SQL, `deleteShopSession` is `ShopSessions.remove` over the same database); `test/unit/backend/d1-tables.test.ts` (`describe("D1Test")`, the three adapter cases; `describe("D1 data model")`, the four member/team rows and the pinned names test); `test/unit/domain/billing.test.ts` ("a shop is at its ceiling when the member count has reached maxMembers"). The data-model test's pointer list is `["Member -> ShopSession"]` (Better Auth's `user` has no foreign key here; legacy's `User -> UserRole` was its hand-written role table).
+
 ### Issues
 
+- 2026-10-17 [Step 1] Check first, all three held on the `node:sqlite` adapter: a `sql.batch` of two `ShopSession` inserts whose second violates the unique `shopActorId` fails `SqlError` and leaves no row; a `Member` delete cascades its `TeamMember` row and leaves the `Team`; `insert or ignore … returning` answers `[{ id: "t1" }]` then `[]` on the name conflict. Repository tests stay in unit.
+- 2026-10-17 [Step 1] The plan review's seam (`Layer.succeed(Cloudflare.D1.QueryDatabase, …)`, "the real `Members.layer` runs unchanged") failed: the binding's callable resolves its `AuthDb` argument as an Effect, which needs `Stack`. See Deviations for the seam used.
+
 ### Command results
+
+- 2026-10-17 [baseline] `vp test`: 46 files, 527 tests, 60.5 s. Nine leaked `baton-test-…-ShopActor` directories deleted.
+- 2026-10-17 [Step 1] `vp check --fix` then `vp check`: green, 273 files formatted, 217 linted and type-checked. `vp test`: green first run, 49 files, 561 tests (+25 `Members`, +8 `D1Test`/data model, +1 `membersAtCeiling`), 64.2 s. Leaked `baton-test-…-ShopActor` directories deleted.
 
 ### Human steps requested
 

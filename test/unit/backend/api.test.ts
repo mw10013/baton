@@ -14,14 +14,13 @@ import {
   MagicLinkRequested,
   type RequestInfo,
 } from "../../../src/contract/auth.ts";
-import { type Member } from "../../../src/contract/members.ts";
 import { type ShopKey } from "../../../src/contract/shop.ts";
 import { OTHER_SHOP, SEED_SHOP } from "../../seed-shops.ts";
 import type { ConnectionCaller } from "../../../src/contract/shop-actor.ts";
 import { ShopActors } from "../../../src/backend/shop-actors.ts";
 import { BackendApi, SignInLimiter } from "../../../src/backend/api.ts";
 import { mintSessionToken } from "../../shopify-session-token.ts";
-import { QuietLogs, TEST_SHOPIFY_APP, testAuth, testShopify } from "./layers.ts";
+import { type MemberRow, QuietLogs, TEST_SHOPIFY_APP, testAuth, testShopify } from "./layers.ts";
 import { Auth } from "../../../src/backend/auth.ts";
 import { SentMail } from "../../../src/backend/mailer.ts";
 import { ShopAccess, ShopAccessDenied } from "../../../src/backend/shop-access.ts";
@@ -33,7 +32,7 @@ const decodeRequested = Schema.decodeSync(MagicLinkRequested);
 const admin = email("a@a.com");
 const member = email("m1@m.com");
 const stranger = email("nobody@example.com");
-const members: ReadonlyArray<Member> = [
+const members: ReadonlyArray<MemberRow> = [
   { id: "mem-1", shop: SEED_SHOP, email: member, createdAt: 1 },
 ];
 const merchant: ConnectionCaller = { role: "merchant" };
@@ -72,7 +71,7 @@ const TestBackend = ({
   delivery?: "inline" | "mailed";
   allow?: boolean;
   gate?: Effect.Effect<ConnectionCaller, ShopAccessDenied>;
-  memberRows?: ReadonlyArray<Member>;
+  memberRows?: ReadonlyArray<MemberRow>;
   actors?: Layer.Layer<ShopActors>;
 } = {}) =>
   BackendApi.layer.pipe(

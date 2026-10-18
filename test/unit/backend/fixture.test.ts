@@ -5,12 +5,12 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { EmailFromInput } from "../../../src/contract/auth.ts";
 import { FIXTURE_ORDER_PREFIX, ShopFixtureData } from "../../../src/contract/fixture.ts";
-import type { Member } from "../../../src/contract/members.ts";
 import { ShopKey } from "../../../src/contract/shop.ts";
 import { type ActorFixtureRows, Fixtures, fixtureRows } from "../../../src/backend/fixture.ts";
 import { Members } from "../../../src/backend/members.ts";
 import { ShopActors } from "../../../src/backend/shop-actors.ts";
 import { ShopSessions, type ShopSessionRow } from "../../../src/backend/shop-sessions.ts";
+import { type MemberRow, testMembers } from "./layers.ts";
 
 const shopKey = Schema.decodeUnknownSync(ShopKey);
 const email = Schema.decodeUnknownSync(EmailFromInput);
@@ -181,7 +181,7 @@ describe("fixtureRows", () => {
 });
 
 describe("Fixtures.load", () => {
-  const prior: ReadonlyArray<Member> = [
+  const prior: ReadonlyArray<MemberRow> = [
     { id: "old-1", shop, email: email("old@example.com"), createdAt: 0 },
     { id: "old-2", shop, email: email("ana@example.com"), createdAt: 0 },
     { id: "other-1", shop: otherShop, email: email("ana@example.com"), createdAt: 0 },
@@ -194,7 +194,7 @@ describe("Fixtures.load", () => {
       Layer.provideMerge(
         Layer.mergeAll(
           ShopSessions.layerTest(sessions),
-          Members.layerTest(prior),
+          testMembers(prior),
           ShopActors.layerTest(revoked, undefined, loaded),
         ),
       ),
@@ -227,14 +227,14 @@ describe("Fixtures.load", () => {
       const members = yield* Members;
       const rows = yield* members.list();
       assert.deepStrictEqual(
-        rows.filter((row) => row.shop === shop).map((row) => row.email),
+        rows.filter((row) => String(row.shop) === shop).map((row) => row.email),
         ["ana@example.com", "ben@example.com"],
       );
       assert.deepStrictEqual(
-        rows.filter((row) => row.shop === otherShop).map((row) => row.id),
+        rows.filter((row) => String(row.shop) === otherShop).map((row) => row.id),
         ["other-1"],
       );
-      const ana = yield* members.find(shop, email("ana@example.com"));
+      const ana = yield* members.findMember({ shop, email: email("ana@example.com") });
       assert.isTrue(Option.isSome(ana) && ana.value.id !== "old-2");
       assert.deepStrictEqual(
         loaded.map(({ key }) => key),

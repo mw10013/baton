@@ -1,4 +1,8 @@
 import { Memory } from "@alchemy.run/better-auth";
+import { getMigrations } from "better-auth/db/migration";
+import { admin, magicLink } from "better-auth/plugins";
+import { readFileSync } from "node:fs";
+import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
 import * as SqliteMigrator from "@effect/sql-sqlite-node/SqliteMigrator";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -9,7 +13,7 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
-import type { Member } from "../../../src/contract/members.ts";
+import type { Email } from "../../../src/contract/auth.ts";
 import type { ShopKey } from "../../../src/contract/shop.ts";
 import { ShopifyAdmin, type ShopifyAdminError } from "../../../src/backend/shopify-admin.ts";
 import type { OrdersSyncParams } from "../../../src/backend/orders-sync-workflow.ts";
@@ -48,6 +52,164 @@ export const testShopify = (rows: ReadonlyArray<ShopSessionRow> = []) =>
     appUrl: "http://localhost",
   }).pipe(Layer.provideMerge(ShopSessions.layerTest(rows)));
 
+/** A value as D1 binds it: `undefined` is null and a boolean 1 or 0, which `node:sqlite` refuses. */
+const d1Value = (value: unknown) =>
+  value === undefined ? null : typeof value === "boolean" ? (value ? 1 : 0) : value;
+
+const d1Meta = (changes = 0, lastRowId = 0): D1Meta & Record<string, unknown> => ({
+  duration: 0,
+  size_after: 0,
+  rows_read: 0,
+  rows_written: changes,
+  last_row_id: lastRowId,
+  changed_db: changes > 0,
+  changes,
+});
+
+/**
+ * One D1 prepared statement over `node:sqlite`. `bind` answers a new statement, as D1's does:
+ * `D1Client` caches a prepared statement and binds it afresh per call.
+ */
+const d1Statement = (db: DatabaseSync, query: string, values: ReadonlyArray<unknown> = []) => {
+  const prepared = () => db.prepare(query);
+  const params = values.map(d1Value) as Array<SQLInputValue>;
+  const rows = () =>
+    prepared()
+      .all(...params)
+      .map((row) => ({ ...row }));
+  const statement = {
+    bind: (...next: Array<unknown>) => d1Statement(db, query, next),
+    first: async (column?: string) => {
+      const row = prepared().get(...params);
+      if (row === undefined) return null;
+      return column === undefined ? { ...row } : row[column];
+    },
+    run: async () => {
+      const result = prepared().run(...params);
+      return {
+        success: true as const,
+        meta: d1Meta(Number(result.changes), Number(result.lastInsertRowid)),
+        results: [],
+      };
+    },
+    all: async () => ({ success: true as const, meta: d1Meta(), results: rows() }),
+    allSync: () => ({ success: true as const, meta: d1Meta(), results: rows() }),
+    raw: async (options?: { columnNames?: boolean }) => {
+      const sync = prepared();
+      sync.setReturnArrays(true);
+      const arrays = sync.all(...params) as unknown as Array<Array<unknown>>;
+      return options?.columnNames === true
+        ? [sync.columns().map((column) => column.name), ...arrays]
+        : arrays;
+    },
+  };
+  return statement;
+};
+
+type D1TestStatement = ReturnType<typeof d1Statement>;
+
+/**
+ * A `D1Database` over one `node:sqlite` database, as `D1Client` drives it: `prepare`, `bind`,
+ * `all`, `raw`, `run`, `first`, and `batch` in one transaction that rolls back whole on a
+ * failure, as D1's implicit batch transaction does.
+ */
+const d1Database = (db: DatabaseSync) => ({
+  prepare: (query: string) => d1Statement(db, query),
+  batch: async (statements: ReadonlyArray<D1TestStatement>) => {
+    db.exec("begin");
+    try {
+      const results = statements.map((statement) => statement.allSync());
+      db.exec("commit");
+      return results;
+    } catch (cause) {
+      db.exec("rollback");
+      throw cause;
+    }
+  },
+  exec: async (query: string) => {
+    db.exec(query);
+    return { count: 0, duration: 0 };
+  },
+  withSession: () => {
+    throw new Error("D1Test: sessions are not supported");
+  },
+  dump: () => {
+    throw new Error("D1Test: dump is not supported");
+  },
+});
+
+/**
+ * Better Auth's options as far as its tables go: the plugins the Backend's `Auth` runs with,
+ * which add columns (the admin plugin's role and ban fields) but no table.
+ */
+const betterAuthTableOptions = {
+  plugins: [admin(), magicLink({ sendMagicLink: async () => {} })],
+};
+
+/**
+ * Baton's D1 in memory, fresh per call: `node:sqlite` with foreign keys on (D1 has them on by
+ * default), migrated by `migrations/0001_init.sql` and by Better Auth's own migration for its
+ * tables, as `@alchemy.run/better-auth` creates them at deploy. `raw` is the `D1Database` the
+ * Backend's D1 services take in their `layerWith`, so the real SQL runs over it; `db` is the same
+ * database, for a test's raw SQL.
+ */
+export const makeD1Test = Effect.promise(async () => {
+  const db = new DatabaseSync(":memory:");
+  db.exec("pragma foreign_keys = on");
+  db.exec(readFileSync(new URL("../../../migrations/0001_init.sql", import.meta.url), "utf8"));
+  const migrations = await getMigrations({
+    ...betterAuthTableOptions,
+    database: db,
+    secret: "d1-test-secret-d1-test-secret-d1-test",
+    telemetry: { enabled: false },
+  });
+  await migrations.runMigrations();
+  return { db, raw: d1Database(db) as unknown as D1Database };
+});
+
+/** A `Member` row as a test seeds it: plain ids, the shop as the Backend holds it. */
+export interface MemberRow {
+  readonly id: string;
+  readonly shop: ShopKey;
+  readonly email: Email;
+  readonly createdAt: number;
+}
+
+/**
+ * Inserts a `ShopSession` row for each of `shops` (a bare one: `Member.shop` and `Team.shop`
+ * reference it) and the `members`, in {@link makeD1Test}'s database.
+ */
+export const seedD1 = (
+  db: DatabaseSync,
+  { shops, members = [] }: { shops: ReadonlyArray<ShopKey>; members?: ReadonlyArray<MemberRow> },
+) => {
+  const insertShop = db.prepare(
+    "insert or ignore into ShopSession (shop, shopGid, shopActorId) values (?, ?, ?)",
+  );
+  for (const shop of new Set([...shops, ...members.map((member) => member.shop)]))
+    insertShop.run(shop, "gid://shopify/Shop/1", shop);
+  const insertMember = db.prepare(
+    "insert into Member (id, shop, email, createdAt) values (?, ?, ?, ?)",
+  );
+  for (const member of members)
+    insertMember.run(member.id, member.shop, member.email, member.createdAt);
+};
+
+/**
+ * The real {@link Members} over a fresh {@link makeD1Test} database seeded with `members` and a
+ * `ShopSession` row for each of their shops and of `shops`.
+ */
+export const testMembers = (
+  members: ReadonlyArray<MemberRow>,
+  shops: ReadonlyArray<ShopKey> = [],
+) =>
+  Layer.unwrap(
+    Effect.map(makeD1Test, ({ db, raw }) => {
+      seedD1(db, { shops, members });
+      return Members.layerWith(raw);
+    }),
+  );
+
 /** Drops `Info` and below, so only a warning or error reaches the test output. */
 export const QuietLogs = Layer.succeed(References.MinimumLogLevel, "Warn");
 
@@ -64,7 +226,7 @@ export const testAuth = <A, E, R>({
   delivery,
   extra,
 }: {
-  members: ReadonlyArray<Member>;
+  members: ReadonlyArray<MemberRow>;
   actors: Layer.Layer<ShopActors>;
   delivery: "inline" | "mailed";
   extra: Layer.Layer<A, E, R>;
@@ -72,7 +234,7 @@ export const testAuth = <A, E, R>({
   Auth.layerWith({ secret: "test-secret-test-secret-test-secret" }).pipe(
     Layer.provideMerge(
       Layer.mergeAll(
-        Members.layerTest(members),
+        testMembers(members),
         actors,
         extra,
         (delivery === "inline"

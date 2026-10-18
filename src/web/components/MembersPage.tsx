@@ -1,5 +1,5 @@
 import * as DateTime from "effect/DateTime";
-import type { Member } from "../../contract/members.ts";
+import type { Member } from "../../domain/shop-work.ts";
 import { useNavigateOnClick } from "./navigate.ts";
 import { IndexSection } from "./screen/IndexSection.tsx";
 import SignOutButton from "./SignOutButton.tsx";

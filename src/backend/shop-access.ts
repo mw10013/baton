@@ -37,7 +37,7 @@ const make = Effect.gen(function* () {
   const sql = yield* SQL.D1(d1);
 
   const shopExists = Effect.fn("ShopAccess.shopExists")(function* (shop: ShopKey) {
-    const rows = yield* decodeShops(yield* sql`SELECT shop FROM ShopSession WHERE shop = ${shop}`);
+    const rows = yield* decodeShops(yield* sql`select shop from ShopSession where shop = ${shop}`);
     return rows.length > 0;
   }, Effect.orDie);
 
@@ -61,13 +61,13 @@ const make = Effect.gen(function* () {
       Effect.catchTag("Unauthorized", () => denied(401)),
     );
     if (session.me.role === "admin") return yield* denied(403);
-    const found = yield* members.find(key, session.me.email);
-    if (Option.isNone(found)) return yield* denied(404);
+    const access = yield* members.findMemberAccess({ shop: key, email: session.me.email });
+    if (Option.isNone(access)) return yield* denied(404);
     return {
       role: "member",
-      memberId: found.value.id,
-      memberEmail: found.value.email,
-      teamIds: yield* members.teamIdsOf(found.value.id),
+      memberId: access.value.memberId,
+      memberEmail: session.me.email,
+      teamIds: access.value.teams.map((team) => team.id),
       userId: session.me.id,
       sessionId: session.sessionId,
       sessionExpiresAt: session.sessionExpiresAt,
