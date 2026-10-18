@@ -247,6 +247,7 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - 2026-10-18, follow-up round 1 (6): `ShopAgentId`, the `shopAgentId` field and `AgentMessage` are deleted; the `ShopSession` struct family stays, because `platform.ts`'s context prose names `ShopSession` as a shared word (its stored twin is the Backend's `ShopSession` table, which has `shopActorId`).
 - 2026-10-18, follow-up round 1: the window's code is Step 6's (`workflow-editor-window.ts`, the `s-app-window` declaration in `app-bridge.ts`, Create and Edit opening it, the editor route posting `applied`/`deleted`); the e2e helpers are Step 6's `editorFrame`, `openEditor`, `closeEditor` plus legacy's `clickHoisted` for the editor's hoisted Turn on, Discard changes, Apply changes and Turn off.
 - 2026-10-18, follow-up round 1 (4): the parked strict serialization is used as parked (`src/backend/strict-serialization.ts`, its unit test, `layerStrictJson` on the actor socket, `rawRequestAs` in `test/integ/actor-clients.ts`, the integ title).
+
 ### Issues
 
 - 2026-10-17, Step 1: the dev server was already running (`vp run dev:status` healthy) when the work started; it is left running.
@@ -264,6 +265,7 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - 2026-10-18, follow-up round 1, window check (dev store, Playwright CLI, after the fix): Create opened the editor in the window; the hoisted Turn on workflow was disabled at open and enabled after Add step, and Turn on in the window's dialog turned it into Turn off workflow; after the first task Save the bar showed Discard changes and Apply changes, and after Discard it went back to Turn off workflow alone. Apply changes in the window closed it and the workflow page showed the applied task; Delete from the window's More actions closed it and the opener landed on the index. In e2e both legacy editor titles pass in the window.
 - 2026-10-18, follow-up round 1: on the dev store, Playwright's `.click()` on the hoisted More actions in the window did nothing (a mouse click at its position opened the menu), and with the Dev Console open the task panel's Save sat under it and a click reported success with no write. Neither affects e2e, which collapses the Dev Console and does not press the window's More actions.
 - 2026-10-18, follow-up round 1: the window document logs a hydration attribute mismatch on the editor's `s-menu` (App Bridge adds `className="title-bar-menu"` before React hydrates); nothing fails.
+
 ### Command results
 
 - 2026-10-17, Step 1: `vp check` pass (249 files); `vp test` 56 files, 615 tests, 55.8 s; `vp run test:e2e` 40 passed, 3.1 min.
@@ -278,6 +280,8 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - CHECKPOINT: ready for staging (36a12b4)
 
 - 2026-10-18, follow-up round 1: `vp check` pass (292 files); `vp test` 64 files, 702 tests, 77.5 s; `vp run test:e2e` 49 passed, 4.9 min.
+- CHECKPOINT: follow-up round 1 done (4912164)
+
 ### Human steps requested
 
 - 2026-10-18, follow-up round 1: file this upstream (Shopify Polaris web components, 2.0 RC), title "`s-page` warns that a primary-action `s-button` has no `variant` of `primary` when React sets it":
