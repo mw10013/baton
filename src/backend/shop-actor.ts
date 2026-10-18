@@ -28,7 +28,9 @@ import {
 import { ShopLimits } from "../domain/platform.ts";
 import { Email } from "../domain/platform.ts";
 import {
+  type GetOrderDetailInput,
   type ListOrdersInput,
+  type ListRunsInput,
   type ListWorkflowsInput,
   MemberId,
   TeamId,
@@ -901,6 +903,29 @@ const makeShopActor = Effect.gen(function* () {
       return yield* runs.listOrders(input);
     }, Effect.provide(runtime));
 
+    /** The order page's read, or null; the same read as `MerchantGetOrderDetail`. */
+    const getOrderDetail = Effect.fn("ShopActor.getOrderDetail")(function* (
+      input: GetOrderDetailInput,
+    ) {
+      return yield* runs.getOrderDetail(input);
+    }, Effect.provide(runtime));
+
+    /**
+     * The workflows list's read for the member the Backend's gate resolved; the same read as
+     * `MemberListRuns`, which takes the member from the socket instead.
+     */
+    const listRuns = Effect.fn("ShopActor.listRuns")(function* (input: ListRunsInput) {
+      return yield* runs.listRuns(input);
+    }, Effect.provide(runtime));
+
+    /** The member's workflow page's read, or null; the same read as `MemberGetRun`. */
+    const getRunPage = Effect.fn("ShopActor.getRunPage")(function* (input: {
+      readonly runId: string;
+      readonly teamIds: ReadonlyArray<TeamId>;
+    }) {
+      return yield* runs.getRunPage(input);
+    }, Effect.provide(runtime));
+
     /**
      * The fixture's work on its runs (`Runs.applyFixture`), after `loadFixture` or `addFixture`
      * wrote the rows and the Backend wrote D1's identity rows: the order is what makes the
@@ -1112,6 +1137,9 @@ const makeShopActor = Effect.gen(function* () {
       syncOrderWebhook,
       getOrder,
       listOrders,
+      getOrderDetail,
+      listRuns,
+      getRunPage,
       listWorkflows,
       getWorkflowDetail,
       workflowSetupFacts,

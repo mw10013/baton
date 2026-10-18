@@ -9,12 +9,18 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { Rpc, RpcGroup } from "effect/rpc";
-import { Email, ReturnPath } from "../../src/contract/auth.ts";
+import { Email, Forbidden, ReturnPath, Unauthorized } from "../../src/contract/auth.ts";
 import { Auth } from "../../src/backend/auth.ts";
 import { MagicLinkDelivery } from "../../src/backend/magic-link-delivery.ts";
 import { MembershipRepository } from "../../src/backend/membership-repository.ts";
-import { InvalidSessionToken, ShopKey } from "../../src/contract/shop.ts";
-import { ListOrdersRequest } from "../../src/contract/orders.ts";
+import { InvalidSessionToken, NotAShopMember, ShopKey } from "../../src/contract/shop.ts";
+import {
+  MemberWorkflowPageData,
+  MemberWorkflowPageRequest,
+  WorkflowsListPageData,
+  WorkflowsListRequest,
+} from "../../src/contract/workflows-list.ts";
+import { ListOrdersRequest, OrderDetailRequest } from "../../src/contract/orders.ts";
 import {
   SetupFactsRequest,
   WorkflowDetailRequest,
@@ -22,6 +28,7 @@ import {
 } from "../../src/contract/workflows.ts";
 import {
   ListOrdersInput,
+  OrderPageData,
   OrdersIndexData,
   SetupFacts,
   WorkflowPageData,
@@ -73,7 +80,11 @@ export type ShopifyFakeCall = typeof ShopifyFakeCall.Type;
  * - `ApiListOrders` is the `BackendApi` method the orders screen's loader calls, with an empty
  *   request, because integ has no Website to call it over the binding.
  * - `ApiWorkflowsPage`, `ApiWorkflowDetail` and `ApiSetupFacts` are the `BackendApi` methods the
- *   workflows screens' and the App Home's loaders call, as `ApiListOrders`.
+ *   workflows screens' and the App Home's loaders call, as `ApiListOrders`; `ApiOrderDetail` is
+ *   the order page's, the same way.
+ * - `ApiWorkflowsList` and `ApiMemberWorkflowPage` are the `BackendApi` methods the member
+ *   screens' loaders call. Their payload carries the member's session `cookie`, which the
+ *   request would carry, because the test Backend has no request to read it from.
  * - `ShopIdentityNames` answers the emails of `shop`'s `Member` rows and the names of its `Team`
  *   rows, read from D1 alone ({@link MembershipRepository}' `identityNames`), so it never reaches the actor.
  */
@@ -122,6 +133,21 @@ export const IntegRpcs = RpcGroup.make(
     success: SetupFacts,
     error: Schema.Union([InvalidSessionToken, ShopNotInstalled]),
   }),
+  Rpc.make("ApiOrderDetail", {
+    payload: OrderDetailRequest,
+    success: Schema.NullOr(OrderPageData),
+    error: Schema.Union([InvalidSessionToken, ShopNotInstalled]),
+  }),
+  Rpc.make("ApiWorkflowsList", {
+    payload: { cookie: Schema.String, ...WorkflowsListRequest.fields },
+    success: WorkflowsListPageData,
+    error: Schema.Union([Unauthorized, Forbidden, NotAShopMember]),
+  }),
+  Rpc.make("ApiMemberWorkflowPage", {
+    payload: { cookie: Schema.String, ...MemberWorkflowPageRequest.fields },
+    success: MemberWorkflowPageData,
+    error: Schema.Union([Unauthorized, Forbidden, NotAShopMember]),
+  }),
   Rpc.make("ShopIdentityNames", {
     payload: { shop: ShopKey },
     success: Schema.Struct({ emails: Schema.Array(Email), teams: Schema.Array(Schema.String) }),
@@ -163,6 +189,11 @@ export const IntegHandlers = IntegRpcs.toLayer(
       ApiWorkflowsPage: (payload) => api.workflowsPage(noRequest, payload),
       ApiWorkflowDetail: (payload) => api.workflowDetail(noRequest, payload),
       ApiSetupFacts: (payload) => api.setupFacts(noRequest, payload),
+      ApiOrderDetail: (payload) => api.orderDetail(noRequest, payload),
+      ApiWorkflowsList: ({ cookie, ...payload }) =>
+        api.workflowsList({ cookie, ip: undefined }, payload),
+      ApiMemberWorkflowPage: ({ cookie, ...payload }) =>
+        api.memberWorkflowPage({ cookie, ip: undefined }, payload),
       ShopIdentityNames: ({ shop }) => members.identityNames(shop),
     });
   }),

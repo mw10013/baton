@@ -5,7 +5,12 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type { ShopKey } from "../contract/shop.ts";
 import type { ShopSnapshot } from "../contract/shop-actor.ts";
-import type { ListOrdersInput } from "../domain/shop-work.ts";
+import type {
+  GetOrderDetailInput,
+  ListOrdersInput,
+  ListRunsInput,
+  TeamId,
+} from "../domain/shop-work.ts";
 import * as Match from "effect/Match";
 import { FixtureConflict } from "../contract/fixture.ts";
 import type { ListWorkflowsInput } from "../domain/shop-work.ts";
@@ -151,6 +156,30 @@ const make = <R>(namespace: Effect.Effect<Effect.Success<typeof ShopActor>, neve
       return yield* actors.getByName(key).listOrders(input);
     });
 
+    /** The order page's read, or null; see `getOrderDetail` on {@link ShopActor}. */
+    const getOrderDetail = Effect.fn("ShopActors.getOrderDetail")(function* (
+      key: ShopKey,
+      input: GetOrderDetailInput,
+    ) {
+      return yield* actors.getByName(key).getOrderDetail(input);
+    });
+
+    /** The workflows list for a member the gate resolved; see `listRuns` on {@link ShopActor}. */
+    const listRuns = Effect.fn("ShopActors.listRuns")(function* (
+      key: ShopKey,
+      input: ListRunsInput,
+    ) {
+      return yield* actors.getByName(key).listRuns(input);
+    });
+
+    /** The member's workflow page, or null; see `getRunPage` on {@link ShopActor}. */
+    const getRunPage = Effect.fn("ShopActors.getRunPage")(function* (
+      key: ShopKey,
+      input: { readonly runId: string; readonly teamIds: ReadonlyArray<TeamId> },
+    ) {
+      return yield* actors.getByName(key).getRunPage(input);
+    });
+
     /** One page of the shop's workflows index; see `listWorkflows` on {@link ShopActor}. */
     const listWorkflows = Effect.fn("ShopActors.listWorkflows")(function* (
       key: ShopKey,
@@ -212,6 +241,9 @@ const make = <R>(namespace: Effect.Effect<Effect.Success<typeof ShopActor>, neve
       syncOrderWebhook,
       getOrder,
       listOrders,
+      getOrderDetail,
+      listRuns,
+      getRunPage,
       listWorkflows,
       getWorkflowDetail,
       workflowSetupFacts,
@@ -295,6 +327,9 @@ export class ShopActors extends Context.Service<
       syncOrderWebhook: () => Effect.die(new Error("ShopActors.layerTest: syncOrderWebhook")),
       getOrder: () => Effect.die(new Error("ShopActors.layerTest: getOrder")),
       listOrders: () => Effect.die(new Error("ShopActors.layerTest: listOrders")),
+      getOrderDetail: () => Effect.die(new Error("ShopActors.layerTest: getOrderDetail")),
+      listRuns: () => Effect.die(new Error("ShopActors.layerTest: listRuns")),
+      getRunPage: () => Effect.die(new Error("ShopActors.layerTest: getRunPage")),
       listWorkflows: () => Effect.die(new Error("ShopActors.layerTest: listWorkflows")),
       getWorkflowDetail: () => Effect.die(new Error("ShopActors.layerTest: getWorkflowDetail")),
       workflowSetupFacts: () => Effect.die(new Error("ShopActors.layerTest: workflowSetupFacts")),

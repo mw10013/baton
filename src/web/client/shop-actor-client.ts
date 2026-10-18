@@ -37,7 +37,23 @@ import {
   ShopActorRpcs,
   type ShopSnapshot,
 } from "../../contract/shop-actor.ts";
-import type { ListOrdersInput, OrdersIndexData } from "../../domain/shop-work.ts";
+import type {
+  AssignRunTaskTeamInput,
+  AttachWorkflowInput,
+  BlockRunInput,
+  ListOrdersInput,
+  MarkTaskDoneInput,
+  OrderPageData,
+  OrdersIndexData,
+  PutBackTaskInput,
+  ReopenTaskInput,
+  RunIdInput,
+  RunPageData,
+  RunQuery,
+  SetRunNoteInput,
+  StartTaskInput,
+  WorkflowsListData,
+} from "../../domain/shop-work.ts";
 import { refreshOnFocus } from "./query.ts";
 
 /**
@@ -429,6 +445,231 @@ export const setTeamMemberAtom = Atom.family((_pair: string) =>
     Effect.fnUntraced(function* (input) {
       const client = yield* ShopActorClient;
       return yield* client("MerchantSetTeamMember", input);
+    }),
+  ),
+);
+
+/**
+ * The order page, by its `legacyId`; the node {@link seedOrderDetail} fills. Refetched on every
+ * notice naming {@link ORDERS_KEY}: an order or one of its runs changed.
+ */
+export const merchantOrderDetailQuery = Atom.family((legacyId: string) =>
+  ShopActorClient.query(
+    "MerchantGetOrderDetail",
+    { legacyId },
+    { serializationKey: `merchant-order:${legacyId}` },
+  ),
+);
+
+/** The order page; see {@link merchantOrderDetailQuery}. */
+export const merchantOrderDetailAtom = Atom.family((legacyId: string) =>
+  merchantOrderDetailQuery(legacyId).pipe(Atom.withReactivity([ORDERS_KEY]), refreshOnFocus),
+);
+
+/** Seeds the order page's node from the loader, as {@link seedOrders} does the orders index's. */
+export const seedOrderDetail = (
+  registry: AtomRegistry.AtomRegistry,
+  input: { readonly legacyId: string; readonly data: OrderPageData | null },
+) => seed(registry, merchantOrderDetailQuery(input.legacyId), input.data);
+
+/**
+ * The member's workflows list, by its whole query; the node {@link seedWorkflowsList} fills.
+ * The member is the socket's caller, never the payload. Refetched on every notice naming
+ * {@link ORDERS_KEY}.
+ */
+export const memberRunsQuery = Atom.family((query: RunQuery) =>
+  ShopActorClient.query(
+    "MemberListRuns",
+    { query },
+    {
+      serializationKey: `member-runs:${JSON.stringify([query.state, query.team, query.limit, query.q])}`,
+    },
+  ),
+);
+
+/** The member's workflows list; see {@link memberRunsQuery}. */
+export const memberRunsAtom = Atom.family((query: RunQuery) =>
+  memberRunsQuery(query).pipe(Atom.withReactivity([ORDERS_KEY]), refreshOnFocus),
+);
+
+/** Seeds the workflows list's node from the loader, for the query the loader resolved. */
+export const seedWorkflowsList = (
+  registry: AtomRegistry.AtomRegistry,
+  input: { readonly query: RunQuery; readonly list: WorkflowsListData },
+) => seed(registry, memberRunsQuery(input.query), input.list);
+
+/** The member's workflow page, by run; the node {@link seedMemberRun} fills. */
+export const memberRunQuery = Atom.family((runId: string) =>
+  ShopActorClient.query("MemberGetRun", { runId }, { serializationKey: `member-run:${runId}` }),
+);
+
+/** The member's workflow page; see {@link memberRunQuery}. */
+export const memberRunAtom = Atom.family((runId: string) =>
+  memberRunQuery(runId).pipe(Atom.withReactivity([ORDERS_KEY]), refreshOnFocus),
+);
+
+/** Seeds the member's workflow page's node from the loader. */
+export const seedMemberRun = (
+  registry: AtomRegistry.AtomRegistry,
+  input: { readonly runId: string; readonly page: RunPageData | null },
+) => seed(registry, memberRunQuery(input.runId), input.page);
+
+/** Attach or Change workflow on the order page, one atom per item (`lineItemId`), for {@link syncOrderAtom}'s reason. */
+export const attachWorkflowAtom = Atom.family((_key: string) =>
+  ShopActorClient.runtime.fn<AttachWorkflowInput>()(
+    Effect.fnUntraced(function* (input) {
+      const client = yield* ShopActorClient;
+      return yield* client("MerchantAttachWorkflow", input);
+    }),
+  ),
+);
+
+/** Cancel workflow on the order page, one atom per run. */
+export const cancelRunAtom = Atom.family((_key: string) =>
+  ShopActorClient.runtime.fn<RunIdInput>()(
+    Effect.fnUntraced(function* (input) {
+      const client = yield* ShopActorClient;
+      return yield* client("MerchantCancelRun", input);
+    }),
+  ),
+);
+
+/** The merchant's Done, one atom per task. */
+export const merchantMarkTaskDoneAtom = Atom.family((_key: string) =>
+  ShopActorClient.runtime.fn<MarkTaskDoneInput>()(
+    Effect.fnUntraced(function* (input) {
+      const client = yield* ShopActorClient;
+      return yield* client("MerchantMarkTaskDone", input);
+    }),
+  ),
+);
+
+/** The merchant's Reopen, one atom per task. */
+export const merchantReopenTaskAtom = Atom.family((_key: string) =>
+  ShopActorClient.runtime.fn<ReopenTaskInput>()(
+    Effect.fnUntraced(function* (input) {
+      const client = yield* ShopActorClient;
+      return yield* client("MerchantReopenTask", input);
+    }),
+  ),
+);
+
+/** The merchant's Put back, one atom per task. */
+export const merchantPutBackTaskAtom = Atom.family((_key: string) =>
+  ShopActorClient.runtime.fn<PutBackTaskInput>()(
+    Effect.fnUntraced(function* (input) {
+      const client = yield* ShopActorClient;
+      return yield* client("MerchantPutBackTask", input);
+    }),
+  ),
+);
+
+/** The merchant's note on a run, one atom per run. */
+export const merchantSetRunNoteAtom = Atom.family((_key: string) =>
+  ShopActorClient.runtime.fn<SetRunNoteInput>()(
+    Effect.fnUntraced(function* (input) {
+      const client = yield* ShopActorClient;
+      return yield* client("MerchantSetRunNote", input);
+    }),
+  ),
+);
+
+/** The merchant's Block, one atom per run. */
+export const merchantBlockRunAtom = Atom.family((_key: string) =>
+  ShopActorClient.runtime.fn<BlockRunInput>()(
+    Effect.fnUntraced(function* (input) {
+      const client = yield* ShopActorClient;
+      return yield* client("MerchantBlockRun", input);
+    }),
+  ),
+);
+
+/** The merchant's Unblock, one atom per run. */
+export const merchantUnblockRunAtom = Atom.family((_key: string) =>
+  ShopActorClient.runtime.fn<RunIdInput>()(
+    Effect.fnUntraced(function* (input) {
+      const client = yield* ShopActorClient;
+      return yield* client("MerchantUnblockRun", input);
+    }),
+  ),
+);
+
+/** Assign team on the order page, one atom per task. */
+export const assignRunTaskTeamAtom = Atom.family((_key: string) =>
+  ShopActorClient.runtime.fn<AssignRunTaskTeamInput>()(
+    Effect.fnUntraced(function* (input) {
+      const client = yield* ShopActorClient;
+      return yield* client("MerchantAssignRunTaskTeam", input);
+    }),
+  ),
+);
+
+/** The member's Start, one atom per task. */
+export const memberStartTaskAtom = Atom.family((_key: string) =>
+  ShopActorClient.runtime.fn<StartTaskInput>()(
+    Effect.fnUntraced(function* (input) {
+      const client = yield* ShopActorClient;
+      return yield* client("MemberStartTask", input);
+    }),
+  ),
+);
+
+/** The member's Done, one atom per task. */
+export const memberMarkTaskDoneAtom = Atom.family((_key: string) =>
+  ShopActorClient.runtime.fn<MarkTaskDoneInput>()(
+    Effect.fnUntraced(function* (input) {
+      const client = yield* ShopActorClient;
+      return yield* client("MemberMarkTaskDone", input);
+    }),
+  ),
+);
+
+/** The member's Undo, one atom per task. */
+export const memberReopenTaskAtom = Atom.family((_key: string) =>
+  ShopActorClient.runtime.fn<ReopenTaskInput>()(
+    Effect.fnUntraced(function* (input) {
+      const client = yield* ShopActorClient;
+      return yield* client("MemberReopenTask", input);
+    }),
+  ),
+);
+
+/** The member's Put back, one atom per task. */
+export const memberPutBackTaskAtom = Atom.family((_key: string) =>
+  ShopActorClient.runtime.fn<PutBackTaskInput>()(
+    Effect.fnUntraced(function* (input) {
+      const client = yield* ShopActorClient;
+      return yield* client("MemberPutBackTask", input);
+    }),
+  ),
+);
+
+/** The member's note on a run, one atom per run. */
+export const memberSetRunNoteAtom = Atom.family((_key: string) =>
+  ShopActorClient.runtime.fn<SetRunNoteInput>()(
+    Effect.fnUntraced(function* (input) {
+      const client = yield* ShopActorClient;
+      return yield* client("MemberSetRunNote", input);
+    }),
+  ),
+);
+
+/** The member's Block, one atom per run. */
+export const memberBlockRunAtom = Atom.family((_key: string) =>
+  ShopActorClient.runtime.fn<BlockRunInput>()(
+    Effect.fnUntraced(function* (input) {
+      const client = yield* ShopActorClient;
+      return yield* client("MemberBlockRun", input);
+    }),
+  ),
+);
+
+/** The member's Unblock, one atom per run. */
+export const memberUnblockRunAtom = Atom.family((_key: string) =>
+  ShopActorClient.runtime.fn<RunIdInput>()(
+    Effect.fnUntraced(function* (input) {
+      const client = yield* ShopActorClient;
+      return yield* client("MemberUnblockRun", input);
     }),
   ),
 );

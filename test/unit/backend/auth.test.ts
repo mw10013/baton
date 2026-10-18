@@ -77,7 +77,10 @@ const TestBackend = ({
         delivery,
         extra: Layer.mergeAll(
           SignInLimiter.layerTest(allow),
-          Layer.succeed(ShopAccess, { resolve: () => Effect.die("ShopAccess needs D1") }),
+          Layer.succeed(ShopAccess, {
+            resolve: () => Effect.die("ShopAccess needs D1"),
+            resolveMember: () => Effect.die("ShopAccess needs D1"),
+          }),
           testShopify(),
         ),
       }),
