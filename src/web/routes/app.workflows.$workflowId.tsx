@@ -15,6 +15,7 @@ export const Route = createFileRoute("/app/workflows/$workflowId")({
       data: { idToken: appSearch(location.searchStr).id_token, workflowId: params.workflowId },
     }),
   component: function WorkflowRoute() {
+    const { workflowId } = Route.useParams();
     const { state, q, after } = Route.useSearch();
     const searchStr = useLocation({ select: (location) => location.searchStr });
     const router = useRouter();
@@ -24,9 +25,10 @@ export const Route = createFileRoute("/app/workflows/$workflowId")({
       <WorkflowPage
         detail={Route.useLoaderData()}
         workflowsLink={navigate(index)}
+        editLink={navigate(appHref(`/app/workflows/${workflowId}/edit`, searchStr))}
         onChanged={() => router.invalidate({ sync: true })}
         onDuplicated={async (workflow) => {
-          await router.navigate({ href: appHref(`/app/workflows/${workflow.id}`, searchStr) });
+          await router.navigate({ href: appHref(`/app/workflows/${workflow.id}/edit`, searchStr) });
         }}
         onDeleted={async () => {
           await router.navigate({ href: index });

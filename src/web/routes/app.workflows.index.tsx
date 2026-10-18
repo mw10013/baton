@@ -59,7 +59,7 @@ export const Route = createFileRoute("/app/workflows/")({
         }}
         onCreated={async (workflow) => {
           await router.invalidate({ sync: true });
-          await router.navigate({ href: appHref(`${PATH}/${workflow.id}`, searchStr) });
+          await router.navigate({ href: appHref(`${PATH}/${workflow.id}/edit`, searchStr) });
         }}
       />
     );

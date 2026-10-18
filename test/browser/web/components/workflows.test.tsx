@@ -117,6 +117,19 @@ describe("WorkflowSwitch", () => {
       .toHaveAttribute("disabled");
   });
 
+  it("an inactive workflow whose tasks all have a team offers Turn on workflow enabled", async () => {
+    const screen = await renderSwitch(
+      "inactive",
+      [taskOf("Cut", "Bench")],
+      { _tag: "NoTasks" },
+      [],
+      [],
+    );
+    await expect
+      .element(screen.getByRole("button", { name: "Turn on workflow" }))
+      .not.toHaveAttribute("disabled");
+  });
+
   it("an active workflow offers Turn off workflow; Turn off writes inactive and re-reads", async () => {
     const calls: Array<string> = [];
     const messages: Array<string | null> = [];

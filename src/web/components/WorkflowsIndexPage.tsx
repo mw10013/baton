@@ -62,7 +62,7 @@ export interface WorkflowsIndexProps {
   }) => void;
   readonly onNextPage: (cursor: ShopWork.WorkflowName) => void;
   readonly onPreviousPage: () => void;
-  /** After Create: re-read the loader, then open the new workflow. */
+  /** After Create: re-read the loader, then the new workflow's editor, as Flow's Create does. */
   readonly onCreated: (workflow: ShopWork.Workflow) => Promise<void>;
 }
 

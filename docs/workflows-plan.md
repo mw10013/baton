@@ -232,6 +232,10 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - 2026-10-17, Step 5: file names `src/web/components/workflow-shared.ts` (legacy `workflowShared`), `src/web/client/polaris-modal.ts`; page components `WorkflowsIndexPage.tsx`, `WorkflowPage.tsx` beside the slice C pages; legacy's misplaced `copyName` JSDoc moved onto it.
 - 2026-10-17, Step 5: the e2e breadcrumb is `getByRole("button", { name: "Workflows" })`; legacy's `button[aria-label="Workflows"]` finds nothing in today's admin.
 - 2026-10-17, Step 5: new tests beside the legacy titles: the browser file `workflows.test.tsx` (SelectableCard, WorkflowSwitch, WorkflowTag) and two `workflow-shared` unit cases.
+- 2026-10-17, Step 6: the editor is a page only: Edit (an `href` plus router `onClick` button), Create and Duplicate navigate to `/app/workflows/$workflowId/edit`; `workflowEditorWindow`, the window's `applied`/`deleted` handling and the `s-app-window` JSX declaration are not built (see Issues). The route keeps `chrome=window`, which still renders the window form (no breadcrumb, the window's button order).
+- 2026-10-17, Step 6: the editor's help foot line ("Learn more in Editing steps and tasks.") is left out: the help pages are slice I and the link would be dead.
+- 2026-10-17, Step 6: the two editor e2e titles run on the page: `openEditor`/`closeEditor` are spec-local and press the hoisted Edit and Close; legacy's `editorFrame` helpers are not added.
+- 2026-10-17, Step 6: the editor is `WorkflowEditorPage.tsx` beside the other pages, split screen and live as they are.
 
 ### Issues
 
@@ -242,6 +246,8 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - 2026-10-17, Step 3: `createDraft` has no procedure, so integ and unit start a draft with a task write (or the repository's `createDraft` in unit).
 - 2026-10-17, Step 5: every embedded page, slice C's included, logs Polaris's "Only Button elements with a `variant` of `primary` are allowed in the `primary-action` slot" warning in the e2e server log; the workflow pages add to it and nothing fails. Not investigated.
 - 2026-10-17, Step 5: one `vp check --fix | tail -1` hid 21 type errors in the new e2e and browser tests (branded fixture literals, an `s-clickable` cast); fixed before the commit by decoding the e2e fixture through `ShopFixtureData`.
+- 2026-10-17, Step 6 check (dev store, Playwright CLI): an `s-app-window` with `src` `/app/workflows/<id>/edit?chrome=window` opened from the workflow page loaded the editor with no session-token bounce; the admin added `admin_theme`, `embedded=1`, `hmac`, `host`, `id_token`, `locale`, `session`, `shop`, `timestamp` to `src`. The window hydrated, opened its own merchant socket (a second `socket accepted`), a task Save created the draft and Discard cleared it, and a `BroadcastChannel` message posted from the window closed it through the opener's hook. All three checks held.
+- 2026-10-17, Step 6: the window still fails in use: the admin draws its title bar once from the page's slots and never follows a later change. In e2e the hoisted Turn on workflow stayed disabled after the first step (the in-frame button was enabled), and on the dev store Discard changes and Apply changes never appeared after the first edit. Remounting the button, and keying the whole `s-page`, did not redraw it; toggling `disabled` by hand on an in-window title-bar button changed nothing in the admin's copy. The page form follows every change (all ten workflow e2e titles pass), so Edit and Create navigate to the editor page and the window is a follow-up.
 
 ### Command results
 
@@ -250,6 +256,7 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - 2026-10-17, Step 3: `vp check` pass (256 files); `vp test` 60 files, 676 tests, 39.3 s (after two runs with the one socket-open failure above); `vp run test:e2e` 40 passed, 3.5 min.
 - 2026-10-17, Step 4: `vp check` pass (259 files); `vp test` 60 files, 683 tests, 42.7 s; `vp run test:e2e` 40 passed, 3.4 min.
 - 2026-10-17, Step 5: `vp check` pass (280 files); `vp test` 62 files, 692 tests, 50.8 s; `vp run test:e2e` 46 passed, 3.7 min (before the type-only test fixes; after them the browser file 6 passed and `workflows.spec.ts` 8 passed, 1.1 min).
+- 2026-10-17, Step 6: `vp check` pass (282 files); `vp test` 62 files, 693 tests, 57.3 s; `vp run test:e2e` 48 passed, 4.0 min.
 
 ### Human steps requested
 

@@ -1,4 +1,4 @@
-import type { Browser } from "playwright/test";
+import type { Browser, Locator } from "playwright/test";
 
 import { gotoApp } from "../../../scripts/lib/embedded-app.ts";
 import { storageStatePath } from "../../../playwright.config.ts";
@@ -22,3 +22,10 @@ export const openApp = async (browser: Browser) => {
   const page = await context.newPage();
   return { context, page, frame: await gotoApp(page) };
 };
+
+/** Whether a hoisted title-bar control is there and enabled: App Bridge mirrors `disabled` onto it. */
+export const hoistedEnabled = async (locator: Locator): Promise<boolean> =>
+  (await locator.count()) > 0 &&
+  locator.evaluate(
+    (el) => !(el as HTMLButtonElement).disabled && el.getAttribute("aria-disabled") !== "true",
+  );

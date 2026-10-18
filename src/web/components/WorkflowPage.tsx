@@ -54,9 +54,11 @@ export interface WorkflowPageProps {
   readonly detail: ShopWork.WorkflowPageData | null;
   /** The breadcrumb to the workflows index, with the index's filter, search and page. */
   readonly workflowsLink: PageLink;
+  /** Edit: the workflow's editor page. */
+  readonly editLink: PageLink;
   /** After a write: re-read the loader. */
   readonly onChanged: () => Promise<void>;
-  /** After Duplicate: open the copy. */
+  /** After Duplicate: the copy's editor. */
   readonly onDuplicated: (workflow: ShopWork.Workflow) => Promise<void>;
   /** After Delete: back to the workflows index. */
   readonly onDeleted: () => Promise<void>;
@@ -195,6 +197,9 @@ function WorkflowScreen(
           )}
         </>
       )}
+      <s-button slot="secondary-actions" icon="edit" {...props.editLink}>
+        {ShopWork.RECORD_VERB_LABEL.edit}
+      </s-button>
       <s-button slot="secondary-actions" commandFor="workflow-actions">
         More actions
       </s-button>
