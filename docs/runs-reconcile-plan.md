@@ -429,6 +429,21 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 4. **The interim orders screen** shows every stored order (`show: "all"`) until Step 6 brings the full index, whose default is Making. Fine as an interim step; no action unless Steps 5–7 are split across sessions.
 5. **The `callables:` rows' third case** (a member who sees the run but holds no current task) is pinned by the unit matrix only. Integ drives the merchant and the member on the task's team. Accept, or add one integ row.
 
+**Decisions** (2026-10-18; the orchestrator's answers, which the user agreed):
+
+1. Steps 5–7 go to the same implementer, on `main`, one step per commit; the lead verifies at the end of Step 7. No worktree split. The run stops at Step 8's `CHECKPOINT: ready for staging`.
+2. **The hydration flake gets no fix in this slice.** A separate thread investigates it in wt-01.
+   - Do not change `awaitHydration`, `prepareApp`, timeouts or retries.
+   - A failure counts as the known flake only if all three hold:
+     - it fails at `awaitHydration`, never at an assertion;
+     - the spec passes alone;
+     - a full re-run passes.
+   - Log each occurrence under Command results: the spec, the run and the time, for matching against `.logs/e2e`.
+   - The lead's two occurrences at this checkpoint: run 1 ended about 12:31, at `install.setup.ts`; run 2 ran about 12:31–12:36, at `embedded/home.spec.ts`. Neither spec was re-run alone; the third full run passed.
+3. Fixture actors with no seeding member: confirmed as built.
+4. The interim orders screen: no action; Step 6 brings the full index.
+5. Step 7 adds one integration `callables:` row: a member who sees the run but holds no current task.
+
 ## 8. Out of scope
 
 - Billing (G): `countOrder`'s body, the cycle, the usage outbox and flush, the metering titles, `QuotaBanners`, the lapsed page and the plan half of member access, the home page's plan tiles and Manage plan.
