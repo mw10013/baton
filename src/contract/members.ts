@@ -1,5 +1,6 @@
 import * as Schema from "effect/Schema";
-import { TeamId, TeamName } from "../domain/shop-work.ts";
+import { Email, ShopLimits } from "../domain/platform.ts";
+import { MemberId, TeamId, TeamName } from "../domain/shop-work.ts";
 import { ShopKey } from "./shop.ts";
 
 /**
@@ -45,3 +46,48 @@ export class MemberNotFoundError extends Schema.TaggedError<MemberNotFoundError>
   "MemberNotFoundError",
   { shop: ShopKey, member: Schema.String },
 ) {}
+
+/** `MerchantAddMember`'s payload: the email to add, trimmed and lowercased on decode. */
+export const AddMemberInput = Schema.Struct({ email: Email });
+export type AddMemberInput = typeof AddMemberInput.Type;
+
+/**
+ * `MerchantDeleteMember`'s payload: by email, as legacy's `deleteMember` is keyed, because the
+ * delete answers the id the revoke closes.
+ */
+export const DeleteMemberInput = Schema.Struct({ email: Email });
+export type DeleteMemberInput = typeof DeleteMemberInput.Type;
+
+/** `MerchantAddMemberTeams`' payload: one member onto at most `ShopLimits.maxTeams` teams. */
+export const AddMemberTeamsInput = Schema.Struct({
+  memberId: MemberId,
+  teamIds: Schema.Array(TeamId).check(Schema.isMaxLength(ShopLimits.maxTeams)),
+});
+export type AddMemberTeamsInput = typeof AddMemberTeamsInput.Type;
+
+/** `MerchantSetTeamMember`'s payload: puts the member on the team, or takes them off. */
+export const SetTeamMemberInput = Schema.Struct({
+  teamId: TeamId,
+  memberId: MemberId,
+  inTeam: Schema.Boolean,
+});
+export type SetTeamMemberInput = typeof SetTeamMemberInput.Type;
+
+/** `MerchantCreateTeam`'s payload: the name, trimmed on decode. */
+export const CreateTeamInput = Schema.Struct({ name: TeamName });
+export type CreateTeamInput = typeof CreateTeamInput.Type;
+
+/** `MerchantRenameTeam`'s payload. */
+export const RenameTeamInput = Schema.Struct({ teamId: TeamId, name: TeamName });
+export type RenameTeamInput = typeof RenameTeamInput.Type;
+
+/** `MerchantAddTeamMembers`' payload: at most `ShopLimits.maxMembers` members onto one team. */
+export const AddTeamMembersInput = Schema.Struct({
+  teamId: TeamId,
+  memberIds: Schema.Array(MemberId).check(Schema.isMaxLength(ShopLimits.maxMembers)),
+});
+export type AddTeamMembersInput = typeof AddTeamMembersInput.Type;
+
+/** `MerchantDeleteTeam`'s payload. */
+export const DeleteTeamInput = Schema.Struct({ teamId: TeamId });
+export type DeleteTeamInput = typeof DeleteTeamInput.Type;

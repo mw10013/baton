@@ -57,6 +57,8 @@ import {
   type Transaction,
 } from "./shop-actor/orders.ts";
 import { makeOrdersAgent } from "./shop-actor/orders-agent.ts";
+import { makeMembersAgent } from "./shop-actor/members-agent.ts";
+import { Members } from "./members.ts";
 import { OrdersSyncWorkflow } from "./orders-sync-workflow.ts";
 import ShopActor, { ABORT_UNINSTALLED, type ShopActorShape } from "./shop-actor/tag.ts";
 import { ShopSessions } from "./shop-sessions.ts";
@@ -399,6 +401,7 @@ const makeShopActor = Effect.gen(function* () {
   const state = yield* Cloudflare.DurableObjectState;
   const admin = yield* ShopifyAdmin;
   const shopSessions = yield* ShopSessions;
+  const members = yield* Members;
   const workflows = yield* OrdersSyncWorkflow;
   return Effect.gen(function* () {
     // Every actor is reached by name (`getByName`), so a nameless id is a broken invariant.
@@ -447,6 +450,16 @@ const makeShopActor = Effect.gen(function* () {
       admin,
       workflows,
       notify,
+      shop,
+    });
+
+    const membersAgent = makeMembersAgent({
+      members,
+      revoke: (memberIds) =>
+        Effect.forEach(memberIds, (memberId) => closeTagged(`member:${memberId}`)).pipe(
+          Effect.map((closed) => closed.reduce((sum, n) => sum + n, 0)),
+          Effect.provide(runtime),
+        ),
       shop,
     });
 
@@ -532,6 +545,14 @@ const makeShopActor = Effect.gen(function* () {
       MerchantSyncOpenOrders: () => syncOpenOrdersFor("ShopActor.MerchantSyncOpenOrders"),
       MerchantSyncOrder: (input) =>
         ordersAgent.syncOrder(input).pipe(Effect.catch(syncFailure("ShopActor.MerchantSyncOrder"))),
+      MerchantAddMember: membersAgent.addMember,
+      MerchantDeleteMember: membersAgent.deleteMember,
+      MerchantAddMemberTeams: membersAgent.addMemberTeams,
+      MerchantSetTeamMember: membersAgent.setTeamMember,
+      MerchantCreateTeam: membersAgent.createTeam,
+      MerchantRenameTeam: membersAgent.renameTeam,
+      MerchantAddTeamMembers: membersAgent.addTeamMembers,
+      MerchantDeleteTeam: membersAgent.deleteTeam,
     });
 
     const socket = yield* ActorSocket.make({
@@ -590,6 +611,21 @@ const makeShopActor = Effect.gen(function* () {
     });
 
     /**
+     * Closes every open socket tagged `tag` (`member:<id>` or `session:<id>`) with
+     * {@link CONNECTION_CLOSE_REVOKED} and answers how many it closed: the one close routine of
+     * the stub's {@link revoke} and the member and team writes ({@link membersAgent}).
+     */
+    const closeTagged = Effect.fn("ShopActor.closeTagged")(function* (tag: string) {
+      let closed = 0;
+      for (const ws of yield* state.getWebSockets(tag)) {
+        if (ws.ws.readyState !== WebSocket.OPEN) continue;
+        yield* closeSocket(ws, CONNECTION_CLOSE_REVOKED, REVOKED_REASON);
+        closed += 1;
+      }
+      return closed;
+    });
+
+    /**
      * Closes every socket of one member (`by: "member"`, Baton's `revokeMemberConnections`) or
      * of one Better Auth session (`by: "session"`) with {@link CONNECTION_CLOSE_REVOKED}.
      */
@@ -597,12 +633,7 @@ const makeShopActor = Effect.gen(function* () {
       readonly by: "member" | "session";
       readonly id: string;
     }) {
-      let closed = 0;
-      for (const ws of yield* state.getWebSockets(`${input.by}:${input.id}`)) {
-        if (ws.ws.readyState !== WebSocket.OPEN) continue;
-        yield* closeSocket(ws, CONNECTION_CLOSE_REVOKED, REVOKED_REASON);
-        closed += 1;
-      }
+      const closed = yield* closeTagged(`${input.by}:${input.id}`);
       yield* Effect.logInfo(`ShopActor.revoke: shop=${shop} by=${input.by} closed=${closed}`);
       return { closed };
     }, Effect.provide(runtime));

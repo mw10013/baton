@@ -8,8 +8,29 @@ import {
   SyncOrderInput,
   SyncOrderResult,
 } from "../domain/orders.ts";
-import { ListOrdersInput, OrdersCursor } from "../domain/shop-work.ts";
+import {
+  DeleteTeamResult,
+  ListOrdersInput,
+  Member,
+  OrdersCursor,
+  Team,
+} from "../domain/shop-work.ts";
 import { Email, Forbidden } from "./auth.ts";
+import {
+  AddMemberInput,
+  AddMemberTeamsInput,
+  AddTeamMembersInput,
+  CreateTeamInput,
+  DeleteMemberInput,
+  DeleteTeamInput,
+  MemberCeilingError,
+  MemberNotFoundError,
+  RenameTeamInput,
+  SetTeamMemberInput,
+  TeamLimitError,
+  TeamNameTakenError,
+  TeamNotFoundError,
+} from "./members.ts";
 import { OrdersSyncFailure } from "./shopify.ts";
 
 export const Count = Schema.Struct({ value: Schema.Int });
@@ -201,6 +222,25 @@ export const MerchantRpcs = RpcGroup.make(
     success: SyncOrderResult,
     error: OrdersSyncFailure,
   }),
+  Rpc.make("MerchantAddMember", {
+    payload: AddMemberInput,
+    success: Member,
+    error: MemberCeilingError,
+  }),
+  Rpc.make("MerchantDeleteMember", { payload: DeleteMemberInput, error: MemberNotFoundError }),
+  Rpc.make("MerchantAddMemberTeams", { payload: AddMemberTeamsInput, error: MemberNotFoundError }),
+  Rpc.make("MerchantSetTeamMember", { payload: SetTeamMemberInput, error: TeamNotFoundError }),
+  Rpc.make("MerchantCreateTeam", {
+    payload: CreateTeamInput,
+    success: Team,
+    error: Schema.Union([TeamLimitError, TeamNameTakenError]),
+  }),
+  Rpc.make("MerchantRenameTeam", {
+    payload: RenameTeamInput,
+    error: Schema.Union([TeamNameTakenError, TeamNotFoundError]),
+  }),
+  Rpc.make("MerchantAddTeamMembers", { payload: AddTeamMembersInput, error: TeamNotFoundError }),
+  Rpc.make("MerchantDeleteTeam", { payload: DeleteTeamInput, success: DeleteTeamResult }),
 )
   .middleware(RequireMerchant)
   .middleware(ConnectionMiddleware);
