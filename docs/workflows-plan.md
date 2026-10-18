@@ -263,6 +263,9 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - 2026-10-17, Step 5: `vp check` pass (280 files); `vp test` 62 files, 692 tests, 50.8 s; `vp run test:e2e` 46 passed, 3.7 min (before the type-only test fixes; after them the browser file 6 passed and `workflows.spec.ts` 8 passed, 1.1 min).
 - 2026-10-17, Step 6: `vp check` pass (282 files); `vp test` 62 files, 693 tests, 57.3 s; `vp run test:e2e` 48 passed, 4.0 min.
 - 2026-10-17, Step 7: `vp check` pass (288 files); `vp test` 63 files, 696 tests, 56.6 s; `vp run test:e2e` 49 passed, 3.9 min.
+- 2026-10-17, Step 8 (§5 checklist): sixteen `Merchant…` workflow procedures in `MerchantRpcs`; every `createServerFn` in `workflows.ts`, `home.ts` (and `dev-kit.ts`) is GET; `ShopActorShape` gained exactly `listWorkflows`, `getWorkflowDetail`, `workflowSetupFacts`; no `MembershipRepository` call inside a `transaction(…)` (`teams()` and `listTeams` run before each repository call, read handler by handler); every legacy title of §4 found byte for byte (`grep -rlF`, one file each); no `…Agent`, `Members`, `ShopSessions` or `OrdersBulkRepository` symbol outside `src/domain/` legacy prose; no uppercase SQL keyword in `workflow-repository.ts`; the current `.alchemy/bundles/Backend/` entry bundles (2026-10-18) hold no `IntegRpcs` or `ShopifyFake` string (only 40 stale bundles from 2026-10-16 do).
+- 2026-10-17, Step 8: `vp check` pass.
+- CHECKPOINT: ready for staging (36a12b4)
 
 ### Human steps requested
 
