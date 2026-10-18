@@ -424,6 +424,7 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
   - Unverified until that run: Steps 6–7's specs, the `openOrders` navLink scope and the `workflows.spec.ts:336` fix.
   - Owed: the two member e2e specs (Needs a decision (Step 7) 1).
 - 2026-10-18, Step 8: `vp check` pass (341 files); `vp test` 75 files, 971 tests, 47.5 s (16:09).
+- CHECKPOINT: ready for staging (e2e pending: orchestrator) (4343234)
 
 ### Human steps requested
 
