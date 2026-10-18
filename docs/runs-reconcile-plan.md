@@ -336,9 +336,16 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 
 ### Deviations
 
+- 2026-10-18, Step 1: the matrix rows live in a new `test/unit/domain/run-actions.test.ts` (legacy's file name), with "lineItemState has one kind per layout" under `"Domain.lineItemState"` beside them; the word→value maps and the reconcile universe are built in the test (216 fixtures, asserted).
+- 2026-10-18, Step 1: JSDoc sweep: legacy tooling sentences (`pnpm spec check`, `scripts/rules-lint.ts`, `scripts/lib/spec.ts`, the controls table in `Screen.ts`, `useLiveQuery`'s throttle, "Always send the key … `onExcessProperty`") are dropped or restated as the rule alone; `initializeSchema` / `ShopAgentSchema.ts` become "the actor's data model"; `RunRepository.x` / `OrderRepository.x` become "the run (order) repository's `x`"; `ShopWorkAgent.reconcileAllNow` / `eligibleContext` become `Runs.reconcileAll` / `Runs.eligibleContext`; `ShopAgent.*` become `Orders.*`, `Runs.merchantAttachWorkflow` or the bare callback name; legacy route and file names become the screen's name. Table cells kept their padding where the row is parsed (the three matrices render unchanged).
+- 2026-10-18, Step 1: rule 14's "where" cell names `onOrdersStream`, `onOrdersSyncEmpty` (this repo has no completion callback; the stream and the empty callback clear the tracking record).
+
 ### Issues
 
 ### Command results
+
+- 2026-10-18, Step 1, titles: `node /tmp/baton-spec/titles.ts` (legacy `ShopWork.ts`) and `node /tmp/baton-spec/titles.ts src/domain/shop-work.ts` render the same 10, 9 and 13 rows (`diff` empty, before and after the JSDoc sweep); the test's titles are that output pasted.
+- 2026-10-18, Step 1: `vp check` pass (293 files); `vp test` 65 files, 738 tests, 56.5 s; `vp run test:e2e` 49 passed, 4.2 min.
 
 ### Human steps requested
 

@@ -6,9 +6,7 @@
  * {@link RUN_STATE_LABEL}, {@link WORKFLOW_STATE_LABEL},
  * {@link ORDER_POSITION_LABEL}, {@link ORDER_ISSUE_LABEL},
  * {@link WORKFLOW_FAULT_LABEL}, {@link VERB_LABEL},
- * {@link RECORD_VERB_LABEL}), and `pnpm spec check`
- * refuses a cell that differs, so
- * a label change starts here.
+ * {@link RECORD_VERB_LABEL}), so a label change starts here.
  *
  * Nouns, shop work. "(none)" means no screen says the word; the
  * cell says what a screen shows instead:
@@ -29,8 +27,8 @@
  * | count         | how many rows a filter value would show, given the other filters and never the search                      | `OrderCounts`, `RunListCounts`                                                           | the number beside the value                                 |
  * | search        | free text matched against a row's order number, item title, variant title and SKU, or a workflow's name; finds, does not narrow | `ListSearch`, `searchTerm`                                                               | Search by order number or item                              |
  * | default       | what a list shows with no filter and no search                                                             | `null` show (Making); `DEFAULT_WORKFLOWS_LIST_STATE`                                     | Making; Started by you                                      |
- * | reconcile     | make an order's runs agree with the order and the eligible workflows; idempotent                           | `reconcileItem`, `RunRepository.reconcileOrder`                                          | (none)                                                      |
- * | reconcile all | reconcile every stored open, paid order once, after anything that changes which workflows are eligible     | `ShopWorkAgent.reconcileAllNow`, `RunRepository.reconcileAll`                            | (none)                                                      |
+ * | reconcile     | make an order's runs agree with the order and the eligible workflows; idempotent                           | `reconcileItem`, the run repository's `reconcileOrder`                                   | (none)                                                      |
+ * | reconcile all | reconcile every stored open, paid order once, after anything that changes which workflows are eligible     | `Runs.reconcileAll`, the run repository's `reconcileAll`                                 | (none)                                                      |
  * | eligible      | an active workflow that has a task and has every task on a team; only an eligible workflow creates runs    | `workflowIsEligible`, `EligibleContext`                                                  | (none): Needs a team names the fault                        |
  * | match         | an item and an eligible workflow: a product tag equals the workflow's tag and units to make are above zero | `itemMatches`                                                                            | the order page's Workflow select lists them first                    |
  * | multi-match   | an item two or more eligible workflows match, with units to make and no run in any state                   | `multiMatchItems`, `OrderIssue` `multi_match`                                            | Multiple workflows match                                    |
@@ -48,8 +46,8 @@
  * "run" is an implementation noun a merchant or member would have to learn;
  * the merchant already has the item and its workflow (Change workflow replaces
  * the run without naming it), and the member has the item's workflow and
- * its tasks. `scripts/rules-lint.ts` refuses "run", "line item" and the
- * other retired words in screen strings. The run's screen word is
+ * its tasks. "Run", "line item" and the other retired words never appear
+ * in screen strings. The run's screen word is
  * "workflow" with the item beside it: the member's row is the item ("Brass
  * hinge ×2") over its tasks and then "Finishing · Step 2 of 3", the workflow
  * page heads "Finishing workflow · #1001". On the merchant's Workflows pages a bare
@@ -173,8 +171,7 @@
  *
  * A verb's title-bar form, when it differs, is {@link SWITCH_TITLE_LABEL}:
  * the switch reads Turn on workflow and Turn off workflow in the title bar
- * and Turn on, Turn off as the modal primary (the controls table in
- * `Screen.ts`).
+ * and Turn on, Turn off as the modal primary.
  *
  * Record verbs, shop work: what the merchant does to a team, a workflow or
  * a member, or to a set one holds, beside the work verbs above. Create is
@@ -186,8 +183,7 @@
  * id) is a storage fact the screen never shows. Delete is a member's delete
  * as it is a team's, and Remove still never names a delete: it takes a
  * thing out of a set and both still exist. Edit is a workflow's tasks only;
- * "Edit <noun>s" for a set is retired. Which control each one is, is the
- * controls table on `Control` in `Screen.ts`. The screen column is
+ * "Edit <noun>s" for a set is retired. The screen column is
  * {@link RECORD_VERB_LABEL}, and a button reads its verb from it:
  *
  * | word      | on a                      | for                                                                                                                       | merchant  |
@@ -207,8 +203,8 @@
  * rule for every list. A page
  * never decides a gate itself: what an item's card is comes from
  * {@link lineItemState}, and which writes an actor may make comes from
- * {@link runActions} and {@link taskActions}, which the page and `ShopAgent`
- * both read.
+ * {@link runActions} and {@link taskActions}, which the page and the actor's
+ * procedures both read.
  *
  * @module
  */
@@ -466,7 +462,7 @@ export type MemberId = typeof MemberId.Type;
 /**
  * Merchant copy: **delete a member and they leave their teams.**
  * Structure on {@link D1_TABLES}; how run history survives the delete is a
- * row on {@link initializeSchema}.
+ * row of the actor's data model (`migrations` in the shop actor).
  */
 export const Member = Schema.Struct({
   id: MemberId,
@@ -518,7 +514,7 @@ export type TeamName = typeof TeamName.Type;
  * its tasks become unassigned until you assign a team.**
  * The order of the delete is the team-delete row on {@link D1_TABLES};
  * which task pointers it nulls and why history never needs the row are the
- * cross-store rows on {@link initializeSchema}.
+ * cross-store rows of the actor's data model.
  * A team with nobody on it is valid and shows **No members** on the teams
  * index (on a workflow it is the `empty_team` {@link WorkflowFault}):
  * its tasks can still create runs, nobody can work them until someone joins,
@@ -750,7 +746,7 @@ export type WorkflowState = typeof WorkflowState.Type;
  *
  * - **Workflow**: name, type, tag, tasks, Active / Inactive. This is what
  *   creates runs. Runs copy it wholesale and never look back at it (the
- *   data model on `initializeSchema`, `ShopAgentSchema.ts`).
+ *   actor's data model).
  * - **Draft**: a private copy of the workflow's **tasks**, created by
  *   Edit and living until Apply or Discard. Every edit writes to the draft
  *   immediately; there is no unsaved state anywhere.
@@ -788,7 +784,7 @@ export type WorkflowState = typeof WorkflowState.Type;
  * Apply and only that; **any open task on a run can be assigned to another
  * team**, a done task is history; **deleting configuration never deletes
  * work**. Delete removes the definition, its tasks, and its draft, nothing
- * else (the data model on `initializeSchema`, `ShopAgentSchema.ts`) — a run
+ * else (the actor's data model) — a run
  * is self-sufficient, so it needs no confirm counts and the dialog says only
  * what survives. The id is identity, the tag is the key a product carries,
  * and the name is the label people pick a workflow by. Both are unique:
@@ -854,8 +850,8 @@ export type WorkflowNameRow = typeof WorkflowNameRow.Type;
  * team that exists. `null` is **unassigned** — what a team delete leaves
  * behind — and an id no D1 row carries reads the same way. It carries no
  * `teamName`: the name is joined at read time, and only the eventual
- * instance rows snapshot it. The pointer's rule is the data model on
- * `initializeSchema` (`ShopAgentSchema.ts`).
+ * instance rows snapshot it. The pointer's rule is the actor's data
+ * model.
  *
  * Stored as one element of its workflow's `tasks` or `draftTasks` document
  * ({@link WorkflowTasks}); `position` is the element's index from 1, filled
@@ -1118,14 +1114,14 @@ export const UpdateTaskInput = Schema.Struct({
 export type UpdateTaskInput = typeof UpdateTaskInput.Type;
 
 /**
- * The whole workflow fixture for `ShopAgent.seedWorkflows`, tasks inline: one
+ * The whole workflow fixture, tasks inline: one
  * declarative payload written in one transaction, rather than a
  * `createWorkflow` + `addStep`-per-task conversation whose failure midway
  * leaves a half-built definition. `position` is array order; `teamId` is a D1
  * `Team.id` the caller has already created, so the team check `AddStepInput`
  * exists to trigger has nothing left to catch — or `null`, which seeds the
  * task **unassigned** so the Needs a team badge is visible on the workflows
- * and orders indexes after `pnpm seed`. A task with no `step` gets the previous task's step + 1
+ * and orders indexes once the fixture loads. A task with no `step` gets the previous task's step + 1
  * (linear); the repository validates the step invariant before writing.
  *
  * `tasks` become the workflow's tasks; a fixture with no tasks and no
@@ -1471,7 +1467,7 @@ export const SeedOrdersInput = Schema.Struct({
            * Applied before progress so the run it creates is one the rounds
            * below then advance. Callers above this schema name the workflow
            * instead — ids are minted by the seed moments earlier — and
-           * `api.dev.seed.ts` maps the name to the id.
+           * the fixture maps the name to the id.
            */
           workflowId: Schema.optionalKey(Schema.String),
         }),
@@ -1528,8 +1524,8 @@ export type SeedOrdersInput = typeof SeedOrdersInput.Type;
  * Baton.
  *
  * The rule is a function, not a table: {@link orderPosition} is the one
- * definition, and the SQL filters in `OrderRepository.listOrders` restate its
- * branches and must move with it. Readers (`app.orders.index.tsx`) switch on
+ * definition, and the SQL filters in the order repository's `listOrders` restate its
+ * branches and must move with it. Readers (the orders index) switch on
  * the value for labels and filters only; no site decides anything by
  * comparing it inline. The labels are {@link ORDER_POSITION_LABEL}.
  */
@@ -1551,7 +1547,7 @@ export type OrderPosition = typeof OrderPosition.Type;
  * ({@link orderPosition}) is itself; `"issues"` is every open order with at
  * least one {@link orderIssues} element; `"all"` is every stored order,
  * cancelled included, and the only value that reads both open and closed
- * orders. Keyed `?show=` in the URL (`OrdersSearch` in `app.orders.tsx`).
+ * orders. Keyed `?show=` in the orders index's URL.
  *
  * **One value at a time; the values do not combine.** The axis is not one
  * fact about an order but the list the merchant wants, so its word is the
@@ -1575,7 +1571,7 @@ export type OrdersShow = typeof OrdersShow.Type;
 /**
  * **An issue is an open order that will not move until the merchant acts**:
  * the orders index's Issues value of its Show filter and its Issues column. The one definition is
- * {@link orderIssues}; the SQL predicates in `OrderRepository.listOrders`
+ * {@link orderIssues}; the SQL predicates in the order repository's `listOrders`
  * restate each element and must move with it.
  *
  * | Issue         | Rule                           | Remedy                              |
@@ -1657,7 +1653,7 @@ export type WorkflowFault = typeof WorkflowFault.Type;
  * those writes.
  *
  * The shape is checked, not just the length: the cursor rides the orders URL
- * as `?after=` (`OrdersSearch` in `app.orders.tsx`), where a value that does
+ * as `?after=`, where a value that does
  * not decode reads as page one. Text that is not a cursor at all would
  * otherwise pass, be read as page one by the repository, and still light
  * Previous, because the page is "not page one" whenever `after` is present.
@@ -1763,7 +1759,7 @@ export const ListOrdersInput = Schema.Struct({
   q: Schema.NullOr(ListSearch),
   /**
    * {@link OrdersShow}: `null` is Making, `"all"` is every order. A position
-   * and `"issues"` each have a SQL form in `OrderRepository.listOrders` that
+   * and `"issues"` each have a SQL form in the order repository's `listOrders` that
    * restates `orderPosition` or `orderIssues`. Always send the key, for the
    * same reason as `team`.
    */
@@ -1784,9 +1780,8 @@ export const ListOrdersInput = Schema.Struct({
    * still matches, so the filter shows the orders that team needs a member
    * for.
    *
-   * Always send the key. `ShopAgent.listOrders` parses with
-   * `onExcessProperty: "error"`, and an omitted key is a different failure
-   * than a null one.
+   * Always send the key: an omitted key is a different value than a null
+   * one.
    */
   team: Schema.NullOr(TeamId),
 });
@@ -1860,7 +1855,7 @@ export type OrderRow = typeof OrderRow.Type;
  * new one from the Workflow select. Whether that is an issue is
  * {@link orderIssues}' question, and the answer is no: a closed run is a
  * decided item. The SQL forms
- * in `OrderRepository.listOrders` restate these branches and must move with
+ * in the order repository's `listOrders` restate these branches and must move with
  * them.
  *
  * Takes the two fields it reads rather than a whole `OrderRow`, so the order
@@ -1889,7 +1884,7 @@ export const orderPosition = ({ order, runs }: Pick<OrderRow, "order" | "runs">)
  * {@link OrderIssue}s, in
  * `OrderIssue` order; `[]` for a closed order. The one definition: the orders index's
  * Issues column renders this result, and Show: Issues is this result's
- * non-emptiness, restated in SQL in `OrderRepository.listOrders`.
+ * non-emptiness, restated in SQL in the order repository's `listOrders`.
  */
 export const orderIssues = ({
   order,
@@ -1918,7 +1913,7 @@ export const ORDER_ISSUE_TONE = "critical";
  * The order's **multi-match** items, the noun's one definition in code; the
  * meaning is the vocabulary row. Reconcile logs them and `OrderRow`'s count
  * is their number. The SQL twin `MULTI_MATCH_ITEM` in
- * `OrderRepository.listOrders` restates it and must move with it.
+ * the order repository's `listOrders` restates it and must move with it.
  *
  * Any run counts, `done` and `closed` included: a `done` run means the item
  * was routed and done, and a closed run still holds its item
@@ -1969,9 +1964,8 @@ export const runCounts = (runs: readonly Run[]): RunCounts =>
  * ({@link OrdersShow}): on a shop with years of history that would be a full-table read on
  * every refresh of a live screen.
  *
- * Refreshes are bounded by the live screen's invalidation throttle,
- * `INVALIDATION_THROTTLE_MS` in `useLiveQuery` (2 s), not by anything
- * here.
+ * Refreshes are bounded by the notices of the live screen's reactivity
+ * key, not by anything here.
  */
 export const OrderCounts = Schema.Struct({
   no_workflow: Schema.Number,
@@ -2143,10 +2137,9 @@ export const actorIsMember = (actor: ActorDisplay, email: Email) =>
   actor.role === "member" && actor.email === email;
 
 /**
- * `connectedAt` (epoch ms) is when `ShopAgent.onConnect` identified the
- * connection, read from `Clock`. The agents SDK does not order
- * `getConnections`, so the state carries the order that
- * `ShopAgent.displaceConnections` needs to find a member's oldest connection.
+ * `connectedAt` (epoch ms) is when the actor accepted the connection, read
+ * from `Clock`. The socket list carries no order, so the state carries the
+ * order displacement needs to find a member's oldest connection.
  */
 export const MerchantConnectionState = Schema.Struct({
   role: Schema.Literal("merchant"),
@@ -2194,7 +2187,7 @@ export type RunTaskId = typeof RunTaskId.Type;
  * fulfilment is final, and the way forward is to start again. The merchant
  * may pick any workflow for a done or closed item by hand, its own included;
  * that replaces the row with a fresh run copied from the definition
- * (`RunRepository.setRun`).
+ * (the run repository's `setRun`).
  *
  * **Shopify events never create a to-do.** A Shopify change is applied to the
  * run and waits on nobody: the order fulfilled or cancelled closes every open
@@ -2212,14 +2205,13 @@ export type RunTaskId = typeof RunTaskId.Type;
  * What each state means to reconcile and the data model. Who may do each
  * verb in each state, and which page offers it, is {@link runActions} and
  * {@link taskActions}; `RunTerminalError` is the repository's refusal under
- * them. `pnpm spec check` does not read this table: it names the predicate
- * per rule, not a result per state.
+ * them. This table names the predicate per rule, not a result per state.
  *
  * | rule                                                                    | gate                                                                       |
  * | ----------------------------------------------------------------------- | -------------------------------------------------------------------------- |
  * | reconcile resizes                                                       | {@link runIsOpen}                                                          |
  * | reconcile closes                                                        | {@link runIsOpen}                                                          |
- * | holds its item: one run per item (the data model on `initializeSchema`) | always, `done` and `closed` included                                       |
+ * | holds its item: one run per item (the actor's data model)               | always, `done` and `closed` included                                       |
  * | replaced by a manual attach                                             | always; open and done behind the confirm that names what is lost, closed from the Workflow select with none |
  *
  * A `done` run holds its item — a done item is not rerouted — but
@@ -2310,8 +2302,7 @@ export const runIsStarted = (run: { readonly startedAt: number | null }) => run.
  * The run carries a record a replacement would lose: a task started or
  * done, a block, or a note. Change workflow inserts the new run fresh from
  * its definition, so all four go with the old row, and its modal names
- * them as the `confirm` slot (the controls row "a verb that replaces a run
- * with a record on it", on `Control` in `Screen.ts`). A run with none of
+ * them as the `confirm` slot. A run with none of
  * them loses nothing, and the modal says nothing. A run has a record when
  * a task is started or done, the run is blocked, or it has a note.
  */
@@ -2341,14 +2332,14 @@ export const runIsDone = (run: { readonly state: RunState }) => run.state === "d
  * the run's open state).
  *
  * What a block changes. Every site reads this predicate, never the column.
- * `pnpm spec check` does not read this table: it names the enforcer
+ * This table names the enforcer
  * per rule, not a result per state, and the action matrices pin each result
  * it describes.
  *
  * | rule                                                                    | enforcer                                     |
  * | ----------------------------------------------------------------------- | -------------------------------------------- |
  * | which verbs a block refuses and which it leaves: the `blocked yes` rows | {@link taskActions}, {@link runActions}      |
- * | a blocked run holds no team ("waiting on") and shows no Now line        | `OrderRepository.listOrders`, the order page |
+ * | a blocked run holds no team ("waiting on") and shows no Now line        | the order repository's `listOrders`, the order page |
  * | counted as `blocked`, open runs only                                    | {@link runCounts}                            |
  * | the run's row is in the Blocked state                                   | {@link listStateOf}                          |
  *
@@ -2366,8 +2357,7 @@ export const runIsBlocked = (run: { readonly blockedAt: number | null }) => run.
  * order is gone; the snapshots are for reading, not for outliving the order.
  *
  * What a run references, what it survives, and that an item has at most one
- * run are rules of the data model on `initializeSchema`
- * (`ShopAgentSchema.ts`), so replacing a workflow means deleting the
+ * run are rules of the actor's data model, so replacing a workflow means deleting the
  * incumbent in the same transaction ({@link RunState}).
  */
 export const Run = Schema.Struct({
@@ -2506,7 +2496,7 @@ export const taskIsOnTeams = (
 /**
  * **A member's access to a run is any task of it on one of their teams**,
  * current or not, done or not. It is what shows them the run page
- * (`RunRepository.getRunPage`) and what lets them write the run's
+ * (the run repository's `getRunPage`) and what lets them write the run's
  * note (`setRunNote`), the one write that is not about a particular task.
  * Acting on a task needs that task's team ({@link taskIsOnTeams}); Block
  * needs a current one, because a hold is placed by whoever is stuck.
@@ -2594,13 +2584,13 @@ export const matchesTag = (
  * which workflows match an item starts from the item's product tags and
  * probes `Workflow.tag`, which is unique: run creation and reconcile
  * (`WorkflowRepository.listActiveWorkflowsByTags`), the order page, and the
- * orders index's counts (`ITEM_MATCHES` in `OrderRepository.ts`). The orders
+ * orders index's counts (`ITEM_MATCHES` in the order repository). The orders
  * index and run creation run per open item; testing each item against every
  * active workflow costs items times workflows per order change, millions of
  * evaluations at a thousand workflows, where the probe costs the item's few
  * tags.
  *
- * The SQL twin is `MULTI_MATCH_ITEM` in `OrderRepository.ts`, which the orders
+ * The SQL twin is `MULTI_MATCH_ITEM` in the order repository, which the orders
  * index reads; it restates this rule and must move with it. SQL cannot ask D1
  * whether a team exists, so the twin reads "every task's `teamId` set", which
  * is what the object holds once `deleteTeam` has nulled the pointers; the
@@ -2640,7 +2630,7 @@ const NOTHING: ReconcileAction = { _tag: "nothing" };
  * once the order is stored. A pass reads what is stored, not the caller's
  * copy (pass rule 1), and ignores the webhook topic: the newest state wins,
  * whatever knocked, which with a pass being idempotent (pass rule 5) is what
- * makes retries and out-of-order delivery safe. `RunRepository.reconcileOrder`
+ * makes retries and out-of-order delivery safe. The run repository's `reconcileOrder`
  * reads, calls this per item, and executes; the rule is here.
  *
  * **What a pass guarantees.** After a pass over a stored order with the
@@ -2664,7 +2654,7 @@ const NOTHING: ReconcileAction = { _tag: "nothing" };
  *
  * A pass writes only what these clauses require (pass rule 5) and reaches
  * them in one transaction (pass rule 2). The actions table below is this
- * condition by cases, and `pnpm spec check` holds the table total; the
+ * condition by cases, and it covers every combination exactly once; the
  * second test pinned on pass rule 5 checks the condition on generated
  * inputs.
  *
@@ -2703,7 +2693,7 @@ const NOTHING: ReconcileAction = { _tag: "nothing" };
  *
  * When it runs. `shape` is `reconcile` (one order, inside its upsert),
  * `reconcile all` (every stored open, paid order, one transaction each, by
- * `ShopWorkAgent.reconcileAllNow`) or `none`:
+ * `Runs.reconcileAll`) or `none`:
  *
  * | trigger                           | shape         | skipped when                                                                                       | pinned by                                                                                           |
  * | --------------------------------- | ------------- | -------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
@@ -2722,8 +2712,8 @@ const NOTHING: ReconcileAction = { _tag: "nothing" };
  * | Delete workflow, for its own runs | none          | always: a run copies its definition and carries on; only an item it left multi-match is reconciled | an active workflow deletes, and its runs carry on                                                   |
  *
  * What it does to one item. Each row is a fixture set, each cell one input;
- * `any` covers every value of its column, and `pnpm spec check` refuses a
- * table whose rows do not cover every combination exactly once. `closed`
+ * `any` covers every value of its column, and the rows cover every
+ * combination exactly once. `closed`
  * under `order` is cancelled or fulfilled. `paid` reads `fullyPaid` and
  * nothing else ({@link orderCanCreateRuns} is the creation gate; authorized
  * or partially paid is `no`). Under `units`, `0` is no units to make; `some`
@@ -2776,10 +2766,10 @@ const NOTHING: ReconcileAction = { _tag: "nothing" };
  *
  * | rule                                                                                                                                                                                                                                                                                                                                    | where                                                       | pinned by                                                                                                                                         |
  * | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
- * | 1. a pass reads the stored order, items and runs, never the caller's copy; a stored run whose item is not stored is read as an item at zero units                                                                                                                                                                                       | `RunRepository.reconcileOrder`                              | a pass reads the stored order, and a run whose item is gone closes as item removed                                                                |
- * | 2. a pass runs inside its order's write: the store and its runs commit together or not at all; reconcile all opens one transaction per order, and a reconcile all that fails partway keeps the orders it walked; the next trigger finishes the rest (rule 5)                                                                            | `OrderRepository.upsertOrder`, `RunRepository.reconcileAll` | a pass that fails leaves neither the order nor its runs                                                                                           |
- * | 3. the teams are read once before the transaction and every order in the pass sees the same teams; the workflows are read per order, by its items' tags, inside its transaction; a stream and a reconcile all may interleave, each with its own snapshot; every order ends under the newer one because each pass is idempotent (rule 5) | `ShopWorkAgent.eligibleContext`                             | every order in a pass sees the same eligible snapshot                                                                                             |
- * | 4. the usage queue is sent after a reconcile all whether or not it finished; the stream's flush is rule 13 on `syncOrder`                                                                                                                                                                                                               | `reconcileAllNow`                                           | a reconcile all sends the usage queue even when it fails                                                                                          |
+ * | 1. a pass reads the stored order, items and runs, never the caller's copy; a stored run whose item is not stored is read as an item at zero units                                                                                                                                                                                       | the run repository's `reconcileOrder`                       | a pass reads the stored order, and a run whose item is gone closes as item removed                                                                |
+ * | 2. a pass runs inside its order's write: the store and its runs commit together or not at all; reconcile all opens one transaction per order, and a reconcile all that fails partway keeps the orders it walked; the next trigger finishes the rest (rule 5)                                                                            | `upsertOrder`, the run repository's `reconcileAll`          | a pass that fails leaves neither the order nor its runs                                                                                           |
+ * | 3. the teams are read once before the transaction and every order in the pass sees the same teams; the workflows are read per order, by its items' tags, inside its transaction; a stream and a reconcile all may interleave, each with its own snapshot; every order ends under the newer one because each pass is idempotent (rule 5) | `Runs.eligibleContext`                                      | every order in a pass sees the same eligible snapshot                                                                                             |
+ * | 4. the usage queue is sent after a reconcile all whether or not it finished; the stream's flush is rule 13 on `syncOrder`                                                                                                                                                                                                               | `Runs.reconcileAll`                                         | a reconcile all sends the usage queue even when it fails                                                                                          |
  * | 5. a pass is idempotent: a second pass over the same stored order and the same snapshot writes nothing                                                                                                                                                                                                                                  | `reconcileItem`                                             | a second pass over the same stored order writes nothing; a pass guarantees stop, fit, record, create and orphan, and a second pass writes nothing |
  * | 6. no count a pass makes reaches a screen; the counts are the log line's                                                                                                                                                                                                                                                                | `ReconcileCounts`, `ReconcileAllCounts`                     | no reconcile count reaches a screen                                                                                                               |
  */
@@ -2811,6 +2801,39 @@ export const reconcileItem = ({
     return NOTHING;
   return { _tag: "create", workflowId: only };
 };
+
+/** What one pass over one order did, for the caller's log line. No count reaches a screen: pass rule 6 on {@link reconcileItem}. */
+export interface ReconcileCounts {
+  /** Runs created by this pass. */
+  readonly created: number;
+  /** Open runs whose quantity this pass rewrote to the line's units. */
+  readonly resized: number;
+  /** Open runs this pass closed: the order cancelled or fulfilled, or the line at zero units ({@link ClosedReason}). */
+  readonly closed: number;
+  /**
+   * Items this pass left **multi-match**: two or more eligible workflows
+   * matched and no run exists, so nothing was started and the merchant
+   * has to choose. Not a fault — a count worth logging, and the number the
+   * orders index turns into a step.
+   */
+  readonly multiMatch: number;
+}
+
+/**
+ * Whether the pass wrote a run: created, resized or closed one. `multiMatch`
+ * is a state the pass left, not a write, and is left out. The run half of the
+ * `changed` that `fetchAndUpsertOrder` (the orders application service) gates
+ * its notice on.
+ */
+export const reconcileCountsChanged = ({ created, resized, closed }: ReconcileCounts) =>
+  created > 0 || resized > 0 || closed > 0;
+
+/** What `reconcileAll` hands back: the pass's counts, added over its orders, for the caller's one log line. No count reaches a screen: pass rule 6 on {@link reconcileItem}. */
+export interface ReconcileAllCounts {
+  readonly orders: number;
+  readonly created: number;
+  readonly multiMatch: number;
+}
 
 /**
  * One current task the member may act on, cut to what a run's row renders.
@@ -3051,7 +3074,7 @@ export const runRowLines = (
  * The four states an open run's row can be in, from the member's seat:
  * {@link WorkflowsListState} less Done or closed, which is a window over what
  * left the lists rather than a grouping of them. The labels the member reads
- * are the route's (`workflowsListStates.ts`); the object only needs the keys,
+ * are the route's (`workflows-list-states.ts`); the object only needs the keys,
  * because it is the side that groups, sorts, and caps.
  */
 export const RunListState = Schema.Literals([
@@ -3105,8 +3128,8 @@ export const workflowsListStateIsDone = (state: WorkflowsListState) => state ===
  * member and re-adding the same address mints a **new** `Member.id` (the
  * member row on {@link D1_TABLES}), so an id taken before that would stop
  * matching the person still standing at the bench, while the email —
- * the snapshot the run task keeps, the snapshot row on
- * {@link initializeSchema} — keeps matching. A merchant's task has no email
+ * the snapshot the run task keeps, the snapshot row of
+ * the actor's data model — keeps matching. A merchant's task has no email
  * at all and so is nobody's, which is right: `Merchant` is not a member of
  * this shop.
  *
@@ -3141,12 +3164,12 @@ export const byAge = (a: RunListItem, b: RunListItem) =>
 
 /**
  * The member's workflows list from the rows their teams own
- * (`RunRepository.runListItems`), grouped by {@link listStateOf} against
+ * (the run repository's `runListItems`), grouped by {@link listStateOf} against
  * `memberEmail`, sorted by state and cut here rather than on the page.
  * **Every** state is counted; **one** is returned — the one `query.state`
  * names — sorted oldest first ({@link byAge}) and cut to `query.limit`.
  * `state: "done"` returns no items at all and the caller reads
- * `RunRepository.listRecent` for that state's rows. Under a search
+ * the run repository's `listRecent` for that state's rows. Under a search
  * (`query.q`) the items are every open match on the member's teams whatever
  * its state or team ({@link RunQuery}), `matches` is how many there were
  * before the cut (`null` without a search), and the counts ignore it. Only
@@ -3239,10 +3262,10 @@ export const lowestOpenStep = (tasks: readonly RunTask[]) =>
  * open task. Several are current at once on a step of several tasks, so this
  * is a list and every caller copes with more than one. A current task is
  * ready or started (the vocabulary's narrow words); this is the flag under
- * both. `currentWhere.ts` is the step half of the rule as SQL for the
+ * both. `currentWhere` is the step half of the rule as SQL for the
  * workflows list and the task guards, and leaves the run's state to its callers; this
  * is the one TypeScript copy, for the merchant's order page (which holds every task of
- * the order) and the dev seeder (which walks runs a step at a time), and the
+ * the order) and the fixture (which walks runs a step at a time), and the
  * test on it pins that the two agree.
  */
 export const currentTasks = (
@@ -3259,7 +3282,7 @@ export const currentTasks = (
  * same run has started or is done. A `startedAt` test covers done tasks
  * too, because Done backfills `startedAt`.
  *
- * Pure and here rather than in `RunRepository` so the repository's write,
+ * Pure and here rather than in the run repository so the repository's write,
  * the rows it decorates for the member pages, and the merchant's order page,
  * which holds every task of the order, read one rule.
  */
@@ -3318,7 +3341,7 @@ export const RUN_LIMIT_MAX = 100;
  * of rows from 1 to {@link RUN_LIMIT_MAX}.
  *
  * **The object refuses a depth out of range; the URL clamps one into it.**
- * Depth is in the member's URL (`MemberSearch` in `src/routes/shop.$shop.tsx`),
+ * Depth is in the member's URL (the `/shop/$key` layout's search),
  * so `?limit=1000` is a thing a person can type into the address bar of a page
  * they are standing on, and a typed URL is not a bug report — the router's
  * error boundary over a whole shop's work is a worse answer than a hundred
@@ -3356,7 +3379,7 @@ export const clampRunLimit = (value: number) =>
  * of that state, and a search. `team` is validated against the connection's `teamIds` by the
  * object; a team the member is not on reads as an empty list, never as an
  * error. The screen resolves a URL's team against the teams before it gets
- * here (`shop.$shop.workflows.index.tsx`), so that empty list is reserved for a caller
+ * here (the workflows list's route), so that empty list is reserved for a caller
  * that ignored the teams. The counts of every state come back regardless of
  * `state` and `q`, so the strip is always current.
  *
@@ -3468,7 +3491,7 @@ const holdsCurrentTask = (
 /**
  * What an actor may do to one run, as the page and the server both read it.
  * The set is an upper bound. No screen offers a verb whose field is false;
- * every `ShopAgent` callable for a run or task write computes the same
+ * every actor procedure for a run or task write computes the same
  * object from the same inputs, read fresh inside the write, and refuses with
  * `NotAllowed` when the field is false, so a stale tab or a second admin
  * cannot write what no page would offer.
@@ -3488,31 +3511,28 @@ const holdsCurrentTask = (
  * caller, reconcile and tests included, and a refusal reaches the page as
  * `NotAllowed` ({@link RunResult}).
  *
- * The table is the rule. `test/integration/run-actions.test.ts` reads it
- * out of this comment and asserts every row, so a change starts at a cell
- * and the test names the cell until the formula follows. `pnpm lint`
- * refuses a malformed table.
+ * The table is the rule. A unit test carries every row as data under the
+ * row's text and asserts it, so a change starts at a cell and the test
+ * names the cell until the formula follows.
  *
  * "M" is the merchant. "m" is a member whose team holds a current
  * task on the run ({@link currentTasks}, {@link taskIsOnTeams}), the team gate
- * `RunRepository` applies to Block and Unblock. "v" is a
+ * the run repository applies to Block and Unblock. "v" is a
  * member whose teams hold a task of the run ({@link runIsVisibleTo}) but no
  * current one. Blank is never. Each state column is one input; a row is one fixture, and a word
- * such as "closed" under `order` stands for every state it names; `pnpm
- * spec check` refuses a table that leaves a state without a row, or two
- * rows that share one. A done
- * run is never blocked (the data model on `initializeSchema`,
- * `ShopAgentSchema.ts`), so "any" under `blocked` beside "open or done"
+ * such as "closed" under `order` stands for every state it names; no state is left without a row, and no
+ * two rows share one. A done
+ * run is never blocked (the actor's data model), so "any" under `blocked` beside "open or done"
  * names a block on the open run only.
  *
  * A row is checked against one task, on "m"'s team, current when the run is
- * open, with the item at `units`; `scripts/lib/spec.ts` (`expand`) builds it.
+ * open, with the item at `units`; the test expands each row's words into those fixtures.
  * The `units` column exists for `changeWorkflow` alone. Cancel on an item at
  * zero units is offered, and reconcile would close that run as
  * `item_removed` anyway; both are closes.
  *
  * A member whose teams hold no task of the run gets nothing, the note
- * included, and cannot open the run page (`RunRepository.getRunPage`
+ * included, and cannot open the run page (the run repository's `getRunPage`
  * answers `None`).
  *
  * | order  | run          | blocked | units | note  | block | unblock | cancel | changeWorkflow |
@@ -3600,14 +3620,13 @@ export type TaskActions = typeof TaskActions.Type;
 /**
  * What an actor may do to one task, by the same contract as
  * {@link runActions}: the page draws a button only when its field is true,
- * the `ShopAgent` callable refuses with `NotAllowed` when it is false, and
+ * the actor's procedure refuses with `NotAllowed` when it is false, and
  * the test reads this table; the upper bound, the screens that offer less
  * and the refusals the set does not read are on {@link runActions}. "M" is
  * the merchant, "m" a member whose team the task is on
  * ({@link taskIsOnTeams}). A member whose teams hold no task of the run gets
- * nothing, the note included, and cannot open the run page. `pnpm spec
- * check` refuses a table that leaves a state the object can hold without a
- * row, or two rows that share one; a `done` run with a task not done is not
+ * nothing, the note included, and cannot open the run page. No state the object can hold is left without a
+ * row, and no two rows share one; a `done` run with a task not done is not
  * one, and `-` under `downstream` is a state Reopen is not offered in, so
  * the column is not read.
  *
@@ -3882,10 +3901,10 @@ export const OrderPageData = Schema.Struct({
 export type OrderPageData = typeof OrderPageData.Type;
 
 /**
- * The member workflows list's loader read. Still Worker-resolved: `teamIds` comes
- * from `requireMember`, and the list's first paint is SSR, where there is no socket
- * to carry an identity — so this one stays plain RPC through `ShopAgentClient`
- * while the mutations below moved onto the socket.
+ * The member workflows list's loader read. Backend-resolved: `teamIds` comes
+ * from the gate (`ShopAccess`), and the list's first paint is SSR, where there is no socket
+ * to carry an identity — so this one is a stub method on the actor
+ * while the mutations below are procedures on the socket.
  */
 export const ListRunsInput = Schema.Struct({
   teamIds: Schema.Array(TeamId),
@@ -3938,11 +3957,11 @@ export type MarkTaskDoneInput = typeof MarkTaskDoneInput.Type;
 export const StartTaskInput = MarkTaskDoneInput;
 export type StartTaskInput = typeof StartTaskInput.Type;
 
-/** Reopen: returns a done task to Ready. Same shape; the rule is on `RunRepository.reopenTask`. */
+/** Reopen: returns a done task to Ready. Same shape; the rule is on the run repository's `reopenTask`. */
 export const ReopenTaskInput = MarkTaskDoneInput;
 export type ReopenTaskInput = typeof ReopenTaskInput.Type;
 
-/** Put back: clears a started task's Start record. Same shape; the rule is on `RunRepository.putBackTask`. */
+/** Put back: clears a started task's Start record. Same shape; the rule is on the run repository's `putBackTask`. */
 export const PutBackTaskInput = MarkTaskDoneInput;
 export type PutBackTaskInput = typeof PutBackTaskInput.Type;
 
