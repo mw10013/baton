@@ -236,6 +236,10 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - 2026-10-17, Step 6: the editor's help foot line ("Learn more in Editing steps and tasks.") is left out: the help pages are slice I and the link would be dead.
 - 2026-10-17, Step 6: the two editor e2e titles run on the page: `openEditor`/`closeEditor` are spec-local and press the hoisted Edit and Close; legacy's `editorFrame` helpers are not added.
 - 2026-10-17, Step 6: the editor is `WorkflowEditorPage.tsx` beside the other pages, split screen and live as they are.
+- 2026-10-17, Step 7: `SetupGuideStep.help` is optional and no step carries one (help pages are slice I); `SetupGuideLink` takes `href` plus an optional router `onClick`.
+- 2026-10-17, Step 7: the kit gate is a Website binding `DEV_KIT` (`on` for `dev`, `test`, `e2e`; `off` on staging) set in `alchemy.run.ts` from `environmentOf(stage)`, read by the GET server function `requireDevKit` (`src/web/server/dev-kit.ts`) that throws `notFound()` in the kit's `beforeLoad`. On the dev stage `/dev/kit` answered 200 after the dev server created the binding; staging's 404 is untested here.
+- 2026-10-17, Step 7: the kit is `KitPage` (a component with a `width` prop) under a thin `dev.kit.tsx`; its sections are legacy's whose parts exist plus the new step flow (a 20-task step), selectable card, panel, fields and text limit, empty aside and connector sections; the foot line is plain text with no link.
+- 2026-10-17, Step 7: the App Home e2e title is new: "the App Home guide marks a team with a member and an active workflow done, and an item with a workflow not done" (`test/e2e/embedded/home.spec.ts`), scoped to the guide's section. Browser: `home-and-kit.test.tsx`.
 
 ### Issues
 
@@ -248,6 +252,7 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - 2026-10-17, Step 5: one `vp check --fix | tail -1` hid 21 type errors in the new e2e and browser tests (branded fixture literals, an `s-clickable` cast); fixed before the commit by decoding the e2e fixture through `ShopFixtureData`.
 - 2026-10-17, Step 6 check (dev store, Playwright CLI): an `s-app-window` with `src` `/app/workflows/<id>/edit?chrome=window` opened from the workflow page loaded the editor with no session-token bounce; the admin added `admin_theme`, `embedded=1`, `hmac`, `host`, `id_token`, `locale`, `session`, `shop`, `timestamp` to `src`. The window hydrated, opened its own merchant socket (a second `socket accepted`), a task Save created the draft and Discard cleared it, and a `BroadcastChannel` message posted from the window closed it through the opener's hook. All three checks held.
 - 2026-10-17, Step 6: the window still fails in use: the admin draws its title bar once from the page's slots and never follows a later change. In e2e the hoisted Turn on workflow stayed disabled after the first step (the in-frame button was enabled), and on the dev store Discard changes and Apply changes never appeared after the first edit. Remounting the button, and keying the whole `s-page`, did not redraw it; toggling `disabled` by hand on an in-window title-bar button changed nothing in the admin's copy. The page form follows every change (all ten workflow e2e titles pass), so Edit and Create navigate to the editor page and the window is a follow-up.
+- 2026-10-17, Step 7: Polaris renders the guide's `s-heading` twice in the frame's DOM (a strict-mode double match in e2e); the spec takes the first.
 
 ### Command results
 
@@ -257,6 +262,7 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - 2026-10-17, Step 4: `vp check` pass (259 files); `vp test` 60 files, 683 tests, 42.7 s; `vp run test:e2e` 40 passed, 3.4 min.
 - 2026-10-17, Step 5: `vp check` pass (280 files); `vp test` 62 files, 692 tests, 50.8 s; `vp run test:e2e` 46 passed, 3.7 min (before the type-only test fixes; after them the browser file 6 passed and `workflows.spec.ts` 8 passed, 1.1 min).
 - 2026-10-17, Step 6: `vp check` pass (282 files); `vp test` 62 files, 693 tests, 57.3 s; `vp run test:e2e` 48 passed, 4.0 min.
+- 2026-10-17, Step 7: `vp check` pass (288 files); `vp test` 63 files, 696 tests, 56.6 s; `vp run test:e2e` 49 passed, 3.9 min.
 
 ### Human steps requested
 

@@ -2,12 +2,13 @@ import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
+import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import type { DeliveryMode } from "./src/backend/magic-link-delivery.ts";
 import { SHOPIFY_API_KEY } from "./src/backend/shopify.ts";
 import Backend from "./src/backend/worker.ts";
 import { ShopifyApp, stageState, wireBackend } from "./src/backend/stack.ts";
-import { workerNameOf } from "./src/backend/stage.ts";
+import { environmentOf, workerNameOf } from "./src/backend/stage.ts";
 
 /**
  * The TanStack Start app. `alchemy dev` serves it on `WEBSITE_PORT` from the checkout's `.env`
@@ -17,6 +18,10 @@ import { workerNameOf } from "./src/backend/stage.ts";
  * `SHOPIFY_API_KEY` goes into the App Home's page, so it is public; the secret stays on the
  * Backend. It is the real app's where {@link ShopifyApp} has one and the fake key elsewhere;
  * `SHOPIFY_APP_URL` is the real app's own URL when it has one and the Website's otherwise.
+ *
+ * `DEV_KIT` is `on` where the stage's environment is one whose data is disposable (`dev`, `test`,
+ * `e2e`, the environments whose Backend mounts the dev procedures), and `off` on staging: the kit
+ * page (`/dev/kit`) is not found unless it is on.
  */
 export class Website extends Cloudflare.Website.Vite<Website>()(
   "Website",
@@ -25,6 +30,7 @@ export class Website extends Cloudflare.Website.Vite<Website>()(
       ? { port: yield* Config.Port("WEBSITE_PORT"), strictPort: true }
       : undefined;
     const app = yield* ShopifyApp;
+    const environment = yield* environmentOf(yield* Alchemy.Stage);
     return {
       name: workerNameOf(yield* Alchemy.Stage, "website"),
       compatibility: { date: "2026-07-01", flags: ["nodejs_compat"] },
@@ -41,6 +47,11 @@ export class Website extends Cloudflare.Website.Vite<Website>()(
             onNone: () => Cloudflare.Worker.URL,
             onSome: (appUrl) => appUrl,
           },
+        ),
+        DEV_KIT: Match.value(environment).pipe(
+          Match.whenOr("dev", "test", "e2e", () => "on"),
+          Match.when("staging", () => "off"),
+          Match.exhaustive,
         ),
       },
     };
