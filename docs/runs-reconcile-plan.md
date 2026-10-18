@@ -393,6 +393,7 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - 2026-10-18, Step 5: `vp check` pass (314 files); `vp test` 72 files, 957 tests, 61.8 s; `vp run test:e2e` 49 passed, 4.7 min (13:09–13:14).
 
 - 2026-10-18, Step 6: `vp check` pass (327 files); `vp test` 74 files, 969 tests, 60.5 s (15:27–15:28). e2e deferred until after the flake-fix merge (lead's instruction): the last full run (15:08–15:14) had 63 passed, 1 failed, 3 did not run; the failure was "the orders index keeps its filters and page across the order page" at an assertion (Previous pressed before the frame the admin reloaded on Back had hydrated), since given an `awaitHydration` before the press, not yet run. Filtered runs passed: `order-page.spec.ts` 7/7; `home.spec.ts` 3/3; `orders-pages.spec.ts` 2/2; `refresh.spec.ts`, `socket.spec.ts`, `app.spec.ts` all passed after their adaptations; every `orders.spec.ts` title passed in some run, the two history titles not together in a final full run.
+- WAITING: orchestrator merges the wt-01 flake fix
 
 ### Human steps requested
 
