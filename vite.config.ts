@@ -249,6 +249,7 @@ export default defineConfig(({ command, mode, isPreview }) => {
         domainBoundary("src/domain/orders.ts", ["shop-work.ts", "billing.ts"]),
         domainBoundary("src/domain/shop-work.ts", ["billing.ts"]),
         domainBoundary("src/domain/billing.ts", ["shop-work.ts"]),
+        domainBoundary("src/domain/workflow-layout.ts", ["platform.ts", "orders.ts", "billing.ts"]),
       ],
       options: { typeAware: true, typeCheck: true },
     },

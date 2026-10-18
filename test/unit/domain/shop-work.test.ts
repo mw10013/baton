@@ -1,5 +1,6 @@
 import { describe, it } from "@effect/vitest";
 import { deepStrictEqual, strictEqual } from "@effect/vitest/utils";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Orders from "../../../src/domain/orders.ts";
 import * as Platform from "../../../src/domain/platform.ts";
@@ -1162,5 +1163,49 @@ describe("the orders index's sync state", () => {
       "lastError",
     ]);
     strictEqual(ShopWork.OrdersIndexData.fields.syncState, Orders.OrdersSyncStatus);
+  });
+});
+
+describe("Domain workflow schemas", () => {
+  const name = Schema.decodeUnknownSync(ShopWork.WorkflowName);
+  const tag = Schema.decodeUnknownSync(ShopWork.WorkflowTag);
+
+  it("WorkflowTag trims and keeps case", () => {
+    strictEqual(tag("  Engraving "), "Engraving");
+  });
+
+  it("WorkflowTag refuses a comma, which Shopify's tag field splits on", () => {
+    strictEqual(
+      Option.isNone(Schema.decodeUnknownOption(ShopWork.WorkflowTag)("cut, engrave")),
+      true,
+    );
+  });
+
+  it("WorkflowTag rejects blank and over-long values", () => {
+    strictEqual(Option.isNone(Schema.decodeUnknownOption(ShopWork.WorkflowTag)("   ")), true);
+    strictEqual(
+      Option.isNone(Schema.decodeUnknownOption(ShopWork.WorkflowTag)("x".repeat(256))),
+      true,
+    );
+  });
+
+  it("names trim and reject empty or over-long values", () => {
+    strictEqual(name("  Engrave  "), "Engrave");
+    strictEqual(Option.isNone(Schema.decodeUnknownOption(ShopWork.WorkflowName)("   ")), true);
+    strictEqual(Option.isNone(Schema.decodeUnknownOption(ShopWork.TaskName)("x".repeat(65))), true);
+  });
+});
+
+describe("workflow callable inputs", () => {
+  it("callable inputs reject excess properties", () => {
+    strictEqual(
+      Option.isNone(
+        Schema.decodeUnknownOption(ShopWork.CreateWorkflowInput)(
+          { name: "W", tag: "w", extra: 1 },
+          { onExcessProperty: "error" },
+        ),
+      ),
+      true,
+    );
   });
 });

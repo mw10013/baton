@@ -212,14 +212,22 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - 2026-10-17, Step 1: the "never nest" JSDoc (Step 2 review item) is written on `Transaction` in `shop-actor/transaction.ts` now, as the module moves.
 - 2026-10-17, Step 1: `membership.test.ts` renames its shop key and emails (`agent.myshopify.com`, `@agent.test` → `membership…`); no legacy title touched.
 - 2026-10-17, Step 1: locals that hold the D1 service in the Backend (`const members = yield* MembershipRepository` in `api.ts`, `auth.ts`, `dev.ts`, `fixture.ts`, `shop-access.ts`) keep their names; only the actor's locals were renamed, as the review lists.
+- 2026-10-17, Step 2: the three `replaceWorkflows`-arranged tests write rows through a test-local `insertWorkflows` (legacy's seeding rule: a task with no step follows the previous, active when every task has a team).
+- 2026-10-17, Step 2: `WorkflowRepositoryError`'s JSDoc sits on the class (legacy's block was misplaced above `ACTIVE_WORKFLOWS_BY_TAGS`'s); `Teams` is exported for the application service; JSDoc that cited `ShopAgentSchema.ts`'s `initializeSchema` cites the actor's `migrations`.
+- 2026-10-17, Step 2: legacy's typed `sql<…>` reads (`workflowIdOfTask`, `teamIdsInUse`) decode through Schema here, as the order repository does.
+- 2026-10-17, Step 2: "callable inputs reject excess properties" (Step 3 by the review) lands with the domain schema tests in `test/unit/domain/shop-work.test.ts`.
+- 2026-10-17, Step 2: `membership-repository.test.ts`'s setup-fact cases build `SetupFacts` with the object's half false and assert through `setupFactHolds`.
 
 ### Issues
 
 - 2026-10-17, Step 1: the dev server was already running (`vp run dev:status` healthy) when the work started; it is left running.
+- 2026-10-17, Step 2 check first: `node:sqlite` runs the `json_each` / `json_extract` queries (`workflowIdOfTask`, `unassignTeam`, `teamIdsInUse`, `stepCount`) as the DO does; the three named tests and all 30 repository tests passed with no change. No integ fallback needed.
+- 2026-10-17, Step 2: the full e2e run failed one embedded spec twice in a row, a different one each time (`socket.spec.ts`, then `teams.spec.ts`), on `awaitHydration`'s 10 s wait in `openApp`; both pass run alone (5 passed, 1.3 min). Step 2 changes no Website code; recorded as parallel-load flakiness of the embedded hydration wait.
 
 ### Command results
 
 - 2026-10-17, Step 1: `vp check` pass (249 files); `vp test` 56 files, 615 tests, 55.8 s; `vp run test:e2e` 40 passed, 3.1 min.
+- 2026-10-17, Step 2: `vp check` pass (253 files); `vp test` 58 files, 660 tests, 55.5 s; `vp run test:e2e` 39 passed, 1 failed (hydration timeout, 3.6 min), rerun 39 passed, 1 failed, 1 did not run (3.6 min), third run 39 passed, 1 failed (3.3 min); the failing specs alone 5 passed, 1.3 min.
 
 ### Human steps requested
 

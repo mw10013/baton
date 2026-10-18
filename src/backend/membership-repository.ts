@@ -408,6 +408,41 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
     }, Effect.orDie);
 
     /**
+     * Every team of the shop with its `memberCount`, by name: the live teams the shop's actor
+     * reads before a workflow write or read resolves a task's team. No limit: a shop holds at
+     * most `ShopLimits.maxTeams`. `memberCount` is a correlated subquery for the reason on
+     * {@link listTeamsPage}.
+     */
+    const listTeams = Effect.fn("MembershipRepository.listTeams")(function* (shop: ShopKey) {
+      const rows = yield* sql`
+        select t.*, (select count(*) from TeamMember tm where tm.teamId = t.id) as memberCount
+        from Team t
+        where t.shop = ${shop}
+        order by t.name
+      `;
+      return yield* decodeRows(Schema.Array(TeamSummary))(rows);
+    }, Effect.orDie);
+
+    /**
+     * The D1 half of `SetupFacts`: some team of the shop has a
+     * member. One `exists`, which stops at the first edge: `Team`'s
+     * `unique (shop, name)` index finds the shop's teams and
+     * `TeamMember`'s primary key `(teamId, memberId)` probes each for one row.
+     */
+    const teamWithMemberExists = Effect.fn("MembershipRepository.teamWithMemberExists")(function* (
+      shop: ShopKey,
+    ) {
+      const rows = yield* sql`
+          select exists (
+            select 1 from Team t
+            join TeamMember tm on tm.teamId = t.id
+            where t.shop = ${shop}
+          )
+        `.values;
+      return countOf(rows) === 1;
+    }, Effect.orDie);
+
+    /**
      * `insert or ignore ... returning` is the whole conflict check: a fresh
      * uuid makes the name index the only reachable unique constraint, so zero
      * returned rows means exactly "that name is taken" — with no pre-check to
@@ -836,6 +871,8 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
       findMemberDetail,
       addMemberTeams,
       listTeamsPage,
+      listTeams,
+      teamWithMemberExists,
       createTeam,
       renameTeam,
       deleteTeam,

@@ -18,16 +18,22 @@ import {
   Email,
   ShopLimits,
 } from "../../../src/domain/platform.ts";
-import { type Team, TeamId, TeamName } from "../../../src/domain/shop-work.ts";
+import {
+  type SetupFacts,
+  setupFactHolds,
+  type Team,
+  TeamId,
+  TeamName,
+} from "../../../src/domain/shop-work.ts";
 import { MembershipRepository } from "../../../src/backend/membership-repository.ts";
 import { ShopSessionRepository } from "../../../src/backend/shop-session-repository.ts";
 import { makeD1Test, seedD1 } from "./layers.ts";
 
 /**
  * Legacy `repository.test.ts`'s `Member` and `Team` blocks, titles unchanged, over the real
- * {@link MembershipRepository} on a fresh in-memory D1 per test. Legacy's `listMembers`, `listTeams` and
+ * {@link MembershipRepository} on a fresh in-memory D1 per test. Legacy's `listMembers` and
  * `countMembers`/`countTeams` are not ported (no production caller): the tests read back
- * through `listMembersPage`/`listTeamsPage` or raw SQL. Legacy's `deleteShopSession` is
+ * through `listMembersPage`, `listTeams` or raw SQL. Legacy's `deleteShopSession` is
  * `ShopSessionRepository.remove` over the same database.
  */
 const run = <A, E>(
@@ -59,13 +65,6 @@ const emailOfLength = (length: number) =>
 const listMembers = (members: MembershipRepository["Service"], shop: ShopKey) =>
   Effect.map(
     members.listMembersPage({ shop, limit: 1000, after: null, q: null }),
-    (page) => page.rows,
-  );
-
-/** The shop's teams in name order with their member counts, every page of them. */
-const listTeams = (members: MembershipRepository["Service"], shop: ShopKey) =>
-  Effect.map(
-    members.listTeamsPage({ shop, limit: 1000, after: null, q: null }),
     (page) => page.rows,
   );
 
@@ -141,7 +140,7 @@ describe("Member", () => {
           });
           yield* repo.deleteMember({ shop, email });
           assertTrue(Option.isNone(yield* repo.findMember({ shop, email })));
-          strictEqual((yield* listTeams(repo, shop))[0]?.memberCount, 0);
+          strictEqual((yield* repo.listTeams(shop))[0]?.memberCount, 0);
           const missing = yield* repo.deleteMember({ shop, email }).pipe(Effect.flip);
           strictEqual(missing._tag, "MemberNotFoundError");
         }),
@@ -207,7 +206,7 @@ describe("Member", () => {
             teamIds: [a.id, b.id, foreign.id],
           });
           strictEqual(yield* names(), "A,B");
-          strictEqual((yield* listTeams(repo, other))[0]?.memberCount, 0);
+          strictEqual((yield* repo.listTeams(other))[0]?.memberCount, 0);
           // From the team's side: the same edge table, so the member's teams show it.
           yield* repo.addTeamMembers({ shop, teamId: c.id, memberIds: [member.id] });
           strictEqual(yield* names(), "A,B,C");
@@ -394,7 +393,7 @@ describe("Team", () => {
         yield* repo.addMember({ shop, email });
         const [member] = yield* listMembers(repo, shop);
         yield* repo.setTeamMember({ shop, teamId: team.id, memberId: member!.id, inTeam: true });
-        const listed = yield* listTeams(repo, shop);
+        const listed = yield* repo.listTeams(shop);
         strictEqual(listed.length, 1);
         strictEqual(listed[0]?.memberCount, 1);
       }),
@@ -445,7 +444,7 @@ describe("Team", () => {
           )) instanceof TeamNameTakenError,
         );
         yield* repo.renameTeam({ shop, id: cut.id, name: teamNameOf("Cutting") });
-        const listed = yield* listTeams(repo, shop);
+        const listed = yield* repo.listTeams(shop);
         strictEqual(listed.map((team) => team.name).join(","), "Cutting,Sew");
         assertTrue(
           (yield* Effect.flip(
@@ -478,7 +477,7 @@ describe("Team", () => {
             inTeam: true,
           });
           yield* repo.deleteTeam({ shop, id: team.id });
-          strictEqual((yield* listTeams(repo, shop)).length, 0);
+          strictEqual((yield* repo.listTeams(shop)).length, 0);
           strictEqual(
             Option.getOrThrow(yield* repo.findMemberAccess({ shop, email })).teams.length,
             0,
@@ -533,7 +532,7 @@ describe("Team", () => {
             teamId: team.id,
             memberIds: [a!.id, b!.id, foreign!.id],
           });
-          strictEqual((yield* listTeams(repo, shop))[0]?.memberCount, 2);
+          strictEqual((yield* repo.listTeams(shop))[0]?.memberCount, 2);
           yield* repo.addTeamMembers({ shop, teamId: team.id, memberIds: [] });
           assertTrue(
             (yield* Effect.flip(
@@ -623,9 +622,9 @@ describe("Team", () => {
         yield* repo.addMember({ shop, email });
         const [member] = yield* listMembers(repo, shop);
         yield* repo.setTeamMember({ shop, teamId: team.id, memberId: member!.id, inTeam: true });
-        strictEqual((yield* listTeams(repo, shop))[0]?.memberCount, 1);
+        strictEqual((yield* repo.listTeams(shop))[0]?.memberCount, 1);
         yield* repo.setTeamMember({ shop, teamId: team.id, memberId: member!.id, inTeam: false });
-        strictEqual((yield* listTeams(repo, shop))[0]?.memberCount, 0);
+        strictEqual((yield* repo.listTeams(shop))[0]?.memberCount, 0);
       }),
     ),
   );
@@ -651,7 +650,7 @@ describe("Team", () => {
         seedD1(db, { shops: [shop] });
         yield* seedTeam(repo, shop, "Cut");
         yield* (yield* ShopSessionRepository).remove(shop);
-        strictEqual((yield* listTeams(repo, shop)).length, 0);
+        strictEqual((yield* repo.listTeams(shop)).length, 0);
       }),
     ),
   );
@@ -760,5 +759,53 @@ describe("MembershipRepository session cap and auth sweep", () => {
           );
         }),
       ),
+  );
+});
+
+/**
+ * Legacy `setup-facts.test.ts`'s D1 cases, titles unchanged: the teams half of `SetupFacts`,
+ * read by {@link MembershipRepository}'s `teamWithMemberExists` alone (the object's half is the
+ * workflow repository's).
+ */
+describe("the setup facts", () => {
+  const seedTeam = (repo: MembershipRepository["Service"], shop: ShopKey, withMember: boolean) =>
+    Effect.gen(function* () {
+      const team = yield* repo.createTeam({ shop, name: teamNameOf("Glaze") });
+      if (withMember) {
+        const member = yield* repo.addMember({ shop, email: emailOf(`lead@${shop}`) });
+        yield* repo.addTeamMembers({ shop, teamId: team.id, memberIds: [member.id] });
+      }
+      return team;
+    });
+
+  const setupFacts = (repo: MembershipRepository["Service"], shop: ShopKey) =>
+    Effect.map(repo.teamWithMemberExists(shop), (teamWithMember): SetupFacts => ({
+      teamWithMember,
+      activeWorkflow: false,
+      run: false,
+    }));
+
+  it.effect("a team with no member does not complete the first step", () =>
+    run((repo, db) =>
+      Effect.gen(function* () {
+        const shop = shopOf("setup-empty-team.myshopify.com");
+        seedD1(db, { shops: [shop] });
+        yield* seedTeam(repo, shop, false);
+        strictEqual(setupFactHolds(yield* setupFacts(repo, shop), "teamWithMember"), false);
+      }),
+    ),
+  );
+
+  it.effect("the D1 fact ignores another shop's team", () =>
+    run((repo, db) =>
+      Effect.gen(function* () {
+        const shop = shopOf("setup-own-team.myshopify.com");
+        const other = shopOf("setup-other-team.myshopify.com");
+        seedD1(db, { shops: [shop, other] });
+        yield* seedTeam(repo, other, true);
+        strictEqual(setupFactHolds(yield* setupFacts(repo, other), "teamWithMember"), true);
+        strictEqual(setupFactHolds(yield* setupFacts(repo, shop), "teamWithMember"), false);
+      }),
+    ),
   );
 });
