@@ -43,6 +43,7 @@ import type {
   BlockRunInput,
   ListOrdersInput,
   MarkTaskDoneInput,
+  OrderCounts,
   OrderPageData,
   OrdersIndexData,
   PutBackTaskInput,
@@ -316,8 +317,58 @@ export const seedShop = (
   }
 };
 
-/** How many orders a page of the orders screen shows: the index's 25 rows. */
+/** How many orders a page of the orders index shows: the index's 25 rows. */
 export const ORDERS_PAGE_SIZE = 25;
+
+/**
+ * The orders index's `listOrders` input for its URL: the page size, then the page, the search
+ * and the filters as the URL has them, `null` for each key the URL leaves out.
+ */
+export const ordersIndexInput = (keys: {
+  readonly after: ListOrdersInput["cursor"];
+  readonly q: ListOrdersInput["q"];
+  readonly show: ListOrdersInput["show"];
+  readonly team: ListOrdersInput["team"];
+}): ListOrdersInput => ({
+  limit: ORDERS_PAGE_SIZE,
+  cursor: keys.after,
+  q: keys.q,
+  show: keys.show,
+  team: keys.team,
+});
+
+/**
+ * **The orders index on arrival and the home page read the same `listOrders` input**:
+ * {@link ordersIndexInput} with every key left out, one page of {@link ORDERS_PAGE_SIZE}, no
+ * cursor, no search, no Show value (Making, the default) and no team. So the two share one entry
+ * of the actor's orders memo (keyed by the input and cleared on every notice naming
+ * {@link ORDERS_KEY}) and one node of {@link merchantOrdersAtom}. After a notice the first of them
+ * to refetch pays the read and the other gets the entry. The home page takes only `page.counts`
+ * from the answer; the page rows it discards were read for the memo entry anyway.
+ */
+export const ORDERS_ARRIVAL_INPUT: ListOrdersInput = ordersIndexInput({
+  after: null,
+  q: null,
+  show: null,
+  team: null,
+});
+
+/**
+ * The orders strip, left to right, on the orders index and the home page: the four positions No
+ * workflow, Not started, Making and Made in the order an order moves, then Issues, which cuts
+ * across them. These are the five values `OrderCounts` counts; each cell is the value's name
+ * (`ORDERS_SHOW_LABEL`) over its count. On the orders index choosing a cell sets the Show filter;
+ * on the home page a cell links to the orders index with that value chosen. Making is the
+ * default, `?show=` left out. Open, Unpaid, Fulfilled, Cancelled and All carry no count and live
+ * in the Show select.
+ */
+export const ORDERS_STRIP: readonly (keyof OrderCounts)[] = [
+  "no_workflow",
+  "not_started",
+  "making",
+  "made",
+  "issues",
+];
 
 /**
  * One page of the orders index, the query itself, by its whole input; the node

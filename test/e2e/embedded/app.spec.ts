@@ -31,5 +31,5 @@ test("the exchange stored a real session", async ({ backend }) => {
 
 test("the Orders link opens the orders screen inside the admin", async () => {
   await frame.getByRole("link", { name: "Orders" }).click();
-  await expect(frame.getByText(/^(No open orders|Sync from Shopify)$/u).first()).toBeVisible();
+  await expect(frame.locator('s-page[heading="Orders"]')).toBeVisible();
 });

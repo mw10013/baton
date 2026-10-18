@@ -22,7 +22,7 @@ test("Orders, the App Home and Orders again share one socket", async ({ browser 
       if (socket.url().includes("/api/actor/")) sockets.push(socket);
     });
     const frame = await gotoApp(page);
-    const orders = frame.getByText(/^(No open orders|Sync from Shopify)$/u).first();
+    const orders = frame.locator('s-page[heading="Orders"]');
     const home = frame.getByRole("link", { name: "Orders" });
 
     await home.click();

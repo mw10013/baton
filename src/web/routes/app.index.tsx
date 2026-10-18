@@ -1,16 +1,27 @@
 import { createFileRoute, useLocation } from "@tanstack/react-router";
 import { formatNumber } from "../../domain/platform.ts";
 import {
+  type OrdersIndexData,
+  ORDERS_SHOW_LABEL,
   SETUP_FACTS,
   type SetupFact,
   type SetupFacts,
   setupFactHolds,
   setupIsComplete,
 } from "../../domain/shop-work.ts";
+import {
+  merchantOrdersAtom,
+  ORDERS_ARRIVAL_INPUT,
+  ORDERS_STRIP,
+  seedOrders,
+} from "../client/shop-actor-client.ts";
+import { useLiveRead } from "../components/live-read.ts";
 import { useNavigateOnClick } from "../components/navigate.ts";
 import { Lines } from "../components/screen/Lines.tsx";
 import { SetupGuide, type SetupGuideStep } from "../components/screen/SetupGuide.tsx";
+import { Strip } from "../components/screen/Strip.tsx";
 import { setupFacts } from "../server/home.ts";
+import { listOrders } from "../server/orders.ts";
 import { appHref, appSearch } from "./-app-search.ts";
 
 /** Each step's words and the screen where it is done, by its fact; the paths are bare. */
@@ -62,19 +73,58 @@ const setupSteps = (
   });
 
 /**
+ * The orders strip, as links: the orders index's five cells, labels and counts, each a link to
+ * the orders index with that value chosen (Making, the default there, with no `show`), so
+ * "Making 34" here lands on a list under a cell that says "Making 34". Live, refreshed over the
+ * socket like the orders index, and it costs nothing extra: it reads `listOrders` with the index's
+ * arrival input, so the two share one memo entry in the actor and one atom node here
+ * ({@link ORDERS_ARRIVAL_INPUT}). The rows of that page are read for the memo entry anyway and
+ * ignored here.
+ */
+function OrdersStrip({ orders }: { readonly orders: OrdersIndexData }) {
+  const searchStr = useLocation({ select: (location) => location.searchStr });
+  const navigate = useNavigateOnClick();
+  const read = useLiveRead({
+    atom: merchantOrdersAtom(ORDERS_ARRIVAL_INPUT),
+    key: "arrival",
+    loaded: orders,
+    seed: (registry, data) => {
+      seedOrders(registry, { input: ORDERS_ARRIVAL_INPUT, data });
+    },
+  });
+  return (
+    <Strip
+      cells={ORDERS_STRIP.map((key) => ({
+        key,
+        label: ORDERS_SHOW_LABEL[key],
+        count: read.value.page.counts[key],
+        ...navigate(appHref("/app/orders", searchStr, key === "making" ? {} : { show: key })),
+      }))}
+    />
+  );
+}
+
+/**
  * The App Home: the setup guide while any of its facts does not hold (legacy's "is Baton set
- * up"), then the ways to Orders, Teams and Members. The guide is derived and stores nothing, it
- * comes back when a fact stops holding, and it is read by the loader only: the first two facts
- * change by the merchant's own writes on other screens, and the loader runs again when they come
- * back here. The links keep the raw search Shopify sent, because the `/app` guards read it on
- * every navigation ({@link appHref}).
+ * up"), the Orders strip ({@link OrdersStrip}), then the ways to Orders, Teams and Members. The
+ * guide is derived and stores nothing, it comes back when a fact stops holding, and it is read by
+ * the loader only: the first two facts change by the merchant's own writes on other screens, and
+ * the loader runs again when they come back here. The links keep the raw search Shopify sent,
+ * because the `/app` guards read it on every navigation ({@link appHref}). The strip is live, so
+ * the socket holder's banner above every page says when its counts are stale.
  */
 export const Route = createFileRoute("/app/")({
-  loader: ({ location }) =>
-    setupFacts({ data: { idToken: appSearch(location.searchStr).id_token } }),
+  loader: async ({ location }) => {
+    const idToken = appSearch(location.searchStr).id_token;
+    const [facts, orders] = await Promise.all([
+      setupFacts({ data: { idToken } }),
+      listOrders({ data: { idToken, ...ORDERS_ARRIVAL_INPUT } }),
+    ]);
+    return { facts, orders };
+  },
   component: function AppHome() {
     const { shop } = Route.useRouteContext();
-    const facts = Route.useLoaderData();
+    const { facts, orders } = Route.useLoaderData();
     const searchStr = useLocation({ select: (location) => location.searchStr });
     const navigate = useNavigateOnClick();
     const steps = setupSteps(facts, (path) => navigate(appHref(path, searchStr)));
@@ -89,6 +139,9 @@ export const Route = createFileRoute("/app/")({
             steps={steps}
           />
         )}
+        <s-section heading="Orders">
+          <OrdersStrip orders={orders} />
+        </s-section>
         <s-section heading={shop}>
           <Lines>
             <s-link {...navigate(appHref("/app/orders", searchStr))}>Orders</s-link>

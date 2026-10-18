@@ -5,6 +5,7 @@ import type { ListSearch } from "../../../../../src/domain/shop-work.ts";
 import { ClampedProse } from "../../../../../src/web/components/screen/ClampedProse.tsx";
 import { ListSearchField } from "../../../../../src/web/components/screen/ListSearchField.tsx";
 import { SearchLine } from "../../../../../src/web/components/screen/SearchLine.tsx";
+import { SelectRow } from "../../../../../src/web/components/screen/SelectRow.tsx";
 import { Strip } from "../../../../../src/web/components/screen/Strip.tsx";
 import {
   textLimitError,
@@ -139,6 +140,55 @@ describe("Strip", () => {
     expect(cells[0]?.getAttribute("accessibilityLabel")).toBe("Started by you, 0");
     await screen.getByRole("link", { name: "Ready, 2" }).click();
     await expect.poll(() => clicked).toStrictEqual(["Ready"]);
+  });
+});
+
+describe("SelectRow", () => {
+  /**
+   * The box a Polaris element draws: its hosts lay out as contents, so the native control in the
+   * shadow root is what has a size.
+   */
+  const boxOf = (host: { readonly shadowRoot: ShadowRoot | null } | null, inner: string) =>
+    host?.shadowRoot?.querySelector(inner)?.getBoundingClientRect();
+
+  it("keeps the button beside its select, on one line, with or without a label, and caps the select at 20rem", async () => {
+    const screen = await render(
+      <div style={{ inlineSize: "60rem" }}>
+        <SelectRow
+          label={<s-text color="subdued">Workflow</s-text>}
+          select={
+            <s-select label="Workflow" labelAccessibilityVisibility="exclusive">
+              <s-option value="a">Engraved ring</s-option>
+            </s-select>
+          }
+          submit={<s-button variant="secondary">Attach</s-button>}
+        />
+        <SelectRow
+          select={
+            <s-select label="Assign team" labelAccessibilityVisibility="exclusive">
+              <s-option value="t">Bench</s-option>
+            </s-select>
+          }
+          submit={<s-button variant="secondary">Assign</s-button>}
+        />
+      </div>,
+    );
+    await expect.element(screen.getByRole("button", { name: "Attach" })).toBeVisible();
+    await expect.element(screen.getByRole("button", { name: "Assign" })).toBeVisible();
+    const rows = [...screen.container.querySelectorAll("s-grid")];
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      const select = boxOf(row.querySelector("s-select"), "select");
+      const button = boxOf(row.querySelector("s-button"), "button");
+      expect(select).toBeDefined();
+      expect(button).toBeDefined();
+      if (select === undefined || button === undefined) return;
+      expect(
+        Math.abs(select.top + select.height / 2 - (button.top + button.height / 2)),
+      ).toBeLessThan(4);
+      expect(select.width).toBeLessThanOrEqual(320);
+      expect(button.left).toBeGreaterThanOrEqual(select.right);
+    }
   });
 });
 

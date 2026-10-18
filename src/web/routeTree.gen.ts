@@ -30,6 +30,8 @@ import { Route as ApiActorKeyRouteImport } from './routes/api.actor.$key'
 import { Route as ApiAuthSplatRouteImport } from './routes/api.auth.$'
 import { Route as AppMembersIndexRouteImport } from './routes/app.members.index'
 import { Route as AppMembersMemberIdRouteImport } from './routes/app.members.$memberId'
+import { Route as AppOrdersIndexRouteImport } from './routes/app.orders.index'
+import { Route as AppOrdersOrderIdRouteImport } from './routes/app.orders.$orderId'
 import { Route as AppOrdersFromShopifyRouteImport } from './routes/app.orders.from-shopify'
 import { Route as AppTeamsIndexRouteImport } from './routes/app.teams.index'
 import { Route as AppTeamsTeamIdRouteImport } from './routes/app.teams.$teamId'
@@ -143,6 +145,16 @@ const AppMembersMemberIdRoute = AppMembersMemberIdRouteImport.update({
   path: '/members/$memberId',
   getParentRoute: () => AppRoute,
 } as any)
+const AppOrdersIndexRoute = AppOrdersIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AppOrdersRoute,
+} as any)
+const AppOrdersOrderIdRoute = AppOrdersOrderIdRouteImport.update({
+  id: '/$orderId',
+  path: '/$orderId',
+  getParentRoute: () => AppOrdersRoute,
+} as any)
 const AppOrdersFromShopifyRoute = AppOrdersFromShopifyRouteImport.update({
   id: '/from-shopify',
   path: '/from-shopify',
@@ -201,10 +213,12 @@ export interface FileRoutesByFullPath {
   '/api/actor/$key': typeof ApiActorKeyRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/app/members/$memberId': typeof AppMembersMemberIdRoute
+  '/app/orders/$orderId': typeof AppOrdersOrderIdRoute
   '/app/orders/from-shopify': typeof AppOrdersFromShopifyRoute
   '/app/teams/$teamId': typeof AppTeamsTeamIdRoute
   '/app/workflows/$workflowId': typeof AppWorkflowsWorkflowIdRoute
   '/app/members/': typeof AppMembersIndexRoute
+  '/app/orders/': typeof AppOrdersIndexRoute
   '/app/teams/': typeof AppTeamsIndexRoute
   '/app/workflows/': typeof AppWorkflowsIndexRoute
   '/shop/$key/': typeof ShopKeyIndexRoute
@@ -215,7 +229,6 @@ export interface FileRoutesByTo {
   '/sign-in': typeof SignInRoute
   '/admin/members': typeof AdminMembersRoute
   '/api/dev': typeof ApiDevRoute
-  '/app/orders': typeof AppOrdersRouteWithChildren
   '/auth/exit-iframe': typeof AuthExitIframeRoute
   '/auth/session-token': typeof AuthSessionTokenRoute
   '/dev/kit': typeof DevKitRoute
@@ -226,10 +239,12 @@ export interface FileRoutesByTo {
   '/api/actor/$key': typeof ApiActorKeyRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/app/members/$memberId': typeof AppMembersMemberIdRoute
+  '/app/orders/$orderId': typeof AppOrdersOrderIdRoute
   '/app/orders/from-shopify': typeof AppOrdersFromShopifyRoute
   '/app/teams/$teamId': typeof AppTeamsTeamIdRoute
   '/app/workflows/$workflowId': typeof AppWorkflowsWorkflowIdRoute
   '/app/members': typeof AppMembersIndexRoute
+  '/app/orders': typeof AppOrdersIndexRoute
   '/app/teams': typeof AppTeamsIndexRoute
   '/app/workflows': typeof AppWorkflowsIndexRoute
   '/shop/$key': typeof ShopKeyIndexRoute
@@ -257,10 +272,12 @@ export interface FileRoutesById {
   '/api/actor/$key': typeof ApiActorKeyRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/app/members/$memberId': typeof AppMembersMemberIdRoute
+  '/app/orders/$orderId': typeof AppOrdersOrderIdRoute
   '/app/orders/from-shopify': typeof AppOrdersFromShopifyRoute
   '/app/teams/$teamId': typeof AppTeamsTeamIdRoute
   '/app/workflows/$workflowId': typeof AppWorkflowsWorkflowIdRoute
   '/app/members/': typeof AppMembersIndexRoute
+  '/app/orders/': typeof AppOrdersIndexRoute
   '/app/teams/': typeof AppTeamsIndexRoute
   '/app/workflows/': typeof AppWorkflowsIndexRoute
   '/shop/$key/': typeof ShopKeyIndexRoute
@@ -289,10 +306,12 @@ export interface FileRouteTypes {
     | '/api/actor/$key'
     | '/api/auth/$'
     | '/app/members/$memberId'
+    | '/app/orders/$orderId'
     | '/app/orders/from-shopify'
     | '/app/teams/$teamId'
     | '/app/workflows/$workflowId'
     | '/app/members/'
+    | '/app/orders/'
     | '/app/teams/'
     | '/app/workflows/'
     | '/shop/$key/'
@@ -303,7 +322,6 @@ export interface FileRouteTypes {
     | '/sign-in'
     | '/admin/members'
     | '/api/dev'
-    | '/app/orders'
     | '/auth/exit-iframe'
     | '/auth/session-token'
     | '/dev/kit'
@@ -314,10 +332,12 @@ export interface FileRouteTypes {
     | '/api/actor/$key'
     | '/api/auth/$'
     | '/app/members/$memberId'
+    | '/app/orders/$orderId'
     | '/app/orders/from-shopify'
     | '/app/teams/$teamId'
     | '/app/workflows/$workflowId'
     | '/app/members'
+    | '/app/orders'
     | '/app/teams'
     | '/app/workflows'
     | '/shop/$key'
@@ -344,10 +364,12 @@ export interface FileRouteTypes {
     | '/api/actor/$key'
     | '/api/auth/$'
     | '/app/members/$memberId'
+    | '/app/orders/$orderId'
     | '/app/orders/from-shopify'
     | '/app/teams/$teamId'
     | '/app/workflows/$workflowId'
     | '/app/members/'
+    | '/app/orders/'
     | '/app/teams/'
     | '/app/workflows/'
     | '/shop/$key/'
@@ -518,6 +540,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppMembersMemberIdRouteImport
       parentRoute: typeof AppRoute
     }
+    '/app/orders/': {
+      id: '/app/orders/'
+      path: '/'
+      fullPath: '/app/orders/'
+      preLoaderRoute: typeof AppOrdersIndexRouteImport
+      parentRoute: typeof AppOrdersRoute
+    }
+    '/app/orders/$orderId': {
+      id: '/app/orders/$orderId'
+      path: '/$orderId'
+      fullPath: '/app/orders/$orderId'
+      preLoaderRoute: typeof AppOrdersOrderIdRouteImport
+      parentRoute: typeof AppOrdersRoute
+    }
     '/app/orders/from-shopify': {
       id: '/app/orders/from-shopify'
       path: '/from-shopify'
@@ -583,11 +619,15 @@ const AdminRouteChildren: AdminRouteChildren = {
 const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)
 
 interface AppOrdersRouteChildren {
+  AppOrdersOrderIdRoute: typeof AppOrdersOrderIdRoute
   AppOrdersFromShopifyRoute: typeof AppOrdersFromShopifyRoute
+  AppOrdersIndexRoute: typeof AppOrdersIndexRoute
 }
 
 const AppOrdersRouteChildren: AppOrdersRouteChildren = {
+  AppOrdersOrderIdRoute: AppOrdersOrderIdRoute,
   AppOrdersFromShopifyRoute: AppOrdersFromShopifyRoute,
+  AppOrdersIndexRoute: AppOrdersIndexRoute,
 }
 
 const AppOrdersRouteWithChildren = AppOrdersRoute._addFileChildren(

@@ -8,12 +8,13 @@ import { cancelTestOrder, createTestOrder, type TestOrder } from "./test-orders.
 /**
  * The Backend's own Admin calls on the e2e store, against Shopify itself: the refresh grant with
  * no merchant present, one refresh under concurrent calls, and Shopify's real answer to a dead
- * refresh token. Each call is a press of Sync from Shopify on the orders screen, on a real order
+ * refresh token. Each call is a press of Sync from Shopify on an order's page, on a real order
  * the spec creates on the store ({@link createTestOrder}) and cancels at the end; a fixture order
- * offers no such press. A press that succeeds stores the order and toasts nothing, so a test waits
- * for the button to stop loading and for no error toast; since the session is ensured before the
- * fetch, the refresh has happened by then. The tests run in order and share one store row, so
- * `workers: 1` keeps the other embedded specs off it.
+ * offers no such press. Each order's page is open in a tab of its own, so five presses can run at
+ * once. A press that succeeds stores the order and toasts nothing, so a test waits for the button
+ * to stop loading and for no error toast; since the session is ensured before the fetch, the
+ * refresh has happened by then. The tests run in order and share one store row, so `workers: 1`
+ * keeps the other embedded specs off it.
  */
 test.describe.configure({ mode: "serial" });
 
@@ -33,30 +34,40 @@ let page: Page;
 let frame: FrameLocator;
 /** The spec's five real orders; the first is the one the single-press tests use. */
 let orders: ReadonlyArray<TestOrder> = [];
+/** Each order's page, in its own tab, by the order's GID. */
+const tabs = new Map<string, { readonly page: Page; readonly frame: FrameLocator }>();
 
+/** The orders index, every order shown: a real order has no workflow, so Making leaves it out. */
 const gotoOrders = async () => {
-  frame = await gotoApp(page, "app/orders");
+  frame = await gotoApp(page, "app/orders?show=all");
 };
 
-/** The row's Sync from Shopify. */
+const tabOf = (order: TestOrder) => {
+  const tab = tabs.get(order.id);
+  if (tab === undefined) throw new Error(`no tab for ${order.name}`);
+  return tab;
+};
+
+/** The order page's Sync from Shopify, in the frame; App Bridge hoists a proxy of it. */
 const syncButton = (order: TestOrder) =>
-  frame.locator("s-table-row", { hasText: order.name }).locator("s-button", {
+  tabOf(order).frame.locator('s-button[slot="secondary-actions"]', {
     hasText: "Sync from Shopify",
   });
 
 /**
- * Presses Sync from Shopify on `order`. A dispatched click, not a pointer one: pointer clicks run
- * at once race on scrolling their rows into view and clicking at coordinates, and in one run only
- * two of five reached the Backend while every button read as answered.
+ * Presses Sync from Shopify on `order`'s page. A dispatched click on the frame's own button, not
+ * a pointer one on the hoisted proxy: the press is the button's handler, and pointer clicks run
+ * at once race on coordinates.
  */
-const press = (order: TestOrder) =>
-  frame.getByRole("button", { name: `Sync ${order.name} from Shopify` }).dispatchEvent("click");
+const press = (order: TestOrder) => syncButton(order).dispatchEvent("click");
 
 /** Waits until the press on `order` has answered: its button stops loading. */
 const answered = (order: TestOrder) => expect(syncButton(order)).toHaveJSProperty("loading", false);
 
-/** No press failed: no error toast in the admin page. */
-const noFailure = () => expect(page.getByText(/^Couldn't/u)).toHaveCount(0);
+/** No press failed: no error toast in any tab. */
+const noFailure = async () => {
+  for (const tab of tabs.values()) await expect(tab.page.getByText(/^Couldn't/u)).toHaveCount(0);
+};
 
 test.beforeAll(async ({ browser }) => {
   test.setTimeout(180_000);
@@ -68,6 +79,12 @@ test.beforeAll(async ({ browser }) => {
       timeout: 60_000,
     });
   await page.waitForTimeout(WEBHOOKS_SETTLE);
+  for (const order of orders) {
+    const tab = await context.newPage();
+    const legacyId = order.id.split("/").at(-1) ?? "";
+    tabs.set(order.id, { page: tab, frame: await gotoApp(tab, `app/orders/${legacyId}`) });
+    await expect(syncButton(order)).toHaveJSProperty("disabled", false);
+  }
 });
 
 const first = () => orders[0] ?? { id: "", name: "(no order)" };
@@ -141,7 +158,7 @@ test("a rejected refresh token is ReauthorizationRequired, Shopify's real 401", 
   await backend(dev((c) => c.ExpireShopSession({ shop, refreshToken: "invalidate" })));
   const expired = await backend(dev((c) => c.GetShopSession({ shop })));
   await press(first());
-  await expect(page.getByText(REAUTHORIZE).first()).toBeVisible();
+  await expect(tabOf(first()).page.getByText(REAUTHORIZE).first()).toBeVisible();
   const after = await backend(dev((c) => c.GetShopSession({ shop })));
   expect(after?.accessTokenExpiresAt).toBe(expired?.accessTokenExpiresAt);
 });
@@ -149,6 +166,12 @@ test("a rejected refresh token is ReauthorizationRequired, Shopify's real 401", 
 test("reloading the embedded app exchanges and restores the session", async ({ backend }) => {
   await gotoOrders();
   await refreshedAfter(backend, Date.now());
+  const legacyId = first().id.split("/").at(-1) ?? "";
+  const tab = tabOf(first());
+  tabs.set(first().id, {
+    page: tab.page,
+    frame: await gotoApp(tab.page, `app/orders/${legacyId}`),
+  });
   await press(first());
   await answered(first());
   await noFailure();

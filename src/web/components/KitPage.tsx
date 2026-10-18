@@ -5,6 +5,7 @@ import {
   VERB_LABEL,
   WORKFLOW_STATE_LABEL,
 } from "../../domain/shop-work.ts";
+import { ORDERS_STRIP } from "../client/shop-actor-client.ts";
 import { LocalDateTime } from "./LocalDateTime.tsx";
 import { BlockBanner, ClosedLine, RunItem, RunNote } from "./MemberRun.tsx";
 import { type RunStepTask, RunSteps } from "./RunSteps.tsx";
@@ -28,6 +29,7 @@ import { Panel } from "./screen/Panel.tsx";
 import { Prose } from "./screen/Prose.tsx";
 import { SearchLine } from "./screen/SearchLine.tsx";
 import { SelectableCard } from "./screen/SelectableCard.tsx";
+import { SelectRow } from "./screen/SelectRow.tsx";
 import { SetupGuide, type SetupGuideStep } from "./screen/SetupGuide.tsx";
 import { Strip } from "./screen/Strip.tsx";
 import { textLimitError, textLimitProps } from "./screen/TextLimit.tsx";
@@ -132,9 +134,6 @@ const RUN = {
 /** The five cells every strip has, with the workflows list's longest labels. */
 const STRIP_LABELS = ["Started by you", "Started by others", "Ready", "Blocked", "Done or closed"];
 
-/** The orders strip's five values, the home page's link cells. */
-const ORDERS_STRIP = ["no_workflow", "not_started", "making", "made", "issues"] as const;
-
 /**
  * The home page's setup guide in each state: `done` marks the steps done, in order. The strings
  * are the home page's.
@@ -234,6 +233,37 @@ export function KitPage({ width }: { readonly width: "small" | "large" }) {
             }))}
           />
         </s-section>
+        {/* The order page's Workflow select and Attach, with the longest workflow name, and its
+            Assign team select and Assign. */}
+        <s-section heading="Select row">
+          <Lines>
+            <SelectRow
+              label={<s-text color="subdued">Workflow</s-text>}
+              select={
+                <s-select
+                  label="Workflow"
+                  labelAccessibilityVisibility="exclusive"
+                  placeholder="Choose workflow"
+                >
+                  <s-option value="a">{TASK_64}</s-option>
+                </s-select>
+              }
+              submit={<s-button variant="secondary">{VERB_LABEL.attachWorkflow.merchant}</s-button>}
+            />
+            <SelectRow
+              select={
+                <s-select
+                  label={VERB_LABEL.assign.merchant}
+                  labelAccessibilityVisibility="exclusive"
+                  placeholder={VERB_LABEL.assign.merchant}
+                >
+                  <s-option value="t">{TEAM_32}</s-option>
+                </s-select>
+              }
+              submit={<s-button variant="secondary">Assign</s-button>}
+            />
+          </Lines>
+        </s-section>
         <IndexSection
           label="Workflows index"
           head={
@@ -283,7 +313,7 @@ export function KitPage({ width }: { readonly width: "small" | "large" }) {
           <ClampedProse>{REASON_1000}</ClampedProse>
         </s-section>
         {/* New: the run pieces the member's workflow page and the merchant's order page share. */}
-        <s-section heading="Run">
+        <s-section heading="Workflow on an item">
           <Lines>
             <s-heading>{TITLE_255}</s-heading>
             <RunItem run={RUN} />
@@ -306,7 +336,7 @@ export function KitPage({ width }: { readonly width: "small" | "large" }) {
           <RunNoteModal id="kit-note" note={RUN.note} pending={false} onSave={resolveNull} />
           <BlockModal id="kit-block" run={RUN} pending={false} onBlock={resolveNull} />
         </s-section>
-        <s-section heading="Run steps">
+        <s-section heading="Workflow steps">
           <RunSteps
             tasks={RUN_TASKS}
             viewer="merchant"

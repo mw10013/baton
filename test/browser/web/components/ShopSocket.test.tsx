@@ -14,7 +14,7 @@ import {
   shopKeyAtom,
 } from "../../../../src/web/client/actor-connection.ts";
 import type { OrdersIndexData } from "../../../../src/domain/shop-work.ts";
-import OrdersPage from "../../../../src/web/components/OrdersPage.tsx";
+import OrdersIndexPage from "../../../../src/web/components/OrdersIndexPage.tsx";
 import { ShopSocket } from "../../../../src/web/components/ShopSocket.tsx";
 import { renderInApp } from "../../render.tsx";
 import { shopTestRegistry } from "../../shop-actor.ts";
@@ -119,10 +119,16 @@ describe("ShopSocket", () => {
       MerchantSyncStatus: () => Effect.succeed({ inFlight: false, lastError: null }),
     });
     const screen = await renderInApp(
-      <OrdersPage
-        input={{ limit: 25, cursor: null, q: null, show: "all", team: null }}
+      <OrdersIndexPage
         data={data}
-        pageLink={() => ({ href: "/app/orders", onClick: () => {} })}
+        q={null}
+        show={null}
+        team={null}
+        after={null}
+        orderLink={() => ({ href: "/app/orders", onClick: () => {} })}
+        onFilter={() => {}}
+        onNextPage={() => {}}
+        onPreviousPage={() => {}}
       />,
       registry,
     );

@@ -36,3 +36,14 @@ export const fieldError = (errors: ReadonlyArray<{ readonly message: string } | 
  */
 export const thrownCopy = (error: unknown, fallback: string) =>
   error instanceof Error && error.message !== "" ? error.message : fallback;
+
+/**
+ * The value of a filter select's "Any <noun>" option, the one that turns the filter off. Not
+ * `""`: an `s-option` with an empty value reports its label as its value, as a native option does,
+ * so a select whose `value` is `""` matches no option and shows the first one only by the
+ * browser's fallback. With a value every option can be matched, the chosen option is the select's
+ * answer rather than the browser's, and a test reads the value instead of the checked option's
+ * text. The screen maps it to `null` on change and back on render; it never reaches a URL or a
+ * read.
+ */
+export const ANY_OPTION_VALUE = "any";

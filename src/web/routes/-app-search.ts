@@ -26,7 +26,7 @@ export const appSearch = (searchStr: string): typeof AppSearch.Type =>
  * The search keys a page under `/app` owns: a list's search and its pages. A link to another page
  * drops them, so a filter never follows the merchant onto a page it does not belong to.
  */
-const PAGE_KEYS = ["state", "q", "after", "teamsAfter", "membersAfter"] as const;
+const PAGE_KEYS = ["state", "show", "team", "q", "after", "teamsAfter", "membersAfter"] as const;
 
 /**
  * A link under `/app` to `path`: the raw search Shopify sent (the `/app` guards read it on every
