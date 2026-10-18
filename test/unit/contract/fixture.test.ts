@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { ShopFixtureData } from "../../../src/contract/fixture.ts";
+import { TEAM_NAME_MAX_LENGTH } from "../../../src/domain/shop-work.ts";
 
 const decode = Schema.decodeUnknownEffect(ShopFixtureData);
 
@@ -54,6 +55,20 @@ describe("ShopFixtureData", () => {
         teams: [{ name: "Engraving", members: ["zed@example.com"] }],
       });
       assert.include(message, "zed@example.com is not a fixture member");
+    }),
+  );
+
+  it.effect("rejects a team name past TEAM_NAME_MAX_LENGTH, which the screens cannot show", () =>
+    Effect.gen(function* () {
+      const name = "x".repeat(TEAM_NAME_MAX_LENGTH + 1);
+      yield* failure({ ...valid, teams: [{ name, members: [] }], workflows: [], orders: [] });
+      const fits = yield* decode({
+        ...valid,
+        teams: [{ name: "x".repeat(TEAM_NAME_MAX_LENGTH), members: [] }],
+        workflows: [],
+        orders: [],
+      });
+      assert.lengthOf(fits.teams[0]?.name ?? "", TEAM_NAME_MAX_LENGTH);
     }),
   );
 

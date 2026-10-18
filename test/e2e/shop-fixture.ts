@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import { Email } from "../../src/contract/auth.ts";
 import type { ShopFixtureData } from "../../src/contract/fixture.ts";
 import { ShopKey } from "../../src/contract/shop.ts";
+import { TeamName } from "../../src/domain/shop-work.ts";
 
 /** This checkout's e2e store (`SHOPIFY_E2E_STORE`, which the config loads from `.env`). */
 export const E2E_SHOP: ShopKey = Schema.decodeUnknownSync(ShopKey)(
@@ -15,6 +16,9 @@ export const E2E_SHOP: ShopKey = Schema.decodeUnknownSync(ShopKey)(
 );
 
 const email = Schema.decodeUnknownSync(Email);
+
+/** A team name a spec adds; one past {@link TeamName}'s cap throws here, before the fixture refuses it. */
+export const teamName = Schema.decodeUnknownSync(TeamName);
 
 /** The fixture's member the specs sign in as; on team `ops`. */
 export const MEMBER = email("m1@m.com");
@@ -26,7 +30,7 @@ export const MEMBER = email("m1@m.com");
  */
 export const e2eFixture: ShopFixtureData = {
   members: [MEMBER, email("m2@m.com")],
-  teams: [{ name: "ops", members: [MEMBER] }],
+  teams: [{ name: teamName("ops"), members: [MEMBER] }],
   workflows: [],
   orders: [],
 };

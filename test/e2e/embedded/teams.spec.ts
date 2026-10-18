@@ -3,7 +3,7 @@ import * as Schema from "effect/Schema";
 
 import { TEAM_NAME_MAX_LENGTH } from "../../../src/domain/shop-work.ts";
 import { dev, expect, test, testEmail } from "../fixtures.ts";
-import { E2E_SHOP as shop, E2eEmail } from "../shop-fixture.ts";
+import { E2E_SHOP as shop, E2eEmail, teamName } from "../shop-fixture.ts";
 import { gotoApp, openApp } from "./app.ts";
 
 /**
@@ -148,7 +148,12 @@ test("the team page pages its members", async ({ backend }) => {
     dev((c) =>
       c.AddToFixture({
         shop,
-        fixture: { members, teams: [{ name: pagesTeam, members }], workflows: [], orders: [] },
+        fixture: {
+          members,
+          teams: [{ name: teamName(pagesTeam), members }],
+          workflows: [],
+          orders: [],
+        },
       }),
     ),
   );

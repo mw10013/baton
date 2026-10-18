@@ -233,7 +233,7 @@ test(
     const { teams } = yield* identity(backendUrl, OTHER_SHOP);
     yield* addToFixture(backendUrl, OTHER_SHOP, {
       teams: Array.from({ length: ShopLimits.maxTeams - teams.length }, (_, n) => ({
-        name: `Limit ${String(n)}`,
+        name: teamName(`Limit ${String(n)}`),
         members: [],
       })),
     });

@@ -3,7 +3,7 @@ import * as Schema from "effect/Schema";
 
 import { EMAIL_MAX_LENGTH } from "../../../src/domain/platform.ts";
 import { dev, expect, test, testEmail } from "../fixtures.ts";
-import { E2E_SHOP as shop, E2eEmail } from "../shop-fixture.ts";
+import { E2E_SHOP as shop, E2eEmail, teamName } from "../shop-fixture.ts";
 import { gotoApp, openApp } from "./app.ts";
 
 /**
@@ -54,7 +54,7 @@ test("the members index adds a member and the member page adds it to teams, remo
         shop,
         fixture: {
           members: [],
-          teams: teams.map((name) => ({ name, members: [] })),
+          teams: teams.map((name) => ({ name: teamName(name), members: [] })),
           workflows: [],
           orders: [],
         },

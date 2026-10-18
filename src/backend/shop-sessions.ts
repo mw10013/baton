@@ -200,7 +200,11 @@ export class ShopSessions extends Context.Service<
     Effect.flatMap(Cloudflare.D1.QueryDatabase(AuthDb), (d1) => make(d1)),
   );
 
-  /** {@link ShopSessions} over a `D1Database` the caller holds, rather than the bound `AuthDb`. */
+  /**
+   * {@link ShopSessions} over a `D1Database` the caller holds, rather than the bound `AuthDb`. It exists
+   * for the unit tests' `node:sqlite` D1 adapter: the `Cloudflare.D1.QueryDatabase` binding
+   * resolves `AuthDb` as a resource, which needs Alchemy's `Stack`, absent in a unit test.
+   */
   static readonly layerWith = (database: D1Database) =>
     Layer.effect(ShopSessions, make(Effect.succeed(database)));
 

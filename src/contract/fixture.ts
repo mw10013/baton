@@ -10,7 +10,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { LineItemProperty } from "../domain/orders.ts";
-import { TaskInstructions, TaskName, WorkflowState } from "../domain/shop-work.ts";
+import { TaskInstructions, TaskName, TeamName, WorkflowState } from "../domain/shop-work.ts";
 import { Email } from "./auth.ts";
 import { ShopKey } from "./shop.ts";
 
@@ -74,8 +74,11 @@ export const StoreOrder = Schema.Struct({
 });
 export type StoreOrder = typeof StoreOrder.Type;
 
-/** A team, with which of the fixture's members are on it; an empty list is a team with nobody. */
-export const FixtureTeam = Schema.Struct({ name: Name, members: Schema.Array(Email) });
+/**
+ * A team, with which of the fixture's members are on it; an empty list is a team with nobody. The
+ * name is a {@link TeamName}, so a fixture never stores a team the screens cannot decode.
+ */
+export const FixtureTeam = Schema.Struct({ name: TeamName, members: Schema.Array(Email) });
 export type FixtureTeam = typeof FixtureTeam.Type;
 
 /**
@@ -85,7 +88,7 @@ export type FixtureTeam = typeof FixtureTeam.Type;
  */
 export const FixtureTask = Schema.Struct({
   name: TaskName,
-  team: Schema.NullOr(Name),
+  team: Schema.NullOr(TeamName),
   step: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
   instructions: Schema.optionalKey(TaskInstructions),
 });

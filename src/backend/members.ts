@@ -858,7 +858,11 @@ export class Members extends Context.Service<Members, Effect.Success<ReturnType<
     Effect.flatMap(Cloudflare.D1.QueryDatabase(AuthDb), (d1) => make(d1)),
   );
 
-  /** {@link Members} over a `D1Database` the caller holds, rather than the bound `AuthDb`. */
+  /**
+   * {@link Members} over a `D1Database` the caller holds, rather than the bound `AuthDb`. It exists
+   * for the unit tests' `node:sqlite` D1 adapter: the `Cloudflare.D1.QueryDatabase` binding
+   * resolves `AuthDb` as a resource, which needs Alchemy's `Stack`, absent in a unit test.
+   */
   static readonly layerWith = (database: D1Database) =>
     Layer.effect(Members, make(Effect.succeed(database)));
 }
