@@ -31,6 +31,13 @@ import {
   TeamsPageRequest,
 } from "../contract/members.ts";
 import { ListOrdersRequest } from "../contract/orders.ts";
+import {
+  SetupFactsRequest,
+  WORKFLOWS_PAGE_SIZE,
+  WorkflowDetailRequest,
+  WorkflowsPageRequest,
+} from "../contract/workflows.ts";
+import type { SetupFacts } from "../domain/shop-work.ts";
 import { ShopActors } from "./shop-actors.ts";
 import { Auth } from "./auth.ts";
 import { MagicLinkDelivery } from "./magic-link-delivery.ts";
@@ -84,6 +91,9 @@ const decodeMembersPageRequest = Schema.decodeUnknownEffect(MembersPageRequest);
 const decodeMemberDetailRequest = Schema.decodeUnknownEffect(MemberDetailRequest);
 const decodeTeamsPageRequest = Schema.decodeUnknownEffect(TeamsPageRequest);
 const decodeTeamDetailRequest = Schema.decodeUnknownEffect(TeamDetailRequest);
+const decodeWorkflowsPageRequest = Schema.decodeUnknownEffect(WorkflowsPageRequest);
+const decodeWorkflowDetailRequest = Schema.decodeUnknownEffect(WorkflowDetailRequest);
+const decodeSetupFactsRequest = Schema.decodeUnknownEffect(SetupFactsRequest);
 const encodeAdminSession = Schema.encodeSync(AdminSession);
 const encodeMagicLinkRequested = Schema.encodeSync(MagicLinkRequested);
 
@@ -301,6 +311,58 @@ const make = Effect.gen(function* () {
     );
   });
 
+  /**
+   * The workflows index's first render: one page of the shop's workflows, read in the actor
+   * (definitions live there) with its live teams. The request is ignored; the session token is
+   * the credential ({@link installedShop}), and a shop with no `ShopSession` never wakes its actor.
+   */
+  const workflowsPage = Effect.fn("BackendApi.workflowsPage")(function* (
+    _request: RequestInfo,
+    payload: WorkflowsPageRequest,
+  ) {
+    const { sessionToken, state, q, after } = yield* decodeWorkflowsPageRequest(payload).pipe(
+      Effect.orDie,
+    );
+    const shop = yield* installedShop(sessionToken);
+    return yield* actors.listWorkflows(shop, {
+      limit: WORKFLOWS_PAGE_SIZE,
+      cursor: after,
+      q,
+      state,
+    });
+  });
+
+  /** The workflow page's and the editor's first render, as {@link workflowsPage}; `null` is no such workflow. */
+  const workflowDetail = Effect.fn("BackendApi.workflowDetail")(function* (
+    _request: RequestInfo,
+    payload: WorkflowDetailRequest,
+  ) {
+    const { sessionToken, workflowId } = yield* decodeWorkflowDetailRequest(payload).pipe(
+      Effect.orDie,
+    );
+    const shop = yield* installedShop(sessionToken);
+    return yield* actors.getWorkflowDetail(shop, { workflowId });
+  });
+
+  /**
+   * The App Home's setup guide: D1's half (a team with a member) and the actor's (an active
+   * workflow, a run) read together, as legacy's loader did in one `Effect.all`. Never live: the
+   * guide is loader data. The request is ignored, as on {@link workflowsPage}.
+   */
+  const setupFacts = Effect.fn("BackendApi.setupFacts")(function* (
+    _request: RequestInfo,
+    payload: SetupFactsRequest,
+  ) {
+    const { sessionToken } = yield* decodeSetupFactsRequest(payload).pipe(Effect.orDie);
+    const shop = yield* installedShop(sessionToken);
+    const [teamWithMember, workflowFacts] = yield* Effect.all(
+      [members.teamWithMemberExists(shop), actors.workflowSetupFacts(shop)],
+      { concurrency: "unbounded" },
+    );
+    const facts: SetupFacts = { teamWithMember, ...workflowFacts };
+    return facts;
+  });
+
   return {
     hello,
     shout,
@@ -315,6 +377,9 @@ const make = Effect.gen(function* () {
     memberDetail,
     teamsPage,
     teamDetail,
+    workflowsPage,
+    workflowDetail,
+    setupFacts,
   };
 });
 

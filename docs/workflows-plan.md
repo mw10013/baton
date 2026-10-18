@@ -223,6 +223,9 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - 2026-10-17, Step 3: the refused-call publish test's positive half is an Edit tag (legacy's was `markTaskDone`, F), and it ends with a second Edit tag whose notice must be the next one queued.
 - 2026-10-17, Step 3: new tests beside the legacy titles: "the editor's task writes answer Ok on the draft, NotFound for a task or step no draft holds" and "a member is refused every workflow procedure with Forbidden" (integ); the reconcile-sites and notice-on-Ok unit tests.
 - 2026-10-17, Step 3: the integ file's `merchant` helper makes one HTTP call (`ShopIdentityNames`) before each socket, as `members.test.ts` does before its first.
+- 2026-10-17, Step 4: `WorkflowsPageRequest` carries `state` beside `q` and `after` (the index's filter); the three request schemas sit in `src/contract/workflows.ts` with `WORKFLOWS_PAGE_SIZE`.
+- 2026-10-17, Step 4: the integ loader cases run in file order on `OTHER_SHOP` (no team, no workflow), the only seed shop with nothing of this file's other cases on it; legacy's index title runs there from the Backend's side through `ApiWorkflowsPage`. Step 3's integ titles gain their read-back halves through `ApiWorkflowDetail` (teamName, memberCount, `null` after delete).
+- 2026-10-17, Step 4: new titles: "setupFacts on a shop with no team and no workflow holds none of the three", "setupFacts after a team with a member and an active workflow holds the first two; a run waits for runs", "the loaders refuse a token signed with another secret and a shop with no ShopSession" (integ); three `BackendApi workflows` unit cases.
 
 ### Issues
 
@@ -237,6 +240,7 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - 2026-10-17, Step 1: `vp check` pass (249 files); `vp test` 56 files, 615 tests, 55.8 s; `vp run test:e2e` 40 passed, 3.1 min.
 - 2026-10-17, Step 2: `vp check` pass (253 files); `vp test` 58 files, 660 tests, 55.5 s; `vp run test:e2e` 39 passed, 1 failed (hydration timeout, 3.6 min), rerun 39 passed, 1 failed, 1 did not run (3.6 min), third run 39 passed, 1 failed (3.3 min); the failing specs alone 5 passed, 1.3 min.
 - 2026-10-17, Step 3: `vp check` pass (256 files); `vp test` 60 files, 676 tests, 39.3 s (after two runs with the one socket-open failure above); `vp run test:e2e` 40 passed, 3.5 min.
+- 2026-10-17, Step 4: `vp check` pass (259 files); `vp test` 60 files, 683 tests, 42.7 s; `vp run test:e2e` 40 passed, 3.4 min.
 
 ### Human steps requested
 

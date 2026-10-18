@@ -2,6 +2,12 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import type * as Effect from "effect/Effect";
 import type { OrdersListInput, OrdersListPage, ShopSnapshot } from "../../contract/shop-actor.ts";
 import type { OrderDetail } from "../../domain/orders.ts";
+import type {
+  ListWorkflowsInput,
+  WorkflowPageData,
+  WorkflowSetupFacts,
+  WorkflowsIndexData,
+} from "../../domain/shop-work.ts";
 import type { ActorFixtureAdded, ActorFixtureCounts, ActorFixtureRows } from "../fixture.ts";
 import type { OrderWebhookStatus } from "./orders.ts";
 import type { OrdersStreamCounts } from "./orders-stream.ts";
@@ -35,6 +41,11 @@ export interface ShopActorShape {
   }) => Effect.Effect<OrderWebhookStatus>;
   readonly getOrder: (input: { readonly orderId: string }) => Effect.Effect<OrderDetail | null>;
   readonly listOrders: (input: OrdersListInput) => Effect.Effect<OrdersListPage>;
+  readonly listWorkflows: (input: ListWorkflowsInput) => Effect.Effect<WorkflowsIndexData>;
+  readonly getWorkflowDetail: (input: {
+    readonly workflowId: string;
+  }) => Effect.Effect<WorkflowPageData | null>;
+  readonly workflowSetupFacts: () => Effect.Effect<WorkflowSetupFacts>;
   readonly onOrdersStream: (input: {
     readonly workflowId: string;
     readonly url: string;

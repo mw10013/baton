@@ -7,6 +7,7 @@ import type { ShopKey } from "../contract/shop.ts";
 import type { OrdersListInput, ShopSnapshot } from "../contract/shop-actor.ts";
 import * as Match from "effect/Match";
 import { FixtureConflict } from "../contract/fixture.ts";
+import type { ListWorkflowsInput } from "../domain/shop-work.ts";
 import type { ActorFixtureRows } from "./fixture.ts";
 import type { Dependencies } from "alchemy";
 import ShopActor, { ABORT_UNINSTALLED } from "./shop-actor/tag.ts";
@@ -140,6 +141,27 @@ const make = <R>(namespace: Effect.Effect<Effect.Success<typeof ShopActor>, neve
       return yield* actors.getByName(key).listOrders(input);
     });
 
+    /** One page of the shop's workflows index; see `listWorkflows` on {@link ShopActor}. */
+    const listWorkflows = Effect.fn("ShopActors.listWorkflows")(function* (
+      key: ShopKey,
+      input: ListWorkflowsInput,
+    ) {
+      return yield* actors.getByName(key).listWorkflows(input);
+    });
+
+    /** One workflow with its tasks, draft and the shop's teams, or null. */
+    const getWorkflowDetail = Effect.fn("ShopActors.getWorkflowDetail")(function* (
+      key: ShopKey,
+      input: { readonly workflowId: string },
+    ) {
+      return yield* actors.getByName(key).getWorkflowDetail(input);
+    });
+
+    /** The actor's half of the shop's setup facts. */
+    const workflowSetupFacts = Effect.fn("ShopActors.workflowSetupFacts")(function* (key: ShopKey) {
+      return yield* actors.getByName(key).workflowSetupFacts();
+    });
+
     /** Streams a completed export into the shop; see `onOrdersStream` on {@link ShopActor}. */
     const onOrdersStream = Effect.fn("ShopActors.onOrdersStream")(function* (
       key: ShopKey,
@@ -179,6 +201,9 @@ const make = <R>(namespace: Effect.Effect<Effect.Success<typeof ShopActor>, neve
       syncOrderWebhook,
       getOrder,
       listOrders,
+      listWorkflows,
+      getWorkflowDetail,
+      workflowSetupFacts,
       onOrdersStream,
       onOrdersSyncEmpty,
       onOrdersSyncError,
@@ -215,7 +240,7 @@ export class ShopActors extends Context.Service<
    * Records each revoke and closes nothing, answers every snapshot with `snapshot`, records
    * each fixture load in `loaded` and each fixture add in `added`, answering the counts of its
    * rows (it never finds a clash), and records each order removal in `removedOrders`, answering
-   * that there was one. Its order and sync methods and `destroy` die: a test that reaches them
+   * that there was one. Its order, workflow and sync methods and `destroy` die: a test that reaches them
    * overrides them.
    */
   static readonly layerTest = (
@@ -258,6 +283,9 @@ export class ShopActors extends Context.Service<
       syncOrderWebhook: () => Effect.die(new Error("ShopActors.layerTest: syncOrderWebhook")),
       getOrder: () => Effect.die(new Error("ShopActors.layerTest: getOrder")),
       listOrders: () => Effect.die(new Error("ShopActors.layerTest: listOrders")),
+      listWorkflows: () => Effect.die(new Error("ShopActors.layerTest: listWorkflows")),
+      getWorkflowDetail: () => Effect.die(new Error("ShopActors.layerTest: getWorkflowDetail")),
+      workflowSetupFacts: () => Effect.die(new Error("ShopActors.layerTest: workflowSetupFacts")),
       onOrdersStream: () => Effect.die(new Error("ShopActors.layerTest: onOrdersStream")),
       onOrdersSyncEmpty: () => Effect.die(new Error("ShopActors.layerTest: onOrdersSyncEmpty")),
       onOrdersSyncError: () => Effect.die(new Error("ShopActors.layerTest: onOrdersSyncError")),

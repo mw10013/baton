@@ -29,7 +29,7 @@ import {
   testShopify,
 } from "./layers.ts";
 import { MembershipRepository } from "../../../src/backend/membership-repository.ts";
-import { MemberId, TeamId } from "../../../src/domain/shop-work.ts";
+import { MemberId, TeamId, WorkflowName } from "../../../src/domain/shop-work.ts";
 import { Auth } from "../../../src/backend/auth.ts";
 import { SentMail } from "../../../src/backend/mailer.ts";
 import { ShopAccess, ShopAccessDenied } from "../../../src/backend/shop-access.ts";
@@ -338,6 +338,115 @@ describe("BackendApi orders", () => {
         assert.strictEqual(error._tag, "ShopNotInstalled");
         assert.deepStrictEqual(listed, []);
       }).pipe(Effect.provide(TestBackend({ actors: listingActors(listed) })));
+    },
+  );
+});
+
+describe("BackendApi workflows", () => {
+  const index = { workflows: [], nextCursor: null, matches: null };
+  const facts = { activeWorkflow: true, run: false };
+  /**
+   * {@link ShopActors.layerTest} whose workflow reads answer fixed data, recording each call as
+   * `<method> <shop>` and the index's input.
+   */
+  const workflowActors = (calls: Array<string>, inputs: Array<unknown> = []) =>
+    Layer.effect(
+      ShopActors,
+      Effect.gen(function* () {
+        const base = yield* ShopActors;
+        return {
+          ...base,
+          listWorkflows: (key: ShopKey, input: unknown) =>
+            Effect.sync(() => {
+              calls.push(`listWorkflows ${key}`);
+              inputs.push(input);
+              return index;
+            }),
+          getWorkflowDetail: (key: ShopKey) =>
+            Effect.sync(() => {
+              calls.push(`getWorkflowDetail ${key}`);
+              return null;
+            }),
+          workflowSetupFacts: (key: ShopKey) =>
+            Effect.sync(() => {
+              calls.push(`workflowSetupFacts ${key}`);
+              return facts;
+            }),
+        };
+      }),
+    ).pipe(Layer.provide(ShopActors.layerTest([], snapshot)));
+
+  /** Every loader method of the workflows screens and the App Home, on `sessionToken`. */
+  const everyMethod = (
+    api: BackendApi["Service"],
+    sessionToken: string,
+  ): ReadonlyArray<Effect.Effect<unknown, { readonly _tag: string }>> => [
+    api.workflowsPage(withCookie(undefined), { sessionToken, state: null, q: null, after: null }),
+    api.workflowDetail(withCookie(undefined), { sessionToken, workflowId: "w-1" }),
+    api.setupFacts(withCookie(undefined), { sessionToken }),
+  ];
+
+  it.live("each refuses a token signed with another secret, touching nothing", () => {
+    const calls: Array<string> = [];
+    return Effect.gen(function* () {
+      const api = yield* BackendApi;
+      const sessionToken = yield* mintSessionToken({ shop: SEED_SHOP, apiSecret: "other-secret" });
+      for (const call of everyMethod(api, sessionToken)) {
+        const error = yield* Effect.flip(call);
+        assert.strictEqual(error._tag, "InvalidSessionToken");
+      }
+      assert.deepStrictEqual(calls, []);
+    }).pipe(Effect.provide(TestBackend({ actors: workflowActors(calls) })));
+  });
+
+  it.live("each for a shop with no ShopSession is ShopNotInstalled and reads no actor", () => {
+    const calls: Array<string> = [];
+    return Effect.gen(function* () {
+      const api = yield* BackendApi;
+      const sessionToken = yield* mintSessionToken({ shop: OTHER_SHOP });
+      for (const call of everyMethod(api, sessionToken)) {
+        const error = yield* Effect.flip(call);
+        assert.strictEqual(error._tag, "ShopNotInstalled");
+      }
+      assert.deepStrictEqual(calls, []);
+    }).pipe(Effect.provide(TestBackend({ actors: workflowActors(calls) })));
+  });
+
+  it.live(
+    "workflowsPage pages 50 by the request's after; workflowDetail and setupFacts read the token's shop",
+    () => {
+      const calls: Array<string> = [];
+      const inputs: Array<unknown> = [];
+      return Effect.gen(function* () {
+        const api = yield* BackendApi;
+        const sessionToken = yield* mintSessionToken({ shop: SEED_SHOP });
+        const after = Schema.decodeUnknownSync(WorkflowName)("Mugs");
+        assert.deepStrictEqual(
+          yield* api.workflowsPage(withCookie(undefined), {
+            sessionToken,
+            state: "active",
+            q: null,
+            after,
+          }),
+          index,
+        );
+        assert.deepStrictEqual(inputs, [{ limit: 50, cursor: "Mugs", q: null, state: "active" }]);
+        assert.strictEqual(
+          yield* api.workflowDetail(withCookie(undefined), { sessionToken, workflowId: "w-1" }),
+          null,
+        );
+        // The test D1 holds no team, so D1's half is false; the actor's half comes through.
+        assert.deepStrictEqual(yield* api.setupFacts(withCookie(undefined), { sessionToken }), {
+          teamWithMember: false,
+          activeWorkflow: true,
+          run: false,
+        });
+        assert.deepStrictEqual(calls, [
+          `listWorkflows ${SEED_SHOP}`,
+          `getWorkflowDetail ${SEED_SHOP}`,
+          `workflowSetupFacts ${SEED_SHOP}`,
+        ]);
+      }).pipe(Effect.provide(TestBackend({ actors: workflowActors(calls, inputs) })));
     },
   );
 });

@@ -8,8 +8,11 @@ import * as Schema from "effect/Schema";
 import { ORDERS_KEY } from "../../src/contract/shop-actor.ts";
 import { TeamName } from "../../src/domain/shop-work.ts";
 import * as ShopWork from "../../src/domain/shop-work.ts";
-import { SEED_SHOP } from "../seed-shops.ts";
-import { email, integ, openAs } from "./actor-clients.ts";
+import { ShopKey } from "../../src/contract/shop.ts";
+import { ShopFixtureData } from "../../src/contract/fixture.ts";
+import { OTHER_SHOP, SEED_SHOP } from "../seed-shops.ts";
+import { mintSessionToken } from "../shopify-session-token.ts";
+import { addToFixture, email, integ, openAs } from "./actor-clients.ts";
 import { fileStage } from "./file-stage.ts";
 import Stack from "./stack.ts";
 
@@ -18,8 +21,11 @@ import Stack from "./stack.ts";
  * procedure on a forged merchant socket and the union it answers, the `ORDERS_KEY` notices a
  * second merchant socket receives, and a member refused every one. Legacy
  * `shop-agent-workflows.test.ts` and `member-runs-socket.test.ts` titles, unchanged; their run
- * halves wait for runs. Every case writes `SEED_SHOP` under names and tags of its own. The
- * repository's and the application service's rules are unit tests.
+ * halves wait for runs. Every case writes `SEED_SHOP` under names and tags of its own, but the
+ * loader cases, which run in file order on `OTHER_SHOP` (no team, no workflow until they add
+ * them). The loaders are reached as the Website's server functions reach them, with a signed
+ * merchant token (`ApiWorkflowsPage`, `ApiWorkflowDetail`, `ApiSetupFacts`). The repository's and
+ * the application service's rules are unit tests.
  */
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
   providers: Cloudflare.providers(),
@@ -74,6 +80,20 @@ const goLive = (client: Client, id: string) =>
     assert.strictEqual(on._tag, "Ok");
   });
 
+/** `BackendApi.workflowDetail` for `workflowId` on `shop`, with a signed merchant token. */
+const detail = (backendUrl: string, workflowId: string, shop: ShopKey = SEED_SHOP) =>
+  Effect.gen(function* () {
+    const sessionToken = yield* mintSessionToken({ shop });
+    return yield* integ(backendUrl, (c) => c.ApiWorkflowDetail({ sessionToken, workflowId }));
+  });
+
+/** `BackendApi.setupFacts` for `shop`, with a signed merchant token. */
+const setupFacts = (backendUrl: string, shop: ShopKey) =>
+  Effect.gen(function* () {
+    const sessionToken = yield* mintSessionToken({ shop });
+    return yield* integ(backendUrl, (c) => c.ApiSetupFacts({ sessionToken }));
+  });
+
 /** `count` notices on `received`, each naming `ORDERS_KEY`, and no more queued. */
 const noticed = (
   received: Effect.Success<ReturnType<typeof merchant>>["received"],
@@ -98,10 +118,23 @@ test(
         addStep({ workflowId: workflow.id, name: "Engrave", teamId: "nope" }),
       );
       assert.strictEqual(unknown._tag, "TeamNotFound");
+      const fresh = yield* detail(backendUrl, workflow.id);
+      assert.strictEqual(fresh?.draftTasks, null);
+      assert.deepStrictEqual<unknown>(fresh?.tasks, []);
+      assert.strictEqual(fresh?.workflow.tag, "Engraving wf-team-check");
       const ok = yield* client.MerchantAddStep(
         addStep({ workflowId: workflow.id, name: "Engrave", teamId: engraving.id }),
       );
       assert.strictEqual(ok._tag, "Ok");
+      const after = yield* detail(backendUrl, workflow.id);
+      assert.deepStrictEqual<unknown>(
+        after?.draftTasks?.map((s) => [s.teamName, s.memberCount]),
+        [["Engraving wf-team-check", 0]],
+      );
+      assert.deepStrictEqual<unknown>(
+        after?.teams.filter((t) => t.id === engraving.id).map((t) => t.memberCount),
+        [0],
+      );
     }).pipe(Effect.scoped);
   }),
 );
@@ -141,6 +174,9 @@ test(
       const task = yield* client.MerchantAddStep(addStep({ ...id, name: "S", teamId: t.id }));
       if (task._tag !== "Ok" || task.task === null) return assert.fail(task._tag);
       yield* client.MerchantDeleteTeam({ teamId: t.id });
+      const unassigned = yield* detail(backendUrl, workflow.id);
+      assert.strictEqual(unassigned?.draftTasks?.[0]?.teamName, null);
+      assert.isFalse(unassigned?.teams.some((each) => each.id === t.id));
       // The draft's task lost its team: Turn on names it.
       assert.deepStrictEqual<unknown>(yield* client.MerchantApplyAndTurnOn(id), {
         _tag: "TaskUnassigned",
@@ -457,5 +493,127 @@ test(
         if (Exit.isFailure(exit)) assert.include(JSON.stringify(exit.cause), "Forbidden");
       }
     }).pipe(Effect.scoped);
+  }),
+);
+
+const fixture = Schema.decodeUnknownSync(ShopFixtureData);
+
+test(
+  "setupFacts on a shop with no team and no workflow holds none of the three",
+  Effect.gen(function* () {
+    const { backendUrl } = yield* stack;
+    assert.deepStrictEqual(yield* setupFacts(backendUrl, OTHER_SHOP), {
+      teamWithMember: false,
+      activeWorkflow: false,
+      run: false,
+    });
+  }),
+);
+
+test(
+  "the workflows index pages by name and a search narrows it",
+  Effect.gen(function* () {
+    const { backendUrl } = yield* stack;
+    const names = Array.from(
+      { length: 55 },
+      (_, index) => `Ring ${String(index).padStart(2, "0")}`,
+    );
+    const added = yield* addToFixture(
+      backendUrl,
+      OTHER_SHOP,
+      fixture({
+        members: [],
+        teams: [],
+        workflows: [
+          ...names.map((name) => ({ name, tag: name, tasks: [] })),
+          { name: "Mug glaze", tag: "mug", tasks: [] },
+        ],
+        orders: [],
+      }),
+    );
+    assert.strictEqual(added.workflows, 56);
+    const sessionToken = yield* mintSessionToken({ shop: OTHER_SHOP });
+    const page = (after: string | null, q: string | null = null, state: "active" | null = null) =>
+      integ(backendUrl, (c) =>
+        c.ApiWorkflowsPage({
+          sessionToken,
+          state,
+          q: q === null ? null : Schema.decodeUnknownSync(ShopWork.ListSearch)(q),
+          after: after === null ? null : Schema.decodeUnknownSync(ShopWork.WorkflowName)(after),
+        }),
+      );
+    const first = yield* page(null);
+    assert.strictEqual(first.workflows.length, 50);
+    assert.strictEqual(first.workflows[0]?.name, "Mug glaze");
+    assert.strictEqual(first.matches, null);
+    if (first.nextCursor === null) return assert.fail("no next page");
+    const second = yield* page(first.nextCursor);
+    assert.deepStrictEqual(
+      second.workflows.map((workflow) => workflow.name),
+      names.slice(49),
+    );
+    assert.strictEqual(second.nextCursor, null);
+    // A word prefix of the name, over every page; the state filter is ignored under a search.
+    const found = yield* page(null, "glaz");
+    assert.deepStrictEqual(
+      found.workflows.map((workflow) => workflow.name),
+      ["Mug glaze"],
+    );
+    assert.strictEqual(found.matches, 1);
+    assert.strictEqual((yield* page(null, "ring", "active")).matches, 55);
+    assert.strictEqual((yield* page(null, null, "active")).workflows.length, 0);
+  }),
+);
+
+test(
+  "setupFacts after a team with a member and an active workflow holds the first two; a run waits for runs",
+  Effect.gen(function* () {
+    const { backendUrl } = yield* stack;
+    yield* addToFixture(
+      backendUrl,
+      OTHER_SHOP,
+      fixture({
+        members: ["setup@workflows.test"],
+        teams: [{ name: "Setup", members: ["setup@workflows.test"] }],
+        workflows: [
+          {
+            name: "Setup on",
+            tag: "setup-on",
+            state: "active",
+            tasks: [{ name: "Do", team: "Setup" }],
+          },
+        ],
+        orders: [],
+      }),
+    );
+    assert.deepStrictEqual(yield* setupFacts(backendUrl, OTHER_SHOP), {
+      teamWithMember: true,
+      activeWorkflow: true,
+      run: false,
+    });
+  }),
+);
+
+test(
+  "the loaders refuse a token signed with another secret and a shop with no ShopSession",
+  Effect.gen(function* () {
+    const { backendUrl } = yield* stack;
+    const bad = yield* mintSessionToken({ shop: SEED_SHOP, apiSecret: "other-secret" });
+    const uninstalled = yield* mintSessionToken({
+      shop: Schema.decodeUnknownSync(ShopKey)("not-installed.myshopify.com"),
+    });
+    for (const [sessionToken, tag] of [
+      [bad, "InvalidSessionToken"],
+      [uninstalled, "ShopNotInstalled"],
+    ] as const) {
+      const calls = [
+        integ(backendUrl, (c) =>
+          c.ApiWorkflowsPage({ sessionToken, state: null, q: null, after: null }),
+        ),
+        integ(backendUrl, (c) => c.ApiWorkflowDetail({ sessionToken, workflowId: "any" })),
+        integ(backendUrl, (c) => c.ApiSetupFacts({ sessionToken })),
+      ] as ReadonlyArray<Effect.Effect<unknown, { readonly _tag: string }>>;
+      for (const call of calls) assert.strictEqual((yield* Effect.flip(call))._tag, tag);
+    }
   }),
 );

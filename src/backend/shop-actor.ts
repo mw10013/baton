@@ -26,6 +26,7 @@ import {
   ShopifyUnavailable as ShopifyUnreachable,
 } from "../contract/shopify.ts";
 import { ShopLimits } from "../domain/platform.ts";
+import type { ListWorkflowsInput } from "../domain/shop-work.ts";
 import {
   CONNECTION_CLOSE_DISPLACED,
   CONNECTION_CLOSE_FORBIDDEN,
@@ -818,6 +819,28 @@ const makeShopActor = Effect.gen(function* () {
     );
 
     /**
+     * One page of the workflows index, legacy's loader read (plain RPC: workflow definitions are
+     * configuration, never live); `Workflows.listWorkflows`.
+     */
+    const listWorkflows = Effect.fn("ShopActor.listWorkflows")(function* (
+      input: ListWorkflowsInput,
+    ) {
+      return yield* workflows.listWorkflows(input);
+    }, Effect.provide(runtime));
+
+    /** The workflow page's and the editor's read, or null; `Workflows.getWorkflowDetail`. */
+    const getWorkflowDetail = Effect.fn("ShopActor.getWorkflowDetail")(function* (input: {
+      readonly workflowId: string;
+    }) {
+      return yield* workflows.getWorkflowDetail(input);
+    }, Effect.provide(runtime));
+
+    /** The actor's half of the App Home's setup facts; `Workflows.workflowSetupFacts`. */
+    const workflowSetupFacts = Effect.fn("ShopActor.workflowSetupFacts")(function* () {
+      return yield* workflows.workflowSetupFacts();
+    }, Effect.provide(runtime));
+
+    /**
      * Legacy's `onOrdersStream`: the Workflow's last step for a completed export, never a
      * browser's (rule 16 on `syncOrder`: the URL must only ever come from a bulk operation this
      * shop started). The stream merges ({@link runOrdersStream}), then the retention pass rides
@@ -984,6 +1007,9 @@ const makeShopActor = Effect.gen(function* () {
       syncOrderWebhook,
       getOrder,
       listOrders,
+      listWorkflows,
+      getWorkflowDetail,
+      workflowSetupFacts,
       onOrdersStream,
       onOrdersSyncEmpty,
       onOrdersSyncError,

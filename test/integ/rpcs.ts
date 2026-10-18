@@ -15,6 +15,12 @@ import { MagicLinkDelivery } from "../../src/backend/magic-link-delivery.ts";
 import { MembershipRepository } from "../../src/backend/membership-repository.ts";
 import { InvalidSessionToken, ShopKey } from "../../src/contract/shop.ts";
 import { ListOrdersRequest } from "../../src/contract/orders.ts";
+import {
+  SetupFactsRequest,
+  WorkflowDetailRequest,
+  WorkflowsPageRequest,
+} from "../../src/contract/workflows.ts";
+import { SetupFacts, WorkflowPageData, WorkflowsIndexData } from "../../src/domain/shop-work.ts";
 import { BackendApi } from "../../src/backend/api.ts";
 import { OrdersListInput, OrdersListPage } from "../../src/contract/shop-actor.ts";
 import { OrderDetail } from "../../src/domain/orders.ts";
@@ -61,6 +67,8 @@ export type ShopifyFakeCall = typeof ShopifyFakeCall.Type;
  *   end as a late caller reports it.
  * - `ApiListOrders` is the `BackendApi` method the orders screen's loader calls, with an empty
  *   request, because integ has no Website to call it over the binding.
+ * - `ApiWorkflowsPage`, `ApiWorkflowDetail` and `ApiSetupFacts` are the `BackendApi` methods the
+ *   workflows screens' and the App Home's loaders call, as `ApiListOrders`.
  * - `ShopIdentityNames` answers the emails of `shop`'s `Member` rows and the names of its `Team`
  *   rows, read from D1 alone ({@link MembershipRepository}' `identityNames`), so it never reaches the actor.
  */
@@ -92,6 +100,21 @@ export const IntegRpcs = RpcGroup.make(
   Rpc.make("ApiListOrders", {
     payload: ListOrdersRequest,
     success: OrdersListPage,
+    error: Schema.Union([InvalidSessionToken, ShopNotInstalled]),
+  }),
+  Rpc.make("ApiWorkflowsPage", {
+    payload: WorkflowsPageRequest,
+    success: WorkflowsIndexData,
+    error: Schema.Union([InvalidSessionToken, ShopNotInstalled]),
+  }),
+  Rpc.make("ApiWorkflowDetail", {
+    payload: WorkflowDetailRequest,
+    success: Schema.NullOr(WorkflowPageData),
+    error: Schema.Union([InvalidSessionToken, ShopNotInstalled]),
+  }),
+  Rpc.make("ApiSetupFacts", {
+    payload: SetupFactsRequest,
+    success: SetupFacts,
     error: Schema.Union([InvalidSessionToken, ShopNotInstalled]),
   }),
   Rpc.make("ShopIdentityNames", {
@@ -132,6 +155,9 @@ export const IntegHandlers = IntegRpcs.toLayer(
       ListOrders: ({ shop, ...input }) => actors.listOrders(shop, input),
       SyncFailed: ({ shop, ...input }) => actors.onOrdersSyncError(shop, input).pipe(Effect.as({})),
       ApiListOrders: (payload) => api.listOrders(noRequest, payload),
+      ApiWorkflowsPage: (payload) => api.workflowsPage(noRequest, payload),
+      ApiWorkflowDetail: (payload) => api.workflowDetail(noRequest, payload),
+      ApiSetupFacts: (payload) => api.setupFacts(noRequest, payload),
       ShopIdentityNames: ({ shop }) => members.identityNames(shop),
     });
   }),
