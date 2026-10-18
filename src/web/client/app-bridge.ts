@@ -24,11 +24,26 @@ export interface AppBridge {
 
 declare global {
   var shopify: AppBridge;
+
+  /**
+   * App Bridge's `s-app-window`: a full-screen iframe the admin opens over the page that
+   * launched it, loading `src` (an app path) with the admin's own chrome around it. `show` and
+   * `hide` open and close it; it fires `hide` however it closes (its X, Escape, a `hide` call).
+   * `@shopify/app-bridge-types` is not a dependency, so the part this repo uses is declared here.
+   *
+   * @see https://shopify.dev/docs/api/app-home/app-bridge-web-components/app-window
+   */
+  interface SAppWindowElement extends HTMLElement {
+    src: string;
+    show: () => Promise<void>;
+    hide: () => Promise<void>;
+  }
 }
 
 /**
  * App Bridge's own elements, which Polaris' types do not carry. `s-app-nav` is the App nav: App
  * Bridge hoists it into the admin's chrome and its `s-link` children are the nav's items.
+ * `s-app-window` is the workflow editor's window ({@link SAppWindowElement}).
  *
  * @see https://shopify.dev/docs/api/app-home/app-bridge-web-components/app-nav
  */
@@ -36,6 +51,11 @@ declare module "react" {
   namespace JSX {
     interface IntrinsicElements {
       "s-app-nav": { readonly children?: ReactNode };
+      "s-app-window": {
+        readonly ref?: Ref<SAppWindowElement | null>;
+        readonly id?: string;
+        readonly src?: string;
+      };
     }
   }
 }

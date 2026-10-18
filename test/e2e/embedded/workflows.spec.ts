@@ -9,7 +9,16 @@ import {
 } from "../../../src/domain/shop-work.ts";
 import { dev, expect, type Run, test, testEmail } from "../fixtures.ts";
 import { E2E_SHOP as shop } from "../shop-fixture.ts";
-import { awaitHydration, gotoApp, hoistedEnabled, openApp } from "./app.ts";
+import {
+  awaitHydration,
+  clickHoisted,
+  closeEditor,
+  editorFrame,
+  gotoApp,
+  hoistedEnabled,
+  openApp,
+  openEditor,
+} from "./app.ts";
 
 /**
  * The workflows index, the workflow page and the editor on the e2e store: legacy
@@ -115,7 +124,9 @@ test("creating a workflow with a taken tag is refused under the field and names 
   // A free tag, and the same dialog goes through.
   await tagField.fill(`e2e-ring-rush-${id}`);
   await frame.getByRole("button", { name: "Create", exact: true }).click();
-  await expect(frame.locator(`s-page[heading="E2E Ring Rush ${id}"]`)).toBeVisible();
+  await expect(editorFrame(page).locator(`s-page[heading="E2E Ring Rush ${id}"]`)).toBeVisible();
+  // Create left the editor open; the shared page needs it closed for the next test.
+  await closeEditor(page);
 });
 
 /**
@@ -309,24 +320,6 @@ test("the workflows index searches by name and clears back to the list", async (
 });
 
 /**
- * The workflow page's Edit, hoisted into the admin's title bar, returning once the editor page is
- * there and hydrated: the editor is a page of the app's own frame.
- */
-const openEditor = async (heading: string) => {
-  await page.getByRole("button", { name: "Edit", exact: true }).click();
-  await expect(frame.locator("s-page > s-button", { hasText: "More actions" })).toBeAttached();
-  await expect(frame.locator(`s-page[heading="${heading}"]`)).toBeVisible();
-  await awaitHydration(frame);
-};
-
-/** The editor page's breadcrumb Close, hoisted into the admin's title bar: back to the workflow page. */
-const closeEditor = async (heading: string) => {
-  await page.getByRole("button", { name: "Close", exact: true }).click();
-  await expect(frame.locator(`s-page[heading="${heading}"]`)).toBeVisible();
-  await expect(frame.getByRole("button", { name: "Edit tag" })).toBeVisible();
-};
-
-/**
  * The task panel's Save and Delete, section buttons that share their names with the Rename and
  * Delete dialogs' confirms; scoped to the aside so the two never collide.
  */
@@ -336,8 +329,9 @@ const taskPanel = (editor: FrameLocator) => editor.locator('s-section[slot="asid
  * The draft lifecycle, which no unit test can see: a workflow never applied is a draft and
  * nothing else, so the editor offers Turn on workflow and that one press applies and activates;
  * from then on the first saved change starts a draft, Apply promotes it, and Discard throws it
- * away. Create lands on the editor page straight away; title-bar controls are hoisted into the
- * admin's chrome and are found on the page, everything else in the app's frame.
+ * away. Create opens the editor in its `s-app-window` straight away, so everything between Create
+ * and Turn on is the window's frame (`editorFrame`); the workflow page comes back once it hides.
+ * Title-bar controls are hoisted into the admin's chrome and are found on the page.
  */
 test("a fresh workflow turns on from the editor, then edits go through the draft", async ({
   backend,
@@ -347,6 +341,7 @@ test("a fresh workflow turns on from the editor, then edits go through the draft
   const created = `E2E Cake ${id}`;
   await add(backend, { ...benchOf(team) });
 
+  const editor = editorFrame(page);
   frame = await gotoApp(page, "app/workflows");
   await expect(frame.locator('s-page[heading="Workflows"]')).toBeVisible();
 
@@ -355,7 +350,7 @@ test("a fresh workflow turns on from the editor, then edits go through the draft
   await page.getByRole("button", { name: "Create workflow" }).click();
   const nameField = frame.getByRole("textbox", { name: "Name", exact: true });
   const tagField = frame.getByRole("textbox", { name: "Tag", exact: true });
-  const taskName = frame.getByRole("textbox", { name: "Name", exact: true });
+  const taskName = editor.getByRole("textbox", { name: "Name", exact: true });
   await nameField.fill("Cake");
   await expect(tagField).toHaveValue("cake");
   await tagField.fill(`e2e-cake-${id}`);
@@ -364,8 +359,8 @@ test("a fresh workflow turns on from the editor, then edits go through the draft
   await frame.getByRole("button", { name: "Create", exact: true }).click();
 
   // Create lands in the editor, so the new workflow's first screen is the canvas.
-  await expect(frame.locator(`s-page[heading="${created}"]`)).toBeVisible();
-  await awaitHydration(frame);
+  await expect(editor.locator(`s-page[heading="${created}"]`)).toBeVisible();
+  await awaitHydration(editor);
 
   // Never applied: Turn on is the only commit on offer, disabled until there is a step.
   const turnOn = page.getByRole("button", { name: "Turn on workflow", exact: true });
@@ -373,98 +368,99 @@ test("a fresh workflow turns on from the editor, then edits go through the draft
   await expect.poll(() => hoistedEnabled(turnOn)).toBe(false);
   await expect(page.getByRole("button", { name: "Apply changes" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Discard changes" })).toHaveCount(0);
-  await expect(frame.locator("s-banner")).toHaveCount(0);
+  await expect(editor.locator("s-banner")).toHaveCount(0);
 
-  await frame.getByRole("button", { name: "Add step" }).click();
+  await editor.getByRole("button", { name: "Add step" }).click();
   await taskName.fill("Bake");
-  await frame.getByRole("combobox", { name: "Team", exact: true }).selectOption({ label: team });
-  await frame.getByRole("button", { name: "Add step" }).click();
-  await expect(frame.getByText("Step 1", { exact: true })).toBeVisible();
+  await editor.getByRole("combobox", { name: "Team", exact: true }).selectOption({ label: team });
+  await editor.getByRole("button", { name: "Add step" }).click();
+  await expect(editor.getByText("Step 1", { exact: true })).toBeVisible();
   await expect.poll(() => hoistedEnabled(turnOn)).toBe(true);
 
   // One press applies the tasks and turns the switch on.
-  await turnOn.click();
+  await clickHoisted(turnOn);
   await expect(
-    frame.getByText("starts this workflow on that item", { exact: false }),
+    editor.getByText("starts this workflow on that item", { exact: false }),
   ).toBeVisible();
-  await frame.getByRole("button", { name: "Turn on", exact: true }).click();
+  await editor.getByRole("button", { name: "Turn on", exact: true }).click();
   await expect(page.getByRole("button", { name: "Turn off workflow", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Apply changes" })).toHaveCount(0);
 
-  // Close lands on the new workflow's page, on what is in force.
-  await closeEditor(created);
+  // Closing the window lands on the new workflow's page, on what is in force.
+  await closeEditor(page);
+  await expect(frame.locator(`s-page[heading="${created}"]`)).toBeVisible();
   await expect(frame.getByText("Bake", { exact: true })).toBeVisible();
 
   // Opening the editor is not an edit: no draft, so nothing to discard.
-  await openEditor(created);
+  await openEditor(page);
   await expect(page.getByRole("button", { name: "Discard changes" })).toHaveCount(0);
 
   // The first saved change starts the draft, on a task that exists only on the workflow so far:
   // the id-preserving copy under test.
-  await frame.getByRole("button", { name: "Edit Bake" }).click();
+  await editor.getByRole("button", { name: "Edit Bake" }).click();
   await taskName.fill("Bake and cool");
-  await taskPanel(frame).getByRole("button", { name: "Save", exact: true }).click();
+  await taskPanel(editor).getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByRole("button", { name: "Discard changes" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Apply changes" })).toBeVisible();
 
   // Two decisions, three verbs. A second task lands in its own step; "Join the previous step"
   // is the only thing that makes the two parallel, "Move to its own step" splits them back, and
   // moving only reorders.
-  await frame.getByRole("button", { name: "Add step", exact: true }).click();
+  await editor.getByRole("button", { name: "Add step", exact: true }).click();
   await taskName.fill("Ice");
-  await frame.getByRole("combobox", { name: "Team", exact: true }).selectOption({ label: team });
-  await frame.getByRole("button", { name: "Add step" }).click();
-  await expect(frame.getByText("Step 2", { exact: true })).toBeVisible();
+  await editor.getByRole("combobox", { name: "Team", exact: true }).selectOption({ label: team });
+  await editor.getByRole("button", { name: "Add step" }).click();
+  await expect(editor.getByText("Step 2", { exact: true })).toBeVisible();
 
-  await frame.getByRole("button", { name: "Edit Ice" }).click();
-  await frame.getByRole("button", { name: "Join the previous step" }).click();
-  await expect(frame.getByText("Step 2", { exact: true })).toHaveCount(0);
-  await frame.getByRole("button", { name: "Move to its own step" }).click();
-  await expect(frame.getByText("Step 2", { exact: true })).toBeVisible();
+  await editor.getByRole("button", { name: "Edit Ice" }).click();
+  await editor.getByRole("button", { name: "Join the previous step" }).click();
+  await expect(editor.getByText("Step 2", { exact: true })).toHaveCount(0);
+  await editor.getByRole("button", { name: "Move to its own step" }).click();
+  await expect(editor.getByText("Step 2", { exact: true })).toBeVisible();
 
   // Card order in the canvas: each card's label, top to bottom.
   const taskOrder = () =>
-    frame
+    editor
       .locator('s-clickable[accessibilityLabel^="Edit "]')
       .evaluateAll((cards: Array<Element>) =>
         cards.map((card) => card.getAttribute("accessibilityLabel")),
       );
-  await frame.getByRole("button", { name: "Move earlier" }).click();
+  await editor.getByRole("button", { name: "Move earlier" }).click();
   await expect.poll(taskOrder).toEqual(["Edit Ice", "Edit Bake and cool"]);
-  await frame.getByRole("button", { name: "Move later" }).click();
+  await editor.getByRole("button", { name: "Move later" }).click();
   await expect.poll(taskOrder).toEqual(["Edit Bake and cool", "Edit Ice"]);
-  await taskPanel(frame).getByRole("button", { name: "Delete", exact: true }).click();
-  await expect(frame.getByText("Step 2", { exact: true })).toHaveCount(0);
+  await taskPanel(editor).getByRole("button", { name: "Delete", exact: true }).click();
+  await expect(editor.getByText("Step 2", { exact: true })).toHaveCount(0);
 
   // Close keeps the draft, and the workflow page still shows only what runs.
-  await closeEditor(created);
+  await closeEditor(page);
   await expect(frame.getByText("Bake", { exact: true })).toBeVisible();
   await expect(frame.getByText("Bake and cool")).toHaveCount(0);
 
   // Discard leaves the workflow exactly as it was. Its confirm belongs to the editor's document.
-  await openEditor(created);
-  await page.getByRole("button", { name: "Discard changes" }).click();
+  await openEditor(page);
+  await clickHoisted(page.getByRole("button", { name: "Discard changes" }));
   await expect(
-    frame.getByText("Your unsaved changes will be lost.", { exact: true }),
+    editor.getByText("Your unsaved changes will be lost.", { exact: true }),
   ).toBeVisible();
-  await frame.getByRole("button", { name: "Discard", exact: true }).click();
+  await editor.getByRole("button", { name: "Discard", exact: true }).click();
   await expect(page.getByRole("button", { name: "Discard changes" })).toHaveCount(0);
-  await expect(frame.getByText("Bake", { exact: true })).toBeVisible();
+  await expect(editor.getByText("Bake", { exact: true })).toBeVisible();
 
   // Apply on a workflow that is on asks first, in the window's own document; applying from there
   // closes the window and the workflow page comes back on the new tasks.
-  await frame.getByRole("button", { name: "Edit Bake" }).click();
+  await editor.getByRole("button", { name: "Edit Bake" }).click();
   await taskName.fill("Bake and rest");
-  await taskPanel(frame).getByRole("button", { name: "Save", exact: true }).click();
-  await page.getByRole("button", { name: "Apply changes" }).click();
-  await expect(frame.getByText("This workflow is active,", { exact: false })).toBeVisible();
-  await frame.getByRole("button", { name: "Apply", exact: true }).click();
-  await expect(frame.getByRole("button", { name: "Edit tag" })).toBeVisible();
+  await taskPanel(editor).getByRole("button", { name: "Save", exact: true }).click();
+  await clickHoisted(page.getByRole("button", { name: "Apply changes" }));
+  await expect(editor.getByText("This workflow is active,", { exact: false })).toBeVisible();
+  await editor.getByRole("button", { name: "Apply", exact: true }).click();
+  await expect(page.locator('iframe[src*="chrome=window"]')).toHaveCount(0);
   await expect(frame.locator(`s-page[heading="${created}"]`)).toBeVisible();
   await expect(frame.getByText("Bake and rest", { exact: true })).toBeVisible();
 
   // Turn off confirms too, and says what keeps going.
-  await page.getByRole("button", { name: "Turn off workflow", exact: true }).click();
+  await clickHoisted(page.getByRole("button", { name: "Turn off workflow", exact: true }));
   await expect(
     frame.getByText("New orders won't start this workflow. Items already on it keep going.", {
       exact: true,
@@ -490,22 +486,25 @@ test("the editor counts instructions down from 300 and refuses 501 on save", asy
     workflows: [{ name: existing, tag: `e2e-ring-${id}`, tasks: [{ name: "Cut", team }] }],
   });
 
+  const editor = editorFrame(page);
   frame = await gotoApp(page, "app/workflows");
   await openWorkflow(existing, id);
-  await openEditor(existing);
-  await frame.getByRole("button", { name: "Edit Cut" }).click();
+  await openEditor(page);
+  await editor.getByRole("button", { name: "Edit Cut" }).click();
 
-  const instructions = frame.getByRole("textbox", { name: "Instructions", exact: true });
+  const instructions = editor.getByRole("textbox", { name: "Instructions", exact: true });
   // No help line and no counter on a field far from its cap.
-  await expect(frame.getByText("characters", { exact: false })).toHaveCount(0);
+  await expect(editor.getByText("characters", { exact: false })).toHaveCount(0);
   await instructions.fill("x".repeat(noteCountFrom(TASK_INSTRUCTIONS_MAX_LENGTH)));
-  await expect(frame.getByText("200 characters left")).toBeVisible();
+  await expect(editor.getByText("200 characters left")).toBeVisible();
   // Past the cap the field keeps the text and Save refuses with its own error.
   const over = "x".repeat(TASK_INSTRUCTIONS_MAX_LENGTH + 1);
   await instructions.fill(over);
   await expect(instructions).toHaveValue(over);
-  await frame.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(frame.getByText("Up to 500 characters")).toBeVisible();
+  await editor.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(editor.getByText("Up to 500 characters")).toBeVisible();
   await expect(instructions).toHaveValue(over);
-  await closeEditor(existing);
+  // The editor is closed on the way out: the window covers the admin, and the next test's
+  // navigation would land under it.
+  await closeEditor(page);
 });

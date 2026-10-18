@@ -2,6 +2,7 @@ import { createFileRoute, useLocation, useRouter } from "@tanstack/react-router"
 import * as Schema from "effect/Schema";
 import { useNavigateOnClick } from "../components/navigate.ts";
 import WorkflowEditorPage from "../components/WorkflowEditorPage.tsx";
+import { postEditorWindowMessage } from "../components/workflow-editor-window.ts";
 import { workflowDetail } from "../server/workflows.ts";
 import { appHref, appSearch } from "./-app-search.ts";
 import { lenientSearchKey } from "./-search-params.ts";
@@ -15,7 +16,8 @@ const EditorSearch = Schema.Struct({ chrome: lenientSearchKey(Schema.Literal("wi
 
 /**
  * The workflow editor under the App Home: the loader is the workflow page's read
- * (`workflowDetail`). Apply lands on the workflow page and Delete on the index.
+ * (`workflowDetail`). As a page, Apply lands on the workflow page and Delete on the index; in
+ * the window (`chrome=window`, `useWorkflowEditorWindow`) both are announced to the opener.
  */
 export const Route = createFileRoute("/app/workflows/$workflowId_/edit")({
   validateSearch: Schema.toStandardSchemaV1(EditorSearch),
@@ -38,10 +40,14 @@ export const Route = createFileRoute("/app/workflows/$workflowId_/edit")({
         teamsLink={navigate(appHref("/app/teams", searchStr))}
         onChanged={() => router.invalidate({ sync: true })}
         onApplied={async () => {
-          await router.navigate({ href: workflowPage });
+          // A window cannot navigate its opener, and a navigation here would only move the
+          // window's own frame: the opener hides it and re-reads.
+          if (chrome === "window") postEditorWindowMessage({ type: "applied", workflowId });
+          else await router.navigate({ href: workflowPage });
         }}
         onDeleted={async () => {
-          await router.navigate({ href: appHref("/app/workflows", searchStr) });
+          if (chrome === "window") postEditorWindowMessage({ type: "deleted", workflowId });
+          else await router.navigate({ href: appHref("/app/workflows", searchStr) });
         }}
       />
     );

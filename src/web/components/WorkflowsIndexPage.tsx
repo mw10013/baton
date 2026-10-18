@@ -20,6 +20,7 @@ import { ListSearchField } from "./screen/ListSearchField.tsx";
 import { SearchLine } from "./screen/SearchLine.tsx";
 import { textLimitError } from "./screen/TextLimit.tsx";
 import { Token } from "./screen/Token.tsx";
+import { useWorkflowEditorWindow } from "./workflow-editor-window.ts";
 import { suggestedTag, TAG_HELP, tagCommaError, workflowResultMessage } from "./workflow-shared.ts";
 
 /** The Create workflow dialog's id. */
@@ -62,8 +63,12 @@ export interface WorkflowsIndexProps {
   }) => void;
   readonly onNextPage: (cursor: ShopWork.WorkflowName) => void;
   readonly onPreviousPage: () => void;
-  /** After Create: re-read the loader, then the new workflow's editor, as Flow's Create does. */
-  readonly onCreated: (workflow: ShopWork.Workflow) => Promise<void>;
+  /** After Create: re-read the loader; the editor window then opens on the new workflow. */
+  readonly onCreated: () => Promise<void>;
+  /** The created workflow's editor window closed: its workflow page. */
+  readonly onEditorClosed: (workflowId: ShopWork.WorkflowId) => Promise<void>;
+  /** The editor window reported a Delete of the created workflow: re-read the loader. */
+  readonly onEditorDeleted: () => Promise<void>;
 }
 
 /** What a press of Create answers the screen: the union, or the copy of what was thrown. */
@@ -80,6 +85,20 @@ function WorkflowsIndexScreen(
   },
 ) {
   const { workflows, nextCursor, matches } = props.data;
+  /**
+   * Create opens the editor straight away, as Flow's Create workflow does, and closing it lands
+   * on the new workflow's page rather than back here ({@link useWorkflowEditorWindow}).
+   */
+  const [created, setCreated] = useState<ShopWork.WorkflowId | null>(null);
+  const editor = useWorkflowEditorWindow({
+    onHide: () => {
+      if (created !== null) void props.onEditorClosed(created);
+    },
+    onDeleted: () => {
+      setCreated(null);
+      void props.onEditorDeleted();
+    },
+  });
   const { state, q, after } = props;
   const [name, setName] = useState("");
   const [tag, setTag] = useState("");
@@ -128,6 +147,8 @@ function WorkflowsIndexScreen(
     if (result._tag === "TagTaken") return setTagError(workflowResultMessage(result));
     if (result._tag !== "Ok") return setBanner(workflowResultMessage(result));
     resetCreateForm();
+    setCreated(result.workflow.id);
+    editor.open(result.workflow.id);
   };
 
   /** No search, no filter and page one: an empty page here means the shop has no workflows. */
@@ -232,6 +253,7 @@ function WorkflowsIndexScreen(
 
   return (
     <s-page heading="Workflows" inlineSize="large">
+      <s-app-window {...editor.windowProps} />
       {/* Unconditional, empty list included: the resource-index template keeps the title-bar
           primary action and lets the empty state carry a second copy. App Bridge hoists this one
           out of the iframe, so the in-card twin is not a duplicate in the frame's DOM. */}
@@ -332,7 +354,7 @@ function WorkflowsIndexScreen(
 
 /**
  * The screen once hydrated: Create workflow is `MerchantCreateWorkflow` on the layout's socket
- * ({@link createWorkflowAtom}); on `Ok` the modal hides and the route opens the new workflow.
+ * ({@link createWorkflowAtom}); on `Ok` the modal hides and the editor window opens on the new workflow.
  */
 function LiveWorkflowsIndex(props: WorkflowsIndexProps) {
   const creating = AsyncResult.isWaiting(useAtomValue(createWorkflowAtom));
@@ -342,7 +364,7 @@ function LiveWorkflowsIndex(props: WorkflowsIndexProps) {
       onSuccess: async (result) => {
         if (result._tag === "Ok") {
           await hideModal(CREATE_WORKFLOW_MODAL);
-          await props.onCreated(result.workflow);
+          await props.onCreated();
         }
         return result;
       },

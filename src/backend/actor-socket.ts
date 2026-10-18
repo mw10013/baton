@@ -6,10 +6,11 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import { type Rpc, type RpcGroup, RpcMiddleware, RpcSerialization, RpcServer } from "effect/rpc";
+import { type Rpc, type RpcGroup, RpcMiddleware, RpcServer } from "effect/rpc";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import { CONNECTION_CLOSE_FORBIDDEN, ConnectionCaller } from "../contract/shop-actor.ts";
+import { layerStrictJson } from "./strict-serialization.ts";
 // Alchemy's internal transport; patches/ adds the exports entry the package lacks.
 import * as RpcWebSocket from "alchemy/Cloudflare/RpcWebSocket";
 
@@ -70,6 +71,8 @@ const UNIDENTIFIED_REASON = "unidentified connection";
  *   {@link ConnectionIdentity} provided. A socket with no identity is closed with
  *   {@link CONNECTION_CLOSE_FORBIDDEN}.
  *
+ * Payloads are decoded by {@link layerStrictJson}.
+ *
  * Built once per activation, in the object's inner Effect.
  *
  * @see node_modules/alchemy/src/Cloudflare/Workers/RpcWebSocket.ts `make`
@@ -117,7 +120,7 @@ export const make = Effect.fn("ActorSocket.make")(function* <Rpcs extends Rpc.An
         );
         const transport = yield* RpcWebSocket.make.pipe(
           Effect.provideService(Cloudflare.DurableObjectState, decorated),
-          Effect.provide(RpcSerialization.layerJson),
+          Effect.provide(layerStrictJson),
         );
         yield* Layer.buildWithMemoMap(
           RpcServer.layer(options.group.middleware(RequestLifetime)).pipe(

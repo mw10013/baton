@@ -4,15 +4,16 @@ import * as Test from "alchemy/Test/Vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as PubSub from "effect/PubSub";
+import { Rpc, RpcSerialization } from "effect/rpc";
 import * as Schema from "effect/Schema";
-import { ORDERS_KEY } from "../../src/contract/shop-actor.ts";
+import { MerchantRpcs, ORDERS_KEY } from "../../src/contract/shop-actor.ts";
 import { TeamName } from "../../src/domain/shop-work.ts";
 import * as ShopWork from "../../src/domain/shop-work.ts";
 import { ShopKey } from "../../src/contract/shop.ts";
 import { ShopFixtureData } from "../../src/contract/fixture.ts";
 import { OTHER_SHOP, SEED_SHOP } from "../seed-shops.ts";
 import { mintSessionToken } from "../shopify-session-token.ts";
-import { addToFixture, email, integ, openAs } from "./actor-clients.ts";
+import { addToFixture, email, integ, openAs, rawRequestAs } from "./actor-clients.ts";
 import { fileStage } from "./file-stage.ts";
 import Stack from "./stack.ts";
 
@@ -615,5 +616,42 @@ test(
       ] as ReadonlyArray<Effect.Effect<unknown, { readonly _tag: string }>>;
       for (const call of calls) assert.strictEqual((yield* Effect.flip(call))._tag, tag);
     }
+  }),
+);
+
+/** A `MerchantCreateWorkflow` exit as the browser's client decodes it off the wire. */
+const decodeCreateExit = Schema.decodeUnknownEffect(
+  RpcSerialization.json.codecFor(
+    Rpc.exitSchema(MerchantRpcs.requests.get("MerchantCreateWorkflow")!),
+  ),
+);
+
+test(
+  "callable inputs reject excess properties",
+  Effect.gen(function* () {
+    const { backendUrl } = yield* stack;
+    yield* integ(backendUrl, (c) => c.ShopIdentityNames({ shop: SEED_SHOP }));
+    const send = (payload: unknown) =>
+      rawRequestAs(
+        backendUrl,
+        SEED_SHOP,
+        { role: "merchant" },
+        {
+          tag: "MerchantCreateWorkflow",
+          payload,
+        },
+      );
+    // The refusal is a defect on the call's exit; a typed client's call dies with it.
+    assert.deepStrictEqual(yield* send({ name: "Strict", tag: "strict", extra: 1 }), {
+      _tag: "Failure",
+      cause: [{ _tag: "Die", defect: 'Expected no excess property\n  at ["extra"]' }],
+    });
+    // Nothing was written: the same name and tag are free. The client's own codec reads the answer.
+    const created = yield* decodeCreateExit(yield* send({ name: "Strict", tag: "strict" }));
+    assert.isTrue(
+      Exit.isSuccess(created) &&
+        Schema.is(ShopWork.WorkflowResult)(created.value) &&
+        created.value._tag === "Ok",
+    );
   }),
 );

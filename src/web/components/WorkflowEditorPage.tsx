@@ -1,9 +1,8 @@
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomSet } from "@effect/atom-react";
 import { useHydrated } from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
 import * as Exit from "effect/Exit";
 import * as Match from "effect/Match";
-import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Schema from "effect/Schema";
 import { useState } from "react";
 import * as ShopWork from "../../domain/shop-work.ts";
@@ -28,6 +27,7 @@ import { EmptyAside } from "./screen/EmptyAside.tsx";
 import { Inline } from "./screen/Inline.tsx";
 import { Lines } from "./screen/Lines.tsx";
 import { Panel } from "./screen/Panel.tsx";
+import { usePressWaiting } from "./press-waiting.ts";
 import { textLimitError, textLimitProps } from "./screen/TextLimit.tsx";
 import { Things } from "./screen/Things.tsx";
 import { DELETED_TOAST } from "./teams.ts";
@@ -771,24 +771,31 @@ const thrown = (fallback: string) => async (cause: Cause.Cause<unknown>) =>
   thrownCopy(Cause.squash(cause), fallback);
 
 /**
- * The editor once hydrated: every control is its `Merchant…` procedure on the layout's socket.
- * Modals are hidden through the element (`hideModal` in `polaris-modal.ts`), which works in the
- * page and inside the editor's window alike.
+ * The editor's presses: each control is its `Merchant…` procedure on the layout's socket once
+ * hydrated, and idle before. A hook rather than a live component swapped in at hydration, so
+ * {@link EditorScreen} keeps its position and the server's `s-page` element survives hydration:
+ * inside the editor's window App Bridge follows only the `s-page` the window document had when it
+ * loaded, and a replaced one leaves the admin's title bar frozen. Reading the procedure atoms is
+ * left to {@link usePressWaiting}; only pressing one builds the socket. Modals are hidden through the element
+ * ({@link hideModal}), which works in the page and inside the window alike.
  */
-function LiveEditor(props: WorkflowEditorProps & { readonly detail: ShopWork.WorkflowPageData }) {
+function useEditorPresses(
+  props: WorkflowEditorProps & { readonly detail: ShopWork.WorkflowPageData },
+): Presses {
+  const hydrated = useHydrated();
   const workflowId = props.detail.workflow.id;
   const waiting = {
-    addStep: AsyncResult.isWaiting(useAtomValue(addStepAtom)),
-    addTask: AsyncResult.isWaiting(useAtomValue(addTaskAtom)),
-    update: AsyncResult.isWaiting(useAtomValue(updateTaskAtom)),
-    move: AsyncResult.isWaiting(useAtomValue(moveTaskAtom)),
-    separate: AsyncResult.isWaiting(useAtomValue(separateTaskAtom)),
-    join: AsyncResult.isWaiting(useAtomValue(joinTaskAtom)),
-    remove: AsyncResult.isWaiting(useAtomValue(removeTaskAtom)),
-    apply: AsyncResult.isWaiting(useAtomValue(applyDraftAtom)),
-    discard: AsyncResult.isWaiting(useAtomValue(discardDraftAtom)),
-    rename: AsyncResult.isWaiting(useAtomValue(updateWorkflowAtom)),
-    delete: AsyncResult.isWaiting(useAtomValue(deleteWorkflowAtom)),
+    addStep: usePressWaiting(addStepAtom),
+    addTask: usePressWaiting(addTaskAtom),
+    update: usePressWaiting(updateTaskAtom),
+    move: usePressWaiting(moveTaskAtom),
+    separate: usePressWaiting(separateTaskAtom),
+    join: usePressWaiting(joinTaskAtom),
+    remove: usePressWaiting(removeTaskAtom),
+    apply: usePressWaiting(applyDraftAtom),
+    discard: usePressWaiting(discardDraftAtom),
+    rename: usePressWaiting(updateWorkflowAtom),
+    delete: usePressWaiting(deleteWorkflowAtom),
   };
   const addStep = useAtomSet(addStepAtom, { mode: "promiseExit" });
   const addTask = useAtomSet(addTaskAtom, { mode: "promiseExit" });
@@ -880,16 +887,43 @@ function LiveEditor(props: WorkflowEditorProps & { readonly detail: ShopWork.Wor
         onFailure: thrown("Couldn't delete the workflow."),
       }),
   };
-  return <EditorScreen {...props} detail={props.detail} presses={presses} />;
+  return hydrated ? presses : IDLE_PRESSES;
+}
+
+const idle = async () => "Not ready.";
+
+/** Until React has hydrated nothing presses. */
+const IDLE_PRESSES: Presses = {
+  busy: false,
+  adding: false,
+  updating: false,
+  removing: false,
+  applying: false,
+  discarding: false,
+  renaming: false,
+  deleting: false,
+  add: idle,
+  update: idle,
+  move: idle,
+  separate: idle,
+  join: idle,
+  remove: idle,
+  apply: idle,
+  discard: idle,
+  rename: idle,
+  deleteWorkflow: idle,
+};
+
+function Editor(props: WorkflowEditorProps & { readonly detail: ShopWork.WorkflowPageData }) {
+  return <EditorScreen {...props} presses={useEditorPresses(props)} />;
 }
 
 /**
  * The workflow editor: its own route, so the workflow page can stay a read-only answer to "what
- * does this workflow do". Edit, Create and Duplicate open it as a page of the app's frame.
- * Legacy opened it in an App Bridge `s-app-window` (Flow's full-screen chrome); with
- * `chrome=window` this page still renders that way (`inWindow`), but nothing opens the window:
- * inside it the admin draws the title bar once from the page's slots and never follows a later
- * change, so Turn on stays disabled after the first step and Discard and Apply never appear.
+ * does this workflow do". Edit and Create open it in an App Bridge `s-app-window` (Flow's
+ * full-screen chrome, `chrome=window`, `inWindow`); Duplicate lands on it as a page of the app's
+ * frame. In the window the admin's title bar follows the `s-page` the window loaded with, so that
+ * element must outlive hydration ({@link useEditorPresses}).
  *
  * Opening it writes nothing. The canvas shows the draft when one exists and the workflow itself
  * when one does not: the first change is what creates the draft, and because a task keeps its id
@@ -910,7 +944,6 @@ function LiveEditor(props: WorkflowEditorProps & { readonly detail: ShopWork.Wor
  * read); until React has hydrated nothing presses.
  */
 export default function WorkflowEditorPage(props: WorkflowEditorProps) {
-  const hydrated = useHydrated();
   if (props.detail === null)
     return (
       <s-page heading="Workflow not found">
@@ -922,32 +955,5 @@ export default function WorkflowEditorPage(props: WorkflowEditorProps) {
         <s-paragraph color="subdued">That workflow no longer exists.</s-paragraph>
       </s-page>
     );
-  if (hydrated) return <LiveEditor {...props} detail={props.detail} />;
-  const idle = async () => "Not ready.";
-  return (
-    <EditorScreen
-      {...props}
-      detail={props.detail}
-      presses={{
-        busy: false,
-        adding: false,
-        updating: false,
-        removing: false,
-        applying: false,
-        discarding: false,
-        renaming: false,
-        deleting: false,
-        add: idle,
-        update: idle,
-        move: idle,
-        separate: idle,
-        join: idle,
-        remove: idle,
-        apply: idle,
-        discard: idle,
-        rename: idle,
-        deleteWorkflow: idle,
-      }}
-    />
-  );
+  return <Editor {...props} detail={props.detail} />;
 }

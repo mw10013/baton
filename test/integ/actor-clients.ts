@@ -120,6 +120,16 @@ const TERMINAL_CODES: ReadonlySet<number> = new Set([
 const isTerminal = (error: Socket.SocketError) =>
   error.reason._tag === "SocketCloseError" && TERMINAL_CODES.has(error.reason.code);
 
+/** Node's WebSocket constructor, sending `headers` in every handshake. */
+const withHeaders = (headers: Record<string, string>) =>
+  Layer.effect(
+    Socket.WebSocketConstructor,
+    Effect.gen(function* () {
+      const make = yield* Socket.WebSocketConstructor;
+      return (url: string) => make(url, { headers });
+    }),
+  ).pipe(Layer.provide(NodeSocket.layerWebSocketConstructor));
+
 /**
  * One browser's socket to a shop's actor: `headers` in the handshake (a member's cookie, or
  * anything a test forges), notice frames taken out onto `received`, and Effect RPC on the
@@ -168,15 +178,7 @@ export const connect = (url: string, headers: Record<string, string> = {}) =>
         }),
       ).pipe(
         Layer.provide(Layer.mergeAll(socket, RpcSerialization.layerJson)),
-        Layer.provide(
-          Layer.effect(
-            Socket.WebSocketConstructor,
-            Effect.gen(function* () {
-              const make = yield* Socket.WebSocketConstructor;
-              return (url: string) => make(url, { headers });
-            }),
-          ).pipe(Layer.provide(NodeSocket.layerWebSocketConstructor)),
-        ),
+        Layer.provide(withHeaders(headers)),
       ),
     );
     const client = yield* RpcClient.make(ShopActorRpcs).pipe(Effect.provideContext(protocol));
@@ -199,6 +201,47 @@ export const openAs = (backendUrl: string, key: ShopKey, caller: ConnectionCalle
   connect(new URL(`/api/integ/actor/${key}`, backendUrl.replace(/^http/u, "ws")).toString(), {
     "x-test-caller": JSON.stringify(caller),
   });
+
+/** The server's frame answering request `"1"`, its exit still encoded. */
+const decodeExitFrame = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      _tag: Schema.Literal("Exit"),
+      requestId: Schema.Literal("1"),
+      exit: Schema.Unknown,
+    }),
+  ),
+);
+
+/**
+ * One procedure request written as a raw frame on a forged socket (see {@link openAs}), and the
+ * encoded exit the actor answers it with. For a payload {@link connect}'s client cannot send:
+ * the client encodes from the payload's type, so it drops a key the schema does not declare.
+ */
+export const rawRequestAs = (
+  backendUrl: string,
+  key: ShopKey,
+  caller: ConnectionCaller,
+  request: { readonly tag: string; readonly payload: unknown },
+) =>
+  Effect.gen(function* () {
+    const socket = yield* Socket.makeWebSocket(
+      new URL(`/api/integ/actor/${key}`, backendUrl.replace(/^http/u, "ws")).toString(),
+    );
+    const reader = yield* socket.reader;
+    const writer = yield* socket.writer;
+    yield* writer.write(JSON.stringify({ _tag: "Request", id: "1", headers: [], ...request }));
+    while (true) {
+      for (const frame of yield* reader.pull) {
+        const exit = typeof frame === "string" ? decodeExitFrame(frame) : Option.none();
+        if (Option.isSome(exit)) return exit.value.exit;
+      }
+    }
+  }).pipe(
+    Effect.scoped,
+    Effect.timeout("10 seconds"),
+    Effect.provide(withHeaders({ "x-test-caller": JSON.stringify(caller) })),
+  );
 
 /** The next close code a socket saw, within a few seconds. */
 export const nextCloseCode = (closes: Queue.Dequeue<Socket.SocketError>) =>

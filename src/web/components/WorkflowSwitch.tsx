@@ -1,13 +1,13 @@
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomSet } from "@effect/atom-react";
 import { useHydrated } from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
 import * as Exit from "effect/Exit";
 import * as Match from "effect/Match";
-import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as ShopWork from "../../domain/shop-work.ts";
 import { hideModal } from "../client/polaris-modal.ts";
 import { applyAndTurnOnAtom, setWorkflowStateAtom } from "../client/shop-actor-client.ts";
 import { thrownCopy } from "./form.ts";
+import { usePressWaiting } from "./press-waiting.ts";
 import { Things } from "./screen/Things.tsx";
 import { TURN_OFF_BODY, TURN_OFF_HEADING, turnOnBlocker } from "./workflow-shared.ts";
 
@@ -134,15 +134,20 @@ function WorkflowSwitchScreen({
 }
 
 /**
- * The switch once hydrated: Turn off and Turn on are `MerchantSetWorkflowState`, Turn on for a
- * never-applied workflow `MerchantApplyAndTurnOn`, on the layout's socket. The union answers the
- * banner; anything thrown (a lost socket, a defect) is {@link thrownCopy}'s.
+ * The switch's press: Turn off and Turn on are `MerchantSetWorkflowState`, Turn on for a
+ * never-applied workflow `MerchantApplyAndTurnOn`, on the layout's socket, once hydrated. The
+ * union answers the banner; anything thrown (a lost socket, a defect) is {@link thrownCopy}'s. A
+ * hook, not a live component swapped in at hydration, so the title-bar button and its dialogs
+ * keep their elements; the editor's `useEditorPresses` says why that matters in its window.
  */
-function LiveWorkflowSwitch(props: WorkflowSwitchProps) {
+function useSwitchPress(props: WorkflowSwitchProps): SwitchPress {
+  const hydrated = useHydrated();
   const workflowId = props.workflow.id;
-  const switching =
-    AsyncResult.isWaiting(useAtomValue(setWorkflowStateAtom)) ||
-    AsyncResult.isWaiting(useAtomValue(applyAndTurnOnAtom));
+  // Both reads run on every render: a `||` between them would skip the second hook while the
+  // first is waiting.
+  const settingState = usePressWaiting(setWorkflowStateAtom);
+  const applyingAndTurningOn = usePressWaiting(applyAndTurnOnAtom);
+  const switching = settingState || applyingAndTurningOn;
   const setState = useAtomSet(setWorkflowStateAtom, { mode: "promiseExit" });
   const applyAndTurnOn = useAtomSet(applyAndTurnOnAtom, { mode: "promiseExit" });
   const press = (state: ShopWork.WorkflowState) => {
@@ -168,7 +173,7 @@ function LiveWorkflowSwitch(props: WorkflowSwitchProps) {
       await props.onChanged();
     })();
   };
-  return <WorkflowSwitchScreen {...props} switching={switching} press={press} />;
+  return hydrated ? { switching, press } : { switching: false, press: () => {} };
 }
 
 /**
@@ -185,7 +190,5 @@ function LiveWorkflowSwitch(props: WorkflowSwitchProps) {
  * Until React has hydrated nothing presses.
  */
 export function WorkflowSwitch(props: WorkflowSwitchProps) {
-  const hydrated = useHydrated();
-  if (hydrated) return <LiveWorkflowSwitch {...props} />;
-  return <WorkflowSwitchScreen {...props} switching={false} press={() => {}} />;
+  return <WorkflowSwitchScreen {...props} {...useSwitchPress(props)} />;
 }

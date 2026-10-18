@@ -101,16 +101,12 @@ export type Shop = typeof Shop.Type;
 export const ShopGid = Schema.NonEmptyString.pipe(Schema.brand("ShopGid"));
 export type ShopGid = typeof ShopGid.Type;
 
-export const ShopAgentId = Schema.NonEmptyString.pipe(Schema.brand("ShopAgentId"));
-export type ShopAgentId = typeof ShopAgentId.Type;
-
 export const SessionId = Schema.NonEmptyString.pipe(Schema.brand("SessionId"));
 export type SessionId = typeof SessionId.Type;
 
 export const ShopSession = Schema.Struct({
   shop: Shop,
   shopGid: ShopGid,
-  shopAgentId: ShopAgentId,
   scope: Schema.NullOr(Schema.String),
   accessTokenExpiresAt: Schema.NullOr(Schema.Number),
   accessToken: Schema.NullOr(Schema.String),
@@ -617,9 +613,6 @@ export const InvalidatedMessage = Schema.Struct({
   type: Schema.Literal("invalidated"),
 });
 export type InvalidatedMessage = typeof InvalidatedMessage.Type;
-
-export const AgentMessage = InvalidatedMessage;
-export type AgentMessage = typeof AgentMessage.Type;
 
 /**
  * Keep-alive frame pair for the `/app` ShopAgent WebSocket. The client pings

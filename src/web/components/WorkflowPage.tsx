@@ -25,6 +25,7 @@ import { Token } from "./screen/Token.tsx";
 import { DELETED_TOAST } from "./teams.ts";
 import { StepFlow, TeamFaultBanners } from "./WorkflowSteps.tsx";
 import { WorkflowSwitch } from "./WorkflowSwitch.tsx";
+import { useWorkflowEditorWindow } from "./workflow-editor-window.ts";
 import { WorkflowTag } from "./WorkflowTag.tsx";
 import {
   copyName,
@@ -54,8 +55,8 @@ export interface WorkflowPageProps {
   readonly detail: ShopWork.WorkflowPageData | null;
   /** The breadcrumb to the workflows index, with the index's filter, search and page. */
   readonly workflowsLink: PageLink;
-  /** Edit: the workflow's editor page. */
-  readonly editLink: PageLink;
+  /** After the editor window reports a Delete: back to the workflows index. */
+  readonly onEditorDeleted: () => Promise<void>;
   /** After a write: re-read the loader. */
   readonly onChanged: () => Promise<void>;
   /** After Duplicate: the copy's editor. */
@@ -168,6 +169,13 @@ function WorkflowScreen(
     setCopyTagError(null);
   };
 
+  /** Edit opens the editor in an `s-app-window` over this page, Flow's chrome ({@link useWorkflowEditorWindow}). */
+  const editor = useWorkflowEditorWindow({
+    workflowId: workflow.id,
+    onHide: () => void props.onChanged(),
+    onDeleted: () => void props.onEditorDeleted(),
+  });
+
   const fresh = neverApplied(detail);
   const hasDraft = draftTasks !== null;
   const active = ShopWork.workflowIsActive(workflow);
@@ -197,9 +205,15 @@ function WorkflowScreen(
           )}
         </>
       )}
-      <s-button slot="secondary-actions" icon="edit" {...props.editLink}>
+      <s-button
+        slot="secondary-actions"
+        icon="edit"
+        commandFor={editor.windowProps.id}
+        command="--show"
+      >
         {ShopWork.RECORD_VERB_LABEL.edit}
       </s-button>
+      <s-app-window {...editor.windowProps} />
       <s-button slot="secondary-actions" commandFor="workflow-actions">
         More actions
       </s-button>
