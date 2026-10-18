@@ -51,6 +51,10 @@ Slices B and D are unaffected (pure). Slice A's ownership is reworked by an **ar
 
 Found while researching slice E (`docs/workflows-research.md` Q2). The actor's per-area modules kept legacy's `…Agent` names (`OrdersAgent`, `MembersAgent`), which came from the Cloudflare Agents SDK and read here as further objects. Decided: one actor, one module per **area** of shop work (orders, membership, workflows, runs), named by role. Storage is `<Area>Repository` (one store's SQL, nothing else); the area's **application service** (its use cases: rules across stores, the repository call, closes, reconcile, notify, the answer) takes the area's bare name (`makeOrders`, `makeMembership`, `makeWorkflows`, `makeRuns`). `Members` becomes `MembershipRepository`, `ShopSessions` `ShopSessionRepository`, `OrdersBulkRepository` `OrdersBulkOperation` (it stores nothing). "Workflow" alone is the product's; Cloudflare's is the orders sync Workflow. Lands as E's first step. Supersedes the `…Agent` names in §3's rows and slice C's Q19 (`makeMembersAgent`). The same review adds `src/domain/workflow-layout.ts` (legacy's `WorkflowLayout`) beside Q3's four context files, inside shop work.
 
+### 0.3 Amendment: member routes speak the screen word (review, 2026-10-18)
+
+Found while researching slice F (`docs/runs-reconcile-research.md` Q8). Q14 kept `$key` and legacy's structure under it but wrote the item page as `/shop/$key/runs/$runId`, against legacy's rule that a screen is never named with "run" and route segments speak the screen word. Decided: legacy's structure verbatim under `$key`: `/shop/$key/` redirects to `/shop/$key/workflows` (the workflows list), and the member's workflow page is `/shop/$key/workflows/$runId`. Supersedes Q14's two example paths; its `$key` decision stands.
+
 ---
 
 ## 1. Where we stand
