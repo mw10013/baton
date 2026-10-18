@@ -410,6 +410,20 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - 2026-10-18, Steps 5–6 e2e after the flake-fix merge: `vp check` pass (328 files); `vp run test:e2e` run 1 (15:32–15:37) 61 passed, 1 failed, 5 did not run (hydration timeout, Issues); run 2 (15:37–15:43) 67 passed, 5.7 min, "the orders index keeps its filters and page across the order page" included.
 
 - 2026-10-18, Step 7: `vp check` pass (341 files linted, 402 formatted); `vp test` 75 files, 971 tests, 51.0 s (53 s wall, 16:06). First run lost the moved removal title to a read sent while the socket was down (fixed by retrying the read); the file alone then passed 33/33. No e2e run (lead's instruction). 29 leaked `baton-test-*-ShopActor` directories deleted.
+- 2026-10-18, Step 8 (the lead): docs.
+  - `docs/glossary.md`: memo, live (adds the home page's orders strip, `useLiveRead`), reconcile and reconcile all now name this repo's symbols.
+  - `docs/legacy-port-research.md` §1.1: the per-shop actor row (the counter retired) and the actor tables row (`Run`, `RunTask` read and written, the member area).
+- 2026-10-18, Step 8, §5 owed lines (the lead):
+  - The count procedures, `COUNT_KEY`, `ShopSnapshot` and `snapshot` are gone from `src` and `test`.
+  - `MemberRpcs` has 11 procedures: the nine run procedures, plus `MemberWhoAmI` and `MemberActivation`, which are kept.
+  - Every server function slice F added is GET; the two POSTs are older.
+  - No uppercase SQL in the two repositories.
+  - Bundle check: the three newest Backend entries (15:48–15:58) hold 0 `IntegRpcs` / `ShopifyFake`.
+  - Copy grep: the hits are modal ids (`run-note`, `run-block`, `cancel-run`), imports and kit data. No visible copy says "run".
+- 2026-10-18, Step 8: `vp check` and `vp test` results in the next line. **No e2e** (the orchestrator runs it after merging wt-01 round 2).
+  - Unverified until that run: Steps 6–7's specs, the `openOrders` navLink scope and the `workflows.spec.ts:336` fix.
+  - Owed: the two member e2e specs (Needs a decision (Step 7) 1).
+- 2026-10-18, Step 8: `vp check` pass (341 files); `vp test` 75 files, 971 tests, 47.5 s (16:09).
 
 ### Human steps requested
 
