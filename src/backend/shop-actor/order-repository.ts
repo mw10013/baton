@@ -1,10 +1,11 @@
 /**
- * The shop actor's orders over its SQLite: the subset of `OrderRepository` the order sync needs.
- * Legacy's SQL, verbatim; runs, the counts strip, filters, search and billing are not here.
+ * The shop actor's orders over its SQLite: legacy's `OrderRepository` but billing (the cycle,
+ * the usage outbox and `countOrder`'s body). Legacy's SQL, verbatim.
  *
  * @module
  */
 import * as Effect from "effect/Effect";
+import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/sql/SqlClient";
@@ -19,7 +20,17 @@ import {
   syncOrder,
 } from "../../domain/orders.ts";
 import { retentionCutoff, ShopLimits } from "../../domain/platform.ts";
+import {
+  type EligibleContext,
+  type ListOrdersInput,
+  type OrderCounts,
+  type OrdersPage,
+  prefixPatterns,
+  type RunCounts,
+  searchTerm,
+} from "../../domain/shop-work.ts";
 import { SYNC_STALE_MS } from "../orders-sync-constants.ts";
+import { currentWhere } from "./current-where.ts";
 import type { Transaction } from "./transaction.ts";
 
 /**
@@ -41,12 +52,11 @@ export interface OrderUpsert<A = void, E = never> {
    * Runs inside the upsert's transaction, after the items are written and
    * only when the write actually happened. The seam for reconcile: runs must
    * be created and adjusted against exactly the item set this write produced,
-   * and Durable Object SQLite refuses nested transactions, so the caller
+   * and a transaction is never nested (`Transaction`), so the caller
    * composes plain statements here rather than opening its own. Must not await
    * anything but storage. Its value comes back as `upsertOrder`'s
    * `afterWrite`, so the caller can act on what the reconcile found once the
-   * transaction has committed. Nothing passes one yet: reconcile arrives with
-   * runs.
+   * transaction has committed.
    */
   readonly afterWrite?: Effect.Effect<A, E>;
 }
@@ -82,11 +92,99 @@ const json = (value: unknown) => JSON.stringify(value);
 
 /**
  * The open-order predicate, character for character what the partial
- * `ShopOrder_open_idx` is declared over: SQLite only uses a partial index when
- * the query's `where` provably implies the index's, and it proves that by
- * matching terms, not by reasoning about them.
+ * `ShopOrder_open_idx` (the actor's `migrations`) is declared over: SQLite only uses a
+ * partial index when the query's `where` provably implies the index's, and it
+ * proves that by matching terms, not by reasoning about them. The run
+ * fragments are correlated to the outer `ShopOrder` row and served by
+ * `Run_orderId_state_idx (orderId, state)`, both terms. A closed run still holds its item
+ * (`RunState`): it is in `RUN_FOR_ITEM`, so an item whose run closed
+ * is not "Multiple workflows match" (a closed run is a decided item), and it is in
+ * no position fragment
+ * but `unpaid`'s and `no_workflow`'s, which ask for no open and no done run.
  */
 const OPEN = "fulfillmentStatus <> 'FULFILLED' and cancelledAt is null";
+/**
+ * {@link OPEN} on an aliased `ShopOrder`, for statements that also read
+ * `Run`: qualified so the predicate cannot bind to a run column of
+ * the same name (both tables carry `id` and `note`).
+ */
+const openAs = (alias: string) =>
+  `${alias}.fulfillmentStatus <> 'FULFILLED' and ${alias}.cancelledAt is null`;
+const OPEN_RUN = `select 1 from Run r
+  where r.orderId = ShopOrder.id and r.state = 'open'`;
+const DONE_RUN = `select 1 from Run r
+  where r.orderId = ShopOrder.id and r.state = 'done'`;
+/**
+ * An open run with a started task (`runIsStarted`), read off the
+ * denormalized `Run.startedAt`. Served by `Run_orderId_state_idx` on both
+ * terms, with `startedAt` as a residual.
+ */
+const STARTED_RUN = `select 1 from Run r
+  where r.orderId = ShopOrder.id and r.state = 'open'
+    and r.startedAt is not null`;
+/** The `blocked` `OrderIssue`: an open run a worker or the merchant blocked. */
+const BLOCKED_RUN = `select 1 from Run r
+  where r.orderId = ShopOrder.id and r.state = 'open'
+    and r.blockedAt is not null`;
+const RUN_FOR_ITEM = `select 1 from Run r
+  where r.lineItemId = li.id`;
+/**
+ * The SQL twin of `itemMatches`, counted: how many eligible workflows
+ * carry a tag of the item `li`. On, with a task, every task's `teamId` set,
+ * and a product tag equal to the workflow's tag, exactly. The item half's
+ * other clause, units to make above zero, is on the readers
+ * ({@link MULTI_MATCH_ITEM}), where it is one comparison on the row. It
+ * restates the rule and must move with it. A `teamId` no D1 team carries is
+ * the window stated on `itemMatches`.
+ *
+ * It starts from the item's tags and probes the unique `Workflow.tag`, the
+ * rule on `itemMatches`, so a workflow whose tag the item does not
+ * carry is never read. Counted per workflow (`distinct w.id`), as
+ * `matchedWorkflows` counts: a tag listed twice on an item is one
+ * match. Exported for the test that reads its query plan.
+ *
+ * `json_each` is SQLite's JSON1, compiled into Durable Object SQLite and `node:sqlite` alike.
+ */
+export const ITEM_MATCHES = `(select count(distinct w.id)
+  from json_each(li.productTags) tag
+  join Workflow w on w.tag = tag.value
+  where w.state = 'active'
+    and json_array_length(w.tasks) > 0
+    and not exists (
+      select 1 from json_each(w.tasks) t
+      where json_extract(t.value, '$.teamId') is null))`;
+/**
+ * `multiMatchItems` in SQL: an item with units still to make, two or
+ * more matches ({@link ITEM_MATCHES}), and no run in any state. It restates
+ * `itemMatches` from the item's side, which is the rule there: a
+ * workflow is found by its tag, never by scanning. Derived from
+ * the workflows as they are now, so a Turn off, a tag edit or Change workflow
+ * away and back reads correctly with no reconcile in between.
+ */
+const MULTI_MATCH_ITEM = `select 1 from OrderLineItem li
+  where li.orderId = ShopOrder.id and li.currentQuantity > 0
+    and ${ITEM_MATCHES} >= 2
+    and not exists (${RUN_FOR_ITEM})`;
+/**
+ * The `multi_match` `OrderIssue` as one predicate. `OPEN` is
+ * the caller's, as for every issue.
+ */
+const MULTI_MATCH = `exists (${MULTI_MATCH_ITEM})`;
+
+/**
+ * Each counted filter value's predicate over the `facts` rows of the count
+ * statement in `listOrders`: `showFilter` restated over per-order facts
+ * instead of correlated subqueries, and moving with it. `OPEN` is the
+ * statement's own `where`. `issues` is the three `orderIssues`
+ * elements or'd.
+ */
+const COUNT_FACT = {
+  no_workflow: "openRuns = 0 and doneRuns = 0 and fullyPaid",
+  not_started: "openRuns > 0 and doneRuns = 0 and startedRuns = 0",
+  making: "openRuns > 0 and (doneRuns > 0 or startedRuns > 0)",
+  made: "doneRuns > 0 and openRuns = 0",
+  issues: "multiMatch or unassigned or blockedRuns > 0",
+} as const satisfies Record<keyof OrderCounts, string>;
 
 const bit = (value: boolean) => (value ? 1 : 0);
 
@@ -330,13 +428,43 @@ export const makeOrderRepository = (sql: SqlClient.SqlClient, transaction: Trans
       }),
     ).pipe(Effect.withSpan("OrderRepository.upsertOrder"));
 
-  /** A single order with its items, or `none`. */
-  const getOrder = Effect.fn("OrderRepository.getOrder")(function* (orderId: string) {
-    const [order] = yield* decodeOrders(
-      yield* sql`select ${orderColumns} from ShopOrder where id = ${orderId}`,
-    );
+  /**
+   * A single order with its items, or `none`. Shared by the GID and
+   * legacy-id lookups so both read the same shape.
+   */
+  const detailOf = Effect.fn("OrderRepository.detailOf")(function* (rows: readonly unknown[]) {
+    const [order] = yield* decodeOrders(rows);
     if (order === undefined) return Option.none<OrderDetail>();
     return Option.some<OrderDetail>({ order, lineItems: yield* lineItemsOf(order.id) });
+  });
+
+  /** A single order with its items, or `none`. */
+  const getOrder = Effect.fn("OrderRepository.getOrder")(function* (orderId: string) {
+    return yield* detailOf(yield* sql`select ${orderColumns} from ShopOrder where id = ${orderId}`);
+  });
+
+  /** {@link getOrder} by Shopify's numeric id, the order page's URL key. */
+  const getOrderByLegacyId = Effect.fn("OrderRepository.getOrderByLegacyId")(function* (
+    legacyId: string,
+  ) {
+    return yield* detailOf(
+      yield* sql`select ${orderColumns} from ShopOrder where legacyId = ${legacyId}`,
+    );
+  });
+
+  /** One line item with its order, or `none`: what manual attach reads. */
+  const getLineItem = Effect.fn("OrderRepository.getLineItem")(function* (lineItemId: string) {
+    const [lineItem] = yield* decodeLineItems(
+      yield* sql`select * from OrderLineItem where id = ${lineItemId}`,
+    );
+    if (lineItem === undefined)
+      return Option.none<{ readonly order: ShopOrder; readonly lineItem: OrderLineItem }>();
+    const [order] = yield* decodeOrders(
+      yield* sql`select ${orderColumns} from ShopOrder where id = ${lineItem.orderId}`,
+    );
+    return order === undefined
+      ? Option.none<{ readonly order: ShopOrder; readonly lineItem: OrderLineItem }>()
+      : Option.some({ order, lineItem });
   });
 
   /**
@@ -388,9 +516,10 @@ export const makeOrderRepository = (sql: SqlClient.SqlClient, transaction: Trans
    * pages, and an offset would skip or repeat rows under those writes. One extra row is fetched
    * to learn whether a next page exists without a second count. A cursor that does not parse is
    * page one. The page and its items are read in one transaction, so a write landing between
-   * the two reads never pairs a row with another version's items.
+   * the two reads never pairs a row with another version's items. The orders index's read before
+   * runs; {@link listOrders} replaces it.
    */
-  const listOrders = Effect.fn("OrderRepository.listOrders")(function* ({
+  const listOrdersRunFree = Effect.fn("OrderRepository.listOrdersRunFree")(function* ({
     limit,
     cursor,
   }: OrdersListInput) {
@@ -432,6 +561,357 @@ export const makeOrderRepository = (sql: SqlClient.SqlClient, transaction: Trans
         } satisfies OrdersListPage;
       }),
     );
+  });
+
+  /**
+   * The orders index's read: one page of orders with their per-order run facts, the Show
+   * counts and, under a search, the match count.
+   *
+   * `show` filters by `OrdersShow`, each SQL fragment restating a
+   * branch of `orderPosition` or, for Issues, the union of `orderIssues`'
+   * elements; each must move with the function it restates.
+   * Open, the open positions, Issues and the `counts` aggregate spell out
+   * `fulfillmentStatus <> 'FULFILLED' and cancelledAt is null` verbatim so
+   * SQLite can prove they are served by the partial `ShopOrder_open_idx`,
+   * which is what keeps a count from reading the shop's whole history.
+   *
+   * `q` set means `show` and `team` are not applied: search
+   * ignores the filters (`ListOrdersInput.q`).
+   *
+   * `counts` follows `OrderCounts`: a count is what choosing that
+   * value would show, given the team. One count per filter value, narrowed
+   * by `team` and by nothing else.
+   *
+   * The default read (Making, no team, no search) is linear in open orders because every
+   * per-order fact is a probe by the order's id: `Run` through `(orderId, state)`, the item's
+   * matches through `Workflow.tag`, the tasks through `runId`. A plan that drives
+   * from a table instead of probing it turns the read quadratic in open
+   * orders.
+   *
+   * No transaction: its statements are reads, and a write landing between two of them shows on
+   * the next read, which the write's notice asks for.
+   */
+  const listOrders = Effect.fn("OrderRepository.listOrders")(function* ({
+    limit,
+    cursor,
+    q,
+    show,
+    team,
+    teams,
+  }: ListOrdersInput & {
+    /** The shop's teams, read live from D1: what `unassigned` is derived against (`OrderRow`). */
+    readonly teams: EligibleContext["teams"];
+  }) {
+    /**
+     * Bound to the teams the caller read from D1. `unassignedRun` is
+     * `OrderRow.unassigned` in SQL.
+     */
+    const liveIds = teams.map(({ id }) => id);
+    const unassigned =
+      liveIds.length === 0
+        ? sql.literal("1 = 1")
+        : sql`(s.teamId is null or s.teamId not in ${sql.in(liveIds)})`;
+    const runWithTask = (task: typeof unassigned) => sql`exists (
+      select 1 from Run r
+      where r.orderId = ShopOrder.id and r.state = 'open'
+        and exists (
+          select 1 from RunTask s
+          where s.runId = r.id and s.doneAt is null and ${task}
+        )
+    )`;
+    const unassignedRun = runWithTask(unassigned);
+    /**
+     * `ListOrdersInput.team`, whose JSDoc carries the rules, as
+     * a `where`. The outer run is aliased `wr` because {@link currentWhere}
+     * binds `p` for the task's own run inside its subqueries (see its
+     * JSDoc).
+     *
+     * `+s.teamId` is SQLite's unary plus, which keeps that term from
+     * choosing an index (https://www.sqlite.org/optoverview.html,
+     * "Disabling index use"). Without it `RunTask_teamId_idx (teamId,
+     * doneAt)` matches two of the subquery's terms (`currentWhere`
+     * starts with `doneAt is null`) against the unique `(runId,
+     * position)`'s one, and the planner drives from the team's open
+     * tasks once per open order: open orders × the team's open tasks.
+     * With it `runId` is the only indexable term on `RunTask`, so the
+     * plan is `Run` by `(orderId, state)`, then `RunTask` by `runId`.
+     */
+    const teamFilter =
+      team === null
+        ? sql.literal("1 = 1")
+        : sql`${sql.literal(OPEN)} and exists (
+            select 1 from Run wr
+            join RunTask s on s.runId = wr.id
+            where wr.orderId = ShopOrder.id
+              and wr.state = 'open'
+              and wr.blockedAt is null
+              and +s.teamId = ${team}
+              and ${sql.literal(currentWhere("s"))}
+          )`;
+    /**
+     * The open positions partition the open orders by run state and
+     * payment, as `orderPosition` says: no open and no done run
+     * is `unpaid` or `no_workflow` by `fullyPaid`; an open run with no
+     * done run and no started open run is `not_started`; an open run
+     * beside a done run or a started open run is `making`; only done
+     * runs is `made`. Issues is `OPEN` and the three
+     * `orderIssues` elements or'd, each the fragment above that
+     * restates it.
+     */
+    const noRun = (fullyPaid: 0 | 1) =>
+      sql.and([
+        OPEN,
+        `fullyPaid = ${String(fullyPaid)}`,
+        `not exists (${OPEN_RUN})`,
+        `not exists (${DONE_RUN})`,
+      ]);
+    const making = () =>
+      sql.and([OPEN, `exists (${OPEN_RUN})`, `(exists (${DONE_RUN}) or exists (${STARTED_RUN}))`]);
+    const showFilter = Match.value(show).pipe(
+      Match.when("unpaid", () => noRun(0)),
+      Match.when("no_workflow", () => noRun(1)),
+      Match.when("not_started", () =>
+        sql.and([
+          OPEN,
+          `exists (${OPEN_RUN})`,
+          `not exists (${DONE_RUN})`,
+          `not exists (${STARTED_RUN})`,
+        ]),
+      ),
+      Match.when("making", making),
+      Match.when("made", () => sql.and([OPEN, `exists (${DONE_RUN})`, `not exists (${OPEN_RUN})`])),
+      Match.when("fulfilled", () =>
+        sql.and(["cancelledAt is null", "fulfillmentStatus = 'FULFILLED'"]),
+      ),
+      Match.when("cancelled", () => sql.literal("cancelledAt is not null")),
+      Match.when("issues", () =>
+        sql.and([OPEN, sql.or([`(${MULTI_MATCH})`, unassignedRun, `exists (${BLOCKED_RUN})`])]),
+      ),
+      /**
+       * `null` is Making, the default (`OrdersShow`).
+       * `"open"` is open work, not everything: the negation of the
+       * `fulfilled` and `cancelled` branches above, spelled as `OPEN`
+       * so the partial index serves it. `"all"`, `"fulfilled"` and
+       * `"cancelled"` are the only values that read a shop's history.
+       */
+      Match.when(null, making),
+      Match.when("open", () => sql.literal(OPEN)),
+      Match.when("all", () => sql.literal("1 = 1")),
+      Match.exhaustive,
+    );
+    /**
+     * {@link searchTerm}'s reading. An order number matches the name
+     * whole: `#10` listing `#1001` … `#1099` read as a guess, and the
+     * merchant has the number off the admin. A word is a prefix of the
+     * item title, the variant title or the SKU, at the start or after a
+     * space ({@link prefixPatterns}), on any of the order's items.
+     */
+    const searchFilter = Option.match(Option.fromNullOr(q), {
+      onNone: () => sql.literal("1 = 1"),
+      onSome: (text) => {
+        const term = searchTerm(text);
+        if (term.kind === "orderName") return sql`name = ${term.name}`;
+        const [start, word] = prefixPatterns(term.text);
+        return sql`exists (
+          select 1 from OrderLineItem li
+          where li.orderId = ShopOrder.id and (
+            li.title like ${start} escape '\\'
+            or li.title like ${word} escape '\\'
+            or li.variantTitle like ${start} escape '\\'
+            or li.variantTitle like ${word} escape '\\'
+            or li.sku like ${start} escape '\\'
+            or li.sku like ${word} escape '\\'
+          )
+        )`;
+      },
+    });
+    /**
+     * Keyset, never `limit/offset`: the bulk stream and webhooks insert
+     * while a merchant pages, and an offset would skip or repeat rows
+     * under those writes. One extra row is fetched to learn whether a
+     * next page exists without a second count.
+     */
+    const after = Option.flatMap(Option.fromNullOr(cursor), decodeCursor);
+    const keyset = Option.match(after, {
+      onNone: () => sql.literal("1 = 1"),
+      onSome: ({ processedAt, id }) =>
+        sql.or([
+          sql`processedAt < ${processedAt}`,
+          sql`(processedAt = ${processedAt} and id < ${id})`,
+        ]),
+    });
+    /**
+     * A search reads every stored order: `show` and `team` apply only
+     * when `q` is null (`ListOrdersInput.q`).
+     */
+    const narrowing = q === null ? [showFilter, teamFilter] : [searchFilter];
+    const page = yield* decodeOrders(
+      yield* sql`
+        select ${orderColumns} from ShopOrder
+        where ${sql.and([keyset, ...narrowing])}
+        order by processedAt desc, id desc
+        limit ${limit + 1}
+      `,
+    );
+    const orders = page.slice(0, limit);
+    const ids = orders.map(({ id }) => id);
+    /**
+     * Two aggregates keyed by the page's ids rather than a join: the
+     * decoder for `ShopOrder` wants exactly its columns, and `Run`
+     * lives in the same SQLite but belongs to
+     * the run repository, so this read touches it for counts only.
+     */
+    const unitRows =
+      ids.length === 0
+        ? []
+        : yield* sql`
+            select orderId, sum(currentQuantity) as units
+            from OrderLineItem
+            where ${sql.in("orderId", ids)}
+            group by orderId
+          `.values;
+    const runRows =
+      ids.length === 0
+        ? []
+        : yield* sql`
+            select
+              orderId,
+              sum(state = 'open') as open,
+              sum(state = 'done') as done,
+              sum(blockedAt is not null and state = 'open') as blocked,
+              sum(startedAt is not null and state = 'open') as started
+            from Run
+            where ${sql.in("orderId", ids)}
+            group by orderId
+          `.values;
+    const unassignedRows =
+      ids.length === 0
+        ? []
+        : yield* sql`
+            select id from ShopOrder
+            where ${sql.in("id", ids)} and ${unassignedRun}
+          `.values;
+    /**
+     * `OrderRow.multiMatchItems`, restating `MULTI_MATCH_ITEM` per
+     * item rather than as an `exists`: the badge says how many items are
+     * waiting on a choice, not merely that one is.
+     */
+    const multiMatchRows =
+      ids.length === 0
+        ? []
+        : yield* sql`
+            select li.orderId, count(*)
+            from OrderLineItem li
+            where ${sql.in("li.orderId", ids)}
+              and li.currentQuantity > 0
+              and ${sql.literal(ITEM_MATCHES)} >= 2
+              and not exists (${sql.literal(RUN_FOR_ITEM)})
+            group by li.orderId
+          `.values;
+    const unassignedIds = new Set(unassignedRows.map((row) => String(row[0])));
+    const multiMatch = new Map(multiMatchRows.map((row) => [String(row[0]), Number(row[1] ?? 0)]));
+    const units = new Map(unitRows.map((row) => [String(row[0]), Number(row[1] ?? 0)]));
+    const runs = new Map(
+      runRows.map((row) => [
+        String(row[0]),
+        {
+          open: Number(row[1] ?? 0),
+          done: Number(row[2] ?? 0),
+          blocked: Number(row[3] ?? 0),
+          started: Number(row[4] ?? 0),
+        } satisfies RunCounts,
+      ]),
+    );
+    /**
+     * `OrderCounts` in one statement over the open orders the
+     * team leaves: one count per Show value, never the Show filter
+     * itself, and never the search, which ignores the filters. `run_summary` is the per-page
+     * `runRows` aggregate hoisted over every open order, one grouped
+     * read of `Run` in place of a correlated `exists` per fragment;
+     * `MULTI_MATCH` and `unassignedRun` stay correlated, walking items and
+     * tasks. `facts` is materialised so each correlated term runs once
+     * per order however many sums read it. The sums restate
+     * `showFilter` over those facts ({@link COUNT_FACT}) and must move
+     * with it.
+     *
+     * `run_summary` is a `cross join`, which SQLite reads as "keep this
+     * table order" (https://www.sqlite.org/optoverview.html#crossjoin):
+     * with no `sqlite_stat1` the planner may otherwise drive from `Run`
+     * and read every run the retention window keeps, closed orders
+     * included. Driven from `ShopOrder_open_idx` through the prefix of
+     * `Run_orderId_state_idx`, the read is the open orders' runs only.
+     * The correlated fragments in `facts` probe the same index with
+     * both terms. The `ShopOrder` columns are qualified for the reason
+     * on {@link openAs}.
+     */
+    const [countRow] = yield* sql`
+      with run_summary as (
+        select r.orderId,
+          sum(r.state = 'open') as openRuns,
+          sum(r.state = 'done') as doneRuns,
+          sum(r.state = 'open' and r.blockedAt is not null) as blockedRuns,
+          sum(r.state = 'open' and r.startedAt is not null) as startedRuns
+        from ShopOrder o
+        cross join Run r on r.orderId = o.id
+        where ${sql.literal(openAs("o"))}
+        group by r.orderId
+      ),
+      facts as materialized (
+        select
+          coalesce(rs.openRuns, 0) as openRuns,
+          coalesce(rs.doneRuns, 0) as doneRuns,
+          coalesce(rs.blockedRuns, 0) as blockedRuns,
+          coalesce(rs.startedRuns, 0) as startedRuns,
+          ShopOrder.fullyPaid as fullyPaid,
+          (${sql.literal(MULTI_MATCH)}) as multiMatch,
+          ${unassignedRun} as unassigned
+        from ShopOrder
+        left join run_summary rs on rs.orderId = ShopOrder.id
+        where ${sql.and([OPEN, teamFilter])}
+      )
+      select
+        count(*),
+        sum(${sql.literal(COUNT_FACT.no_workflow)}),
+        sum(${sql.literal(COUNT_FACT.not_started)}),
+        sum(${sql.literal(COUNT_FACT.making)}),
+        sum(${sql.literal(COUNT_FACT.made)}),
+        sum(${sql.literal(COUNT_FACT.issues)})
+      from facts
+    `.values;
+    const openOrders = Number(countRow?.[0] ?? 0);
+    const counts = {
+      no_workflow: Number(countRow?.[1] ?? 0),
+      not_started: Number(countRow?.[2] ?? 0),
+      making: Number(countRow?.[3] ?? 0),
+      made: Number(countRow?.[4] ?? 0),
+      issues: Number(countRow?.[5] ?? 0),
+    } satisfies OrderCounts;
+    /**
+     * `OrdersPage.matches`: read only under a search, over every
+     * stored order, because the search ignores the filters and the
+     * screen's line says how many it found, not how many one page holds.
+     */
+    const matches =
+      q === null
+        ? null
+        : Number(
+            (yield* sql`select count(*) from ShopOrder where ${searchFilter}`.values)[0]?.[0] ?? 0,
+          );
+    const last = orders.at(-1);
+    return {
+      orders: orders.map((order) => ({
+        order,
+        itemUnits: units.get(order.id) ?? 0,
+        runs: runs.get(order.id) ?? { open: 0, done: 0, blocked: 0, started: 0 },
+        unassigned: unassignedIds.has(order.id),
+        multiMatchItems: multiMatch.get(order.id) ?? 0,
+      })),
+      limit,
+      nextCursor: page.length > limit && last !== undefined ? encodeCursor(last) : null,
+      counts,
+      openOrders,
+      matches,
+    } satisfies OrdersPage;
   });
 
   /**
@@ -667,10 +1147,13 @@ export const makeOrderRepository = (sql: SqlClient.SqlClient, transaction: Trans
     getOrder,
     getOrderUpdatedAt,
     orderVersion,
+    getOrderByLegacyId,
+    getLineItem,
     countOpenOrders,
     markOrdersLimited,
     clearOrdersLimited,
     listOrders,
+    listOrdersRunFree,
     getSyncState,
     setSyncError,
     setSyncErrorIfEmpty,

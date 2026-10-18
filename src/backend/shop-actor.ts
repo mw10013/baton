@@ -540,7 +540,7 @@ const makeShopActor = Effect.gen(function* () {
       MemberActivation: () => Effect.succeed({ id: activationId }),
       MemberWhoAmI: () => Effect.service(CurrentCaller),
       MerchantWhoAmI: () => Effect.service(CurrentCaller),
-      MerchantListOrders: (input) => orderRepository.listOrders(input).pipe(Effect.orDie),
+      MerchantListOrders: (input) => orderRepository.listOrdersRunFree(input).pipe(Effect.orDie),
       MerchantSyncStatus: () =>
         Clock.currentTimeMillis.pipe(Effect.flatMap(orderRepository.getSyncStatus), Effect.orDie),
       MerchantSyncOpenOrders: () => syncOpenOrdersFor("ShopActor.MerchantSyncOpenOrders"),
@@ -811,7 +811,7 @@ const makeShopActor = Effect.gen(function* () {
     /** One page of the orders list; the same read as `MerchantListOrders`. */
     const listOrders = Effect.fn("ShopActor.listOrders")(
       function* (input: OrdersListInput) {
-        const page: OrdersListPage = yield* orderRepository.listOrders(input);
+        const page: OrdersListPage = yield* orderRepository.listOrdersRunFree(input);
         return page;
       },
       Effect.orDie,

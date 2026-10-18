@@ -1,13 +1,34 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Statement from "effect/sql/Statement";
 import { fixture } from "../../../../fixture.ts";
 import { fixtureRows } from "../../../../src/backend/fixture.ts";
 import { insertFixtureRows } from "../../../../src/backend/shop-actor.ts";
-import type { OrderRepository } from "../../../../src/backend/shop-actor/order-repository.ts";
-import type { OrderLineItem, ShopOrder } from "../../../../src/domain/orders.ts";
+import {
+  ITEM_MATCHES,
+  type OrderRepository,
+} from "../../../../src/backend/shop-actor/order-repository.ts";
+import { type OrderLineItem, orderIsOpen, type ShopOrder } from "../../../../src/domain/orders.ts";
 import { ShopLimits } from "../../../../src/domain/platform.ts";
+import {
+  ListSearch,
+  multiMatchItems,
+  type OrderCounts,
+  OrderPosition,
+  OrdersCursor,
+  type OrdersPage,
+  type OrdersShow,
+  orderIssues,
+  orderPosition,
+  type RunState,
+  TeamId,
+  TeamWithMemberCount,
+  WorkflowDetail,
+  type WorkflowState,
+} from "../../../../src/domain/shop-work.ts";
 import { ActorSqliteTest, testOrderRepository } from "../layers.ts";
 
 /**
@@ -239,20 +260,26 @@ describe("fixture rows", () => {
         let next = 0;
         const { actor } = fixtureRows(fixture, CYCLE_START, () => `id-${String(++next)}`);
         yield* insertFixtureRows(sql, actor);
-        const page = yield* repository.listOrders({ limit: actor.orders.length, cursor: null });
+        const page = yield* repository.listOrders({
+          limit: actor.orders.length,
+          cursor: null,
+          q: null,
+          show: "all",
+          team: null,
+          teams: [],
+        });
         const listed = page.orders.map(({ order }) => order);
         assert.strictEqual(listed.length, actor.orders.length);
         assert.strictEqual(page.nextCursor, null);
+        const details = yield* Effect.forEach(listed, ({ id }) => repository.getOrder(id));
         assert.strictEqual(
-          page.orders.flatMap(({ lineItems }) => lineItems).length,
+          details.flatMap((detail) => Option.getOrThrow(detail).lineItems).length,
           actor.lineItems.length,
         );
         assert.isTrue(listed.some(({ cancelledAt }) => cancelledAt !== null));
         assert.isTrue(listed.some(({ fullyPaid }) => !fullyPaid));
 
-        const [newest] = page.orders;
-        assert.isDefined(newest);
-        if (newest === undefined) return;
+        const newest = Option.getOrThrow(details[0] ?? Option.none());
         const synced = yield* upsert(
           repository,
           { ...newest.order, updatedAt: newest.order.updatedAt + 1 },
@@ -606,26 +633,892 @@ describe("OrderRepository sync state", () => {
   );
 });
 
+const names = (page: OrdersPage) => page.orders.map(({ order }) => order.name);
+const aTeamId = (value: string) => Schema.decodeUnknownSync(TeamId)(value);
+const rowOf = (page: OrdersPage, name: string) =>
+  page.orders.find((row) => row.order.name === name);
+const flagged = (page: OrdersPage, field: "unassigned") =>
+  page.orders.filter((row) => row[field]).map((row) => row.order.name);
+
+/** `listOrders` with no search, the given filter and team, against `teams`. */
+const listWith = (
+  repository: OrderRepository,
+  show: OrdersShow | null,
+  {
+    team = null,
+    q = null,
+    teams = [],
+    limit = 20,
+    cursor = null,
+  }: {
+    readonly team?: TeamId | null;
+    readonly q?: string | null;
+    readonly teams?: readonly TeamWithMemberCount[];
+    readonly limit?: number;
+    readonly cursor?: string | null;
+  } = {},
+) =>
+  repository.listOrders({
+    limit,
+    cursor: cursor === null ? null : Schema.decodeUnknownSync(OrdersCursor)(cursor),
+    q: q === null ? null : Schema.decodeUnknownSync(ListSearch)(q),
+    show,
+    team,
+    teams,
+  });
+
 describe("OrderRepository.listOrders", () => {
   it.effect("pages newest first through a keyset cursor", () =>
     runInRepository((repository) =>
       Effect.gen(function* () {
-        // Two orders in one millisecond: the id breaks the tie, newest id first.
-        yield* upsert(repository, anOrder({ id: orderId(1), processedAt: 1000 }), [aLineItem(1)]);
-        yield* upsert(repository, anOrder({ id: orderId(2), processedAt: 2000 }), []);
-        yield* upsert(repository, anOrder({ id: orderId(3), processedAt: 2000 }), []);
-        const first = yield* repository.listOrders({ limit: 2, cursor: null });
-        assert.deepStrictEqual(
-          first.orders.map(({ order }) => order.id),
-          [orderId(3), orderId(2)],
+        yield* Effect.forEach([1, 2, 3], (n) =>
+          upsert(
+            repository,
+            anOrder({
+              id: orderId(n),
+              legacyId: String(n),
+              name: `#100${String(n)}`,
+              processedAt: n * 1000,
+            }),
+            [aLineItem(n, { orderId: orderId(n) })],
+          ),
         );
-        assert.strictEqual(first.nextCursor, `2000:${orderId(2)}`);
-        const second = yield* repository.listOrders({ limit: 2, cursor: first.nextCursor });
-        assert.deepStrictEqual(
-          second.orders.map(({ order, lineItems }) => [order.id, lineItems.map(({ id }) => id)]),
-          [[orderId(1), [lineItemId(1)]]],
-        );
+        const first = yield* listWith(repository, "open", { limit: 2 });
+        const second = yield* listWith(repository, "open", {
+          limit: 2,
+          cursor: first.nextCursor,
+        });
+        assert.strictEqual(first.orders.length, 2);
+        assert.strictEqual(first.orders[0]?.order.name, "#1003");
+        assert.strictEqual(first.orders[1]?.order.name, "#1002");
+        assert.strictEqual(first.orders[0]?.itemUnits, 1);
+        assert.strictEqual(first.orders[0]?.runs.open, 0);
+        assert.strictEqual(second.orders.length, 1);
+        assert.strictEqual(second.orders[0]?.order.name, "#1001");
         assert.strictEqual(second.nextCursor, null);
+      }),
+    ),
+  );
+});
+
+/** One workflow's stored `tasks` document: a single task on `teamId`. */
+const taskList = (workflowId: string, teamId: string | null) =>
+  JSON.stringify([{ id: `${workflowId}-task`, step: 1, name: "Task", teamId, instructions: null }]);
+
+/** One state case of {@link seedStates}. */
+interface StateCase {
+  readonly n: number;
+  readonly order?: Partial<ShopOrder>;
+  readonly states: readonly RunState[];
+  /** The product tags of the order's own item; two on workflows' tags and no run on it is a multi-match. */
+  readonly matched?: readonly string[];
+  /** The order's open runs carry `startedAt`: a task on them is started. */
+  readonly started?: boolean;
+}
+
+/**
+ * Every SQL fragment against `orderPosition` and `orderIssues`:
+ * the fixture covers each branch, and each filter value must return exactly the
+ * names the TypeScript functions give it. Runs are written directly because
+ * the filters only read state. A done run always carries `startedAt` (the schema refuses one
+ * without), and an open run carries it when the case says `started`.
+ * `#1005`, `#1010` and `#1012` are open and paid with no open and no done
+ * run: `no_workflow`; `#1009` is the same unpaid: `unpaid`. `#1005` matched
+ * no workflow, which is No workflow with no issue. `#1010`'s only run is
+ * closed, which reads no workflow too but decides the item, so it is no
+ * issue. `#1014`'s open run is untouched: `not_started`. `#1003`'s open run
+ * is untouched beside a done run and `#1004`'s is started: both `making`.
+ *
+ * `#1012` and `#1013` are the multi-match cases: their items carry the tags
+ * of two on workflows, `w1` and `w2`, which the fixture writes directly.
+ * `#1013` has an open run *and* an item still waiting on a choice: `making`
+ * with the issue `multi_match`. Between them they are also the proof
+ * that `json_each` exists in the SQLite under test — every `MULTI_MATCH_ITEM`
+ * fragment would throw without it.
+ */
+const seedStates = (repository: OrderRepository, sql: SqlClient.SqlClient) =>
+  Effect.gen(function* () {
+    const cases: readonly StateCase[] = [
+      { n: 1, states: ["done"] },
+      { n: 2, states: ["done", "closed"] },
+      { n: 3, states: ["done", "open"] },
+      { n: 4, states: ["done", "open"], started: true },
+      { n: 5, states: [] },
+      { n: 6, order: { cancelledAt: 5 }, states: ["done"] },
+      { n: 7, order: { fulfillmentStatus: "FULFILLED" }, states: ["done"] },
+      { n: 8, states: ["done", "done"] },
+      { n: 9, order: { fullyPaid: false }, states: [] },
+      { n: 10, states: ["closed"] },
+      { n: 11, order: { fulfillmentStatus: "FULFILLED" }, states: [] },
+      { n: 12, states: [], matched: ["w1", "w2"] },
+      { n: 13, states: ["open"], matched: ["w1", "w2"], started: true },
+      // Unpaid: a multi-match is an issue all the same; its open run is untouched.
+      { n: 14, order: { fullyPaid: false }, states: ["open"], matched: ["w1", "w2"] },
+    ];
+    for (const id of ["w1", "w2"])
+      yield* sql`
+        insert into Workflow (id, name, tag, state, updatedAt, tasks)
+        values (${id}, ${id}, ${id}, 'active', 0, ${taskList(id, "team-cut")})
+      `;
+    for (const { n, order, states, matched, started = false } of cases) {
+      yield* upsert(
+        repository,
+        anOrder({
+          id: orderId(n),
+          legacyId: String(n),
+          name: `#10${String(n).padStart(2, "0")}`,
+          processedAt: n * 1000,
+          fullyPaid: true,
+          ...order,
+        }),
+        [
+          aLineItem(n, {
+            orderId: orderId(n),
+            ...(matched === undefined ? {} : { productTags: matched }),
+          }),
+        ],
+      );
+      for (const [index, state] of states.entries())
+        yield* sql`
+          insert into Run (
+            id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
+            lineItemId, lineItemTitle, variantTitle, sku, quantity, lineItemProperties,
+            state, startedAt, closedAt, closedReason, createdAt, updatedAt
+          ) values (
+            ${`run-${String(n)}-${String(index)}`}, 'wf', 'Workflow',
+            ${orderId(n)}, ${`#10${String(n).padStart(2, "0")}`}, 0,
+            ${`${lineItemId(n)}-${String(index)}`}, 'Item', null, null, 1,
+            '[]', ${state},
+            ${state === "done" || (state === "open" && started) ? 1 : null},
+            ${state === "closed" ? 1 : null},
+            ${state === "closed" ? "merchant_cancelled" : null}, 0, 0
+          )
+        `;
+    }
+  });
+
+/**
+ * {@link seedStates} plus the issues it lacks, and a team to filter on: `#1003`'s
+ * open run is blocked, `#1004`'s open run has a task on a team that
+ * was deleted (unassigned), and `#1015`, added here, is not started, with
+ * its current task on a team with no members, which is no order issue.
+ * Ready tasks on Cut hang off `#1013` and `#1014`, both choosing.
+ */
+const seedIssues = (repository: OrderRepository, sql: SqlClient.SqlClient) =>
+  Effect.gen(function* () {
+    yield* seedStates(repository, sql);
+    const task = (id: string, runId: string, teamId: string) => sql`
+      insert into RunTask
+        (id, runId, position, step, name, teamId, teamName, doneAt)
+      values (${id}, ${runId}, 1, 1, 'Task', ${teamId}, 'Team', null)
+    `;
+    yield* sql`update Run set blockedAt = 1, blockedBy = '{"role":"merchant"}' where id = 'run-3-1'`;
+    yield* task("s4", "run-4-1", "team-gone");
+    yield* task("s13", "run-13-0", "team-cut");
+    yield* task("s14", "run-14-0", "team-cut");
+    yield* upsert(
+      repository,
+      anOrder({
+        id: orderId(15),
+        legacyId: "15",
+        name: "#1015",
+        processedAt: 15_000,
+        fullyPaid: true,
+      }),
+      [aLineItem(15, { orderId: orderId(15) })],
+    );
+    yield* sql`
+      insert into Run (
+        id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
+        lineItemId, lineItemTitle, variantTitle, sku, quantity, lineItemProperties,
+        state, closedAt, closedReason, createdAt, updatedAt
+      ) values (
+        'run-15-0', 'wf', 'Workflow', ${orderId(15)}, '#1015', 0,
+        ${`${lineItemId(15)}-0`}, 'Item', null, null, 1, '[]', 'open', null,
+        null, 0, 0
+      )
+    `;
+    yield* task("s15", "run-15-0", "team-empty");
+    const teams = Schema.decodeUnknownSync(Schema.Array(TeamWithMemberCount))([
+      { id: "team-cut", name: "Cut", memberCount: 1 },
+      { id: "team-empty", name: "Polish", memberCount: 0 },
+    ]);
+    const list = (filter: OrdersShow | null, team: TeamId | null = null, q: string | null = null) =>
+      listWith(repository, filter, { team, q, teams });
+    return { list };
+  });
+
+describe("OrderRepository.listOrders multi-match", () => {
+  /**
+   * `MULTI_MATCH_ITEM` is the SQL twin of `itemMatches`. Of four
+   * workflows tagged for the first item, two are on with every task on a
+   * team, one is off and one has an unassigned task, so the item is
+   * a multi-match; the second item carries one eligible workflow's tag and the
+   * two ineligible ones', so it is not. SQL and TypeScript count the same.
+   */
+  it.effect("the index's multi-match predicate agrees with multiMatchItems", () =>
+    runInRepository((repository, sql) =>
+      Effect.gen(function* () {
+        const cases: readonly (readonly [string, WorkflowState, string | null])[] = [
+          ["w1", "active", "team-cut"],
+          ["w2", "active", "team-cut"],
+          ["w3", "inactive", "team-cut"],
+          ["w4", "active", null],
+        ];
+        for (const [id, state, teamId] of cases)
+          yield* sql`
+            insert into Workflow (id, name, tag, state, updatedAt, tasks)
+            values (${id}, ${id}, ${id}, ${state}, 0, ${taskList(id, teamId)})
+          `;
+        const details = cases.map(([id, state, teamId]) =>
+          Schema.decodeUnknownSync(WorkflowDetail)({
+            workflow: { id, name: id, tag: id, state, updatedAt: 0 },
+            tasks: [
+              { id: `${id}-task`, position: 1, step: 1, name: "Task", teamId, instructions: null },
+            ],
+          }),
+        );
+        const teams = Schema.decodeUnknownSync(Schema.Array(TeamWithMemberCount))([
+          { id: "team-cut", name: "Cut", memberCount: 1 },
+        ]);
+        const lineItems = [
+          aLineItem(1, { productTags: ["w1", "w2", "w3", "w4"] }),
+          aLineItem(2, { productTags: ["w1", "w3", "w4"] }),
+          // Tags match exactly: a case variant or a padded tag is another tag.
+          aLineItem(3, { productTags: ["W1", " w2 "] }),
+          // A tag listed twice is one workflow, not two: counted per workflow.
+          aLineItem(4, { productTags: ["w1", "w1"] }),
+        ];
+        yield* upsert(repository, anOrder({ fullyPaid: true }), lineItems);
+        const page = yield* listWith(repository, "open", { teams });
+        const tsCount = multiMatchItems(lineItems, [], details, teams).length;
+        assert.strictEqual(tsCount, 1);
+        assert.strictEqual(page.orders[0]?.multiMatchItems, tsCount);
+      }),
+    ),
+  );
+});
+
+describe("OrderRepository.listOrders by tag", () => {
+  it.effect(
+    "an item matches by its own tags: a workflow whose tag no item carries is never evaluated",
+    () =>
+      runInRepository((repository, sql) =>
+        Effect.gen(function* () {
+          const insert = (id: string) => sql`
+            insert into Workflow (id, name, tag, state, updatedAt, tasks)
+            values (${id}, ${id}, ${id}, 'active', 0, ${taskList(id, "team-cut")})
+          `;
+          yield* insert("w1");
+          yield* insert("w2");
+          // A thousand on workflows whose tags no item carries.
+          for (let index = 0; index < 1000; index++) yield* insert(`x${String(index)}`);
+          yield* upsert(repository, anOrder({ fullyPaid: true }), [
+            aLineItem(1, { productTags: ["w1", "w2"] }),
+          ]);
+          const page = yield* listWith(repository, "open");
+          // No `analyze`: with statistics the planner reverses this join and scans every
+          // workflow per item.
+          const rows = yield* sql.unsafe<{ readonly detail: string }>(
+            `explain query plan select ${ITEM_MATCHES} from OrderLineItem li`,
+          );
+          const plan = rows.map((row) => row.detail);
+          assert.strictEqual(page.orders[0]?.multiMatchItems, 1);
+          // The probe searches the unique index on Workflow.tag; it never scans the workflows.
+          assert.isTrue(
+            plan.some((detail) => detail.startsWith("SEARCH w USING INDEX")),
+            plan.join("\n"),
+          );
+          assert.isFalse(
+            plan.some((detail) => /^SCAN w\b/u.test(detail)),
+            plan.join("\n"),
+          );
+        }),
+      ),
+  );
+});
+
+/** The plan lines that read `alias`, by search or by scan. */
+const reads = (plan: readonly string[], alias: string) =>
+  plan.filter((detail) => new RegExp(`^(?:SEARCH|SCAN) ${alias}\\b`, "u").test(detail));
+
+/**
+ * The plans of the statements `listOrders` runs, read from the statement
+ * text it executed: each statement is captured compiled through `Statement.CurrentTransformer`
+ * and explained with its own parameters. Every plan here is the no-statistics plan: nothing runs
+ * `analyze`, and neither does the actor.
+ */
+describe("OrderRepository.listOrders query plans", () => {
+  const countsPlan = (team: TeamId | null) =>
+    runInRepository((repository, sql) =>
+      Effect.gen(function* () {
+        const { list } = yield* seedIssues(repository, sql);
+        const captured: Array<readonly [string, ReadonlyArray<unknown>]> = [];
+        yield* list(null, team).pipe(
+          Effect.provideService(Statement.CurrentTransformer, (self) =>
+            Effect.sync(() => {
+              captured.push(self.compile());
+              return self;
+            }),
+          ),
+        );
+        const counts = captured.find(([query]) => query.includes("run_summary"));
+        if (counts === undefined) return yield* Effect.die("no counts statement");
+        const [query, params] = counts;
+        const rows = yield* sql.unsafe<{ readonly detail: string }>(
+          `explain query plan ${query}`,
+          params,
+        );
+        return rows.map((row) => row.detail);
+      }),
+    );
+
+  // No `analyze`: the plan is the one the actor runs.
+  it.effect("the counts statement probes Run by order and state and Workflow by tag", () =>
+    Effect.gen(function* () {
+      const plan = yield* countsPlan(null);
+      const runs = reads(plan, "r").filter((detail) => !detail.includes("(lineItemId=?)"));
+      assert.isTrue(runs.length > 0, plan.join("\n"));
+      assert.isTrue(
+        runs.every((detail) => detail.startsWith("SEARCH r USING INDEX Run_orderId_state_idx")),
+        plan.join("\n"),
+      );
+      const workflows = reads(plan, "w");
+      assert.isTrue(workflows.length > 0, plan.join("\n"));
+      assert.isTrue(
+        workflows.every((detail) => detail.startsWith("SEARCH w") && detail.includes("(tag=?)")),
+        plan.join("\n"),
+      );
+    }),
+  );
+
+  // No `analyze`: the plan is the one the actor runs.
+  it.effect("the team filter reads a run's tasks by run, never the team's tasks by team", () =>
+    Effect.gen(function* () {
+      const plan = yield* countsPlan(aTeamId("team-cut"));
+      const wr = reads(plan, "wr");
+      assert.isTrue(wr.length > 0, plan.join("\n"));
+      assert.isTrue(
+        wr.every((detail) => detail.startsWith("SEARCH wr USING INDEX Run_orderId_state_idx")),
+        plan.join("\n"),
+      );
+      assert.isTrue(
+        reads(plan, "s").some((detail) =>
+          detail.startsWith("SEARCH s USING INDEX sqlite_autoindex_RunTask_2 (runId=?)"),
+        ),
+        plan.join("\n"),
+      );
+      assert.isFalse(
+        plan.some((detail) => detail.includes("RunTask_teamId_idx")),
+        plan.join("\n"),
+      );
+    }),
+  );
+});
+
+describe("OrderRepository.listOrders filters", () => {
+  it.effect(
+    "each position filter returns exactly the orders orderPosition gives that position, and an order whose only run is closed is no workflow",
+    () =>
+      runInRepository((repository, sql) =>
+        Effect.gen(function* () {
+          yield* seedStates(repository, sql);
+          const list = (show: OrdersShow | null) => listWith(repository, show);
+          const pages = {
+            default: yield* list(null),
+            open: yield* list("open"),
+            all: yield* list("all"),
+            unpaid: yield* list("unpaid"),
+            no_workflow: yield* list("no_workflow"),
+            not_started: yield* list("not_started"),
+            making: yield* list("making"),
+            made: yield* list("made"),
+            fulfilled: yield* list("fulfilled"),
+            cancelled: yield* list("cancelled"),
+          };
+          assert.strictEqual(pages.all.orders.length, 14);
+          assert.deepStrictEqual(names(pages.unpaid), ["#1009"]);
+          assert.deepStrictEqual(names(pages.no_workflow), ["#1012", "#1010", "#1005"]);
+          assert.deepStrictEqual(names(pages.not_started), ["#1014"]);
+          // `#1013`: one item being made beside one waiting on a choice. It is making, with the
+          // choice as an issue. `#1003`: a done run beside an untouched open one is making.
+          assert.deepStrictEqual(names(pages.making), ["#1013", "#1004", "#1003"]);
+          // Show left out is Making.
+          assert.deepStrictEqual(names(pages.default), names(pages.making));
+          assert.deepStrictEqual(names(pages.made), ["#1008", "#1002", "#1001"]);
+          assert.deepStrictEqual(names(pages.fulfilled), ["#1011", "#1007"]);
+          assert.deepStrictEqual(names(pages.cancelled), ["#1006"]);
+          // The SQL and the TypeScript agree row by row.
+          for (const row of pages.all.orders) {
+            const state = orderPosition(row);
+            for (const position of OrderPosition.literals)
+              assert.strictEqual(
+                names(pages[position]).includes(row.order.name),
+                state === position,
+                `${row.order.name} as ${state} under ${position}`,
+              );
+            assert.strictEqual(
+              names(pages.open).includes(row.order.name),
+              orderIsOpen(row.order),
+              `${row.order.name} under Open`,
+            );
+          }
+        }),
+      ),
+  );
+
+  it.effect(
+    "the Issues filter returns exactly the orders orderIssues gives at least one issue",
+    () =>
+      runInRepository((repository, sql) =>
+        Effect.gen(function* () {
+          const { list } = yield* seedIssues(repository, sql);
+          // A stale block on a fulfilled order's run is not an issue.
+          yield* sql`update Run set state = 'open', blockedAt = 1, blockedBy = '{"role":"merchant"}' where id = 'run-7-0'`;
+          const all = yield* list("all");
+          const issues = yield* list("issues");
+          // Choosing `#1014` (unpaid), `#1013` and `#1012`, unassigned `#1004`, blocked `#1003`.
+          // `#1005` matched no workflow, `#1010`'s only run was closed, and `#1015` waits on a
+          // team with no members, a workflow fault and no order issue.
+          assert.deepStrictEqual(names(issues), ["#1014", "#1013", "#1012", "#1004", "#1003"]);
+          for (const row of all.orders)
+            assert.strictEqual(
+              names(issues).includes(row.order.name),
+              orderIssues(row).length > 0,
+              `${row.order.name} under Issues`,
+            );
+        }),
+      ),
+  );
+
+  /**
+   * `OrderCounts`, checked as the rule itself: for every filter, team
+   * and search, each count equals the length of the list its value would show
+   * under that team with no search, so a count never moves with the Show
+   * filter or the search.
+   */
+  it.effect("a count ignores the search and the main filter and honours the team", () =>
+    runInRepository((repository, sql) =>
+      Effect.gen(function* () {
+        const { list } = yield* seedIssues(repository, sql);
+        const filters = [
+          null,
+          "open",
+          "unpaid",
+          "no_workflow",
+          "issues",
+          "not_started",
+          "making",
+          "made",
+          "fulfilled",
+          "cancelled",
+          "all",
+        ] as const;
+        const counted = {
+          no_workflow: "no_workflow",
+          not_started: "not_started",
+          making: "making",
+          made: "made",
+          issues: "issues",
+        } as const satisfies Record<keyof OrderCounts, OrdersShow>;
+        for (const filter of filters)
+          for (const team of [null, aTeamId("team-cut")])
+            for (const q of [null, "1007", "1013", "item 1"]) {
+              const { counts } = yield* list(filter, team, q);
+              for (const key of Object.keys(counted) as (keyof typeof counted)[])
+                assert.strictEqual(
+                  counts[key],
+                  (yield* list(counted[key], team)).orders.length,
+                  `${String(filter)}/${String(team)}/${String(q)}: ${key}`,
+                );
+            }
+        // Every open order, unpaid `#1009` included, which no cell counts.
+        assert.strictEqual((yield* list(null)).openOrders, 12);
+        assert.deepStrictEqual((yield* list(null)).counts, {
+          no_workflow: 3,
+          not_started: 2,
+          making: 3,
+          made: 3,
+          issues: 5,
+        });
+        // Cut holds `#1013`, making, and `#1014`, not started, both choosing.
+        assert.deepStrictEqual((yield* list(null, aTeamId("team-cut"))).counts, {
+          no_workflow: 0,
+          not_started: 1,
+          making: 1,
+          made: 0,
+          issues: 2,
+        });
+      }),
+    ),
+  );
+
+  it.effect("search ignores the filters", () =>
+    runInRepository((repository, sql) =>
+      Effect.gen(function* () {
+        const { list } = yield* seedIssues(repository, sql);
+        // Fulfilled, so under no Made filter, and waiting on nobody.
+        assert.deepStrictEqual(names(yield* list("made", aTeamId("team-nobody"), "1007")), [
+          "#1007",
+        ]);
+        // Waiting on Cut, making, not made.
+        assert.deepStrictEqual(names(yield* list("made", aTeamId("team-nobody"), "1013")), [
+          "#1013",
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("a search by item title finds the order whatever the filters", () =>
+    runInRepository((repository, sql) =>
+      Effect.gen(function* () {
+        const { list } = yield* seedIssues(repository, sql);
+        const found = yield* list("made", aTeamId("team-nobody"), "item 7");
+        assert.deepStrictEqual(names(found), ["#1007"]);
+        assert.strictEqual(found.matches, 1);
+      }),
+    ),
+  );
+
+  it.effect("a search by SKU", () =>
+    runInRepository((repository, sql) =>
+      Effect.gen(function* () {
+        const { list } = yield* seedIssues(repository, sql);
+        assert.deepStrictEqual(names(yield* list(null, null, "sku-13")), ["#1013"]);
+      }),
+    ),
+  );
+
+  it.effect("Issues holds every open order with an issue, whatever its position", () =>
+    runInRepository((repository, sql) =>
+      Effect.gen(function* () {
+        const { list } = yield* seedIssues(repository, sql);
+        const open = yield* list("open");
+        const issues = yield* list("issues");
+        // Not started `#1014`, making `#1013`, `#1004` and `#1003`, and no workflow `#1012`.
+        assert.deepStrictEqual(
+          names(issues),
+          names(open).filter((name) =>
+            ["#1014", "#1013", "#1012", "#1004", "#1003"].includes(name),
+          ),
+        );
+        assert.deepStrictEqual(
+          new Set(issues.orders.map((row) => orderPosition(row))),
+          new Set(["making", "not_started", "no_workflow"]),
+        );
+      }),
+    ),
+  );
+
+  it.effect("a filter under a team narrows to the open orders waiting on it", () =>
+    runInRepository((repository, sql) =>
+      Effect.gen(function* () {
+        const { list } = yield* seedIssues(repository, sql);
+        // A leftover open run with a current task on Cut, on a fulfilled order.
+        yield* sql`update Run set state = 'open' where id = 'run-7-0'`;
+        yield* sql`
+          insert into RunTask
+            (id, runId, position, step, name, teamId, teamName, doneAt)
+          values ('s7', 'run-7-0', 1, 1, 'Task', 'team-cut', 'Team', null)
+        `;
+        const cut = aTeamId("team-cut");
+        assert.deepStrictEqual(names(yield* list("all", cut)), ["#1014", "#1013"]);
+        assert.deepStrictEqual(names(yield* list("fulfilled", cut)), []);
+        assert.deepStrictEqual(names(yield* list("issues", cut)), ["#1014", "#1013"]);
+      }),
+    ),
+  );
+
+  /**
+   * `RunCounts.blocked` counts open runs only, and a closed run is not
+   * counted at all (`#1002`'s closed run leaves its counts at one done run).
+   * A done run carries no block (the actor's data model), so no done run is blocked here.
+   */
+  it.effect("counts a block on open runs only, and counts closed runs not at all", () =>
+    runInRepository((repository, sql) =>
+      Effect.gen(function* () {
+        yield* seedStates(repository, sql);
+        yield* sql`update Run set blockedAt = 1, blockedBy = '{"role":"merchant"}' where id = 'run-3-1'`;
+        const all = yield* listWith(repository, "open");
+        const runsOf = (name: string) => rowOf(all, name)?.runs;
+        assert.deepStrictEqual(runsOf("#1003"), { open: 1, done: 1, blocked: 1, started: 0 });
+        assert.deepStrictEqual(runsOf("#1004"), { open: 1, done: 1, blocked: 0, started: 1 });
+        assert.deepStrictEqual(runsOf("#1001"), { open: 0, done: 1, blocked: 0, started: 0 });
+        assert.deepStrictEqual(runsOf("#1002"), { open: 0, done: 1, blocked: 0, started: 0 });
+      }),
+    ),
+  );
+});
+
+/**
+ * `ListOrdersInput.q`, read by `searchTerm`: an order number
+ * matches `ShopOrder.name` whole, the `#` the merchant's to type or omit; a
+ * word is a prefix of an item's title, variant title or SKU, with `like`'s
+ * own metacharacters escaped rather than honoured.
+ */
+describe("OrderRepository.listOrders q", () => {
+  const search = (q: string) =>
+    runInRepository((repository) =>
+      Effect.gen(function* () {
+        for (const [n, name, title, variantTitle, sku] of [
+          [1, "#1001", "Signet ring", "Rose gold", "RING-9"],
+          [2, "#1002", "Brass hinge", null, "HINGE_2"],
+          [3, "#2100", "Stamp", "Large", null],
+        ] as const)
+          yield* upsert(
+            repository,
+            anOrder({ id: orderId(n), legacyId: String(n), name, processedAt: n * 1000 }),
+            [aLineItem(n, { orderId: orderId(n), title, variantTitle, sku })],
+          );
+        return names(yield* listWith(repository, null, { q }));
+      }),
+    );
+
+  it.effect("matches the full number with or without the #", () =>
+    Effect.gen(function* () {
+      assert.deepStrictEqual(yield* search("1001"), ["#1001"]);
+      assert.deepStrictEqual(yield* search("#1001"), ["#1001"]);
+      assert.deepStrictEqual(yield* search("  1001  "), ["#1001"]);
+    }),
+  );
+
+  it.effect("an order number matches whole, so #10 takes nothing", () =>
+    Effect.gen(function* () {
+      assert.deepStrictEqual(yield* search("#10"), []);
+    }),
+  );
+
+  it.effect("a word is a prefix of a word in the item title, case-insensitive", () =>
+    Effect.gen(function* () {
+      assert.deepStrictEqual(yield* search("sig"), ["#1001"]);
+      assert.deepStrictEqual(yield* search("RING"), ["#1001"]);
+      assert.deepStrictEqual(yield* search("net"), []);
+    }),
+  );
+
+  it.effect("a search by variant title", () =>
+    Effect.gen(function* () {
+      assert.deepStrictEqual(yield* search("gold"), ["#1001"]);
+      assert.deepStrictEqual(yield* search("large"), ["#2100"]);
+    }),
+  );
+
+  it.effect("escapes like's own wildcards rather than honouring them", () =>
+    Effect.gen(function* () {
+      assert.deepStrictEqual(yield* search("%"), []);
+      assert.deepStrictEqual(yield* search("hinge_"), ["#1002"]);
+      assert.deepStrictEqual(yield* search("hingex"), []);
+    }),
+  );
+});
+
+/** A run task written straight to SQL, done by the merchant at `doneAt` when it is set. */
+const insertTask = (
+  sql: SqlClient.SqlClient,
+  {
+    id,
+    runId,
+    position,
+    step,
+    teamId,
+    doneAt = null,
+  }: {
+    readonly id: string;
+    readonly runId: string;
+    readonly position: number;
+    readonly step: number;
+    readonly teamId: string | null;
+    readonly doneAt?: number | null;
+  },
+) => sql`
+  insert into RunTask
+    (id, runId, position, step, name, teamId, teamName, doneAt,
+     doneByRole, startedAt, startedByRole)
+  values (${id}, ${runId}, ${position}, ${step}, 'Task', ${teamId}, 'Team', ${doneAt},
+    ${doneAt === null ? null : "merchant"}, ${doneAt},
+    ${doneAt === null ? null : "merchant"})
+`;
+
+describe("OrderRepository.listOrders team issues", () => {
+  const teams = Schema.decodeUnknownSync(Schema.Array(TeamWithMemberCount))([
+    { id: "team-cut", name: "Cut", memberCount: 1 },
+    { id: "team-empty", name: "Polish", memberCount: 0 },
+  ]);
+
+  /**
+   * `#1003`'s open run has an open task on a deleted team on its current
+   * step; `#1014`'s has a current task on Cut and a later one on the deleted
+   * team. `#1`'s done run keeps a stale pointer on a done task and never counts, and `#8` is
+   * healthy (`OrderRow.unassigned`).
+   */
+  it.effect(
+    "an open task on a deleted team, on any step, makes the order unassigned, and the Issues filter holds it",
+    () =>
+      runInRepository((repository, sql) =>
+        Effect.gen(function* () {
+          yield* seedStates(repository, sql);
+          const task = (
+            id: string,
+            runId: string,
+            step: number,
+            teamId: string,
+            doneAt: number | null,
+          ) => insertTask(sql, { id, runId, position: step, step, teamId, doneAt });
+          yield* task("s1", "run-1-0", 1, "team-gone", 1);
+          yield* task("s8", "run-8-0", 1, "team-cut", 1);
+          yield* task("s3", "run-3-1", 1, "team-gone", null);
+          yield* task("s14a", "run-14-0", 1, "team-cut", null);
+          yield* task("s14b", "run-14-0", 2, "team-gone", null);
+          const all = yield* listWith(repository, "open", { teams });
+          const issues = yield* listWith(repository, "issues", { teams });
+          assert.deepStrictEqual(flagged(all, "unassigned"), ["#1014", "#1003"]);
+          for (const name of ["#1014", "#1003"]) assert.isTrue(names(issues).includes(name), name);
+          assert.isFalse(names(issues).includes("#1008"));
+          assert.isFalse(names(issues).includes("#1001"));
+          assert.strictEqual(all.counts.issues, names(issues).length);
+        }),
+      ),
+  );
+});
+
+/**
+ * `ListOrdersInput.team`: the orders with a current task on the team
+ * on an open run, through the same `currentWhere` the member's workflows list
+ * runs on. The fixture reuses {@link seedStates}' runs and hangs tasks off them; on
+ * #1003 and #1004, `run-N-0` is done and `run-N-1` is open.
+ */
+describe("OrderRepository.listOrders team", () => {
+  const teams = Schema.decodeUnknownSync(Schema.Array(TeamWithMemberCount))([
+    { id: "team-cut", name: "Cut", memberCount: 1 },
+    { id: "team-polish", name: "Anodize", memberCount: 1 },
+    { id: "team-pack", name: "Pack", memberCount: 1 },
+  ]);
+
+  const waitingFixture = (repository: OrderRepository, sql: SqlClient.SqlClient) =>
+    Effect.gen(function* () {
+      yield* seedStates(repository, sql);
+      /** `position` is unique per run and only orders a list, so it comes off a counter; `step` decides which tasks are current and every case names it. */
+      let position = 0;
+      const task = (id: string, runId: string, step: number, team: string) => {
+        position += 1;
+        return insertTask(sql, { id, runId, position, step, teamId: team });
+      };
+      // #1003: two open item runs both current on Cut, so the order is listed once; the done
+      // run's task is on Cut too, and a run that is over holds nobody up.
+      yield* sql`
+        insert into Run (
+          id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
+          lineItemId, lineItemTitle, variantTitle, sku, quantity, lineItemProperties,
+          state, createdAt, updatedAt
+        ) values (
+          'run-3-2', 'wf', 'Workflow', ${orderId(3)}, '#1003', 0,
+          ${`${lineItemId(3)}-2`}, 'Item', null, null, 1, '[]', 'open',
+          0, 0
+        )
+      `;
+      yield* task("s3a", "run-3-1", 1, "team-cut");
+      yield* task("s3b", "run-3-0", 1, "team-cut");
+      yield* task("s3e", "run-3-2", 1, "team-cut");
+      // #1004: current on Cut, with a later step on Anodize that is not current.
+      yield* task("s4a", "run-4-1", 1, "team-cut");
+      yield* task("s4b", "run-4-1", 2, "team-polish");
+      const list = (team: TeamId | null = null, filter: OrdersShow | null = "open") =>
+        listWith(repository, filter, { team, teams });
+      return { task, list };
+    });
+
+  /**
+   * `#1007` is fulfilled and `#1006` cancelled. Reconcile closes every open
+   * run on a closed order, but the rule does not lean on that: each is given
+   * a leftover open run with an unassigned current task and a current task on
+   * Cut, and neither order has an issue or waits on anyone under the
+   * filter, whichever position is chosen.
+   */
+  it.effect("a fulfilled or cancelled order has no issues and waits on no team", () =>
+    runInRepository((repository, sql) =>
+      Effect.gen(function* () {
+        const { task, list } = yield* waitingFixture(repository, sql);
+        yield* sql`update Run set state = 'open', blockedAt = 1, blockedBy = '{"role":"merchant"}' where id = 'run-7-0'`;
+        yield* sql`update Run set state = 'open' where id = 'run-6-0'`;
+        yield* task("s7", "run-7-0", 1, "team-cut");
+        yield* task("s6", "run-6-0", 1, "team-cut");
+        yield* task("s6b", "run-6-0", 1, "team-gone");
+        const all = yield* list(null, "all");
+        const cut = yield* list(aTeamId("team-cut"), "all");
+        const issues = yield* list(null, "issues");
+        for (const name of ["#1007", "#1006"]) {
+          const row = rowOf(all, name);
+          assert.strictEqual(row === undefined ? null : orderIssues(row).length, 0);
+          assert.isFalse(names(issues).includes(name));
+        }
+        assert.deepStrictEqual(names(cut), ["#1004", "#1003"]);
+      }),
+    ),
+  );
+
+  /**
+   * A blocked run's current task still satisfies `currentWhere` (the workflows list keeps
+   * showing it), but the team cannot move it, so the filter leaves the order
+   * out; `RunCounts.blocked` is where that run is counted.
+   */
+  it.effect("leaves out a blocked run, which is counted as blocked instead", () =>
+    runInRepository((repository, sql) =>
+      Effect.gen(function* () {
+        const { list } = yield* waitingFixture(repository, sql);
+        yield* sql`update Run set blockedAt = 1, blockedBy = '{"role":"merchant"}' where id = 'run-4-1'`;
+        const filtered = yield* list(aTeamId("team-cut"));
+        assert.strictEqual(rowOf(filtered, "#1004"), undefined);
+        assert.strictEqual(rowOf(filtered, "#1003")?.order.name, "#1003");
+      }),
+    ),
+  );
+
+  /**
+   * #1003 has two open runs current on Cut and is listed once; #1001's runs
+   * are all done; Anodize's task on #1004 is a later step. The counts are
+   * narrowed to the filter, as `OrderCounts` says.
+   */
+  it.effect("keeps exactly the rows waiting on that team, and narrows the counts to it", () =>
+    runInRepository((repository, sql) =>
+      Effect.gen(function* () {
+        const { list } = yield* waitingFixture(repository, sql);
+        const all = yield* list();
+        const cut = yield* list(aTeamId("team-cut"));
+        // Anodize owns #1004's second step, which is not current yet.
+        const polish = yield* list(aTeamId("team-polish"));
+        const unknown = yield* list(aTeamId("team-nobody"));
+        assert.deepStrictEqual(names(cut), ["#1004", "#1003"]);
+        assert.deepStrictEqual(names(polish), []);
+        assert.deepStrictEqual(names(unknown), []);
+        const none = { no_workflow: 0, not_started: 0, making: 0, made: 0, issues: 0 };
+        assert.deepStrictEqual(cut.counts, { ...none, making: 2 });
+        assert.deepStrictEqual(unknown.counts, none);
+        assert.strictEqual(all.counts.making, 3);
+      }),
+    ),
+  );
+});
+
+/**
+ * The order page's and manual attach's lookups: by Shopify's numeric id, and an item with its
+ * order.
+ */
+describe("OrderRepository.getOrderByLegacyId and getLineItem", () => {
+  it.effect("find an order by its legacy id and an item with its order, and none for neither", () =>
+    runInRepository((repository) =>
+      Effect.gen(function* () {
+        yield* upsert(repository, anOrder({ legacyId: "77" }), [aLineItem(1), aLineItem(2)]);
+        const detail = Option.getOrThrow(yield* repository.getOrderByLegacyId("77"));
+        assert.strictEqual(detail.order.id, orderId(1));
+        assert.deepStrictEqual(
+          detail.lineItems.map(({ id }) => id),
+          [lineItemId(1), lineItemId(2)],
+        );
+        assert.isTrue(Option.isNone(yield* repository.getOrderByLegacyId("78")));
+        const found = Option.getOrThrow(yield* repository.getLineItem(lineItemId(2)));
+        assert.strictEqual(found.order.id, orderId(1));
+        assert.strictEqual(found.lineItem.id, lineItemId(2));
+        assert.isTrue(Option.isNone(yield* repository.getLineItem(lineItemId(9))));
       }),
     ),
   );
