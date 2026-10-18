@@ -1,0 +1,30 @@
+diff --git a/dist/core/node/proxy/WorkerProxy.mjs b/dist/core/node/proxy/WorkerProxy.mjs
+index beb1f94bcbba212a524df23f9dae4062820da9be..4f4d7838a4f870ea9ac0395f5de10d893e8c3de7 100644
+--- a/dist/core/node/proxy/WorkerProxy.mjs
++++ b/dist/core/node/proxy/WorkerProxy.mjs
+@@ -168,7 +168,9 @@ const makeRelay = (pendingTimeout) => {
+ 			socket.resume();
+ 			upstream.pipe(socket);
+ 			upstream.on("error", () => socket.destroy());
+-			upstream.on("close", () => socket.destroy());
++			// A clean close ends the client once the pipe has flushed what it read:
++			// `destroy` would drop those bytes and truncate a `Connection: close` response.
++			upstream.on("close", (hadError) => (hadError ? socket.destroy() : socket.end()));
+ 		}
+ 		yield* Effect.never;
+ 	});
+diff --git a/src/core/proxy/WorkerProxy.ts b/src/core/proxy/WorkerProxy.ts
+index 1ac5076f1b05bcb57a6a8b50e968e997276ec3ee..8c240cfc03f21e819163f1d98ce0107d4aac51ea 100644
+--- a/src/core/proxy/WorkerProxy.ts
++++ b/src/core/proxy/WorkerProxy.ts
+@@ -277,7 +277,9 @@ const makeRelay = (pendingTimeout: Duration.Duration): Relay => {
+       upstream.pipe(socket);
+       // The upstream going away ends the client; the finalizers do the rest.
+       upstream.on("error", () => socket.destroy());
+-      upstream.on("close", () => socket.destroy());
++      // A clean close ends the client once the pipe has flushed what it read:
++      // `destroy` would drop those bytes and truncate a `Connection: close` response.
++      upstream.on("close", (hadError) => (hadError ? socket.destroy() : socket.end()));
+     }
+     // From here the socket does the talking; the client closing ends the
+     // fiber (see `accept`), and the finalizers destroy both ends.

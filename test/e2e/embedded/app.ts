@@ -1,15 +1,26 @@
 import type { Browser, FrameLocator, Locator, Page } from "playwright/test";
-import { expect } from "playwright/test";
+import { expect, test } from "playwright/test";
 
-import { awaitHydration, gotoApp } from "../../../scripts/lib/embedded-app.ts";
+import { awaitHydration, gotoApp as gotoAdminApp } from "../../../scripts/lib/embedded-app.ts";
 import { storageStatePath } from "../../../playwright.config.ts";
+import { reportLoad, watchFrameRequests } from "./frame-requests.ts";
 
-export {
-  appFrame,
-  awaitHydration,
-  closeDevConsole,
-  gotoApp,
-} from "../../../scripts/lib/embedded-app.ts";
+export { appFrame, awaitHydration, closeDevConsole } from "../../../scripts/lib/embedded-app.ts";
+
+/**
+ * {@link gotoAdminApp} under {@link watchFrameRequests}: a load that does not hydrate fails with
+ * the frame's pending requests and console attached by {@link reportLoad}.
+ */
+export const gotoApp = async (page: Page, path = ""): Promise<FrameLocator> => {
+  watchFrameRequests(page);
+  const since = Date.now();
+  const frame = await gotoAdminApp(page, path).catch(async (error: unknown) => {
+    await reportLoad(page, test.info(), since, false);
+    throw error;
+  });
+  await reportLoad(page, test.info(), since, true);
+  return frame;
+};
 
 /**
  * Opens the embedded app once for a whole spec file: a context under the exported admin session,

@@ -52,16 +52,15 @@ export const closeDevConsole = async (page: Page): Promise<void> => {
 /**
  * Waits until the embedded app is safe to interact with, including after a CLI navigation.
  *
- * Local previews go through a Cloudflare quick tunnel, where a module request can stay pending
- * forever, leaving the server-rendered page visible while the client entry never hydrates. After
- * 15 s the Shopify admin document is reloaded once; the second wait is bounded to 10 s.
+ * One wait, no reload: a cold load through the tunnel requests some 250 unbundled modules and
+ * hydrates in about 3 s (5 s at the 90th percentile), so a frame that is not hydrated after 15 s is
+ * stuck on a request that will never finish, and a reload only hides which one. The stall once
+ * absorbed here was Alchemy's dev proxy cutting large `Connection: close` responses short, which
+ * the Shopify CLI's proxy then held open forever; `patches/@alchemy.run__cloudflare-runtime*` fixes it.
  */
 export const prepareApp = async (page: Page): Promise<FrameLocator> => {
   const frame = appFrame(page);
-  await awaitHydration(frame, 15_000).catch(async () => {
-    await page.reload({ waitUntil: "commit" });
-    await awaitHydration(frame, 10_000);
-  });
+  await awaitHydration(frame, 15_000);
   await closeDevConsole(page);
   return frame;
 };

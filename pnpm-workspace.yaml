@@ -16,4 +16,5 @@ peerDependencyRules:
   allowedVersions:
     vite: "*"
 patchedDependencies:
+  "@alchemy.run/cloudflare-runtime@2.0.0-beta.81": patches/@alchemy.run__cloudflare-runtime@2.0.0-beta.81.patch
   alchemy@2.0.0-beta.81: patches/alchemy@2.0.0-beta.81.patch
