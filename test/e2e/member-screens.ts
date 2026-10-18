@@ -269,7 +269,7 @@ export const homeLink = (page: Page) => page.locator("a.top-bar-home");
 
 /** The workflow page's way back, above its heading. */
 export const workflowsLink = (page: Page) =>
-  page.getByRole("button", { name: "Workflows", exact: true });
+  page.getByRole("link", { name: "Workflows", exact: true });
 
 /** The `team` the address bar is carrying, or `null`. */
 export const teamParam = (page: Page) => new URL(page.url()).searchParams.get("team");

@@ -498,6 +498,20 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 1. **The two member e2e specs are not written.** `test/e2e/workflows-list.spec.ts` and `member-workflow-page.spec.ts` (legacy `member-runs.member.spec.ts`' 39 e2e titles and `member-area.member.spec.ts`' three: "a seeded member signs in by magic link, lands on their workflows list, and signs out", "removing a member closes the shop page on their live session", "a member sees the teams they are on, and only those") were cut when the lead stopped e2e work; the helpers they need are in `test/e2e/member-screens.ts`. Write them in the post-merge e2e step, or accept the browser, unit and integ coverage.
 2. **The bar names the shop on "No access".** `MemberBar` is the `/shop` layout's and reads the key from the URL, so the not-found page's bar shows the domain the URL already holds and links to its (refused) workflows list. Legacy rendered no bar there. Accept, or hide the shop on the not-found match.
 
+**Decisions (Step 7)** (2026-10-18; the user agreed the orchestrator's recommendations):
+
+1. Member e2e: the specs already cover sign-in by link, sign-out, removal and a Done seen across windows (`sign-in.spec.ts`, `shop.spec.ts`). The orchestrator added `member-workflows.spec.ts` with three tests: teams scoping (one team, no Team select), the two-team select's options, and Start · Done · Undo on the workflow page. The rest of legacy's titles stay with the browser, unit and integ coverage.
+2. "No access" shows Your stores' bar: `MemberBar` drops the shop when the `/shop/$key` match is `notFound`. `shop.spec.ts`' removal test checks the bar reads Baton.
+
+**Orchestrator takeover** (2026-10-18)
+
+- Merged wt-01's second flake fix (`getShopifyApp` as a POST), cf56877.
+- `vp check`: pass. `vp test`: 75 files, 971 tests passed.
+- `vp run test:e2e` with `E2E_FRAME_LOG=1`, 16:14–16:20: 69 passed, 1 failed, the new spec's own locator (the item title is on the page twice). All 41 embedded loads hydrated, median 3.3 s, max 7.4 s. No hydration flake.
+- Fixed the locator and `workflowsLink` (a link, not a button); `member-workflows.spec.ts` and `shop.spec.ts` re-run: all passed.
+
+CHECKPOINT: e2e done, ready for staging (user's go).
+
 ## 8. Out of scope
 
 - Billing (G): `countOrder`'s body, the cycle, the usage outbox and flush, the metering titles, `QuotaBanners`, the lapsed page and the plan half of member access, the home page's plan tiles and Manage plan.

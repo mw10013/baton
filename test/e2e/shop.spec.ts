@@ -5,6 +5,7 @@ import { E2E_SHOP } from "./shop-fixture.ts";
 import {
   card,
   closeMembers,
+  homeLink,
   openRuns,
   rowAction,
   rowLink,
@@ -79,6 +80,8 @@ test("a member removed while the page is open is told so", async ({ backend, bro
   await backend(dev((c) => c.RemoveMember({ shop: E2E_SHOP, email })));
 
   await expect(memberShop(page).noAccess).toBeVisible();
+  // The refusal does not say whether the shop exists, so the bar no longer names it.
+  await expect(homeLink(page)).toHaveText("Baton");
   await context.close();
 });
 

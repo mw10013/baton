@@ -155,12 +155,12 @@ After the proxy fix was merged (e76df60), main's run 1 (15:32–15:37 EDT) lost 
 - **The timing.** The previous test ("duplicate asks for a tag…") ends with `searchWorkflows`, a client navigation that re-runs `beforeLoad`, and so issues a `getShopifyApp`. The failing test began at about 15:36:56 with a fixture add, then `gotoApp`. At **15:36:56.000** the Website log forwarded a browser `TypeError: Failed to fetch` whose stack runs through App Bridge's `fetch` wrapper into a route `loadResource`. That is a server-function fetch from the old frame, aborted as the admin navigated.
 - **Replay can't reproduce it**, against a wt-01 e2e server, 20 calls in flight:
 
-  | Target | `getShopifyApp` calls | Stalled | Max |
-  | --- | --- | --- | --- |
-  | Vite child | 3,000 | 0 | 59 ms |
-  | Alchemy `WorkerProxy` (patched) | 3,000 | 0 | 65 ms |
-  | Shopify CLI proxy | 3,000 | 0 | 84 ms |
-  | Quick tunnel | 3,000 | 0 | 400 ms |
+  | Target                          | `getShopifyApp` calls | Stalled | Max    |
+  | ------------------------------- | --------------------- | ------- | ------ |
+  | Vite child                      | 3,000                 | 0       | 59 ms  |
+  | Alchemy `WorkerProxy` (patched) | 3,000                 | 0       | 65 ms  |
+  | Shopify CLI proxy               | 3,000                 | 0       | 84 ms  |
+  | Quick tunnel                    | 3,000                 | 0       | 400 ms |
 
   So no hop on the server side loses it.
 
@@ -170,12 +170,12 @@ After the proxy fix was merged (e76df60), main's run 1 (15:32–15:37 EDT) lost 
 
 Measured with a local server and headless Chrome (`channel: "chrome"`, as the e2e projects use). The first `/fn` takes 8 s; the second asks for the same URL:
 
-| Second request | Waited | Reached the server |
-| --- | --- | --- |
+| Second request                                                      | Waited       | Reached the server            |
+| ------------------------------------------------------------------- | ------------ | ----------------------------- |
 | GET, same URL, first still in flight in another page of the context | **7,452 ms** | only after the first finished |
-| GET, same URL, first aborted by navigating its page | 2 ms | at once |
-| GET, same URL, first's head sent and body slow | 2 ms | at once |
-| **POST**, same URL, first still in flight in another page | 2 ms | at once |
+| GET, same URL, first aborted by navigating its page                 | 2 ms         | at once                       |
+| GET, same URL, first's head sent and body slow                      | 2 ms         | at once                       |
+| **POST**, same URL, first still in flight in another page           | 2 ms         | at once                       |
 
 That matches the signature exactly. What it doesn't establish is which request held the lock in main's run: the aborted fetch at 15:36:56.000 should have released it, and the report then listed only requests started during the load. Hence the instrumentation change below.
 
