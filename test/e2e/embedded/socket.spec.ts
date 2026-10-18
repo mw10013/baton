@@ -6,12 +6,12 @@ import { gotoApp } from "./app.ts";
 
 /**
  * One socket per tab: the `/app` layout holds the merchant's socket, so moving between the App
- * Home and Orders inside the admin keeps the one it opened. Orders has no link to the App Home
- * (there is no app nav), so the way back is the app's router navigating inside the frame, a
- * navigation in the same document, as the Orders link is. Not `history.back()`: in the admin that
- * moves the admin's own history, and App Bridge loads the frame afresh, a new document and so a
- * new socket. The way forward again is the App Home's Orders link. `page.on("websocket")` sees
- * the app frame's sockets.
+ * Home and Orders inside the admin keeps the one it opened. The way back is the App nav's Home: its
+ * item in the admin's chrome is the app's own name (`rel="home"` hides a Home entry), and its click
+ * reaches the `/app` layout's `shopify:navigate` bridge, a navigation in the same document, as the
+ * Orders link is. Not `history.back()`: in the admin that moves the admin's own history, and App
+ * Bridge loads the frame afresh, a new document and so a new socket. The way forward again is the
+ * App Home's Orders link. `page.on("websocket")` sees the app frame's sockets.
  */
 test("Orders, the App Home and Orders again share one socket", async ({ browser }) => {
   const context = await browser.newContext({ storageState: storageStatePath });
@@ -29,13 +29,8 @@ test("Orders, the App Home and Orders again share one socket", async ({ browser 
     await expect(orders).toBeVisible();
     await expect.poll(() => sockets.length).toBeGreaterThan(0);
 
-    // The router TanStack Router registers on the window, navigating to the App Home with the
-    // raw search the `/app` guards read.
-    await frame.locator("body").evaluate(() =>
-      Reflect.get(globalThis, "__TSR_ROUTER__").navigate({
-        href: `/app${globalThis.location.search}`,
-      }),
-    );
+    // The App nav's Home: the app's item in the admin's nav, the one that carries an `appLoadId`.
+    await page.locator('a[href*="appLoadId"]', { hasText: /^Baton/u }).click();
     await expect(home).toBeVisible();
     // Past the client's 400 ms idle release, so a socket held by the page alone would be gone.
     await page.waitForTimeout(1_500);

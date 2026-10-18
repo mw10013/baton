@@ -1,9 +1,12 @@
 import { createFileRoute, useLocation } from "@tanstack/react-router";
 import { useNavigateOnClick } from "../components/navigate.ts";
+import { Lines } from "../components/screen/Lines.tsx";
+import { appHref } from "./-app-search.ts";
 
 /**
- * The App Home's landing page: the shop, and the way to Orders. The link keeps the raw search
- * Shopify sent, because the `/app` guards read it on every navigation (`appSearch`).
+ * The App Home's landing page: the shop, and the ways to Orders, Teams and Members. The links keep
+ * the raw search Shopify sent, because the `/app` guards read it on every navigation
+ * ({@link appHref}).
  */
 export const Route = createFileRoute("/app/")({
   component: function AppHome() {
@@ -13,7 +16,11 @@ export const Route = createFileRoute("/app/")({
     return (
       <s-page heading="Baton">
         <s-section heading={shop}>
-          <s-link {...navigate(`/app/orders${searchStr}`)}>Orders</s-link>
+          <Lines>
+            <s-link {...navigate(appHref("/app/orders", searchStr))}>Orders</s-link>
+            <s-link {...navigate(appHref("/app/teams", searchStr))}>Teams</s-link>
+            <s-link {...navigate(appHref("/app/members", searchStr))}>Members</s-link>
+          </Lines>
         </s-section>
       </s-page>
     );

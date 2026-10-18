@@ -1,4 +1,5 @@
-import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
+import { createFileRoute, Outlet, redirect, useHydrated, useRouter } from "@tanstack/react-router";
+import { useEffect } from "react";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { ShopKey } from "../../contract/shop.ts";
@@ -6,7 +7,7 @@ import { mintSessionToken } from "../client/app-bridge.ts";
 import { ShopSocket } from "../components/ShopSocket.tsx";
 import { APP_BRIDGE_URL } from "../components/polaris.ts";
 import { authenticateApp, getShopifyApp } from "../server/shopify.ts";
-import { appSearch } from "./-app-search.ts";
+import { appHref, appSearch } from "./-app-search.ts";
 import { embeddedAppUrl, frameAncestors, sessionTokenBounce } from "../server/shopify-urls.ts";
 
 /**
@@ -49,8 +50,50 @@ export const Route = createFileRoute("/app")({
         shop={Schema.decodeUnknownSync(ShopKey)(shop)}
         merchantToken={Option.some(mintSessionToken)}
       >
+        <AppNav />
         <Outlet />
       </ShopSocket>
     );
   },
 });
+
+/**
+ * The App nav in the Shopify admin's chrome. Its links keep bare paths, as legacy's: App Bridge
+ * hoists `s-app-nav` out of the frame, and a click dispatches `shopify:navigate` on the link here,
+ * which this turns into a router navigation to the link's path with the current raw search
+ * ({@link appHref}), which the `/app` guards need.
+ *
+ * Rendered only once hydrated: App Bridge hoists the nav out of the iframe into the admin chrome,
+ * escaping the root document's `inert` body, so a pre-hydration click on a hoisted `s-link` lands
+ * before the `shopify:navigate` → `navigate` bridge is wired and falls through to a full iframe
+ * re-embed (bounce / dropped click). Not rendering the nav until hydrated means there is nothing
+ * to hoist until the bridge exists.
+ */
+function AppNav() {
+  const hydrated = useHydrated();
+  const router = useRouter();
+  useEffect(() => {
+    const onNavigate = (event: Event) => {
+      const href = event.target instanceof Element ? event.target.getAttribute("href") : null;
+      if (href === null) return;
+      const { pathname } = new URL(href, window.location.origin);
+      void router.navigate({ href: appHref(pathname, router.state.location.searchStr) });
+    };
+    document.addEventListener("shopify:navigate", onNavigate);
+    return () => {
+      document.removeEventListener("shopify:navigate", onNavigate);
+    };
+  }, [router]);
+  if (!hydrated) return null;
+  return (
+    <s-app-nav>
+      {/* Shopify reads rel="home" as the hidden default landing page; spread because s-link's JSX type omits rel. */}
+      <s-link href="/app" {...{ rel: "home" }}>
+        Home
+      </s-link>
+      <s-link href="/app/orders">Orders</s-link>
+      <s-link href="/app/teams">Teams</s-link>
+      <s-link href="/app/members">Members</s-link>
+    </s-app-nav>
+  );
+}

@@ -25,6 +25,7 @@ import {
   retryPolicy,
   shopKeyAtom,
 } from "./actor-connection.ts";
+import type { SetTeamMemberInput } from "../../contract/members.ts";
 import type { ShopKey } from "../../contract/shop.ts";
 import {
   COUNT_KEY,
@@ -348,6 +349,29 @@ export const syncOrderAtom = Atom.family((orderId: string) =>
     Effect.fnUntraced(function* () {
       const client = yield* ShopActorClient;
       return yield* client("MerchantSyncOrder", { orderId });
+    }),
+  ),
+);
+
+/** Add member, on the members index: one button, so one mutation atom. */
+export const addMemberAtom = ShopActorClient.mutation("MerchantAddMember");
+
+/** Delete member, on the member page. */
+export const deleteMemberAtom = ShopActorClient.mutation("MerchantDeleteMember");
+
+/** Add to teams, on the member page. */
+export const addMemberTeamsAtom = ShopActorClient.mutation("MerchantAddMemberTeams");
+
+/**
+ * Remove on one row: a member's team row on the member page, a team's member row on the team
+ * page, one atom per `<teamId>/<memberId>` pair, for {@link syncOrderAtom}'s reason (a second
+ * press on one mutation atom would interrupt the first).
+ */
+export const setTeamMemberAtom = Atom.family((_pair: string) =>
+  ShopActorClient.runtime.fn<SetTeamMemberInput>()(
+    Effect.fnUntraced(function* (input) {
+      const client = yield* ShopActorClient;
+      return yield* client("MerchantSetTeamMember", input);
     }),
   ),
 );

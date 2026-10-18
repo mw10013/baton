@@ -77,6 +77,7 @@ interface Presses {
 let toasts: Array<{ message: string; isError: boolean }> = [];
 const appBridge: AppBridge = {
   idToken: () => Promise.resolve("token"),
+  modal: { hide: () => Promise.resolve() },
   toast: {
     show: (message, options) => {
       toasts.push({ message, isError: options?.isError === true });

@@ -23,6 +23,7 @@ import {
   syncOpenOrdersAtom,
   syncOrderAtom,
 } from "../client/shop-actor-client.ts";
+import { thrownCopy } from "./form.ts";
 import { EmptyLine } from "./screen/EmptyLine.tsx";
 import { IndexSection } from "./screen/IndexSection.tsx";
 
@@ -52,10 +53,6 @@ const failureCopy = (reason: OrdersSyncFailure["_tag"], what: string) =>
     Match.when("ShopifyUnavailable", () => "Couldn't reach Shopify. Try again."),
     Match.orElse(() => `Couldn't ${what}: Baton isn't installed on this shop.`),
   );
-
-/** A press that threw: its message, as legacy shows it, or `fallback`. */
-const thrownCopy = (error: unknown, fallback: string) =>
-  error instanceof Error && error.message !== "" ? error.message : fallback;
 
 const isSyncFailure = Schema.is(OrdersSyncFailure);
 

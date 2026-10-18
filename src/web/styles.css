@@ -39,3 +39,13 @@
   padding-inline: max(2rem, calc((100% - 49rem) / 2));
   padding-inline-start: calc(max(2rem, calc((100% - 49rem) / 2)) - 0.625rem);
 }
+
+/*
+ * A token or an identity (`Token` in `src/web/components/screen/`): a SKU, a tag, an order
+ * number, an email, a shop domain. It has no word break, so it breaks anywhere rather than widen
+ * its box past the screen. `anywhere`, not `break-word`, because only `anywhere` shrinks the
+ * min-content size, which is what lets a grid track or a table cell hold it.
+ */
+.token {
+  overflow-wrap: anywhere;
+}

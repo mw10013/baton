@@ -29,3 +29,10 @@ export const schemaForm = <S extends Schema.Codec<any, any>>(schema: S) => ({
 /** A Polaris field's `error` prop: its first issue's message, or none while it is valid. */
 export const fieldError = (errors: ReadonlyArray<{ readonly message: string } | undefined>) =>
   Option.getOrUndefined(Option.map(Option.fromNullishOr(errors[0]), (issue) => issue.message));
+
+/**
+ * A press that failed with no typed answer (a lost socket, a defect): its message, as legacy
+ * shows it, or `fallback`.
+ */
+export const thrownCopy = (error: unknown, fallback: string) =>
+  error instanceof Error && error.message !== "" ? error.message : fallback;

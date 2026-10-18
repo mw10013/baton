@@ -26,6 +26,8 @@ import { Route as ShopKeyRouteImport } from './routes/shop.$key'
 import { Route as WebhooksSplatRouteImport } from './routes/webhooks.$'
 import { Route as ApiActorKeyRouteImport } from './routes/api.actor.$key'
 import { Route as ApiAuthSplatRouteImport } from './routes/api.auth.$'
+import { Route as AppMembersIndexRouteImport } from './routes/app.members.index'
+import { Route as AppMembersMemberIdRouteImport } from './routes/app.members.$memberId'
 import { Route as AppOrdersFromShopifyRouteImport } from './routes/app.orders.from-shopify'
 import { Route as ShopKeyIndexRouteImport } from './routes/shop.$key.index'
 
@@ -114,6 +116,16 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   path: '/api/auth/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppMembersIndexRoute = AppMembersIndexRouteImport.update({
+  id: '/members/',
+  path: '/members/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppMembersMemberIdRoute = AppMembersMemberIdRouteImport.update({
+  id: '/members/$memberId',
+  path: '/members/$memberId',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppOrdersFromShopifyRoute = AppOrdersFromShopifyRouteImport.update({
   id: '/from-shopify',
   path: '/from-shopify',
@@ -143,7 +155,9 @@ export interface FileRoutesByFullPath {
   '/shop/': typeof ShopIndexRoute
   '/api/actor/$key': typeof ApiActorKeyRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/app/members/$memberId': typeof AppMembersMemberIdRoute
   '/app/orders/from-shopify': typeof AppOrdersFromShopifyRoute
+  '/app/members/': typeof AppMembersIndexRoute
   '/shop/$key/': typeof ShopKeyIndexRoute
 }
 export interface FileRoutesByTo {
@@ -160,7 +174,9 @@ export interface FileRoutesByTo {
   '/shop': typeof ShopIndexRoute
   '/api/actor/$key': typeof ApiActorKeyRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/app/members/$memberId': typeof AppMembersMemberIdRoute
   '/app/orders/from-shopify': typeof AppOrdersFromShopifyRoute
+  '/app/members': typeof AppMembersIndexRoute
   '/shop/$key': typeof ShopKeyIndexRoute
 }
 export interface FileRoutesById {
@@ -182,7 +198,9 @@ export interface FileRoutesById {
   '/shop/': typeof ShopIndexRoute
   '/api/actor/$key': typeof ApiActorKeyRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/app/members/$memberId': typeof AppMembersMemberIdRoute
   '/app/orders/from-shopify': typeof AppOrdersFromShopifyRoute
+  '/app/members/': typeof AppMembersIndexRoute
   '/shop/$key/': typeof ShopKeyIndexRoute
 }
 export interface FileRouteTypes {
@@ -205,7 +223,9 @@ export interface FileRouteTypes {
     | '/shop/'
     | '/api/actor/$key'
     | '/api/auth/$'
+    | '/app/members/$memberId'
     | '/app/orders/from-shopify'
+    | '/app/members/'
     | '/shop/$key/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -222,7 +242,9 @@ export interface FileRouteTypes {
     | '/shop'
     | '/api/actor/$key'
     | '/api/auth/$'
+    | '/app/members/$memberId'
     | '/app/orders/from-shopify'
+    | '/app/members'
     | '/shop/$key'
   id:
     | '__root__'
@@ -243,7 +265,9 @@ export interface FileRouteTypes {
     | '/shop/'
     | '/api/actor/$key'
     | '/api/auth/$'
+    | '/app/members/$memberId'
     | '/app/orders/from-shopify'
+    | '/app/members/'
     | '/shop/$key/'
   fileRoutesById: FileRoutesById
 }
@@ -382,6 +406,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAuthSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/app/members/': {
+      id: '/app/members/'
+      path: '/members'
+      fullPath: '/app/members/'
+      preLoaderRoute: typeof AppMembersIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/members/$memberId': {
+      id: '/app/members/$memberId'
+      path: '/members/$memberId'
+      fullPath: '/app/members/$memberId'
+      preLoaderRoute: typeof AppMembersMemberIdRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/app/orders/from-shopify': {
       id: '/app/orders/from-shopify'
       path: '/from-shopify'
@@ -426,11 +464,15 @@ const AppOrdersRouteWithChildren = AppOrdersRoute._addFileChildren(
 interface AppRouteChildren {
   AppOrdersRoute: typeof AppOrdersRouteWithChildren
   AppIndexRoute: typeof AppIndexRoute
+  AppMembersMemberIdRoute: typeof AppMembersMemberIdRoute
+  AppMembersIndexRoute: typeof AppMembersIndexRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
   AppOrdersRoute: AppOrdersRouteWithChildren,
   AppIndexRoute: AppIndexRoute,
+  AppMembersMemberIdRoute: AppMembersMemberIdRoute,
+  AppMembersIndexRoute: AppMembersIndexRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
