@@ -132,6 +132,12 @@ export const reportLoad = async (
     `The app frame did not hydrate within ${now - since}ms; ${requests.length} frame requests.`,
     "Pending:",
     ...requests.filter((entry) => entry.end === undefined).map((entry) => describe(entry, now)),
+    // A request a previous document left in flight can hold this load's, as Chrome's cache lock
+    // holds a GET behind another for the same URL; list them so the holder is named.
+    "Pending since before this load:",
+    ...[...watch.requests.values()]
+      .filter((entry) => entry.start < since && entry.end === undefined)
+      .map((entry) => describe(entry, now)),
     "Failed:",
     ...requests.filter((entry) => entry.failure !== undefined).map((entry) => describe(entry, now)),
     "Console:",

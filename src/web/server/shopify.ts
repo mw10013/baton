@@ -89,8 +89,13 @@ export const authenticateApp = createServerFn({ method: "GET" })
 /**
  * The app's API key and public URL, from the Website's bindings, for the App Home's guards that
  * run before any token is checked.
+ *
+ * POST, though it reads nothing: it has no input, so as a GET every call has the same URL, and
+ * Chrome holds a GET while another for the same URL is in flight in the browser context,
+ * unsent, for up to 20 s. The `/app` guards call it on every client load and navigation, so a
+ * frame could sit unhydrated behind one. Chrome never holds a POST.
  */
-export const getShopifyApp = createServerFn({ method: "GET" }).handler(() => ({
+export const getShopifyApp = createServerFn({ method: "POST" }).handler(() => ({
   apiKey: env.SHOPIFY_API_KEY,
   appUrl: env.SHOPIFY_APP_URL,
 }));
