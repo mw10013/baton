@@ -259,6 +259,10 @@ Needs a decision:
 - Staging is the first deployed run of D1 writes from the actor and of `s-app-nav` with the bridge; check add member, create team, add to team, delete both on `mw10013-staging-shop-00`, and one nav click with no frame reload.
 - Integ first cases timed out under load twice (Steps 2–3, other worktrees' dev servers running); green on rerun. Watch it.
 
+### Follow-up round 1
+
+- 2026-10-17 Orchestrator decisions on the review: (1) **change:** `FixtureTeam.name` decodes with `TeamName` (32), so `AddToFixture` and `LoadFixture` refuse a team name the screens cannot show; check the dev and e2e fixtures still decode, and keep the spec's fix; (2) Previous page stays legacy's `history.back()`; the frame reload in the admin is accepted (the right page shows, legacy has no backward cursor); (3) the loaders stay covered by unit and e2e, no `IntegRpcs`; the sweep's legacy title in unit is accepted; (4) `layerWith(D1Database)` on `Members` and `ShopSessions` is accepted, with JSDoc saying it exists for the unit adapter because the `QueryDatabase` seam needs Alchemy's `Stack`; (5) the session cap revoking only the deleted sessions' sockets is accepted (research Q12's own wording); `/shop` without its own heading and second Sign out is accepted; (6) noted; (7) staging runs after this round, with the review's checks; (8) watched. Round 1 ends green on `vp check`, `vp test` and `vp run test:e2e`, committed, with `CHECKPOINT: ready for staging (<commit>)` under Command results.
+
 ## 8. Out of scope
 
 - The pointer half of team delete, the setup guide and `teamWithMemberExists` (E); team names in `MemberAccess` for the work list (F).
