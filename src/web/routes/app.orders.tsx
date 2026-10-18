@@ -1,7 +1,7 @@
 import { createFileRoute, useLocation } from "@tanstack/react-router";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { OrdersCursor } from "../../domain/shop-work.ts";
+import { type ListOrdersInput, OrdersCursor } from "../../domain/shop-work.ts";
 import { ORDERS_PAGE_SIZE } from "../client/shop-actor-client.ts";
 import { useNavigateOnClick } from "../components/navigate.ts";
 import OrdersPage from "../components/OrdersPage.tsx";
@@ -23,6 +23,18 @@ const OrdersSearch = Schema.Struct({
 });
 
 /**
+ * The page `after` names, as the orders index reads it. Every order, with no search or team, as
+ * the screen has listed them so far; its Show, Team and search arrive with the full index.
+ */
+const ordersInput = (after: ListOrdersInput["cursor"]): ListOrdersInput => ({
+  limit: ORDERS_PAGE_SIZE,
+  cursor: after,
+  q: null,
+  show: "all",
+  team: null,
+});
+
+/**
  * The merchant's orders screen under the App Home, whose guards have already run. The loader
  * reads the page `after` names; during SSR its session token is the document's `id_token`, in
  * the browser App Bridge's bearer. Next page is a link to the same raw search Shopify sent with
@@ -35,8 +47,7 @@ export const Route = createFileRoute("/app/orders")({
     listOrders({
       data: {
         idToken: appSearch(location.searchStr).id_token,
-        limit: ORDERS_PAGE_SIZE,
-        cursor: deps.after,
+        ...ordersInput(deps.after),
       },
     }),
   component: function OrdersRoute() {
@@ -48,6 +59,8 @@ export const Route = createFileRoute("/app/orders")({
       search.set("after", cursor);
       return navigate(`/app/orders?${search.toString()}`);
     };
-    return <OrdersPage cursor={after} page={Route.useLoaderData()} pageLink={pageLink} />;
+    return (
+      <OrdersPage input={ordersInput(after)} data={Route.useLoaderData()} pageLink={pageLink} />
+    );
   },
 });

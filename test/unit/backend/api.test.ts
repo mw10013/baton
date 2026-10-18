@@ -29,7 +29,12 @@ import {
   testShopify,
 } from "./layers.ts";
 import { MembershipRepository } from "../../../src/backend/membership-repository.ts";
-import { MemberId, TeamId, WorkflowName } from "../../../src/domain/shop-work.ts";
+import {
+  MemberId,
+  type OrdersIndexData,
+  TeamId,
+  WorkflowName,
+} from "../../../src/domain/shop-work.ts";
 import { Auth } from "../../../src/backend/auth.ts";
 import { SentMail } from "../../../src/backend/mailer.ts";
 import { ShopAccess, ShopAccessDenied } from "../../../src/backend/shop-access.ts";
@@ -280,7 +285,20 @@ describe("BackendApi.authenticateAdmin", () => {
 });
 
 describe("BackendApi orders", () => {
-  const page = { orders: [], limit: 25, nextCursor: null };
+  const page: OrdersIndexData = {
+    page: {
+      orders: [],
+      limit: 25,
+      nextCursor: null,
+      counts: { no_workflow: 0, not_started: 0, making: 0, made: 0, issues: 0 },
+      openOrders: 0,
+      matches: null,
+    },
+    syncState: { inFlight: false, lastError: null },
+    teams: [],
+  };
+  /** The orders index's first page, every order. */
+  const input = { limit: 25, cursor: null, q: null, show: "all", team: null } as const;
   /** {@link ShopActors.layerTest} whose `listOrders` answers {@link page}, recording each shop. */
   const listingActors = (listed: Array<ShopKey>) =>
     Layer.effect(
@@ -305,7 +323,7 @@ describe("BackendApi orders", () => {
       const api = yield* BackendApi;
       const sessionToken = yield* badToken;
       const error = yield* api
-        .listOrders(withCookie(undefined), { sessionToken, limit: 25, cursor: null })
+        .listOrders(withCookie(undefined), { sessionToken, ...input })
         .pipe(Effect.flip);
       assert.strictEqual(error._tag, "InvalidSessionToken");
       assert.deepStrictEqual(listed, []);
@@ -318,7 +336,7 @@ describe("BackendApi orders", () => {
       const api = yield* BackendApi;
       const sessionToken = yield* mintSessionToken({ shop: SEED_SHOP });
       assert.deepStrictEqual(
-        yield* api.listOrders(withCookie(undefined), { sessionToken, limit: 25, cursor: null }),
+        yield* api.listOrders(withCookie(undefined), { sessionToken, ...input }),
         page,
       );
       assert.deepStrictEqual(listed, [SEED_SHOP]);
@@ -333,7 +351,7 @@ describe("BackendApi orders", () => {
         const api = yield* BackendApi;
         const sessionToken = yield* mintSessionToken({ shop: OTHER_SHOP });
         const error = yield* api
-          .listOrders(withCookie(undefined), { sessionToken, limit: 25, cursor: null })
+          .listOrders(withCookie(undefined), { sessionToken, ...input })
           .pipe(Effect.flip);
         assert.strictEqual(error._tag, "ShopNotInstalled");
         assert.deepStrictEqual(listed, []);

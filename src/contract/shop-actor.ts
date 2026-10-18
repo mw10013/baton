@@ -2,7 +2,6 @@ import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
 import { Rpc, RpcGroup, RpcMiddleware } from "effect/rpc";
 import {
-  OrderDetail,
   OrdersSyncResult,
   OrdersSyncStatus,
   SyncOrderInput,
@@ -14,6 +13,11 @@ import {
   ApplyAndTurnOnInput,
   ApplyDraftInput,
   ApplyResult,
+  AssignRunTaskTeamInput,
+  AssignRunTaskTeamResult,
+  AttachResult,
+  AttachWorkflowInput,
+  BlockRunInput,
   CreateWorkflowInput,
   DeleteTeamResult,
   DeleteWorkflowInput,
@@ -21,12 +25,23 @@ import {
   DiscardDraftInput,
   DiscardResult,
   DuplicateWorkflowInput,
+  GetOrderDetailInput,
   JoinTaskInput,
   ListOrdersInput,
+  LiveRunsInput,
+  MarkTaskDoneInput,
   Member,
   MoveTaskInput,
-  OrdersCursor,
+  OrderPageData,
+  OrdersIndexData,
+  PutBackTaskInput,
+  ReopenTaskInput,
+  RunIdInput,
+  RunPageData,
+  RunResult,
   SeparateTaskInput,
+  SetRunNoteInput,
+  StartTaskInput,
   SetWorkflowStateInput,
   SwitchResult,
   TaskIdInput,
@@ -36,6 +51,7 @@ import {
   UpdateWorkflowInput,
   UpdateWorkflowTagInput,
   WorkflowResult,
+  WorkflowsListData,
 } from "../domain/shop-work.ts";
 import { Email, Forbidden } from "./auth.ts";
 import {
@@ -81,7 +97,11 @@ export const NoticeFrame = Schema.fromJsonString(Notice);
 /** The `count` reactivity key. */
 export const COUNT_KEY = "count";
 
-/** The orders list's reactivity key: a write that moved an order row, or a sweep that deleted one. */
+/**
+ * The orders' and their runs' reactivity key: an order or one of its runs changed (a write that
+ * moved an order row or a run, or a sweep that deleted one). Read by every screen that shows
+ * orders or their runs, the member's included.
+ */
 export const ORDERS_KEY = "orders";
 
 /**
@@ -91,32 +111,11 @@ export const ORDERS_KEY = "orders";
 export const SYNC_KEY = "sync";
 
 /**
- * One page of the orders list, run-free: `limit` and `cursor` as `ListOrdersInput` bounds them,
- * without its search, filter or team. `cursor` null is page one.
- */
-export const OrdersListInput = Schema.Struct({
-  limit: ListOrdersInput.fields.limit,
-  cursor: ListOrdersInput.fields.cursor,
-});
-export type OrdersListInput = typeof OrdersListInput.Type;
-
-/**
- * A page of the orders list: each order with its items, newest first by `processedAt`, and the
- * cursor of the next page, null on the last. `OrdersPage` without its runs, counts and matches.
- */
-export const OrdersListPage = Schema.Struct({
-  orders: Schema.Array(OrderDetail),
-  limit: Schema.Number,
-  nextCursor: Schema.NullOr(OrdersCursor),
-});
-export type OrdersListPage = typeof OrdersListPage.Type;
-
-/**
  * A member on a socket: Baton's `ConnectionState` for the `member` role (`memberId`,
  * `memberEmail`, `teamIds`), plus the Better Auth session it was resolved from. `sessionId`
  * scopes a revoke to one session; `sessionExpiresAt` (epoch ms, the session's `expiresAt`) is
- * the backstop for a missed revoke, checked on every message. `teamIds` is carried as Baton
- * carries it; nothing reads it yet.
+ * the backstop for a missed revoke, checked on every message. `teamIds` gates the member's run
+ * reads and writes, which take the member's identity from here, never from a payload.
  */
 export const MemberCaller = Schema.Struct({
   role: Schema.Literal("member"),
@@ -227,6 +226,15 @@ export const MemberRpcs = RpcGroup.make(
   Rpc.make("MemberIncrement", { success: Count }),
   Rpc.make("MemberActivation", { success: Activation }),
   Rpc.make("MemberWhoAmI", { success: ConnectionCaller }),
+  Rpc.make("MemberListRuns", { payload: LiveRunsInput, success: WorkflowsListData }),
+  Rpc.make("MemberGetRun", { payload: RunIdInput, success: Schema.NullOr(RunPageData) }),
+  Rpc.make("MemberStartTask", { payload: StartTaskInput, success: RunResult }),
+  Rpc.make("MemberMarkTaskDone", { payload: MarkTaskDoneInput, success: RunResult }),
+  Rpc.make("MemberReopenTask", { payload: ReopenTaskInput, success: RunResult }),
+  Rpc.make("MemberPutBackTask", { payload: PutBackTaskInput, success: RunResult }),
+  Rpc.make("MemberSetRunNote", { payload: SetRunNoteInput, success: RunResult }),
+  Rpc.make("MemberBlockRun", { payload: BlockRunInput, success: RunResult }),
+  Rpc.make("MemberUnblockRun", { payload: RunIdInput, success: RunResult }),
 )
   .middleware(RequireMember)
   .middleware(ConnectionMiddleware);
@@ -240,7 +248,23 @@ export const MerchantRpcs = RpcGroup.make(
   Rpc.make("MerchantGetCount", { success: Count }),
   Rpc.make("MerchantResetCount", { success: Count }),
   Rpc.make("MerchantWhoAmI", { success: ConnectionCaller }),
-  Rpc.make("MerchantListOrders", { payload: OrdersListInput, success: OrdersListPage }),
+  Rpc.make("MerchantListOrders", { payload: ListOrdersInput, success: OrdersIndexData }),
+  Rpc.make("MerchantGetOrderDetail", {
+    payload: GetOrderDetailInput,
+    success: Schema.NullOr(OrderPageData),
+  }),
+  Rpc.make("MerchantAttachWorkflow", { payload: AttachWorkflowInput, success: AttachResult }),
+  Rpc.make("MerchantCancelRun", { payload: RunIdInput, success: RunResult }),
+  Rpc.make("MerchantMarkTaskDone", { payload: MarkTaskDoneInput, success: RunResult }),
+  Rpc.make("MerchantReopenTask", { payload: ReopenTaskInput, success: RunResult }),
+  Rpc.make("MerchantPutBackTask", { payload: PutBackTaskInput, success: RunResult }),
+  Rpc.make("MerchantSetRunNote", { payload: SetRunNoteInput, success: RunResult }),
+  Rpc.make("MerchantBlockRun", { payload: BlockRunInput, success: RunResult }),
+  Rpc.make("MerchantUnblockRun", { payload: RunIdInput, success: RunResult }),
+  Rpc.make("MerchantAssignRunTaskTeam", {
+    payload: AssignRunTaskTeamInput,
+    success: AssignRunTaskTeamResult,
+  }),
   Rpc.make("MerchantSyncStatus", { success: OrdersSyncStatus }),
   Rpc.make("MerchantSyncOpenOrders", { success: OrdersSyncResult, error: OrdersSyncFailure }),
   Rpc.make("MerchantSyncOrder", {

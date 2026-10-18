@@ -11,10 +11,16 @@ import { type ReactNode, useContext, useMemo } from "react";
 import { isFixtureOrder } from "../../contract/fixture.ts";
 import { ORDER_SYNC_WINDOW_DAYS } from "../../contract/orders.ts";
 import { OrdersSyncFailure } from "../../contract/shopify.ts";
-import type { OrdersListInput, OrdersListPage } from "../../contract/shop-actor.ts";
-import type { OrderDetail } from "../../domain/orders.ts";
+import type { ShopOrder } from "../../domain/orders.ts";
 import { formatNumber, ShopLimits } from "../../domain/platform.ts";
-import { ORDER_POSITION_LABEL, orderPosition } from "../../domain/shop-work.ts";
+import {
+  type ListOrdersInput,
+  ORDER_POSITION_LABEL,
+  type OrderRow,
+  type OrdersIndexData,
+  type OrdersPage as OrdersPageData,
+  orderPosition,
+} from "../../domain/shop-work.ts";
 import { toast } from "../client/app-bridge.ts";
 import {
   merchantOrdersAtom,
@@ -72,18 +78,11 @@ const toastFailure = (
 };
 
 /** Legacy's `adminOrderUrl`: the order in the Shopify admin, which App Bridge resolves. */
-const adminOrderUrl = ({ legacyId }: OrderDetail["order"]) => `shopify://admin/orders/${legacyId}`;
+const adminOrderUrl = ({ legacyId }: ShopOrder) => `shopify://admin/orders/${legacyId}`;
 
-/** The units still to make on the order: legacy's Items cell. */
-const itemUnits = ({ lineItems }: OrderDetail) =>
-  lineItems.reduce((sum, item) => sum + item.currentQuantity, 0);
-
-/**
- * The Status cell: legacy's position badge over a run-free row, so an order reads Unpaid, No
- * workflow, Fulfilled or Cancelled until runs arrive.
- */
-function PositionBadge({ order }: { readonly order: OrderDetail["order"] }) {
-  const state = orderPosition({ order, runs: { open: 0, done: 0, blocked: 0, started: 0 } });
+/** The Status cell: legacy's position badge, from the row's order and its run counts. */
+function PositionBadge({ row }: { readonly row: OrderRow }) {
+  const state = orderPosition(row);
   return (
     <s-badge
       tone={Match.value(state).pipe(
@@ -100,19 +99,19 @@ function PositionBadge({ order }: { readonly order: OrderDetail["order"] }) {
 
 /** What the screen renders, the same before and after hydration. */
 interface OrdersView {
-  readonly page: OrdersListPage;
+  readonly page: OrdersPageData;
   readonly pageLink: OrdersPageLink;
   readonly banners: ReadonlyArray<string>;
   readonly syncInFlight: boolean;
   readonly syncing: boolean;
   readonly onSyncOpenOrders: () => void;
   /** A row's Sync from Shopify button. */
-  readonly syncOrderButton: (order: OrderDetail["order"]) => ReactNode;
+  readonly syncOrderButton: (order: ShopOrder) => ReactNode;
 }
 
 /** A row's Sync from Shopify button, as its press and loading state say. */
 function SyncOrderButton(props: {
-  readonly order: OrderDetail["order"];
+  readonly order: ShopOrder;
   readonly loading: boolean;
   readonly onClick: () => void;
 }) {
@@ -133,7 +132,7 @@ function SyncOrderButton(props: {
  * {@link syncOrderAtom}, whose state is the button's loading. `Gone` toasts; `Stored` toasts
  * nothing (legacy).
  */
-function LiveSyncOrderButton({ order }: { readonly order: OrderDetail["order"] }) {
+function LiveSyncOrderButton({ order }: { readonly order: ShopOrder }) {
   const atom = syncOrderAtom(order.id);
   const loading = AsyncResult.isWaiting(useAtomValue(atom));
   const sync = useAtomSet(atom, { mode: "promiseExit" });
@@ -228,9 +227,9 @@ function OrdersScreen(view: OrdersView) {
                     </s-badge>
                   </s-table-cell>
                   <s-table-cell>
-                    <PositionBadge order={detail.order} />
+                    <PositionBadge row={detail} />
                   </s-table-cell>
-                  <s-table-cell>{formatNumber(itemUnits(detail))}</s-table-cell>
+                  <s-table-cell>{formatNumber(detail.itemUnits)}</s-table-cell>
                   {isFixtureOrder(detail.order.legacyId) ? (
                     <>
                       <s-table-cell />
@@ -272,12 +271,12 @@ function OrdersScreen(view: OrdersView) {
 function LiveOrders(props: OrdersPageProps) {
   const registry = useContext(RegistryContext);
   useMemo(
-    () => seedOrders(registry, { cursor: props.cursor, page: props.page }),
-    // Once per page shown, so not on `page`, which changes with its cursor: a refresh of the
+    () => seedOrders(registry, { input: props.input, data: props.data }),
+    // Once per input shown, so not on `data`, which changes with its input: a refresh of the
     // node this render reads would notify it mid-render.
-    [registry, props.cursor],
+    [registry, props.input],
   );
-  const orders = useAtomValue(merchantOrdersAtom(props.cursor));
+  const orders = useAtomValue(merchantOrdersAtom(props.input));
   const status = AsyncResult.value(useAtomValue(merchantSyncStatusAtom));
   const syncing = AsyncResult.isWaiting(useAtomValue(syncOpenOrdersAtom));
   const syncOpenOrders = useAtomSet(syncOpenOrdersAtom, { mode: "promiseExit" });
@@ -303,7 +302,7 @@ function LiveOrders(props: OrdersPageProps) {
   ];
   return (
     <OrdersScreen
-      page={Option.getOrElse(AsyncResult.value(orders), () => props.page)}
+      page={Option.getOrElse(AsyncResult.value(orders), () => props.data).page}
       pageLink={props.pageLink}
       banners={banners}
       syncInFlight={Option.exists(status, ({ inFlight }) => inFlight)}
@@ -314,10 +313,10 @@ function LiveOrders(props: OrdersPageProps) {
   );
 }
 
-/** {@link OrdersPage}'s props: `cursor` is the one `page` starts after, null on page one. */
+/** {@link OrdersPage}'s props: `data` is what the loader read for `input`. */
 interface OrdersPageProps {
-  readonly cursor: OrdersListInput["cursor"];
-  readonly page: OrdersListPage;
+  readonly input: ListOrdersInput;
+  readonly data: OrdersIndexData;
   readonly pageLink: OrdersPageLink;
 }
 
@@ -336,7 +335,7 @@ export default function OrdersPage(props: OrdersPageProps) {
   if (hydrated) return <LiveOrders {...props} />;
   return (
     <OrdersScreen
-      page={props.page}
+      page={props.data.page}
       pageLink={props.pageLink}
       banners={[]}
       syncInFlight={false}

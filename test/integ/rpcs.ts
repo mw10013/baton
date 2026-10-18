@@ -20,9 +20,14 @@ import {
   WorkflowDetailRequest,
   WorkflowsPageRequest,
 } from "../../src/contract/workflows.ts";
-import { SetupFacts, WorkflowPageData, WorkflowsIndexData } from "../../src/domain/shop-work.ts";
+import {
+  ListOrdersInput,
+  OrdersIndexData,
+  SetupFacts,
+  WorkflowPageData,
+  WorkflowsIndexData,
+} from "../../src/domain/shop-work.ts";
 import { BackendApi } from "../../src/backend/api.ts";
-import { OrdersListInput, OrdersListPage } from "../../src/contract/shop-actor.ts";
 import { OrderDetail } from "../../src/domain/orders.ts";
 import { ShopNotInstalled } from "../../src/contract/fixture.ts";
 import { ShopActors } from "../../src/backend/shop-actors.ts";
@@ -90,8 +95,8 @@ export const IntegRpcs = RpcGroup.make(
     success: Schema.NullOr(OrderDetail),
   }),
   Rpc.make("ListOrders", {
-    payload: { shop: ShopKey, ...OrdersListInput.fields },
-    success: OrdersListPage,
+    payload: { shop: ShopKey, ...ListOrdersInput.fields },
+    success: OrdersIndexData,
   }),
   Rpc.make("SyncFailed", {
     payload: { shop: ShopKey, workflowId: Schema.String, message: Schema.String },
@@ -99,7 +104,7 @@ export const IntegRpcs = RpcGroup.make(
   }),
   Rpc.make("ApiListOrders", {
     payload: ListOrdersRequest,
-    success: OrdersListPage,
+    success: OrdersIndexData,
     error: Schema.Union([InvalidSessionToken, ShopNotInstalled]),
   }),
   Rpc.make("ApiWorkflowsPage", {

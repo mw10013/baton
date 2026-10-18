@@ -231,7 +231,8 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * The merchant's orders screen, its first render: one page of the shop's stored orders. The
+   * The orders index, its first render: one page of the shop's orders with their run facts,
+   * counts and sync state (`OrdersIndexData`). The
    * session token names the shop and is only verified (`Shopify.sessionTokenShop`), never
    * exchanged: the App Home's guard exchanged it when the page loaded, and a call per screen
    * read must not cost a token exchange. The request is ignored, as on
@@ -242,11 +243,9 @@ const make = Effect.gen(function* () {
     _request: RequestInfo,
     payload: ListOrdersRequest,
   ) {
-    const { sessionToken, limit, cursor } = yield* decodeListOrdersRequest(payload).pipe(
-      Effect.orDie,
-    );
+    const { sessionToken, ...input } = yield* decodeListOrdersRequest(payload).pipe(Effect.orDie);
     const shop = yield* installedShop(sessionToken);
-    return yield* actors.listOrders(shop, { limit, cursor });
+    return yield* actors.listOrders(shop, input);
   });
 
   /**

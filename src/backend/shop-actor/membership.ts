@@ -31,7 +31,8 @@ import type { WorkflowRepository } from "./workflow-repository.ts";
  * is logged and the write stands.
  *
  * Team delete also nulls the actor's task pointers (`deleteTeam`), over the actor's
- * workflow repository, then runs the reconcile seam (a no-op until runs) and notifies.
+ * workflow repository, then reconciles every stored order (`reconcileAll`, the runs service's)
+ * and notifies.
  */
 export const makeMembership = <R>({
   membershipRepository,

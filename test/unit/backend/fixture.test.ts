@@ -150,15 +150,15 @@ describe("fixtureRows", () => {
     );
   });
 
-  it("gives fixture orders their prefixed ids and applies `after`", () => {
+  it("gives fixture orders their prefixed ids and stores them as placed", () => {
     const [fulfilled, cancelled] = actor.orders;
     assert.strictEqual(fulfilled?.id, `gid://shopify/Order/${FIXTURE_ORDER_PREFIX}1201`);
     assert.strictEqual(fulfilled?.legacyId, `${FIXTURE_ORDER_PREFIX}1201`);
     assert.strictEqual(fulfilled?.name, "#1201");
-    assert.strictEqual(fulfilled?.fulfillmentStatus, "FULFILLED");
+    assert.strictEqual(fulfilled?.fulfillmentStatus, "UNFULFILLED");
     assert.strictEqual(fulfilled?.cancelledAt, null);
     assert.strictEqual(fulfilled?.processedAt, NOW - 2 * 86_400_000);
-    assert.strictEqual(cancelled?.cancelledAt, NOW);
+    assert.strictEqual(cancelled?.cancelledAt, null);
     assert.strictEqual(cancelled?.fulfillmentStatus, "UNFULFILLED");
     assert.strictEqual(cancelled?.fullyPaid, 0);
     assert.strictEqual(cancelled?.note, "Gift");
@@ -169,17 +169,41 @@ describe("fixtureRows", () => {
     );
   });
 
-  it("builds line items by position, with `after`'s quantity last", () => {
+  it("builds line items by position, as placed", () => {
     assert.deepStrictEqual(
       actor.lineItems.map(({ id, currentQuantity, sku }) => [id, currentQuantity, sku]),
       [
         [`gid://shopify/Order/${FIXTURE_ORDER_PREFIX}1201/line-1`, 1, null],
         [`gid://shopify/Order/${FIXTURE_ORDER_PREFIX}1202/line-1`, 1, "SR-GOLD"],
-        [`gid://shopify/Order/${FIXTURE_ORDER_PREFIX}1202/line-2`, 0, null],
+        [`gid://shopify/Order/${FIXTURE_ORDER_PREFIX}1202/line-2`, 1, null],
       ],
     );
     assert.strictEqual(actor.lineItems[2]?.properties, '[{"key":"Name","value":"Mia"}]');
     assert.strictEqual(actor.lineItems[2]?.productTags, '["blanket"]');
+  });
+
+  it("carries each order's after, each item's progress and the members as the actor's work", () => {
+    const order1201 = `gid://shopify/Order/${FIXTURE_ORDER_PREFIX}1201`;
+    const order1202 = `gid://shopify/Order/${FIXTURE_ORDER_PREFIX}1202`;
+    assert.deepStrictEqual(actor.work, [
+      {
+        orderId: order1201,
+        items: [{ lineItemId: `${order1201}/line-1`, workflowId: null, progress: { done: true } }],
+        after: { fulfillmentStatus: "FULFILLED" },
+      },
+      {
+        orderId: order1202,
+        items: [
+          { lineItemId: `${order1202}/line-1`, workflowId: null, progress: {} },
+          { lineItemId: `${order1202}/line-2`, workflowId: null, progress: {} },
+        ],
+        after: { cancelled: true, lineItems: [{ position: 2, currentQuantity: 0 }] },
+      },
+    ]);
+    assert.deepStrictEqual(actor.members, [
+      { memberId: "id-1", email: "ana@example.com", teamIds: ["id-3"] },
+      { memberId: "id-2", email: "ben@example.com", teamIds: [] },
+    ]);
   });
 });
 

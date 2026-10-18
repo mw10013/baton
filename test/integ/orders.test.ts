@@ -43,6 +43,9 @@ afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack));
 const UNINSTALLED_SHOP = Schema.decodeUnknownSync(ShopKey)("uninstalled-shop.myshopify.com");
 
 const orderId = (n: number) => `gid://shopify/Order/${String(n)}`;
+
+/** The orders index's input keys for every stored order: no search, Show all, any team. */
+const EVERY_ORDER = { q: null, show: "all", team: null } as const;
 const lineItemId = (n: number) => `gid://shopify/LineItem/${String(n)}`;
 
 /** An order as Shopify answers it, at `updatedAt`; a recent `processedAt`, so retention keeps it. */
@@ -313,10 +316,14 @@ test(
       assert.deepStrictEqual(notice, { _tag: "ShopActorNotice", invalidated: [ORDERS_KEY] });
       assert.isNull(yield* read(SEED_SHOP, orderId(9)));
       assert.isNotNull(yield* read(SEED_SHOP, orderId(10)));
-      const page = yield* merchant.client.MerchantListOrders({ limit: 25, cursor: null });
+      const { page } = yield* merchant.client.MerchantListOrders({
+        limit: 25,
+        cursor: null,
+        ...EVERY_ORDER,
+      });
       assert.deepStrictEqual(
-        page.orders.flatMap(({ lineItems }) => lineItems.map(({ id }) => id)),
-        [lineItemId(3)],
+        page.orders.map(({ order }) => order.id),
+        [orderId(10)],
       );
 
       const again = yield* dev(backendUrl, (c) =>
@@ -341,18 +348,22 @@ test(
     yield* store(SEED_SHOP, aNode(13, 1, { processedAt: at + 10 }), []);
     yield* Effect.gen(function* () {
       const merchant = yield* openAs(backendUrl, SEED_SHOP, { role: "merchant" });
-      const first = yield* merchant.client.MerchantListOrders({ limit: 2, cursor: null });
+      const { page: first } = yield* merchant.client.MerchantListOrders({
+        limit: 2,
+        cursor: null,
+        ...EVERY_ORDER,
+      });
       assert.deepStrictEqual(
         first.orders.map(({ order }) => order.id),
         [orderId(13), orderId(12)],
       );
       assert.strictEqual(first.nextCursor, `${String(at + 10)}:${orderId(12)}`);
-      const second = yield* integ(backendUrl, (c) =>
-        c.ListOrders({ shop: SEED_SHOP, limit: 2, cursor: first.nextCursor }),
+      const { page: second } = yield* integ(backendUrl, (c) =>
+        c.ListOrders({ shop: SEED_SHOP, limit: 2, cursor: first.nextCursor, ...EVERY_ORDER }),
       );
       assert.deepStrictEqual(
-        second.orders.map(({ order, lineItems }) => [order.id, lineItems.map(({ id }) => id)]),
-        [[orderId(11), [lineItemId(11)]]],
+        second.orders.map(({ order, itemUnits }) => [order.id, itemUnits]),
+        [[orderId(11), 1]],
       );
       assert.strictEqual(second.nextCursor, null);
     }).pipe(Effect.scoped);
@@ -422,10 +433,10 @@ const age = (shop: ShopKey, n: number) =>
 const listedIds = (shop: ShopKey) =>
   Effect.gen(function* () {
     const { backendUrl } = yield* stack;
-    const { orders } = yield* integ(backendUrl, (c) =>
-      c.ListOrders({ shop, limit: 50, cursor: null }),
+    const { page } = yield* integ(backendUrl, (c) =>
+      c.ListOrders({ shop, limit: 50, cursor: null, ...EVERY_ORDER }),
     );
-    return orders.map(({ order }) => order.id).toSorted();
+    return page.orders.map(({ order }) => order.id).toSorted();
   });
 
 test(
@@ -540,16 +551,21 @@ test(
     yield* integ(backendUrl, (c) =>
       Effect.gen(function* () {
         const refusal = yield* c
-          .ApiListOrders({ sessionToken: bad, limit: 25, cursor: null })
+          .ApiListOrders({ sessionToken: bad, limit: 25, cursor: null, ...EVERY_ORDER })
           .pipe(Effect.flip);
         assert.strictEqual(refusal._tag, "InvalidSessionToken");
-        const page = yield* c.ApiListOrders({ sessionToken: good, limit: 25, cursor: null });
+        const { page } = yield* c.ApiListOrders({
+          sessionToken: good,
+          limit: 25,
+          cursor: null,
+          ...EVERY_ORDER,
+        });
         assert.deepStrictEqual(
-          page.orders.map(({ order, lineItems }) => [order.id, lineItems.length]),
+          page.orders.map(({ order, itemUnits }) => [order.id, itemUnits]),
           [[orderId(21), 1]],
         );
         const notInstalled = yield* c
-          .ApiListOrders({ sessionToken: uninstalled, limit: 25, cursor: null })
+          .ApiListOrders({ sessionToken: uninstalled, limit: 25, cursor: null, ...EVERY_ORDER })
           .pipe(Effect.flip);
         assert.strictEqual(notInstalled._tag, "ShopNotInstalled");
       }),
@@ -573,7 +589,7 @@ test(
         sessionExpiresAt: Date.now() + 600_000,
       });
       const error = yield* member.client
-        .MerchantListOrders({ limit: 25, cursor: null })
+        .MerchantListOrders({ limit: 25, cursor: null, ...EVERY_ORDER })
         .pipe(Effect.flip);
       assert.strictEqual(error._tag, "Forbidden");
     }).pipe(Effect.scoped);

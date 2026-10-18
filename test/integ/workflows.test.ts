@@ -22,7 +22,7 @@ import Stack from "./stack.ts";
  * procedure on a forged merchant socket and the union it answers, the `ORDERS_KEY` notices a
  * second merchant socket receives, and a member refused every one. Legacy
  * `shop-agent-workflows.test.ts` and `member-runs-socket.test.ts` titles, unchanged; their run
- * halves wait for runs. Every case writes `SEED_SHOP` under names and tags of its own, but the
+ * halves, and the setup facts' titles, are in `runs.test.ts`. Every case writes `SEED_SHOP` under names and tags of its own, but the
  * loader cases, which run in file order on `OTHER_SHOP` (no team, no workflow until they add
  * them). The loaders are reached as the Website's server functions reach them, with a signed
  * merchant token (`ApiWorkflowsPage`, `ApiWorkflowDetail`, `ApiSetupFacts`). The repository's and
@@ -86,13 +86,6 @@ const detail = (backendUrl: string, workflowId: string, shop: ShopKey = SEED_SHO
   Effect.gen(function* () {
     const sessionToken = yield* mintSessionToken({ shop });
     return yield* integ(backendUrl, (c) => c.ApiWorkflowDetail({ sessionToken, workflowId }));
-  });
-
-/** `BackendApi.setupFacts` for `shop`, with a signed merchant token. */
-const setupFacts = (backendUrl: string, shop: ShopKey) =>
-  Effect.gen(function* () {
-    const sessionToken = yield* mintSessionToken({ shop });
-    return yield* integ(backendUrl, (c) => c.ApiSetupFacts({ sessionToken }));
   });
 
 /** `count` notices on `received`, each naming `ORDERS_KEY`, and no more queued. */
@@ -500,18 +493,6 @@ test(
 const fixture = Schema.decodeUnknownSync(ShopFixtureData);
 
 test(
-  "setupFacts on a shop with no team and no workflow holds none of the three",
-  Effect.gen(function* () {
-    const { backendUrl } = yield* stack;
-    assert.deepStrictEqual(yield* setupFacts(backendUrl, OTHER_SHOP), {
-      teamWithMember: false,
-      activeWorkflow: false,
-      run: false,
-    });
-  }),
-);
-
-test(
   "the workflows index pages by name and a search narrows it",
   Effect.gen(function* () {
     const { backendUrl } = yield* stack;
@@ -563,35 +544,6 @@ test(
     assert.strictEqual(found.matches, 1);
     assert.strictEqual((yield* page(null, "ring", "active")).matches, 55);
     assert.strictEqual((yield* page(null, null, "active")).workflows.length, 0);
-  }),
-);
-
-test(
-  "setupFacts after a team with a member and an active workflow holds the first two; a run waits for runs",
-  Effect.gen(function* () {
-    const { backendUrl } = yield* stack;
-    yield* addToFixture(
-      backendUrl,
-      OTHER_SHOP,
-      fixture({
-        members: ["setup@workflows.test"],
-        teams: [{ name: "Setup", members: ["setup@workflows.test"] }],
-        workflows: [
-          {
-            name: "Setup on",
-            tag: "setup-on",
-            state: "active",
-            tasks: [{ name: "Do", team: "Setup" }],
-          },
-        ],
-        orders: [],
-      }),
-    );
-    assert.deepStrictEqual(yield* setupFacts(backendUrl, OTHER_SHOP), {
-      teamWithMember: true,
-      activeWorkflow: true,
-      run: false,
-    });
   }),
 );
 

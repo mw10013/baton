@@ -33,6 +33,14 @@ import {
 } from "../../../src/backend/shop-session-repository.ts";
 import { SHOPIFY_API_KEY, SHOPIFY_API_SECRET_FAKE, Shopify } from "../../../src/backend/shopify.ts";
 
+/**
+ * A `reconciler` for `makeOrders` that reconciles nothing: what a test of the orders service
+ * passes when runs are not what it is about.
+ */
+export const noReconciler = Effect.succeed(() =>
+  Effect.succeed({ created: 0, resized: 0, closed: 0, multiMatch: 0 }),
+);
+
 /** The `AUTH_ORIGIN` the test Backend's Better Auth runs under, so links resolve against it. */
 export const TEST_ORIGIN = "http://test.local";
 
@@ -351,6 +359,8 @@ export const testOrderActors = (calls: OrderActorCalls, stub: Effect.Effect<void
               admin,
               ordersSync: testOrdersSyncWorkflows(),
               notify,
+              reconciler: noReconciler,
+              flushUsage: Effect.void,
               shop: key,
             })
               .syncOrderWebhook(input)

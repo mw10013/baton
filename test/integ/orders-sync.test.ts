@@ -124,9 +124,9 @@ const settled = (backendUrl: string, shop: ShopKey) =>
   );
 
 const orderIds = (backendUrl: string, shop: ShopKey) =>
-  integ(backendUrl, (c) => c.ListOrders({ shop, limit: 50, cursor: null })).pipe(
-    Effect.map(({ orders }) => orders.map(({ order }) => order.id).toSorted()),
-  );
+  integ(backendUrl, (c) =>
+    c.ListOrders({ shop, limit: 50, cursor: null, q: null, show: "all", team: null }),
+  ).pipe(Effect.map(({ page }) => page.orders.map(({ order }) => order.id).toSorted()));
 
 /** Empties `shop`'s orders: a load of an empty fixture. */
 const reset = (backendUrl: string, shop: ShopKey) =>

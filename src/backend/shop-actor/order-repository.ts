@@ -10,7 +10,6 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/sql/SqlClient";
 import type * as SqlError from "effect/sql/SqlError";
-import type { OrdersListInput, OrdersListPage } from "../../contract/shop-actor.ts";
 import {
   type OrderDetail,
   OrderLineItem,
@@ -508,59 +507,6 @@ export const makeOrderRepository = (sql: SqlClient.SqlClient, transaction: Trans
       }
     }
     return { _tag: "Fetch" } as const;
-  });
-
-  /**
-   * One page of the stored orders with their items, newest first by `processedAt`, `id` breaking
-   * a tie. Keyset, never `limit/offset`: the bulk stream and webhooks insert while a merchant
-   * pages, and an offset would skip or repeat rows under those writes. One extra row is fetched
-   * to learn whether a next page exists without a second count. A cursor that does not parse is
-   * page one. The page and its items are read in one transaction, so a write landing between
-   * the two reads never pairs a row with another version's items. The orders index's read before
-   * runs; {@link listOrders} replaces it.
-   */
-  const listOrdersRunFree = Effect.fn("OrderRepository.listOrdersRunFree")(function* ({
-    limit,
-    cursor,
-  }: OrdersListInput) {
-    const after = Option.flatMap(Option.fromNullishOr(cursor), decodeCursor);
-    const keyset = Option.match(after, {
-      onNone: () => sql.literal("1 = 1"),
-      onSome: ({ processedAt, id }) =>
-        sql.or([
-          sql`processedAt < ${processedAt}`,
-          sql`(processedAt = ${processedAt} and id < ${id})`,
-        ]),
-    });
-    return yield* transaction(
-      Effect.gen(function* () {
-        const page = yield* decodeOrders(
-          yield* sql`
-            select ${orderColumns} from ShopOrder
-            where ${keyset}
-            order by processedAt desc, id desc
-            limit ${limit + 1}
-          `,
-        );
-        const orders = page.slice(0, limit);
-        const ids = orders.map(({ id }) => id);
-        const items =
-          ids.length === 0
-            ? []
-            : yield* decodeLineItems(
-                yield* sql`select * from OrderLineItem where ${sql.in("orderId", ids)} order by id`,
-              );
-        const last = orders.at(-1);
-        return {
-          orders: orders.map((order) => ({
-            order,
-            lineItems: items.filter((item) => item.orderId === order.id),
-          })),
-          limit,
-          nextCursor: page.length > limit && last !== undefined ? encodeCursor(last) : null,
-        } satisfies OrdersListPage;
-      }),
-    );
   });
 
   /**
@@ -1153,7 +1099,6 @@ export const makeOrderRepository = (sql: SqlClient.SqlClient, transaction: Trans
     markOrdersLimited,
     clearOrdersLimited,
     listOrders,
-    listOrdersRunFree,
     getSyncState,
     setSyncError,
     setSyncErrorIfEmpty,

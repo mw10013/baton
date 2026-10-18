@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import * as Schema from "effect/Schema";
-import { OrdersListInput } from "../../contract/shop-actor.ts";
+import { ListOrdersInput } from "../../domain/shop-work.ts";
 import { backend, requestInfo } from "./backend.ts";
 import { embeddedSessionToken } from "./shopify.ts";
 
@@ -8,12 +8,14 @@ import { embeddedSessionToken } from "./shopify.ts";
 const idToken = { idToken: Schema.optional(Schema.NonEmptyString) };
 
 /**
- * The orders screen's first page, for its loader. The token is only verified, never exchanged
+ * The orders index's first page, for its loader. The token is only verified, never exchanged
  * (`BackendApi.listOrders`).
  */
 export const listOrders = createServerFn({ method: "GET" })
   .middleware([embeddedSessionToken])
-  .validator(Schema.toStandardSchemaV1(Schema.Struct({ ...idToken, ...OrdersListInput.fields })))
-  .handler(({ data: { limit, cursor }, context: { sessionToken, rescueToken } }) =>
-    backend().listOrders(requestInfo(), { sessionToken, limit, cursor }).catch(rescueToken),
+  .validator(Schema.toStandardSchemaV1(Schema.Struct({ ...idToken, ...ListOrdersInput.fields })))
+  .handler(({ data: { limit, cursor, q, show, team }, context: { sessionToken, rescueToken } }) =>
+    backend()
+      .listOrders(requestInfo(), { sessionToken, limit, cursor, q, show, team })
+      .catch(rescueToken),
   );

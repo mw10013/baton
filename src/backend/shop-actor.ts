@@ -26,7 +26,13 @@ import {
   ShopifyUnavailable as ShopifyUnreachable,
 } from "../contract/shopify.ts";
 import { ShopLimits } from "../domain/platform.ts";
-import type { ListWorkflowsInput } from "../domain/shop-work.ts";
+import { Email } from "../domain/platform.ts";
+import {
+  type ListOrdersInput,
+  type ListWorkflowsInput,
+  MemberId,
+  TeamId,
+} from "../domain/shop-work.ts";
 import {
   CONNECTION_CLOSE_DISPLACED,
   CONNECTION_CLOSE_FORBIDDEN,
@@ -41,8 +47,6 @@ import {
   MAX_CONNECTIONS_PER_MEMBER,
   NoticeFrame,
   ORDERS_KEY,
-  type OrdersListInput,
-  type OrdersListPage,
   RequireMember,
   RequireMerchant,
   ShopActorRpcs,
@@ -53,6 +57,8 @@ import * as ActorSocket from "./actor-socket.ts";
 import type { ActorFixtureAdded, ActorFixtureRows } from "./fixture.ts";
 import { makeOrderRepository, type OrderRepositoryError } from "./shop-actor/order-repository.ts";
 import { makeOrders } from "./shop-actor/orders.ts";
+import { makeRunRepository, type RunRepositoryError } from "./shop-actor/run-repository.ts";
+import { makeRuns } from "./shop-actor/runs.ts";
 import { makeMembership } from "./shop-actor/membership.ts";
 import { syncTransaction } from "./shop-actor/transaction.ts";
 import { makeWorkflowRepository } from "./shop-actor/workflow-repository.ts";
@@ -336,6 +342,25 @@ export const insertFixtureRows = (sql: SqlClient.SqlClient, rows: ActorFixtureRo
         VALUES (${i.id}, ${i.orderId}, ${i.title}, ${i.variantTitle}, ${i.sku}, ${i.quantity}, ${i.currentQuantity}, ${i.productTags}, ${i.properties})`;
   });
 
+/**
+ * The member on the socket as the runs service's member writes and reads take them
+ * (`RunMember`): decoded once from the caller, whose fields cross the header unbranded. A member
+ * procedure runs behind `RequireMember`, so any other caller is a broken invariant and dies.
+ */
+const decodeRunMember = Schema.decodeUnknownEffect(
+  Schema.Struct({ memberId: MemberId, email: Email, teamIds: Schema.Array(TeamId) }),
+);
+const currentMember = Effect.gen(function* () {
+  const caller = yield* CurrentCaller;
+  if (caller.role !== "member") return yield* Effect.die(new Error("a member procedure's caller"));
+  const member = yield* decodeRunMember({
+    memberId: caller.memberId,
+    email: caller.memberEmail,
+    teamIds: caller.teamIds,
+  }).pipe(Effect.orDie);
+  return { role: "member" as const, ...member };
+});
+
 /** Each role middleware admits exactly its role; see `MemberRpcs`. */
 const requireRole = (role: ConnectionCaller["role"]) =>
   Effect.gen(function* () {
@@ -410,10 +435,17 @@ const makeShopActor = Effect.gen(function* () {
     const orderRepository = makeOrderRepository(sql, transaction);
     const workflowRepository = makeWorkflowRepository(sql, transaction);
     /**
-     * Legacy's `reconcileAllNow`, the seam the workflow and team writes call where legacy
-     * reconciles every stored order: runs do not exist yet, so there is nothing to reconcile.
+     * The billing meter, called by the run repository once per created run, inside the
+     * caller's transaction. A no-op until billing lands; its call site is legacy's.
      */
-    const reconcileAll = (): Effect.Effect<void> => Effect.void;
+    const countOrder = (): Effect.Effect<void> => Effect.void;
+    /**
+     * The usage outbox's send, called where legacy flushes (after a webhook, Sync from
+     * Shopify, the stream, reconcile all and Attach), never inside a transaction. A no-op until
+     * billing lands.
+     */
+    const flushUsage: Effect.Effect<void> = Effect.void;
+    const runRepository = makeRunRepository(sql, transaction, countOrder);
 
     /**
      * The count the shop page shows, in memory: an example of the socket's reads, writes and
@@ -426,7 +458,9 @@ const makeShopActor = Effect.gen(function* () {
     );
     const resetCount = Ref.setAndGet(count, 0).pipe(Effect.map((value): Count => ({ value })));
 
-    const notify = Effect.fn("ShopActor.notify")(function* (invalidated: ReadonlyArray<string>) {
+    const sendNotice = Effect.fn("ShopActor.notify")(function* (
+      invalidated: ReadonlyArray<string>,
+    ) {
       const frame = encodeNotice({ _tag: "ShopActorNotice", invalidated });
       for (const socket of yield* state.getWebSockets())
         // A socket mid-close throws on send, which `send` surfaces as a defect; the next
@@ -434,12 +468,28 @@ const makeShopActor = Effect.gen(function* () {
         yield* socket.send(frame).pipe(Effect.catchDefect(() => Effect.void));
     });
 
+    const runs = yield* makeRuns({
+      runRepository,
+      orderRepository,
+      workflowRepository,
+      membershipRepository,
+      transaction,
+      notify: sendNotice,
+      flushUsage,
+      shop,
+    });
+    /** Every notice goes through the runs service's, which clears its memos first (`makeRuns`). */
+    const notify = runs.notify;
+    const reconcileAll = runs.reconcileAll;
+
     const orders = makeOrders({
       repository: orderRepository,
       transaction,
       admin,
       ordersSync,
       notify,
+      reconciler: runs.reconciler(),
+      flushUsage,
       shop,
     });
 
@@ -483,7 +533,13 @@ const makeShopActor = Effect.gen(function* () {
      */
     const syncFailure =
       (operation: string) =>
-      (error: EnsureShopSessionError | SqlError.SqlError | OrderRepositoryError) =>
+      (
+        error:
+          | EnsureShopSessionError
+          | SqlError.SqlError
+          | OrderRepositoryError
+          | RunRepositoryError,
+      ) =>
         Match.value(error).pipe(
           Match.tags({
             OfflineSessionMissing: (failure) => Effect.fail(failure),
@@ -540,7 +596,39 @@ const makeShopActor = Effect.gen(function* () {
       MemberActivation: () => Effect.succeed({ id: activationId }),
       MemberWhoAmI: () => Effect.service(CurrentCaller),
       MerchantWhoAmI: () => Effect.service(CurrentCaller),
-      MerchantListOrders: (input) => orderRepository.listOrdersRunFree(input).pipe(Effect.orDie),
+      MerchantListOrders: runs.listOrders,
+      MerchantGetOrderDetail: runs.getOrderDetail,
+      MerchantAttachWorkflow: runs.merchantAttachWorkflow,
+      MerchantCancelRun: runs.merchantCancelRun,
+      MerchantMarkTaskDone: runs.merchantMarkTaskDone,
+      MerchantReopenTask: runs.merchantReopenTask,
+      MerchantPutBackTask: runs.merchantPutBackTask,
+      MerchantSetRunNote: runs.merchantSetRunNote,
+      MerchantBlockRun: runs.merchantBlockRun,
+      MerchantUnblockRun: runs.merchantUnblockRun,
+      MerchantAssignRunTaskTeam: runs.merchantAssignRunTaskTeam,
+      MemberListRuns: ({ query }) =>
+        currentMember.pipe(
+          Effect.flatMap(({ teamIds, email }) =>
+            runs.listRuns({ teamIds, memberEmail: email, query }),
+          ),
+        ),
+      MemberGetRun: ({ runId }) =>
+        currentMember.pipe(Effect.flatMap(({ teamIds }) => runs.getRunPage({ runId, teamIds }))),
+      MemberStartTask: (input) =>
+        currentMember.pipe(Effect.flatMap((member) => runs.memberStartTask(input, member))),
+      MemberMarkTaskDone: (input) =>
+        currentMember.pipe(Effect.flatMap((member) => runs.memberMarkTaskDone(input, member))),
+      MemberReopenTask: (input) =>
+        currentMember.pipe(Effect.flatMap((member) => runs.memberReopenTask(input, member))),
+      MemberPutBackTask: (input) =>
+        currentMember.pipe(Effect.flatMap((member) => runs.memberPutBackTask(input, member))),
+      MemberSetRunNote: (input) =>
+        currentMember.pipe(Effect.flatMap((member) => runs.memberSetRunNote(input, member))),
+      MemberBlockRun: (input) =>
+        currentMember.pipe(Effect.flatMap((member) => runs.memberBlockRun(input, member))),
+      MemberUnblockRun: (input) =>
+        currentMember.pipe(Effect.flatMap((member) => runs.memberUnblockRun(input, member))),
       MerchantSyncStatus: () =>
         Clock.currentTimeMillis.pipe(Effect.flatMap(orderRepository.getSyncStatus), Effect.orDie),
       MerchantSyncOpenOrders: () => syncOpenOrdersFor("ShopActor.MerchantSyncOpenOrders"),
@@ -808,15 +896,22 @@ const makeShopActor = Effect.gen(function* () {
       Effect.provide(runtime),
     );
 
-    /** One page of the orders list; the same read as `MerchantListOrders`. */
-    const listOrders = Effect.fn("ShopActor.listOrders")(
-      function* (input: OrdersListInput) {
-        const page: OrdersListPage = yield* orderRepository.listOrdersRunFree(input);
-        return page;
-      },
-      Effect.orDie,
-      Effect.provide(runtime),
-    );
+    /** The orders index's read; the same read as `MerchantListOrders` (`Runs.listOrders`). */
+    const listOrders = Effect.fn("ShopActor.listOrders")(function* (input: ListOrdersInput) {
+      return yield* runs.listOrders(input);
+    }, Effect.provide(runtime));
+
+    /**
+     * The fixture's work on its runs (`Runs.applyFixture`), after `loadFixture` or `addFixture`
+     * wrote the rows and the Backend wrote D1's identity rows: the order is what makes the
+     * fixture's teams eligible.
+     */
+    const applyFixture = Effect.fn("ShopActor.applyFixture")(function* (input: {
+      readonly rows: ActorFixtureRows;
+      readonly caller: "loadFixture" | "addToFixture";
+    }) {
+      yield* runs.applyFixture(input.rows, input.caller);
+    }, Effect.provide(runtime));
 
     /**
      * One page of the workflows index, legacy's loader read (plain RPC: workflow definitions are
@@ -854,16 +949,25 @@ const makeShopActor = Effect.gen(function* () {
      * request is doing anyway.
      *
      * A step retry re-streams the whole file when the sweep throws after the writes: correct
-     * under rule 7, a full second pass, and rare. The billing seam: the usage flush after the
-     * stream goes here.
+     * under rule 7, a full second pass, and rare. Each streamed order is reconciled inside its
+     * upsert (the runs service's `reconciler`, loaded once per stream); the usage queue is sent
+     * once after the stream, whatever became of it (rule 13).
      */
     const onOrdersStream = Effect.fn("ShopActor.onOrdersStream")(
       function* ({ workflowId, url }: { readonly workflowId: string; readonly url: string }) {
-        const counts = yield* runOrdersStream({ repository: orderRepository, shop, url }).pipe(
+        const counts = yield* runOrdersStream({
+          repository: orderRepository,
+          shop,
+          url,
+          afterWrite: yield* runs.reconciler(),
+        }).pipe(
           Effect.provideService(HttpClient.HttpClient, http),
           // A stream that fails partway keeps the orders it wrote, and the failure carries no
           // counts, so the list is invalidated without knowing whether a row moved.
           Effect.onError(() => notify([ORDERS_KEY])),
+          // After the stream, never per order, and whatever became of it: a stream that fails
+          // halfway has already counted every order it stored.
+          Effect.ensuring(flushUsage),
         );
         if (counts.ordersRefused > 0)
           yield* Effect.logError(
@@ -1003,6 +1107,7 @@ const makeShopActor = Effect.gen(function* () {
       snapshot,
       loadFixture,
       addFixture,
+      applyFixture,
       removeOrder,
       syncOrderWebhook,
       getOrder,

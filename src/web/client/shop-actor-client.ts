@@ -33,12 +33,11 @@ import {
   type Notice,
   NoticeFrame,
   ORDERS_KEY,
-  type OrdersListInput,
-  type OrdersListPage,
   SYNC_KEY,
   ShopActorRpcs,
   type ShopSnapshot,
 } from "../../contract/shop-actor.ts";
+import type { ListOrdersInput, OrdersIndexData } from "../../domain/shop-work.ts";
 import { refreshOnFocus } from "./query.ts";
 
 /**
@@ -305,21 +304,19 @@ export const seedShop = (
 export const ORDERS_PAGE_SIZE = 25;
 
 /**
- * One page of the orders screen, the query itself, by the cursor it starts after (null is page
- * one); the node {@link seedOrders} fills. Each page is its own node under its own serialization
- * key, so a refetch on page two reads page two.
+ * One page of the orders index, the query itself, by its whole input; the node
+ * {@link seedOrders} fills. Each input is its own node under its own serialization key, so a
+ * refetch on page two, or under a filter, reads that page.
  */
-export const merchantOrdersQuery = Atom.family((cursor: OrdersListInput["cursor"]) =>
-  ShopActorClient.query(
-    "MerchantListOrders",
-    { limit: ORDERS_PAGE_SIZE, cursor },
-    { serializationKey: `merchant-orders:${cursor ?? "first"}` },
-  ),
+export const merchantOrdersQuery = Atom.family((input: ListOrdersInput) =>
+  ShopActorClient.query("MerchantListOrders", input, {
+    serializationKey: `merchant-orders:${JSON.stringify([input.limit, input.cursor, input.q, input.show, input.team])}`,
+  }),
 );
 
-/** One page of the orders screen; refetched on every notice naming {@link ORDERS_KEY}. */
-export const merchantOrdersAtom = Atom.family((cursor: OrdersListInput["cursor"]) =>
-  merchantOrdersQuery(cursor).pipe(Atom.withReactivity([ORDERS_KEY]), refreshOnFocus),
+/** One page of the orders index; refetched on every notice naming {@link ORDERS_KEY}. */
+export const merchantOrdersAtom = Atom.family((input: ListOrdersInput) =>
+  merchantOrdersQuery(input).pipe(Atom.withReactivity([ORDERS_KEY]), refreshOnFocus),
 );
 
 /**
@@ -443,8 +440,8 @@ export const setTeamMemberAtom = Atom.family((_pair: string) =>
  */
 export const seedOrders = (
   registry: AtomRegistry.AtomRegistry,
-  input: { readonly cursor: OrdersListInput["cursor"]; readonly page: OrdersListPage },
-) => seed(registry, merchantOrdersQuery(input.cursor), input.page);
+  input: { readonly input: ListOrdersInput; readonly data: OrdersIndexData },
+) => seed(registry, merchantOrdersQuery(input.input), input.data);
 
 /**
  * Turns notices into invalidations; mounted by the socket holder for as long as the layout is,

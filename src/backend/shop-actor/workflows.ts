@@ -184,8 +184,8 @@ const notifyIfOk =
  * first, then null every pointer) closes that window, as legacy's did.
  *
  * `reconcileAll` is legacy's `reconcileAllNow`, called where legacy calls it and through
- * {@link reconcileAllIfActive} where legacy does; runs are not here yet, so the actor passes a
- * no-op. A write that changes which workflows an order page's Workflow select lists notifies
+ * {@link reconcileAllIfActive} where legacy does; the actor passes the runs service's, which
+ * reads the teams and opens one transaction per order after the definition write. A write that changes which workflows an order page's Workflow select lists notifies
  * `ORDERS_KEY` on `Ok` (Edit tag, Apply, the switch, Turn on; delete on `Deleted`); nothing reads
  * workflows live, so there is no workflows key.
  */

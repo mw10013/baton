@@ -7,12 +7,12 @@
  * @module
  */
 import * as Schema from "effect/Schema";
-import { OrdersListInput } from "./shop-actor.ts";
+import { ListOrdersInput } from "../domain/shop-work.ts";
 
 const sessionToken = Schema.NonEmptyString;
 
-/** `BackendApi.listOrders`' input: one page of the shop's orders. */
-export const ListOrdersRequest = Schema.Struct({ sessionToken, ...OrdersListInput.fields });
+/** `BackendApi.listOrders`' input: one page of the orders index, as `ListOrdersInput` reads it. */
+export const ListOrdersRequest = Schema.Struct({ sessionToken, ...ListOrdersInput.fields });
 export type ListOrdersRequest = typeof ListOrdersRequest.Type;
 
 /**

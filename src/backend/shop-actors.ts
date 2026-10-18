@@ -4,7 +4,8 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type { ShopKey } from "../contract/shop.ts";
-import type { OrdersListInput, ShopSnapshot } from "../contract/shop-actor.ts";
+import type { ShopSnapshot } from "../contract/shop-actor.ts";
+import type { ListOrdersInput } from "../domain/shop-work.ts";
 import * as Match from "effect/Match";
 import { FixtureConflict } from "../contract/fixture.ts";
 import type { ListWorkflowsInput } from "../domain/shop-work.ts";
@@ -104,6 +105,15 @@ const make = <R>(namespace: Effect.Effect<Effect.Success<typeof ShopActor>, neve
       );
     });
 
+    /** Applies a fixture's work to its runs; see `applyFixture` on {@link ShopActor}. */
+    const applyFixture = Effect.fn("ShopActors.applyFixture")(function* (
+      key: ShopKey,
+      rows: ActorFixtureRows,
+      caller: "loadFixture" | "addToFixture",
+    ) {
+      yield* actors.getByName(key).applyFixture({ rows, caller });
+    });
+
     /** Deletes one stored order; see `removeOrder` on {@link ShopActor}. */
     const removeOrder = Effect.fn("ShopActors.removeOrder")(function* (
       key: ShopKey,
@@ -133,10 +143,10 @@ const make = <R>(namespace: Effect.Effect<Effect.Success<typeof ShopActor>, neve
       return yield* actors.getByName(key).getOrder({ orderId });
     });
 
-    /** One page of the shop's orders, newest first. */
+    /** One page of the shop's orders index; see `listOrders` on {@link ShopActor}. */
     const listOrders = Effect.fn("ShopActors.listOrders")(function* (
       key: ShopKey,
-      input: OrdersListInput,
+      input: ListOrdersInput,
     ) {
       return yield* actors.getByName(key).listOrders(input);
     });
@@ -197,6 +207,7 @@ const make = <R>(namespace: Effect.Effect<Effect.Success<typeof ShopActor>, neve
       snapshot,
       loadFixture,
       addFixture,
+      applyFixture,
       removeOrder,
       syncOrderWebhook,
       getOrder,
@@ -239,7 +250,7 @@ export class ShopActors extends Context.Service<
   /**
    * Records each revoke and closes nothing, answers every snapshot with `snapshot`, records
    * each fixture load in `loaded` and each fixture add in `added`, answering the counts of its
-   * rows (it never finds a clash), and records each order removal in `removedOrders`, answering
+   * rows (it never finds a clash), applies no fixture work, and records each order removal in `removedOrders`, answering
    * that there was one. Its order, workflow and sync methods and `destroy` die: a test that reaches them
    * overrides them.
    */
@@ -275,6 +286,7 @@ export class ShopActors extends Context.Service<
             lineItems: rows.lineItems.length,
           };
         }),
+      applyFixture: () => Effect.void,
       removeOrder: (key, orderId) =>
         Effect.sync(() => {
           removedOrders.push({ key, orderId });

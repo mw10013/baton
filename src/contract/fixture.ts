@@ -162,8 +162,8 @@ export const FixtureWorkflow = Schema.Struct({
 export type FixtureWorkflow = typeof FixtureWorkflow.Type;
 
 /**
- * Progress on a run, shared by an order and an item; see {@link FixtureProgress}. Decoded and
- * kept, but nothing applies it until runs exist.
+ * Progress on a run, shared by an order and an item; see {@link FixtureProgress}. The actor
+ * applies it after the fixture's rows and teams are in (`applyFixture`), in legacy's seed order.
  */
 const progressFields = {
   /** Every task done. Exclusive with `advance`. */

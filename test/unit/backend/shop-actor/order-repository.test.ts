@@ -276,7 +276,9 @@ describe("fixture rows", () => {
           details.flatMap((detail) => Option.getOrThrow(detail).lineItems).length,
           actor.lineItems.length,
         );
-        assert.isTrue(listed.some(({ cancelledAt }) => cancelledAt !== null));
+        // Stored as placed: a fixture order's cancel is work the actor applies later.
+        assert.isTrue(listed.every(({ cancelledAt }) => cancelledAt === null));
+        assert.isTrue(actor.work.some(({ after }) => after?.cancelled === true));
         assert.isTrue(listed.some(({ fullyPaid }) => !fullyPaid));
 
         const newest = Option.getOrThrow(details[0] ?? Option.none());

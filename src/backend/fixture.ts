@@ -8,6 +8,8 @@ import {
   FIXTURE_ORDER_PREFIX,
   FixtureConflict,
   type FixtureCounts,
+  type FixtureOrderChange,
+  type FixtureProgress,
   type FixtureTask,
   LineItemProperty,
   ShopNotInstalled,
@@ -71,11 +73,39 @@ export interface LineItemRow {
   readonly properties: string;
 }
 
-/** The rows a fixture puts in the shop actor. */
+/**
+ * A fixture member as the actor records a seeded step: legacy's seed member list, in the
+ * fixture's order, with the D1 ids minted for it. The actor reads it, never D1, to name who
+ * started, did or blocked a seeded step.
+ */
+export interface FixtureMemberRow {
+  readonly memberId: string;
+  readonly email: string;
+  readonly teamIds: ReadonlyArray<string>;
+}
+
+/**
+ * What the actor applies to one fixture order's runs once its rows are in and the shop's teams
+ * are in D1: each item's chosen workflow (the minted `WorkflowRow.id`) and its progress (the
+ * item's own, or the order's keys), then the order's `after`.
+ */
+export interface FixtureOrderWork {
+  readonly orderId: string;
+  readonly items: ReadonlyArray<{
+    readonly lineItemId: string;
+    readonly workflowId: string | null;
+    readonly progress: FixtureProgress;
+  }>;
+  readonly after: FixtureOrderChange | null;
+}
+
+/** The rows a fixture puts in the shop actor, and the work its runs are given after. */
 export interface ActorFixtureRows {
   readonly workflows: ReadonlyArray<WorkflowRow>;
   readonly orders: ReadonlyArray<OrderRow>;
   readonly lineItems: ReadonlyArray<LineItemRow>;
+  readonly members: ReadonlyArray<FixtureMemberRow>;
+  readonly work: ReadonlyArray<FixtureOrderWork>;
 }
 
 /** The shop actor's work rows, counted after a fixture write. */
@@ -92,14 +122,35 @@ export type ActorFixtureAdded =
 
 const DAY_MS = 86_400_000;
 
+/** An order's progress keys as one item's progress: every key but the order's own fields. */
+const progressOf = ({
+  done,
+  advance,
+  started,
+  blocked,
+  byMerchant,
+  by,
+  cancelled,
+}: FixtureProgress): FixtureProgress => ({
+  ...(done === undefined ? {} : { done }),
+  ...(advance === undefined ? {} : { advance }),
+  ...(started === undefined ? {} : { started }),
+  ...(blocked === undefined ? {} : { blocked }),
+  ...(byMerchant === undefined ? {} : { byMerchant }),
+  ...(by === undefined ? {} : { by }),
+  ...(cancelled === undefined ? {} : { cancelled }),
+});
+
 /**
  * The rows a fixture becomes, at `now`, with ids from `newId`: D1's identity rows and the actor's
  * work rows. Team ids are minted first, so a task's `teamId` is the D1 id of the team it names.
  * Fixture orders have deterministic ids under {@link FIXTURE_ORDER_PREFIX}.
  *
- * An order's `after` is applied to the stored row (cancelled, a new fulfillment status, new item
- * quantities), so the orders read as closed or changed. Progress, an item's `workflow` and an
- * order's progress keys all act on runs; there are none yet, so they are not applied.
+ * Orders are stored as placed: an order's `after` (cancelled, a new fulfillment status, new item
+ * quantities) is carried in `work`, which the actor applies through an upsert once the order's
+ * runs exist, so reconcile closes and resizes them. Each item's `workflow` and progress (its own,
+ * or the order's keys but `note`, which is the order note) are carried there too; the actor's
+ * `applyFixture` applies them.
  *
  * An order's `processedAt` is `placedDaysAgo` days before `now`, plus its index in the list in
  * milliseconds, so orders placed the same day still sort by number. `countedAt` is 0, so usage
@@ -156,8 +207,10 @@ export const fixtureRows = (
     draftTasks: workflow.draft === undefined ? null : storedTasks(workflow.draft.tasks),
   }));
 
+  const workflowIds = new Map(workflows.map((workflow) => [workflow.name, workflow.id]));
   const orders: Array<OrderRow> = [];
   const lineItems: Array<LineItemRow> = [];
+  const work: Array<FixtureOrderWork> = [];
   data.orders.forEach((order, index) => {
     const legacyId = `${FIXTURE_ORDER_PREFIX}${order.n}`;
     const id = `gid://shopify/Order/${legacyId}`;
@@ -167,16 +220,25 @@ export const fixtureRows = (
       name: `#${order.n}`,
       processedAt: now - (order.placedDaysAgo ?? 0) * DAY_MS + index,
       updatedAt: now,
-      cancelledAt: order.after?.cancelled === true ? now : null,
-      fulfillmentStatus: order.after?.fulfillmentStatus ?? order.fulfillmentStatus ?? "UNFULFILLED",
+      cancelledAt: null,
+      fulfillmentStatus: order.fulfillmentStatus ?? "UNFULFILLED",
       fullyPaid: order.unpaid === true ? 0 : 1,
       note: order.note ?? null,
       syncedAt: now,
       countedAt: 0,
     });
+    const { lineItems: _items, after, note: _note, n: _n, ...orderProgress } = order;
+    work.push({
+      orderId: id,
+      items: order.lineItems.map((item, itemIndex) => ({
+        lineItemId: `${id}/line-${itemIndex + 1}`,
+        workflowId: item.workflow === undefined ? null : (workflowIds.get(item.workflow) ?? null),
+        progress: item.progress ?? progressOf(orderProgress),
+      })),
+      after: after ?? null,
+    });
     order.lineItems.forEach((item, itemIndex) => {
       const position = itemIndex + 1;
-      const changed = order.after?.lineItems?.find((change) => change.position === position);
       lineItems.push({
         id: `${id}/line-${position}`,
         orderId: id,
@@ -184,13 +246,20 @@ export const fixtureRows = (
         variantTitle: item.variantTitle ?? null,
         sku: item.sku ?? null,
         quantity: item.quantity,
-        currentQuantity: changed?.currentQuantity ?? item.currentQuantity ?? item.quantity,
+        currentQuantity: item.currentQuantity ?? item.quantity,
         productTags: encodeTags(item.tags),
         properties: encodeProperties(item.properties),
       });
     });
   });
-  return { identity, actor: { workflows, orders, lineItems } };
+  const members = data.members.map((email): FixtureMemberRow => ({
+    memberId: memberIds.get(email) ?? "",
+    email,
+    teamIds: data.teams.flatMap((team) =>
+      team.members.includes(email) ? [teamIds.get(team.name) ?? ""] : [],
+    ),
+  }));
+  return { identity, actor: { workflows, orders, lineItems, members, work } };
 };
 
 const make = Effect.gen(function* () {
@@ -200,7 +269,8 @@ const make = Effect.gen(function* () {
 
   /**
    * Replaces one installed shop's data with `data`: D1's identity rows in one batch, then the
-   * actor's work rows in one transaction, then a revoke of every member it replaced, whose
+   * actor's work rows in one transaction, then the work on their runs (`applyFixture`, which
+   * reads the teams just written to D1), then a revoke of every member it replaced, whose
    * sockets carry ids that no longer exist. Each store is atomic on its own; a failure between
    * them leaves the new identity beside the old work, which the next load replaces. The shop's
    * session, other shops and Better Auth are never touched.
@@ -211,6 +281,7 @@ const make = Effect.gen(function* () {
     const rows = yield* Effect.sync(() => fixtureRows(data, now, () => crypto.randomUUID()));
     const identity = yield* members.replaceShop(shop, rows.identity);
     const work = yield* actors.loadFixture(shop, rows.actor);
+    yield* actors.applyFixture(shop, rows.actor, "loadFixture");
     // Best effort, as `ShopActors.revoke` is: the write has landed either way.
     yield* Effect.forEach(identity.priorMemberIds, (id) => actors.revoke(shop, "member", id), {
       concurrency: "unbounded",
@@ -228,8 +299,10 @@ const make = Effect.gen(function* () {
    * member email or team name already in the shop and fails with {@link FixtureConflict} before
    * anything is written; then the actor adds its rows, failing the same way on a clashing
    * workflow or order with nothing written; then D1's identity rows go in, in one batch, whose
-   * unique indexes are only the backstop for a race (a clash there is a defect). As with
-   * {@link load}, each store is atomic on its own.
+   * unique indexes are only the backstop for a race (a clash there is a defect); then the actor
+   * applies the work on the fixture's runs (`applyFixture`), after D1, so the fixture's teams
+   * make its workflows eligible. D1 is never written first: an actor `Conflict` would leave its
+   * rows behind. As with {@link load}, each store is atomic on its own.
    */
   const add = Effect.fn("Fixtures.add")(function* (shop: ShopKey, data: ShopFixtureData) {
     if (Option.isNone(yield* sessions.find(shop))) return yield* new ShopNotInstalled({ shop });
@@ -244,6 +317,7 @@ const make = Effect.gen(function* () {
     const rows = yield* Effect.sync(() => fixtureRows(data, now, () => crypto.randomUUID()));
     const work = yield* actors.addFixture(shop, rows.actor);
     const identity = yield* members.addToShop(shop, rows.identity);
+    yield* actors.applyFixture(shop, rows.actor, "addToFixture");
     const counts: FixtureCounts = { members: identity.members, teams: identity.teams, ...work };
     yield* Effect.logInfo(
       `Fixtures.add: shop=${shop} members=${counts.members} teams=${counts.teams} workflows=${counts.workflows} orders=${counts.orders} lineItems=${counts.lineItems}`,
