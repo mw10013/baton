@@ -379,6 +379,7 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - 2026-10-18, Step 6: a Back out of the orders index to Teams, then Forward, makes the admin load the frame afresh at `/auth/session-token?team=…`, and the frame shows the router's "Page not found". Not fixed here (the session-token bounce, not the orders screens); "a filter change resets the page and replaces history" no longer takes Forward.
 - 2026-10-18, Step 6: trycloudflare rate-limited this machine (error 1015) from about 13:57 to 14:56; every `vp run test:e2e` in that window failed to start the web server ("Could not start Cloudflare tunnel: max retries reached"). Not a code fault.
 - 2026-10-18, Step 6: hydration flake (`awaitHydration` in `openApp`, `orders.spec.ts` beforeAll) once in a filtered development run, 13:46–13:47; the re-run at 13:47 passed that point. No full-suite run hit it.
+- 2026-10-18, Steps 5–6 e2e after the flake-fix merge (e76df60): run 1 (15:32–15:37) lost `embedded/workflows.spec.ts` "editing the tag from the detail page writes immediately and starts no draft" at `awaitHydration` (via `gotoApp`, 15.1 s), 5 did not run. The attachment named one frame request pending with no response head for 15 070 ms: the `getShopifyApp` server function (`/_serverFn/…src/web/server/shopify.ts…getShopifyApp_createServerFn_handler`) through the trycloudflare tunnel. Not the old flake (the proxy fix is in); not investigated further. The one allowed re-run passed whole.
 
 ### Command results
 
@@ -395,6 +396,7 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - 2026-10-18, Step 6: `vp check` pass (327 files); `vp test` 74 files, 969 tests, 60.5 s (15:27–15:28). e2e deferred until after the flake-fix merge (lead's instruction): the last full run (15:08–15:14) had 63 passed, 1 failed, 3 did not run; the failure was "the orders index keeps its filters and page across the order page" at an assertion (Previous pressed before the frame the admin reloaded on Back had hydrated), since given an `awaitHydration` before the press, not yet run. Filtered runs passed: `order-page.spec.ts` 7/7; `home.spec.ts` 3/3; `orders-pages.spec.ts` 2/2; `refresh.spec.ts`, `socket.spec.ts`, `app.spec.ts` all passed after their adaptations; every `orders.spec.ts` title passed in some run, the two history titles not together in a final full run.
 - 2026-10-18, Step 6, the known flake (logged by the lead from the implementer's report). A filtered `orders.spec.ts` development run, 13:46–13:47, failed in `beforeAll` at `awaitHydration`; its re-run passed.
 - WAITING: orchestrator merges the wt-01 flake fix
+- 2026-10-18, Steps 5–6 e2e after the flake-fix merge: `vp check` pass (328 files); `vp run test:e2e` run 1 (15:32–15:37) 61 passed, 1 failed, 5 did not run (hydration timeout, Issues); run 2 (15:37–15:43) 67 passed, 5.7 min, "the orders index keeps its filters and page across the order page" included.
 
 ### Human steps requested
 
