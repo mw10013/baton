@@ -143,6 +143,70 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 
 ### Plan review
 
+2026-10-17, by the lead, read-only against this repo, `refs/baton-legacy/` and `refs/effect/`. Each item is what is wrong or missing, then the detail the step is built to. The steps above stand; where an item corrects one, the item wins.
+
+**Plan-wide**
+
+- **Sixteen procedures, not fifteen.** §3's row and research §1.3 list 16 (four `WorkflowResult`, Apply, Discard, two `SwitchResult`, Delete, seven task writes). Build to 16 wherever the plan says fifteen (Step 3 twice, §5).
+- **Payloads.** Each is the domain input of the same name (`CreateWorkflowInput`, `DuplicateWorkflowInput`, `UpdateWorkflowInput`, `UpdateWorkflowTagInput`, `ApplyDraftInput`, `DiscardDraftInput`, `SetWorkflowStateInput`, `ApplyAndTurnOnInput`, `DeleteWorkflowInput`, `AddStepInput`, `AddTaskInput`, `UpdateTaskInput`, `MoveTaskInput`, `SeparateTaskInput`, `JoinTaskInput`); `MerchantRemoveTask` takes `TaskIdInput` (there is no `RemoveTaskInput`). `DraftResult` stays unused (only `createDraft`). `DeleteTeamInput` exists in both `shop-work.ts` and `contract/members.ts`; `contract/shop-actor.ts` keeps importing the contract one.
+- **Integ cannot reach `BackendApi` without an `IntegRpcs` row** (the orders loader is reached only through `ApiListOrders`, `test/integ/rpcs.ts`). Step 4's integ tests need `ApiWorkflowsPage`, `ApiWorkflowDetail`, `ApiSetupFacts` there, built as `ApiListOrders`. This relaxes §0's "no new `IntegRpcs`" for these three test-only rows; nothing else grows.
+
+**Step 1**
+
+- `shop-actor/orders.ts` holds more than the repository (`Transaction`, `OrderRepositoryError`, `OrderUpsert`, `openOrdersAtCeiling`, `SyncTracking`, `isTrackingFresh`). Move the whole module to `order-repository.ts` first; then `orders-agent.ts` becomes `orders.ts`. `Transaction` (and `syncTransaction` from `shop-actor.ts`) move to `src/backend/shop-actor/transaction.ts`, because the workflow repository needs them too.
+- The actor's local `const workflows = yield* OrdersSyncWorkflow` (`shop-actor.ts`) becomes `ordersSync` now; Step 3 needs the name. `OrdersSyncWorkflows` (the handle's type) keeps its name: it names the orders sync Workflow.
+- Also renamed: `OrdersBulkRepositoryError` (and its tag) → `OrdersBulkOperationError`; the service keys `"app/Members"`, `"app/ShopSessions"`, `"app/OrdersBulkRepository"`; the type `OrdersAgent<R>` → `Orders<R>`; the actor's locals `ordersAgent`/`membersAgent` → `orders`/`membership`, and the order repository local → `orderRepository`; test helpers (`withAgent`, `agent` variables, `testMembers` → `testMembershipRepository`, the `membersLayer` option, `recordingMembers`); the describe names `MembersAgent`, `OrdersAgent.*`, "Members session cap and auth sweep", "ShopSessions refresh writes" (none is a legacy title); every `{@link}` and prose naming the old symbols (`orders-sync-workflow.ts`, `order-sync.ts`, `tag.ts`, `contract/members.ts`, the members and teams routes, `billing.ts`, `d1-tables.ts`, `dev.ts`, `layers.ts`, `webhooks.test.ts`).
+- `ShopAgentId` and `AgentMessage` (`src/domain/platform.ts`) are ported legacy domain names; they stay (§0.2 renames the actor's areas, not the domain). §5's "no `…Agent` symbol" exempts `src/domain/`.
+- The verify greps are wrong: `Agent\b` finds ~100 legacy JSDoc hits and misses lowercase leftovers; `Members\b` matches `listMembers`, `addTeamMembers`, `maxMembers`, UI copy. Verify instead with `grep -rniE "orders-agent|members-agent|OrdersAgent|MembersAgent|makeOrdersAgent|makeMembersAgent|\bagent\b" src test` (review each hit; `src/domain/` legacy references and `ShopAgent`/`ShopWorkAgent` in JSDoc pass) and `grep -rnE "\b(Members|ShopSessions|OrdersBulkRepository)\b" src test` restricted to code (UI copy passes).
+
+**Step 2**
+
+- **Check first needs more methods.** The three tests also call `createWorkflow`, `addStep`, `applyDraft`, `createDraft`, `getWorkflow`, `updateTask` (and `insertWorkflow`, `requireRoom`, `promoteDraft`, `workflowIdOfTask`, `editDraft`). Port those with the three; the check is the `json_each` queries (`workflowIdOfTask`, `unassignTeam`), still unrun. Already proved by the reviewer on `node:sqlite` (Node 24, SQLite 3.53): a multi-statement `prepare` runs only the first statement (legacy's repository has none), and the `ACTIVE_WORKFLOWS_BY_TAGS` shape plans `SEARCH … USING INDEX (tag=?)`.
+- **Seven tests, not four, use `replaceWorkflows`.** Besides the four excluded (459, 530, 631, 1792), "a workflow's stepCount is the number of steps, not tasks", "the workflows index pages by name and a search narrows it" and "the run path finds the order's workflows through the index on the tag" build rows with it. They keep their titles and arrange rows with `insertFixtureRows` (`src/backend/shop-actor.ts`) or a test-local `insert into Workflow`.
+- Legacy `workflow-repository.test.ts` opens with `describe("Domain workflow schemas")` (four titles: "WorkflowTag trims and keeps case", "WorkflowTag refuses a comma, which Shopify's tag field splits on", "WorkflowTag rejects blank and over-long values", "names trim and reject empty or over-long values"). None exists here; they go to `test/unit/domain/shop-work.test.ts` (or its nearest file), titles unchanged.
+- **The `domainBoundary` line is inverted.** `siblings` are the files it may _not_ import; legacy `WorkflowLayout.ts` imports `shop-work.ts` (`TaskDirection`). Build: `domainBoundary("src/domain/workflow-layout.ts", ["platform.ts", "orders.ts", "billing.ts"])`. `shop-work.ts` names `WorkflowLayout` only in backticks today; no import. The context map in `src/domain/platform.ts`'s JSDoc gains a row for `workflow-layout.ts`.
+- **Nothing refuses a nested transaction here.** `syncTransaction` is `sql.withTransaction` on a sync scheduler; `@effect/sql-sqlite-do` and `-node` both nest (savepoint / storage depth). Research §1.3.1's "refused here as in legacy" and the `Transaction` JSDoc (`orders.ts`) overstate it: do not nest by convention, and say so in JSDoc. Legacy never nests (`editDraft` opens none). `setWorkflowState` runs two statements outside a transaction in legacy; port as is.
+- **Decode failures.** The order repository maps them to its typed `OrderRepositoryError`; so `WorkflowRepositoryError` exists (no `orDie` in the repository). Imports per module (`effect/Effect`, …); the bare `"effect"` barrel is banned.
+- **`listTeams` / `teamWithMemberExists`.** This repo's `Members` methods take `shop` positionally; build `listTeams(shop)` and `teamWithMemberExists(shop)` (legacy's shape too), not `({ shop })`. `listTeams` has no limit in legacy (at most `maxTeams` rows by the ceiling). `test/unit/backend/members.test.ts`'s JSDoc "listTeams … not ported" and its local `listTeams` helper change with it.
+
+**Step 3**
+
+- **Publish tests.** The two quoted "titles" are legacy's sites table, not tests. The tests are `member-runs-socket.test.ts`'s "Edit tag and Apply publish to every screen whether or not a run moved", "turning a workflow on or off, deleting it, or deleting a team publishes to every screen", and "a refused call publishes nothing". Port all three titles byte for byte with their workflow half only: a task write starts the draft (no `createDraft` procedure); the refused-call test drops its run write (`markTaskDone`, F) and its member screen. Observe with `connect`'s `received` PubSub (`test/integ/shop-actor.test.ts`, `orders.test.ts`'s `PubSub.remaining`).
+- **"callable inputs reject excess properties"** is a pure schema decode with `onExcessProperty: "error"` in legacy; this repo's RPC server sets none, so procedures accept excess keys. It goes to unit over the domain inputs, title unchanged; the procedures are not changed.
+- **Log lines** only where legacy logs (duplicate, updateWorkflowTag, applyDraft, discardDraft, setWorkflowState, applyAndTurnOn, removeWorkflow → `deleteWorkflow`, addTask, separateTask, joinTask; the last two with `step=`). createWorkflow, updateWorkflow, addStep, updateTask, moveTask, removeTask log nothing.
+- **Shapes.** `notify` and `reconcileAll` are generic in `R` as `makeOrders` takes `notify`. `makeWorkflows` `orDie`s repository and D1 faults itself and answers `Effect<Result>`; the handlers pass the methods straight through, as the membership handlers do. The D1 parameter is `membershipRepository` in both `makeWorkflows` and `makeMembership` (`membership` reads as the service); `makeMembership`'s `members` parameter becomes `membershipRepository` in Step 1, and `workflows` (Step 3) is `workflowRepository`.
+- **Harness.** `membership.test.ts`'s deleteTeam tests need `ActorSqliteTest` and `makeWorkflowRepository` beside the D1 layer; the model is `orders.test.ts` (today's `orders-agent.test.ts`) with its recording `notify`.
+- `addToFixture` answers counts, not ids: integ finds a workflow by creating it through a procedure or reading it through `ApiWorkflowsPage`.
+
+**Step 4**
+
+- `ShopActorShape` is in `src/backend/shop-actor/tag.ts`; `ShopActors.layerTest` (`shop-actors.ts`) gains three `die` stubs.
+- `installedShop` is itself a D1 read; read "`ShopNotInstalled` before any actor or `MembershipRepository` call".
+- The model is `membersPage` / `teamsPage`: the Backend applies the page size. `WORKFLOWS_PAGE_SIZE` lives in `src/contract/workflows.ts`. Contract requests are strict (`Schema.NullOr`, as `MembersPageRequest`); the lenient decode (`lenientSearchKey`, `ListSearchParam`, both in `src/web/routes/-search-params.ts`) is the route's search schema, as legacy's `WorkflowsSearch`. The request's `after` maps to `ListWorkflowsInput.cursor`.
+- `setupFacts` runs its two reads with `{ concurrency: "unbounded" }` (legacy's one `Effect.all`).
+
+**Step 5**
+
+- **`retainSearchParamsUnder` does not fit here.** TanStack's `retainSearchParams` re-adds a missing key; this repo navigates by `appHref` strings, which drop null keys, so Clear search, page one and a filter change would get the old `q`/`after`/`state` back. Not ported. Build: the index's links to a workflow and the workflow page's back link carry `state`, `q`, `after` through `appHref` keys; `state` joins `PAGE_KEYS` (`-app-search.ts`); a nav click drops them (the plan's and research §1.3.7's rule; legacy kept them, recorded as a deviation).
+- **The element `hideModal` lands here, not in Step 6**, with `showModal` and `useModalBackdropDismissGuard` (`WorkflowSwitch`, `WorkflowTag` use them). `app-bridge.ts` already exports a `hideModal` (`shopify.modal.hide`); legacy's go in `src/web/client/polaris-modal.ts`, imported as `import * as PolarisModal`.
+- `WorkflowTag` makes no call: it takes `onSave: (tag) => Promise<WorkflowResult>`; its browser test passes `onSave` answers. `test/browser/shop-actor.ts` needs no change (handlers derive from `ShopActorRpcs.requests`; tests pass their own).
+- `SocketBanner` is the layout's (`ShopSocket.tsx`); pages do not render it.
+- **e2e data.** Names _and_ tags from the test id (the fixture refuses a clashing tag); a fixture task's team must be in the same `AddToFixture` call; menus through the in-frame `clickMenuItem` (legacy's `clickHoisted`/`openScreen` do not exist).
+
+**Step 6**
+
+- **The window's `src`.** Start the check with legacy's bare `` `/app/workflows/${id}/edit?chrome=window` `` and record what search the admin adds; copying the opener's search hands the window an expiring `id_token`, which SSR authenticates (the guard needs `shop`, `host`, `embedded=1`, `id_token`). Research §1.3.7's list omits `id_token`.
+- `s-app-window` has no JSX type; `@shopify/app-bridge-types` is not a dependency. Hand-declare it in `app-bridge.ts` (`show()`, `hide()`, `src`, the `hide` event), as `s-app-nav` is.
+- e2e reaches the window by `page.frameLocator('iframe[src*="chrome=window"]')` (legacy `editorFrame`); `appFrame` (`scripts/lib/embedded-app.ts`) already excludes it. Add `editorFrame`, `openEditor`, `closeEditor` helpers.
+
+**Step 7**
+
+- Legacy `SetupGuideStep.help` is required and rendered; make it optional (deviation). `SetupGuideLink` takes `href` plus `onClick` (`navigate(appHref(…))`), as every `/app` link here. The e2e scopes its locators to the guide (the home has its own Teams link).
+- **The e2e store always has a team with a member** (`ops`, `test/e2e/shop-fixture.ts`), so step 1 is always done there and "a shop with no team" cannot be shown; the run fact is false until F, so the guide always shows. The spec asserts step 1 Done, step 2 Done after its own active workflow, step 3 Not done; its title is new (legacy's "the seeded shop shows no setup guide" cannot port).
+- **The kit gate.** `DEV_ENDPOINT` is bound on the Backend only; the Website has no environment binding. Build: a Website `env` entry in `alchemy.run.ts` from the stage's environment (true for `dev`, `test`, `e2e`), read by a GET server function that `notFound()`s in the kit's `beforeLoad`, as legacy's `requireLocal`. `test` never runs the Website, so the kit is reachable on dev and e2e.
+- **The kit's content.** Legacy's sections mostly use parts that do not exist (`Strip`, `ResourceRow`, `Clamp`, `Name`, `ShowMore`, help parts). Port the sections whose parts exist (SetupGuide ×3 plus all done, Search, Workflows index filter, Empty, `PageNote`, Text fits with `Token` and `Prose`, `FootLine` without its link), adapted to this repo's part APIs (`BackLink` has no `onNavigate`, `ListSearchField` needs `placeholder`, `IndexSection` needs `children`), and add sections for `StepFlow` (a 20-task step), `SelectableCard`, `Fields`, `Panel`, `EmptyAside`, `Connector`, `TextLimit`, marked new. The page body is a component with a `width` prop so the browser smoke test renders it without a router.
+- `.prose` (legacy `styles.css`) joins `src/web/styles.css`; `DELETED_TOAST.workflow` is "Workflow deleted".
+
 ### Deviations
 
 ### Issues
