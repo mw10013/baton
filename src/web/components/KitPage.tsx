@@ -18,6 +18,8 @@ import { BlockModal, RunNoteModal } from "./RunTextModals.tsx";
 import { BackLink } from "./screen/BackLink.tsx";
 import { BatonMark } from "./screen/BatonMark.tsx";
 import { HelpList } from "./screen/HelpList.tsx";
+import { HelpPicture } from "./screen/HelpPicture.tsx";
+import { NumberedList } from "./screen/NumberedList.tsx";
 import { HelpTable } from "./screen/HelpTable.tsx";
 import { HELP_SECTIONS } from "./help/pages.ts";
 import { Clamp } from "./screen/Clamp.tsx";
@@ -495,6 +497,22 @@ export function KitPage({ width }: { readonly width: "small" | "large" }) {
               [<s-badge key="badge">Inactive</s-badge>, "Workflows page", "It starts nothing."],
             ]}
           />
+        </s-section>
+        <s-section heading="Numbered list">
+          <NumberedList
+            items={[
+              <>
+                On the Teams page, press <strong>Create team</strong>.
+              </>,
+              <>
+                Press <strong>Create</strong>.
+              </>,
+            ]}
+          />
+        </s-section>
+        <s-section heading="Help picture">
+          <HelpPicture name="installing1" />
+          <HelpPicture name="findingYourWork1" />
         </s-section>
         <s-section heading="Baton mark">
           <Inline>
