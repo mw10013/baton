@@ -10,6 +10,7 @@ import {
   connectionStateAtom,
   membershipChangedAtom,
   merchantExpiredAtom,
+  paymentRequiredAtom,
   retryPolicy,
   uninstalledAtom,
 } from "../../../../src/web/client/actor-connection.ts";
@@ -17,6 +18,7 @@ import {
   CONNECTION_CLOSE_DISPLACED,
   CONNECTION_CLOSE_FORBIDDEN,
   CONNECTION_CLOSE_NOT_A_MEMBER,
+  CONNECTION_CLOSE_PAYMENT_REQUIRED,
   CONNECTION_CLOSE_REVOKED,
   CONNECTION_CLOSE_TRY_AGAIN,
   CONNECTION_CLOSE_UNAUTHENTICATED,
@@ -41,6 +43,7 @@ describe("retry policy", () => {
     { code: CONNECTION_CLOSE_NOT_A_MEMBER, continues: false },
     { code: CONNECTION_CLOSE_DISPLACED, continues: false },
     { code: CONNECTION_CLOSE_UNINSTALLED, continues: false },
+    { code: CONNECTION_CLOSE_PAYMENT_REQUIRED, continues: false },
     { code: CONNECTION_CLOSE_REVOKED, continues: true },
     { code: 1006, continues: true },
     { code: CONNECTION_CLOSE_TRY_AGAIN, continues: true },
@@ -60,6 +63,8 @@ describe("close outcome", () => {
     { code: CONNECTION_CLOSE_DISPLACED, merchant: false, outcome: "displaced" },
     { code: CONNECTION_CLOSE_UNINSTALLED, merchant: false, outcome: "uninstalled" },
     { code: CONNECTION_CLOSE_UNINSTALLED, merchant: true, outcome: "uninstalled" },
+    { code: CONNECTION_CLOSE_PAYMENT_REQUIRED, merchant: true, outcome: "payment-required" },
+    { code: CONNECTION_CLOSE_PAYMENT_REQUIRED, merchant: false, outcome: "payment-required" },
     { code: CONNECTION_CLOSE_REVOKED, merchant: false, outcome: "revoked" },
     { code: CONNECTION_CLOSE_TRY_AGAIN, merchant: true, outcome: "lost" },
   ] as const)("$code for a merchant: $merchant is $outcome", ({ code, merchant, outcome }) => {
@@ -114,7 +119,19 @@ describe("close outcome", () => {
         assert.strictEqual(registry.get(membershipChangedAtom), changed);
         assert.strictEqual(registry.get(merchantExpiredAtom), expired);
         assert.strictEqual(registry.get(uninstalledAtom), uninstalled);
+        assert.strictEqual(registry.get(paymentRequiredAtom), 0);
         registry.dispose();
       }),
+  );
+
+  it.effect("payment-required leaves the page forbidden and asks the route again", () =>
+    Effect.gen(function* () {
+      const registry = AtomRegistry.make();
+      yield* applyCloseOutcome(registry, "payment-required");
+      assert.strictEqual(registry.get(connectionStateAtom), "forbidden");
+      assert.strictEqual(registry.get(paymentRequiredAtom), 1);
+      assert.strictEqual(registry.get(membershipChangedAtom), 0);
+      registry.dispose();
+    }),
   );
 });

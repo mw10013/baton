@@ -1,15 +1,25 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Socket from "effect/socket/Socket";
-import { describe, expect, it } from "vite-plus/test";
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRouter,
+  RouterProvider,
+} from "@tanstack/react-router";
+import { describe, expect, it, vi } from "vite-plus/test";
 import {
   CONNECTION_CLOSE_DISPLACED,
+  CONNECTION_CLOSE_FORBIDDEN,
+  CONNECTION_CLOSE_PAYMENT_REQUIRED,
+  CONNECTION_CLOSE_REVOKED,
   CONNECTION_CLOSE_UNINSTALLED,
 } from "../../../../src/contract/shop-actor.ts";
 import {
   applyCloseOutcome,
   closeOutcome,
   connectionStateAtom,
+  isTerminal,
   reconnectAtom,
   shopKeyAtom,
 } from "../../../../src/web/client/actor-connection.ts";
@@ -135,5 +145,53 @@ describe("ShopSocket", () => {
     await expect.element(screen.getByText("No open orders")).toBeVisible();
     expect(Option.isNone(registry.get(shopKeyAtom))).toBe(true);
     await expect.element(screen.getByText("Couldn't load orders.")).not.toBeInTheDocument();
+  });
+});
+
+/** The socket error a close with `code` is, as the retry policy sees it. */
+const closeError = (code: number) =>
+  new Socket.SocketError({ reason: new Socket.SocketCloseError({ code }) });
+
+/** `holder` under a one-route memory router, whose `invalidate` the test watches. */
+const inRouter = (holder: React.ReactNode) => {
+  const router = createRouter({
+    routeTree: createRootRoute({ component: () => holder }),
+    history: createMemoryHistory({ initialEntries: ["/"] }),
+  });
+  return { router, invalidate: vi.spyOn(router, "invalidate") };
+};
+
+describe("ShopSocket close codes", () => {
+  it("the tab reconnects on 3401 and not on 4403", async () => {
+    expect(isTerminal(closeError(CONNECTION_CLOSE_REVOKED))).toBe(false);
+    expect(isTerminal(closeError(CONNECTION_CLOSE_FORBIDDEN))).toBe(true);
+    const registry = shopTestRegistry({});
+    await renderInApp(memberHolder, registry);
+    await closeWith(registry, CONNECTION_CLOSE_REVOKED);
+    expect(registry.get(connectionStateAtom)).toBe("lost");
+    await closeWith(registry, CONNECTION_CLOSE_FORBIDDEN);
+    expect(registry.get(connectionStateAtom)).toBe("forbidden");
+  });
+
+  it("a 4402 stops the socket and reruns the route's guards, merchant and member alike", async () => {
+    expect(isTerminal(closeError(CONNECTION_CLOSE_PAYMENT_REQUIRED))).toBe(true);
+    for (const merchant of [true, false]) {
+      const registry = shopTestRegistry({});
+      const { router, invalidate } = inRouter(
+        <ShopSocket
+          shop={SEED_SHOP}
+          merchantToken={merchant ? Option.some(Effect.succeed("token")) : Option.none()}
+        >
+          <p>The page</p>
+        </ShopSocket>,
+      );
+      const screen = await renderInApp(<RouterProvider router={router} />, registry);
+      await expect.element(screen.getByText("The page")).toBeVisible();
+      invalidate.mockClear();
+      await closeWith(registry, CONNECTION_CLOSE_PAYMENT_REQUIRED, merchant);
+      expect(registry.get(connectionStateAtom)).toBe("forbidden");
+      await expect.poll(() => invalidate.mock.calls.length).toBe(1);
+      await screen.unmount();
+    }
   });
 });

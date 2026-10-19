@@ -1,9 +1,10 @@
-import { RegistryContext, useAtomMount } from "@effect/atom-react";
-import { useHydrated } from "@tanstack/react-router";
+import { RegistryContext, useAtomMount, useAtomValue } from "@effect/atom-react";
+import { useHydrated, useRouter } from "@tanstack/react-router";
 import type * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { type ReactNode, useContext, useState } from "react";
+import { type ReactNode, useContext, useEffect, useRef, useState } from "react";
 import type { ShopKey } from "../../contract/shop.ts";
+import { paymentRequiredAtom } from "../client/actor-connection.ts";
 import { nameSocket, noticesAtom } from "../client/shop-actor-client.ts";
 import { SocketBanner } from "./SocketBanner.tsx";
 
@@ -21,7 +22,24 @@ function LiveShopSocket(props: SocketProps) {
   const registry = useContext(RegistryContext);
   useState(() => nameSocket(registry, props.shop, props.merchantToken));
   useAtomMount(noticesAtom);
+  usePaymentRequired();
   return <SocketBanner merchant={Option.isSome(props.merchantToken)} />;
+}
+
+/**
+ * Reruns the router's guards and loaders when the gate refused the socket for a shop with no app
+ * subscription ({@link paymentRequiredAtom}): the socket stays closed, and the route decides
+ * where the browser goes.
+ */
+function usePaymentRequired() {
+  const refused = useAtomValue(paymentRequiredAtom);
+  const router = useRouter();
+  const seen = useRef(refused);
+  useEffect(() => {
+    if (refused === seen.current) return;
+    seen.current = refused;
+    void router.invalidate();
+  }, [refused, router]);
 }
 
 /**

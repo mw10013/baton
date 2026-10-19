@@ -12,6 +12,7 @@ import {
   CONNECTION_CLOSE_DISPLACED,
   CONNECTION_CLOSE_FORBIDDEN,
   CONNECTION_CLOSE_NOT_A_MEMBER,
+  CONNECTION_CLOSE_PAYMENT_REQUIRED,
   CONNECTION_CLOSE_REVOKED,
   CONNECTION_CLOSE_UNAUTHENTICATED,
   CONNECTION_CLOSE_UNINSTALLED,
@@ -51,6 +52,13 @@ export const merchantExpiredAtom = Atom.make(false).pipe(Atom.keepAlive);
 export const uninstalledAtom = Atom.make(false).pipe(Atom.keepAlive);
 
 /**
+ * Bumped when the gate refuses the socket because the shop has no app subscription (4402). The
+ * socket holder reruns the router's guards and loaders on each bump: `/app`'s sends the merchant
+ * to plan selection, the member shop layout's sends a member to Subscription inactive.
+ */
+export const paymentRequiredAtom = Atom.make(0).pipe(Atom.keepAlive);
+
+/**
  * The actor socket as the page shows it. `displaced` and `forbidden` are terminal: the socket
  * stays closed until the person asks again ({@link reconnectAtom}).
  */
@@ -80,6 +88,7 @@ export const lostAtom = Atom.make((get) => {
  */
 const TERMINAL_CODES: ReadonlySet<number> = new Set([
   CONNECTION_CLOSE_UNAUTHENTICATED,
+  CONNECTION_CLOSE_PAYMENT_REQUIRED,
   CONNECTION_CLOSE_FORBIDDEN,
   CONNECTION_CLOSE_NOT_A_MEMBER,
   CONNECTION_CLOSE_DISPLACED,
@@ -117,15 +126,16 @@ export const goToSignIn = Effect.sync(() => {
 
 /**
  * What a socket error means for the page. Each terminal code ({@link isTerminal}) says why the
- * browser stops: 4401 sends a member to sign-in and marks a merchant's token expired, 4404 is
- * "not a member", 4409 is displaced, 4410 is uninstalled, 4403 is forbidden. 3401 is `revoked`
- * and anything else `lost`, and both are retried.
+ * browser stops: 4401 sends a member to sign-in and marks a merchant's token expired, 4402 is
+ * "payment required", 4404 is "not a member", 4409 is displaced, 4410 is uninstalled, 4403 is
+ * forbidden. 3401 is `revoked` and anything else `lost`, and both are retried.
  */
 export type CloseOutcome =
   | "lost"
   | "revoked"
   | "sign-in"
   | "expired"
+  | "payment-required"
   | "not-a-member"
   | "displaced"
   | "uninstalled"
@@ -140,6 +150,7 @@ export const closeOutcome = (error: Socket.SocketError, merchant: boolean): Clos
         Match.when(CONNECTION_CLOSE_UNAUTHENTICATED, (): CloseOutcome =>
           merchant ? "expired" : "sign-in",
         ),
+        Match.when(CONNECTION_CLOSE_PAYMENT_REQUIRED, (): CloseOutcome => "payment-required"),
         Match.when(CONNECTION_CLOSE_NOT_A_MEMBER, (): CloseOutcome => "not-a-member"),
         Match.when(CONNECTION_CLOSE_DISPLACED, (): CloseOutcome => "displaced"),
         Match.when(CONNECTION_CLOSE_UNINSTALLED, (): CloseOutcome => "uninstalled"),
@@ -151,7 +162,8 @@ export const closeOutcome = (error: Socket.SocketError, merchant: boolean): Clos
 /**
  * Applies a {@link CloseOutcome} to the page's atoms. A refusal that has its own copy
  * (`expired`, `uninstalled`) also leaves the socket `forbidden`, so nothing reconnects; so does
- * `not-a-member`, which with `revoked` bumps {@link membershipChangedAtom}.
+ * `not-a-member`, which with `revoked` bumps {@link membershipChangedAtom}, and so does
+ * `payment-required`, which bumps {@link paymentRequiredAtom}.
  */
 export const applyCloseOutcome = (
   registry: AtomRegistry.AtomRegistry,
@@ -167,6 +179,12 @@ export const applyCloseOutcome = (
     Match.when("sign-in", () => Effect.andThen(set("forbidden"), goToSignIn)),
     Match.when("expired", () => set("forbidden", merchantExpiredAtom)),
     Match.when("not-a-member", () => Effect.andThen(set("forbidden"), membershipChanged)),
+    Match.when("payment-required", () =>
+      Effect.andThen(
+        set("forbidden"),
+        Effect.sync(() => registry.update(paymentRequiredAtom, (n) => n + 1)),
+      ),
+    ),
     Match.when("revoked", () => Effect.andThen(set("lost"), membershipChanged)),
     Match.when("uninstalled", () =>
       Effect.andThen(set("forbidden", uninstalledAtom), membershipChanged),

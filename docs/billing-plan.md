@@ -340,6 +340,9 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - **2026-10-18, Step 4:** `ScriptPartner` also makes the shop's cached plan stale (`planHandleExpiresAt` 0, handle kept), so the next gate, home read or `RevalidateStalePlans` re-reads it the way a real expiry would. `AppEventsSent` takes an optional `refuse`, the fake's scriptable refusal (the uninstall case needs a queued event at uninstall). `ApiWorkflowsList` and `ApiMemberWorkflowPage` errors grew `PaymentRequired`.
 - **2026-10-18, Step 4:** the cron handler logs its own failure, `scheduled.revalidatePlans` at Error with the cause, since the event source swallows it.
 
+- **2026-10-18, Step 5:** the `4402` rerun is an atom, not a callback threaded into the client layer: `applyCloseOutcome` maps `payment-required` to `forbidden` and bumps `paymentRequiredAtom`, and `ShopSocket`'s holder (both layouts) calls `router.invalidate()` on each bump, as the member layout already does for `membershipChangedAtom`. "the tab reconnects on 3401 and not on 4403" is a browser test in `ShopSocket.test.tsx`, beside the `4402` case.
+- **2026-10-18, Step 5:** the e2e plan check is in `install.setup.ts`: a load that does not hydrate while the page sits on `/pricing_plans` fails with "pick a plan on <store> (docs/shopify-stores-runbook.md)" (measured: it does, on the store with no subscription for the configured app id).
+
 ### Issues
 
 - **2026-10-18, Step 0: `activeSubscription` answers null for both stores. `WAITING: Partner API`.** Spike (a scratch script outside the repo, deleted after; the token and the app secret read into the environment, never printed) for Baton Dev (org `2798461`, app `417214922753`, handle `baton-local`):
@@ -376,7 +379,9 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 
 - **2026-10-18, Step 4:** `vp check` green (355 files); `vp test` 1058 passed, 80 files, 52 s (+21 "SubscriptionPlan", +2 plan-cache titles, +8 `ShopifyPartner`, +3 `authenticateAdmin`, +2 `402` rows, +7 integ in `billing.test.ts`; the existing 971 unchanged).
 - **2026-10-18, Step 4, cron:** the stack plans `[Backend/Cron(17 4 * * *)] create` under `alchemy dev` (and the integ stages deploy with it, `TestBackend` carrying `backendBody`). Fired by hand on the dev server: `GET <backend>/cdn-cgi/handler/scheduled?cron=17%204%20*%20*%20*&format=json` → `{"outcome":"ok"}`, log `scheduled.revalidatePlans: shops=1 failed=0`. (`+` for spaces is not decoded: use `%20`.)
-- **2026-10-18, Step 4:** `CHECKPOINT: Backend half (see the Step 4 commit below this line's commit)`.
+- **2026-10-18, Step 4:** `CHECKPOINT: Backend half (4ad7a2c)`.
+
+- **2026-10-18, Step 5:** `vp check` green (355 files); `vp test` 1064 passed, 80 files, 56 s (+4 close-code unit rows and a `payment-required` case, +2 browser in `ShopSocket.test.tsx`). `vp run test:e2e -- --project install`: 1 failed, 1 passed (`shopify-admin`), 68 did not run, 50 s: `Error: pick a plan on mw10013-e2e-shop-00 (docs/shopify-stores-runbook.md)`. The gate is right: `.env`'s `SHOPIFY_PARTNER_APP_ID` is Baton Staging's, for which the e2e store has no app subscription, so `/app` went to the pricing page (behind Cloudflare's challenge). Step 5 cannot end green on e2e until `.env` is fixed. `WAITING: .env app id` (see Human steps).
 
 ### Human steps requested
 
@@ -391,6 +396,8 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 **2026-10-18, Step 0, answered.** Step 3: the user picked Baton Basic (`baton-basic`) on both `mw10013-dev-shop-00` and `mw10013-e2e-shop-00` (lead). Confirmed by the re-check (trial until 2026-10-20).
 
 **2026-10-18, Step 0, new (unblocks dev and e2e from Step 5 on; Steps 1–4 use fakes and go ahead).** In the main checkout's `.env` (`/Users/mw/Documents/src/baton/.env`), `SHOPIFY_PARTNER_APP_ID` holds Baton Staging's app id. Set it to Baton Dev's, `417214922753` (`partners.shopify.com/2798461/apps/417214922753`). `.env.staging` keeps Baton Staging's id. Also `.env.staging`'s `SHOPIFY_APP_HANDLE` is not `baton-local`: confirm it is Baton Staging's handle once Baton Staging has one (Step 10).
+
+**2026-10-18, Step 5, blocking (unblocks Step 5's e2e and every step after).** `/Users/mw/Documents/src/baton/.env` still holds Baton Staging's app id in `SHOPIFY_PARTNER_APP_ID` (checked by equality only). With it the Partner API answers that neither `mw10013-*-shop-00` store has an app subscription, so the dev and e2e `/app` loads redirect to the pricing page (measured: the e2e `install` setup fails with "pick a plan on mw10013-e2e-shop-00"). Change that one line to Baton Dev's id, `SHOPIFY_PARTNER_APP_ID=417214922753`, and leave `.env.staging` as it is. Then: restart the dev server (`vp run dev:stop`, `vp run dev`) so the Backend is rebound; the dev store's plan is cached as "no subscription" until 2026-10-19 ~21:16 local, so either wait, open the app once from the plan selection page (its return carries `plan_handle`, which re-reads), or `vp run db:reset` the dev stage. The e2e stage is rebuilt on each run, so it needs nothing more.
 
 ### Implementation review
 
