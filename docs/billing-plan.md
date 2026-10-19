@@ -302,9 +302,26 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - `shop-actor.ts`'s `loadFixture` has uppercase SQL (`INSERT INTO ShopOrder`, the `DELETE FROM`s). Lowercase it only where Step 3 edits it; otherwise leave it.
 - In legacy, "the daily check re-reads every shop whose cached plan is stale, and only those" is one of `subscription-plan.test.ts`'s 21 titles. Port it there, in unit. The integ test through `RevalidateStalePlans` gets its own new title.
 
+**Orchestrator revision 1 (2026-10-18, from the user, before Step 4).** Research Q7 is revised (`docs/billing-research.md` §0 Q7, 15df007). It wins over §3's Configuration row, and Step 4 and Step 10 are built to it:
+
+- **Config, not code, for every value a Shopify app issues per stage:** the app's key and secret, `SHOPIFY_PARTNER_API_TOKEN`, `SHOPIFY_PARTNER_ORG_ID`, `SHOPIFY_PARTNER_APP_ID`, `SHOPIFY_APP_HANDLE`.
+- **Where each stage reads them:**
+  - Dev and e2e read the four Partner values from the checkout's `.env` through `Config`; the user has already added them to `.env` and `.env.staging`, so check them by name only. The app's key and secret in dev and e2e keep coming from the Shopify CLI (`shopifyCliApp`), as today.
+  - Staging reads them from the stage config record. Add the four as `StageConfigValues` fields (the token `Redacted`, the rest plain), read them in `stacks/stage-config.ts`, and bind them in the app stack.
+  - Declare each value once, in a typed schema. Decode `SHOPIFY_APP_HANDLE` and the ids with Schema.
+- **Code holds only what Baton defines:** plan handles, meter handles, entitlements, the two API versions.
+- `CLOUDFLARE_WORKERS_API_TOKEN` is in both `.env` files for a future admin explorer. Leave it there; bind nothing and read nothing.
+- **State the rule once,** as JSDoc on `StageConfigValues`: values another service issues come through config; values Baton defines live in code. Also add a line to `docs/stage-config-runbook.md` "How it works".
+- **Staging stays the orchestrator's** (Step 10's human steps): do not run `vp run stage-config --stage staging`, and do not push.
+
 ### Deviations
 
 - **2026-10-18, Step 1:** the domain's JSDoc says "the Backend" for legacy's Worker and "the actor" for its Durable Object; the two tooling sentences (`scripts/rules-lint.ts`, `pnpm spec check`) and the `scripts/lib/cost.ts` and `README.md` paths are dropped (the cost sentence and "the operator's plans table" kept without a path). `PlanStatus`'s proration URL moved to `@see`. "the shop is at its order ceiling…" sits in `order-repository.test.ts` (`describe("openOrdersAtCeiling")`), beside the function.
+
+- **2026-10-18, Step 2:** `makeUsageRepository.setBillingCycle` answers a boolean (the count or the cycle changed) for `makeBilling`'s notify (research Q11); legacy's answered void.
+- **2026-10-18, Step 2:** `ShopifyAppEvents.send` reads a non-2xx answer's body into the error (`App Events request refused: status=403: {…not_installed…}`) instead of legacy's `filterStatusOk` (whose error carried no reason). It is research Q6's "now carrying Shopify's reason"; the 401 retry keys on the status the same way. "carries the refusal reason into the error a caller records" also asserts the events endpoint's refusal.
+- **2026-10-18, Step 2:** `ShopifyAppEvents.layerWith({ apiKey, apiSecret, appHandle })` takes the handle (the plan's "pass the handle through the layer"); `ShopifyAppEvents.layer` reads `SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, `SHOPIFY_APP_HANDLE` with `Shopify.layer`'s "absent while planning" rule. Nothing binds `SHOPIFY_APP_HANDLE` before Step 4.
+- **2026-10-18, Step 2:** this repo's `upsertOrder` does not resolve the cycle (legacy's did); `countOrder` resolves it itself, so the meter's rules hold. "rolls the cycle forward on the first order past its end" keeps its title; its comment says the count resolves the cycle. `order-repository.test.ts`'s `CYCLE_START` is now legacy's `Date.UTC(2026, 5, 15)` (was day 400 since the epoch); every case in the file passes on it.
 
 ### Issues
 
@@ -332,6 +349,8 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - **2026-10-18, Step 0:** `CHECKPOINT: spike answered (no commit; recorded in §7)`. Partner API `2026-10` and App Events `2026-10`.
 
 - **2026-10-18, Step 1:** `vp check` green (342 files); `vp test` 981 passed, 75 files, 67 s (971 + 10: seat value, order ceiling, provisional cycle, expiry, `planOfHandle`, five `adminShopPlanCache` states).
+
+- **2026-10-18, Step 2:** `vp check` green (345 files); `vp test` 1007 passed, 76 files, 50 s (+16 "OrderRepository usage", +5 "RunRepository metering", +5 "ShopifyAppEvents").
 
 ### Human steps requested
 

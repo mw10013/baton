@@ -1,5 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -13,7 +14,17 @@ import {
   type OrderRepository,
 } from "../../../../src/backend/shop-actor/order-repository.ts";
 import { type OrderLineItem, orderIsOpen, type ShopOrder } from "../../../../src/domain/orders.ts";
-import { ShopLimits } from "../../../../src/domain/platform.ts";
+import { ShopGid, ShopLimits } from "../../../../src/domain/platform.ts";
+import { USAGE_METER_MEMBER, USAGE_METER_ORDER } from "../../../../src/domain/billing.ts";
+import {
+  ShopifyAppEvents,
+  ShopifyAppEventsError,
+} from "../../../../src/backend/shopify-app-events.ts";
+import { syncTransaction } from "../../../../src/backend/shop-actor/transaction.ts";
+import {
+  makeUsageRepository,
+  type UsageRepository,
+} from "../../../../src/backend/shop-actor/usage-repository.ts";
 import {
   ListSearch,
   multiMatchItems,
@@ -88,8 +99,8 @@ const ids = (sql: SqlClient.SqlClient, table: string) =>
   );
 
 /**
- * The `ShopUsage` columns the orders write, and the open-order count, read straight from SQL
- * rather than through a repository method: billing's `getUsage` is not ported.
+ * The `ShopUsage` columns the orders write, and the open-order count, read straight from SQL:
+ * the ceiling's cases read the order repository alone, not the meter's `getUsage`.
  */
 const usage = (repository: OrderRepository, sql: SqlClient.SqlClient) =>
   Effect.gen(function* () {
@@ -296,7 +307,9 @@ describe("fixture rows", () => {
   );
 });
 
-const CYCLE_START = 400 * 86_400_000;
+/** Mid-month, so `processedAt: CYCLE_START - 1` is unambiguously the cycle before. */
+const CYCLE_START = Date.UTC(2026, 5, 15);
+const CYCLE_END = Date.UTC(2026, 6, 15);
 
 const paid = (n: number, overrides: Partial<ShopOrder> = {}) =>
   anOrder({
@@ -379,6 +392,433 @@ describe("OrderRepository usage", () => {
           assert.strictEqual(after.ordersLimitedAt !== null, true);
         }),
       ),
+  );
+
+  const shopGid = Schema.decodeUnknownSync(ShopGid)("gid://shopify/Shop/1");
+
+  /** `body` with the order repository, the meter over the same database, and the client. */
+  const runInMeter = <A, E>(
+    body: (
+      repository: OrderRepository,
+      meter: UsageRepository,
+      sql: SqlClient.SqlClient,
+    ) => Effect.Effect<A, E, SqlClient.SqlClient>,
+  ) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      return yield* body(
+        yield* testOrderRepository,
+        makeUsageRepository(sql, syncTransaction(sql)),
+        sql,
+      );
+    }).pipe(Effect.provide(ActorSqliteTest));
+
+  const openCycle = (meter: UsageRepository) =>
+    meter.setBillingCycle({
+      shopGid,
+      cycleStartAt: CYCLE_START,
+      cycleEndAt: CYCLE_END,
+      memberCount: 0,
+    });
+
+  /**
+   * What `makeRunRepository`'s `insertRun` does after it creates the order's
+   * first run. Called directly here so the meter is tested as the rule it is,
+   * rather than through a reconcile that would have to be staged first;
+   * `run-repository.test.ts` owns the other half — that a run is what
+   * fires it, and that a second run does not.
+   */
+  const count = (meter: UsageRepository, n: number, now = CYCLE_START) =>
+    meter.countOrder(orderId(n), now);
+
+  const usageEvents = (sql: SqlClient.SqlClient) =>
+    sql`select idempotencyKey, value from UsageEvent order by rowid`.values.pipe(
+      Effect.map((rows) =>
+        rows.map((row) => ({
+          idempotencyKey: String(row[0]),
+          value: Number(row[1]),
+        })),
+      ),
+    );
+
+  /** The seat rows alone, with their dates: what the seat mark cases assert. */
+  const seatEvents = (sql: SqlClient.SqlClient) =>
+    sql`
+      select idempotencyKey, value, occurredAt from UsageEvent
+      where eventHandle = ${USAGE_METER_MEMBER}
+      order by rowid
+    `.values.pipe(
+      Effect.map((rows) =>
+        rows.map((row) => ({
+          idempotencyKey: String(row[0]),
+          value: Number(row[1]),
+          occurredAt: Number(row[2]),
+        })),
+      ),
+    );
+
+  const seatKey = (cycleStartAt: number, mark: number) =>
+    `seat#${String(cycleStartAt)}#${String(mark)}`;
+
+  /**
+   * Two `ShopifyAppEvents` stubs, because the whole point of the outbox is the
+   * difference between them: an accepted event leaves no row, a refused one keeps
+   * its row and its error for the next pass.
+   */
+  const acceptingAppEvents = Layer.succeed(
+    ShopifyAppEvents,
+    ShopifyAppEvents.of({ send: () => Effect.void }),
+  );
+
+  const refusingAppEvents = Layer.succeed(
+    ShopifyAppEvents,
+    ShopifyAppEvents.of({
+      send: () =>
+        Effect.fail(
+          new ShopifyAppEventsError({
+            message: "refused",
+            cause: new Error("refused"),
+          }),
+        ),
+    }),
+  );
+
+  it.effect("counts an order against the pushed billing cycle", () =>
+    runInMeter((repository, meter) =>
+      Effect.gen(function* () {
+        yield* openCycle(meter);
+        // Five orders stored; two of them reached run creation. Storing an
+        // order is not what the merchant is billed for.
+        for (const n of [1, 2, 3, 4, 5]) yield* upsert(repository, paid(n), []);
+        yield* count(meter, 1);
+        yield* count(meter, 2);
+        const usage = yield* meter.getUsage();
+        assert.strictEqual(usage.ordersThisCycle, 2);
+        assert.strictEqual(usage.cycleStartAt, CYCLE_START);
+        assert.strictEqual(usage.cycleEndAt, CYCLE_END);
+      }),
+    ),
+  );
+
+  it.effect("opens a provisional cycle before a billing cycle is known", () =>
+    runInMeter((repository, meter) =>
+      Effect.gen(function* () {
+        yield* upsert(repository, paid(1), []);
+        yield* count(meter, 1);
+        const usage = yield* meter.getUsage();
+        assert.strictEqual(usage.ordersThisCycle, 1);
+        assert.strictEqual(usage.cycleStartAt, Date.UTC(2026, 5, 1));
+        assert.strictEqual(usage.cycleEndAt, null);
+      }),
+    ),
+  );
+
+  it.effect("rolls the cycle forward on the first order past its end", () =>
+    runInMeter((repository, meter) =>
+      Effect.gen(function* () {
+        yield* openCycle(meter);
+        yield* upsert(repository, paid(1), []);
+        yield* count(meter, 1);
+        const before = yield* meter.getUsage();
+        // The count resolves the cycle before it writes the marker, so the
+        // order lands in the period it opened.
+        yield* upsert(
+          repository,
+          paid(2, {
+            processedAt: CYCLE_END,
+            updatedAt: CYCLE_END,
+            syncedAt: CYCLE_END,
+          }),
+          [],
+        );
+        yield* count(meter, 2, CYCLE_END);
+        const after = yield* meter.getUsage();
+        assert.strictEqual(before.ordersThisCycle, 1);
+        assert.strictEqual(after.ordersThisCycle, 1);
+        assert.strictEqual(after.cycleStartAt, CYCLE_END);
+        assert.strictEqual(after.cycleEndAt, null);
+      }),
+    ),
+  );
+
+  it.effect("a manual attach past the cycle end counts into the new cycle", () =>
+    runInMeter((repository, meter) =>
+      Effect.gen(function* () {
+        yield* openCycle(meter);
+        yield* upsert(repository, paid(1), []);
+        yield* count(meter, 1);
+        yield* upsert(repository, paid(2), []);
+        // No upsert lands past the end: the count itself rolls the cycle.
+        yield* count(meter, 2, CYCLE_END + 1);
+        const usage = yield* meter.getUsage();
+        assert.strictEqual(usage.ordersThisCycle, 1);
+        assert.strictEqual(usage.cycleStartAt, CYCLE_END);
+        assert.strictEqual(usage.cycleEndAt, null);
+      }),
+    ),
+  );
+
+  it.effect("recounts the cycle from the orders when a new billing cycle is pushed", () =>
+    runInMeter((repository, meter) =>
+      Effect.gen(function* () {
+        yield* openCycle(meter);
+        yield* upsert(repository, paid(1), []);
+        yield* upsert(repository, paid(2), []);
+        yield* count(meter, 1);
+        yield* count(meter, 2);
+        // The next cycle: the two above fall outside it and drop out.
+        yield* meter.setBillingCycle({
+          shopGid,
+          cycleStartAt: CYCLE_END,
+          cycleEndAt: null,
+          memberCount: 0,
+        });
+        assert.strictEqual((yield* meter.getUsage()).ordersThisCycle, 0);
+      }),
+    ),
+  );
+
+  it.effect("counting an order queues one usage event", () =>
+    runInMeter((repository, meter, sql) =>
+      Effect.gen(function* () {
+        yield* openCycle(meter);
+        yield* upsert(repository, paid(1), []);
+        yield* count(meter, 1);
+        assert.deepStrictEqual(yield* usageEvents(sql), [
+          { idempotencyKey: `${orderId(1)}#count`, value: 1 },
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("a second sync never queues a second count", () =>
+    runInMeter((repository, meter, sql) =>
+      Effect.gen(function* () {
+        yield* openCycle(meter);
+        yield* upsert(repository, paid(1), []);
+        yield* count(meter, 1);
+        yield* upsert(repository, paid(1, { updatedAt: CYCLE_START + 1 }), []);
+        yield* count(meter, 1, CYCLE_START + 1);
+        assert.strictEqual((yield* meter.getUsage()).ordersThisCycle, 1);
+        assert.strictEqual((yield* usageEvents(sql)).length, 1);
+      }),
+    ),
+  );
+
+  it.effect(
+    "the first billing cycle discards events queued before the shop could be addressed",
+    () =>
+      runInMeter((repository, meter, sql) =>
+        Effect.gen(function* () {
+          // A trial: orders arrive, a provisional cycle counts them, no cycle
+          // can be pushed because Shopify reports none, and nothing can be
+          // sent because nothing has named the shop.
+          yield* upsert(repository, paid(1), []);
+          yield* upsert(repository, paid(2), []);
+          yield* count(meter, 1);
+          yield* count(meter, 2);
+          // The trial ends and the first real billing cycle starts after both.
+          yield* meter.setBillingCycle({
+            shopGid,
+            cycleStartAt: CYCLE_START + 10,
+            cycleEndAt: CYCLE_END,
+            memberCount: 0,
+          });
+          const usage = yield* meter.getUsage();
+          assert.strictEqual(usage.ordersThisCycle, 0);
+          assert.strictEqual(usage.pendingUsageEvents, 0);
+          assert.deepStrictEqual(yield* usageEvents(sql), []);
+        }),
+      ),
+  );
+
+  it.effect("a usage event is one row per idempotency key, kept until Shopify accepts it", () =>
+    runInMeter((repository, meter, sql) =>
+      Effect.gen(function* () {
+        const key = `${orderId(1)}#count`;
+        const keys = () =>
+          sql`select idempotencyKey, attempts from UsageEvent`.values.pipe(
+            Effect.map((rows) => rows.map(([k, n]) => [String(k), Number(n)])),
+          );
+        yield* openCycle(meter);
+        yield* upsert(repository, paid(1), []);
+        yield* count(meter, 1);
+        const duplicate = yield* sql`
+          insert into UsageEvent (idempotencyKey, eventHandle, orderId, value, occurredAt)
+          values (${key}, ${USAGE_METER_ORDER}, ${orderId(1)}, 1, ${CYCLE_START})
+        `.pipe(
+          Effect.as("inserted"),
+          Effect.catch(() => Effect.succeed("refused")),
+        );
+        yield* meter.flushUsageEvents("shop.myshopify.com").pipe(Effect.provide(refusingAppEvents));
+        const afterRefusal = yield* keys();
+        yield* meter
+          .flushUsageEvents("shop.myshopify.com")
+          .pipe(Effect.provide(acceptingAppEvents));
+        assert.strictEqual(duplicate, "refused");
+        assert.deepStrictEqual(afterRefusal, [[key, 1]]);
+        assert.deepStrictEqual(yield* keys(), []);
+      }),
+    ),
+  );
+
+  it.effect("flush deletes accepted events and keeps refused ones with the error", () =>
+    runInMeter((repository, meter) =>
+      Effect.gen(function* () {
+        yield* openCycle(meter);
+        yield* upsert(repository, paid(1), []);
+        yield* count(meter, 1);
+        const first = yield* meter
+          .flushUsageEvents("shop.myshopify.com")
+          .pipe(Effect.provide(refusingAppEvents));
+        const second = yield* meter
+          .flushUsageEvents("shop.myshopify.com")
+          .pipe(Effect.provide(acceptingAppEvents));
+        assert.deepStrictEqual(first, { sent: 0, remaining: 1 });
+        assert.deepStrictEqual(second, { sent: 1, remaining: 0 });
+      }),
+    ),
+  );
+
+  it.effect("leaves events queued until a billing cycle names the shop", () =>
+    runInMeter((repository, meter) =>
+      Effect.gen(function* () {
+        yield* upsert(repository, paid(1), []);
+        yield* count(meter, 1);
+        const flush = yield* meter
+          .flushUsageEvents("shop.myshopify.com")
+          .pipe(Effect.provide(acceptingAppEvents));
+        assert.deepStrictEqual(flush, { sent: 0, remaining: 1 });
+      }),
+    ),
+  );
+
+  const openCycleWithMemberCount = (meter: UsageRepository, memberCount: number) =>
+    meter.setBillingCycle({
+      shopGid,
+      cycleStartAt: CYCLE_START,
+      cycleEndAt: CYCLE_END,
+      memberCount,
+    });
+
+  /**
+   * A removal is never reported to the actor, so what these pin is the
+   * consequence: removing and re-adding inside a cycle bills the seat once,
+   * and a revalidation that reads the smaller member count lowers nothing.
+   */
+  it.effect(
+    "a new cycle resets the mark to the member count and queues it as the cycle's first seat event",
+    () =>
+      runInMeter((_, meter, sql) =>
+        Effect.gen(function* () {
+          yield* openCycleWithMemberCount(meter, 3);
+          yield* openCycleWithMemberCount(meter, 5);
+          yield* meter.setBillingCycle({
+            shopGid,
+            cycleStartAt: CYCLE_END,
+            cycleEndAt: null,
+            memberCount: 4,
+          });
+          assert.strictEqual((yield* meter.getUsage()).seatsThisCycle, 4);
+          assert.deepStrictEqual((yield* seatEvents(sql)).at(-1), {
+            idempotencyKey: seatKey(CYCLE_END, 4),
+            value: 4,
+            occurredAt: CYCLE_END,
+          });
+        }),
+      ),
+  );
+
+  it.effect("an unchanged cycle leaves the mark and queues nothing", () =>
+    runInMeter((_, meter, sql) =>
+      Effect.gen(function* () {
+        yield* openCycleWithMemberCount(meter, 3);
+        yield* openCycleWithMemberCount(meter, 3);
+        assert.strictEqual((yield* meter.getUsage()).seatsThisCycle, 3);
+        assert.strictEqual((yield* seatEvents(sql)).length, 1);
+      }),
+    ),
+  );
+
+  it.effect("a revalidation raises the mark to a member count past it and sends the rise", () =>
+    runInMeter((_, meter, sql) =>
+      Effect.gen(function* () {
+        yield* openCycleWithMemberCount(meter, 3);
+        yield* openCycleWithMemberCount(meter, 5);
+        assert.strictEqual((yield* meter.getUsage()).seatsThisCycle, 5);
+        assert.deepStrictEqual(
+          (yield* seatEvents(sql)).map(({ idempotencyKey, value }) => ({ idempotencyKey, value })),
+          [
+            { idempotencyKey: seatKey(CYCLE_START, 3), value: 3 },
+            { idempotencyKey: seatKey(CYCLE_START, 5), value: 2 },
+          ],
+        );
+      }),
+    ),
+  );
+
+  /**
+   * The counting path rolls a cycle past its end without the Backend, and the
+   * revalidation that follows pushes that same start: an unchanged cycle to
+   * `setBillingCycle`. The rolled cycle must still get its whole member count sent.
+   */
+  it.effect(
+    "a cycle the counting path rolled forward starts with no seat mark, and the next revalidation sends the whole count",
+    () =>
+      runInMeter((repository, meter, sql) =>
+        Effect.gen(function* () {
+          yield* openCycleWithMemberCount(meter, 3);
+          // An order past the cycle end rolls the cycle forward on its own.
+          yield* upsert(repository, paid(1), []);
+          yield* count(meter, 1, CYCLE_END + 1);
+          const mark = (yield* meter.getUsage()).seatsThisCycle;
+          yield* meter.setBillingCycle({
+            shopGid,
+            cycleStartAt: CYCLE_END,
+            cycleEndAt: null,
+            memberCount: 3,
+          });
+          assert.strictEqual(mark, 0);
+          assert.deepStrictEqual(
+            (yield* seatEvents(sql)).map(({ idempotencyKey, value }) => ({
+              idempotencyKey,
+              value,
+            })),
+            [
+              { idempotencyKey: seatKey(CYCLE_START, 3), value: 3 },
+              { idempotencyKey: seatKey(CYCLE_END, 3), value: 3 },
+            ],
+          );
+        }),
+      ),
+  );
+
+  it.effect("the flush sends each event under its own meter handle", () =>
+    runInMeter((repository, meter) =>
+      Effect.gen(function* () {
+        yield* openCycleWithMemberCount(meter, 2);
+        yield* upsert(repository, paid(1), []);
+        yield* count(meter, 1);
+        const sent: { eventHandle: string; value: number }[] = [];
+        yield* meter.flushUsageEvents("shop.myshopify.com").pipe(
+          Effect.provide(
+            Layer.succeed(
+              ShopifyAppEvents,
+              ShopifyAppEvents.of({
+                send: ({ eventHandle, value }) =>
+                  Effect.sync(() => {
+                    sent.push({ eventHandle, value });
+                  }),
+              }),
+            ),
+          ),
+        );
+        assert.deepStrictEqual(sent, [
+          { eventHandle: USAGE_METER_MEMBER, value: 2 },
+          { eventHandle: USAGE_METER_ORDER, value: 1 },
+        ]);
+      }),
+    ),
   );
 
   it.effect("reports whether the upsert created the row", () =>

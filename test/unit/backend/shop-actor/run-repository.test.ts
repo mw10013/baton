@@ -20,6 +20,10 @@ import {
 } from "../../../../src/backend/shop-actor/run-repository.ts";
 import { syncTransaction } from "../../../../src/backend/shop-actor/transaction.ts";
 import {
+  makeUsageRepository,
+  type UsageRepository as UsageRepositoryShape,
+} from "../../../../src/backend/shop-actor/usage-repository.ts";
+import {
   makeWorkflowRepository,
   type WorkflowRepository as WorkflowRepositoryShape,
 } from "../../../../src/backend/shop-actor/workflow-repository.ts";
@@ -31,10 +35,10 @@ import { ActorSqliteTest } from "../layers.ts";
 
 /**
  * The actor's run repository over a fresh in-memory SQLite migrated by the actor's own schema:
- * legacy `run-repository.test.ts`'s cases, titles and describe names unchanged, but the
- * `RunRepository metering` describe (billing: the meter here is the `countOrder` argument,
- * pinned by `RunRepository countOrder` below). Each repository is a test-local service so the
- * cases read as legacy's.
+ * legacy `run-repository.test.ts`'s cases, titles and describe names unchanged. The meter is the
+ * `countOrder` argument: `RunRepository countOrder` pins its calls through a recording stub, and
+ * `RunRepository metering` runs legacy's cases over the real meter (`makeUsageRepository`). Each
+ * repository is a test-local service so the cases read as legacy's.
  */
 class OrderRepository extends Context.Service<OrderRepository, OrderRepositoryShape>()(
   "test/OrderRepository",
@@ -53,6 +57,11 @@ class CountedOrders extends Context.Service<
   CountedOrders,
   Ref.Ref<ReadonlyArray<{ readonly orderId: string; readonly now: number }>>
 >()("test/CountedOrders") {}
+
+/** The real meter, for `RunRepository metering`. */
+class UsageRepository extends Context.Service<UsageRepository, UsageRepositoryShape>()(
+  "test/UsageRepository",
+) {}
 
 const RepositoriesTest = Layer.effectContext(
   Effect.gen(function* () {
@@ -3437,6 +3446,152 @@ describe("RunRepository countOrder", () => {
         });
         strictEqual(counts.created, 0);
         strictEqual((yield* calls()).length, 1);
+      }),
+    ),
+  );
+});
+
+describe("RunRepository metering", () => {
+  /** The repositories with the real meter in the run repository's `countOrder`. */
+  const MeteredRepositoriesTest = Layer.effectContext(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const transaction = syncTransaction(sql);
+      const usageRepository = makeUsageRepository(sql, transaction);
+      return Context.make(OrderRepository, makeOrderRepository(sql, transaction)).pipe(
+        Context.add(WorkflowRepository, makeWorkflowRepository(sql, transaction)),
+        Context.add(RunRepository, makeRunRepository(sql, transaction, usageRepository.countOrder)),
+        Context.add(UsageRepository, usageRepository),
+      );
+    }),
+  ).pipe(Layer.provideMerge(ActorSqliteTest));
+
+  const runInRepository = <A, E>(
+    program: Effect.Effect<
+      A,
+      E,
+      OrderRepository | WorkflowRepository | RunRepository | UsageRepository | SqlClient.SqlClient
+    >,
+  ) => program.pipe(Effect.provide(MeteredRepositoriesTest));
+
+  const usage = () => UsageRepository.pipe(Effect.flatMap((meter) => meter.getUsage()));
+
+  const usageEvents = () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const rows = yield* sql`select idempotencyKey, value from UsageEvent order by rowid`.values;
+      return rows.map((row) => ({
+        idempotencyKey: String(row[0]),
+        value: Number(row[1]),
+      }));
+    });
+
+  it.live("an order is counted once, when its first run is created", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        yield* seed;
+        // Two matched lines, so two runs are created in the one reconcile —
+        // and the order is still one order.
+        const counts = yield* upsertAndReconcile(order(), [lineItem(1, ["a"]), lineItem(2, ["b"])]);
+        strictEqual(counts.created, 2);
+        strictEqual((yield* usage()).ordersThisCycle, 1);
+        deepStrictEqual(yield* usageEvents(), [{ idempotencyKey: `${ORDER_ID}#count`, value: 1 }]);
+
+        // A second knock re-reconciles and creates nothing; `countedAt` is
+        // what keeps it from billing again.
+        yield* upsertAndReconcile(order({ updatedAt: PROCESSED_AT + 1 }), [
+          lineItem(1, ["a"]),
+          lineItem(2, ["b"]),
+        ]);
+        strictEqual((yield* usage()).ordersThisCycle, 1);
+        strictEqual((yield* usageEvents()).length, 1);
+      }),
+    ),
+  );
+
+  it.live("a resize rewrites the quantity and counts nothing", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        yield* seed;
+        const sql = yield* SqlClient.SqlClient;
+        const countedAt = () =>
+          sql`select countedAt from ShopOrder where id = ${ORDER_ID}`.values.pipe(
+            Effect.map((rows) => rows[0]?.[0] ?? null),
+          );
+        yield* upsertAndReconcile(order(), [lineItem(1, ["a"])]);
+        const counted = yield* countedAt();
+        strictEqual(typeof counted, "number");
+        const events = yield* usageEvents();
+        strictEqual(events.length, 1);
+
+        const counts = yield* upsertAndReconcile(order({ updatedAt: PROCESSED_AT + 1 }), [
+          lineItem(1, ["a"], { currentQuantity: 3 }),
+        ]);
+        strictEqual(counts.resized, 1);
+        const [detail] = yield* runsForOrder();
+        strictEqual(detail?.run.quantity, 3);
+        strictEqual(yield* countedAt(), counted);
+        deepStrictEqual(yield* usageEvents(), events);
+        strictEqual((yield* usage()).ordersThisCycle, 1);
+      }),
+    ),
+  );
+
+  it.live("a paid order with no matching line is not counted", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        yield* seed;
+        // Paid, stored, displayed — and no tag any workflow claims, so Baton
+        // never carried the work and the merchant is not billed for it.
+        const counts = yield* upsertAndReconcile(order(), [lineItem(1, [])]);
+        strictEqual(counts.created, 0);
+        strictEqual((yield* usage()).ordersThisCycle, 0);
+        deepStrictEqual(yield* usageEvents(), []);
+      }),
+    ),
+  );
+
+  it.live("a manual attach counts the order if nothing has yet", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const { a } = yield* seed;
+        const runs = yield* RunRepository;
+        const orders = yield* OrderRepository;
+        // Unpaid, so reconcile creates nothing and counts nothing; the
+        // merchant attaches a workflow by hand.
+        yield* upsertAndReconcile(order({ fullyPaid: false }), [lineItem(1, [])]);
+        strictEqual((yield* usage()).ordersThisCycle, 0);
+        const stored = Option.getOrThrow(yield* orders.getLineItem("gid://shopify/LineItem/1"));
+        yield* runs.setRun({
+          workflow: yield* savedDetail(a.id),
+          teams: TEAMS,
+          order: stored.order,
+          lineItem: stored.lineItem,
+        });
+        strictEqual((yield* usage()).ordersThisCycle, 1);
+        deepStrictEqual(yield* usageEvents(), [{ idempotencyKey: `${ORDER_ID}#count`, value: 1 }]);
+      }),
+    ),
+  );
+
+  it.live("cancelling an order after its run was created queues nothing", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        yield* seed;
+        yield* upsertAndReconcile(order(), [lineItem(1, ["a"])]);
+        strictEqual((yield* usage()).ordersThisCycle, 1);
+        const counts = yield* upsertAndReconcile(
+          order({
+            updatedAt: PROCESSED_AT + 1,
+            cancelledAt: PROCESSED_AT + 1,
+          }),
+          [lineItem(1, ["a"])],
+        );
+        strictEqual(counts.closed, 1);
+        // The count is never given back: the shop carried the work up to the
+        // moment the merchant stopped it.
+        strictEqual((yield* usage()).ordersThisCycle, 1);
+        deepStrictEqual(yield* usageEvents(), [{ idempotencyKey: `${ORDER_ID}#count`, value: 1 }]);
       }),
     ),
   );
