@@ -7,6 +7,7 @@
 import * as Schema from "effect/Schema";
 import { AdminShopPlanCache, ShopUsage } from "../domain/billing.ts";
 import { ShopKey, ShopSessionRedacted, ShopSessionRedactedPage } from "../domain/platform.ts";
+import { ListSearch } from "../domain/shop-work.ts";
 import { EntitlementsData } from "./billing.ts";
 
 /** The Shops list holds this many shops a page, either way. */
@@ -14,12 +15,12 @@ export const SHOP_SESSIONS_PAGE_SIZE = 25;
 
 /**
  * `BackendApi.shopSessionsPage`'s input: a keyset cursor on `shop` one way or the other, never
- * both (the page's loader keeps `after` alone), and the search by shop.
+ * both (the page's loader keeps `after` alone), and the search by shop, matched anywhere in it.
  */
 export const ShopSessionsPageRequest = Schema.Struct({
   after: Schema.optional(ShopKey),
   before: Schema.optional(ShopKey),
-  filter: Schema.optional(Schema.NonEmptyString),
+  filter: Schema.optional(ListSearch),
 });
 export type ShopSessionsPageRequest = typeof ShopSessionsPageRequest.Type;
 

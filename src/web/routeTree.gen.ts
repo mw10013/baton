@@ -17,6 +17,7 @@ import { Route as ShopRouteImport } from './routes/shop'
 import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as AdminMembersRouteImport } from './routes/admin.members'
+import { Route as AdminShopsRouteImport } from './routes/admin.shops'
 import { Route as ApiDevRouteImport } from './routes/api.dev'
 import { Route as AppIndexRouteImport } from './routes/app.index'
 import { Route as AppOrdersRouteImport } from './routes/app.orders'
@@ -27,6 +28,7 @@ import { Route as DevKitRouteImport } from './routes/dev.kit'
 import { Route as ShopIndexRouteImport } from './routes/shop.index'
 import { Route as ShopKeyRouteImport } from './routes/shop.$key'
 import { Route as WebhooksSplatRouteImport } from './routes/webhooks.$'
+import { Route as AdminShopShopRouteImport } from './routes/admin.shop.$shop'
 import { Route as ApiActorKeyRouteImport } from './routes/api.actor.$key'
 import { Route as ApiAuthSplatRouteImport } from './routes/api.auth.$'
 import { Route as AppMembersIndexRouteImport } from './routes/app.members.index'
@@ -84,6 +86,11 @@ const AdminMembersRoute = AdminMembersRouteImport.update({
   path: '/members',
   getParentRoute: () => AdminRoute,
 } as any)
+const AdminShopsRoute = AdminShopsRouteImport.update({
+  id: '/shops',
+  path: '/shops',
+  getParentRoute: () => AdminRoute,
+} as any)
 const ApiDevRoute = ApiDevRouteImport.update({
   id: '/api/dev',
   path: '/api/dev',
@@ -133,6 +140,11 @@ const WebhooksSplatRoute = WebhooksSplatRouteImport.update({
   id: '/webhooks/$',
   path: '/webhooks/$',
   getParentRoute: () => rootRouteImport,
+} as any)
+const AdminShopShopRoute = AdminShopShopRouteImport.update({
+  id: '/shop/$shop',
+  path: '/shop/$shop',
+  getParentRoute: () => AdminRoute,
 } as any)
 const ApiActorKeyRoute = ApiActorKeyRouteImport.update({
   id: '/api/actor/$key',
@@ -224,6 +236,7 @@ export interface FileRoutesByFullPath {
   '/shop': typeof ShopRouteWithChildren
   '/sign-in': typeof SignInRoute
   '/admin/members': typeof AdminMembersRoute
+  '/admin/shops': typeof AdminShopsRoute
   '/api/dev': typeof ApiDevRoute
   '/app/orders': typeof AppOrdersRouteWithChildren
   '/app/workflows': typeof AppWorkflowsRouteWithChildren
@@ -235,6 +248,7 @@ export interface FileRoutesByFullPath {
   '/admin/': typeof AdminIndexRoute
   '/app/': typeof AppIndexRoute
   '/shop/': typeof ShopIndexRoute
+  '/admin/shop/$shop': typeof AdminShopShopRoute
   '/api/actor/$key': typeof ApiActorKeyRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/app/members/$memberId': typeof AppMembersMemberIdRoute
@@ -257,6 +271,7 @@ export interface FileRoutesByTo {
   '/login-callback': typeof LoginCallbackRoute
   '/sign-in': typeof SignInRoute
   '/admin/members': typeof AdminMembersRoute
+  '/admin/shops': typeof AdminShopsRoute
   '/api/dev': typeof ApiDevRoute
   '/auth/exit-iframe': typeof AuthExitIframeRoute
   '/auth/session-token': typeof AuthSessionTokenRoute
@@ -265,6 +280,7 @@ export interface FileRoutesByTo {
   '/admin': typeof AdminIndexRoute
   '/app': typeof AppIndexRoute
   '/shop': typeof ShopIndexRoute
+  '/admin/shop/$shop': typeof AdminShopShopRoute
   '/api/actor/$key': typeof ApiActorKeyRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/app/members/$memberId': typeof AppMembersMemberIdRoute
@@ -291,6 +307,7 @@ export interface FileRoutesById {
   '/shop': typeof ShopRouteWithChildren
   '/sign-in': typeof SignInRoute
   '/admin/members': typeof AdminMembersRoute
+  '/admin/shops': typeof AdminShopsRoute
   '/api/dev': typeof ApiDevRoute
   '/app/orders': typeof AppOrdersRouteWithChildren
   '/app/workflows': typeof AppWorkflowsRouteWithChildren
@@ -302,6 +319,7 @@ export interface FileRoutesById {
   '/admin/': typeof AdminIndexRoute
   '/app/': typeof AppIndexRoute
   '/shop/': typeof ShopIndexRoute
+  '/admin/shop/$shop': typeof AdminShopShopRoute
   '/api/actor/$key': typeof ApiActorKeyRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/app/members/$memberId': typeof AppMembersMemberIdRoute
@@ -329,6 +347,7 @@ export interface FileRouteTypes {
     | '/shop'
     | '/sign-in'
     | '/admin/members'
+    | '/admin/shops'
     | '/api/dev'
     | '/app/orders'
     | '/app/workflows'
@@ -340,6 +359,7 @@ export interface FileRouteTypes {
     | '/admin/'
     | '/app/'
     | '/shop/'
+    | '/admin/shop/$shop'
     | '/api/actor/$key'
     | '/api/auth/$'
     | '/app/members/$memberId'
@@ -362,6 +382,7 @@ export interface FileRouteTypes {
     | '/login-callback'
     | '/sign-in'
     | '/admin/members'
+    | '/admin/shops'
     | '/api/dev'
     | '/auth/exit-iframe'
     | '/auth/session-token'
@@ -370,6 +391,7 @@ export interface FileRouteTypes {
     | '/admin'
     | '/app'
     | '/shop'
+    | '/admin/shop/$shop'
     | '/api/actor/$key'
     | '/api/auth/$'
     | '/app/members/$memberId'
@@ -395,6 +417,7 @@ export interface FileRouteTypes {
     | '/shop'
     | '/sign-in'
     | '/admin/members'
+    | '/admin/shops'
     | '/api/dev'
     | '/app/orders'
     | '/app/workflows'
@@ -406,6 +429,7 @@ export interface FileRouteTypes {
     | '/admin/'
     | '/app/'
     | '/shop/'
+    | '/admin/shop/$shop'
     | '/api/actor/$key'
     | '/api/auth/$'
     | '/app/members/$memberId'
@@ -498,6 +522,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminMembersRouteImport
       parentRoute: typeof AdminRoute
     }
+    '/admin/shops': {
+      id: '/admin/shops'
+      path: '/shops'
+      fullPath: '/admin/shops'
+      preLoaderRoute: typeof AdminShopsRouteImport
+      parentRoute: typeof AdminRoute
+    }
     '/api/dev': {
       id: '/api/dev'
       path: '/api/dev'
@@ -567,6 +598,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/webhooks/$'
       preLoaderRoute: typeof WebhooksSplatRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/admin/shop/$shop': {
+      id: '/admin/shop/$shop'
+      path: '/shop/$shop'
+      fullPath: '/admin/shop/$shop'
+      preLoaderRoute: typeof AdminShopShopRouteImport
+      parentRoute: typeof AdminRoute
     }
     '/api/actor/$key': {
       id: '/api/actor/$key'
@@ -685,12 +723,16 @@ declare module '@tanstack/react-router' {
 
 interface AdminRouteChildren {
   AdminMembersRoute: typeof AdminMembersRoute
+  AdminShopsRoute: typeof AdminShopsRoute
   AdminIndexRoute: typeof AdminIndexRoute
+  AdminShopShopRoute: typeof AdminShopShopRoute
 }
 
 const AdminRouteChildren: AdminRouteChildren = {
   AdminMembersRoute: AdminMembersRoute,
+  AdminShopsRoute: AdminShopsRoute,
   AdminIndexRoute: AdminIndexRoute,
+  AdminShopShopRoute: AdminShopShopRoute,
 }
 
 const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)

@@ -34,11 +34,14 @@ export function ListSearchField({
   value,
   placeholder,
   onSubmit,
+  slot,
 }: {
   readonly value: ListSearch | null;
   /** "Search by <field>": the field the list's search reads. */
   readonly placeholder: string;
   readonly onSubmit: (next: ListSearch | null) => void;
+  /** `filters` puts the field in its `s-table`'s filters slot, as the admin console's Shops list does. */
+  readonly slot?: "filters";
 }) {
   const [draft, setDraft] = useState<string>(value ?? "");
   const [seeded, setSeeded] = useState<string | null>(value);
@@ -77,6 +80,7 @@ export function ListSearchField({
   }, [element]);
   return (
     <s-search-field
+      {...(slot === undefined ? {} : { slot })}
       ref={setElement}
       label="Search"
       labelAccessibilityVisibility="exclusive"
