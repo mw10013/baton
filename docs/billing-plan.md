@@ -176,6 +176,132 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 
 ### Plan review
 
+**2026-10-18, lead, before implementation.** Checked against HEAD f556bb2, `refs/baton-legacy/` and `refs/alchemy` (installed `alchemy@2.0.0-beta.81`, identical). The steps stand; each is built to the corrected detail below.
+
+**Step 0**
+
+- `activeSubscription(appId, shopId)` is on the Partner API at `2026-10` (shopify.dev, Partner `2026-10`, `queries/activeSubscription`): `items { handle }`, `currentBillingCycle { startTime endTime }` (null in a trial), `trialEndsAt`. Legacy's query is unchanged. The spike only has to confirm it answers for Baton Dev.
+- Legacy pinned `PARTNER_API_VERSION = "2026-07"` as a private constant. It read the App Events version, org id, app id and handle from wrangler vars (`2798461`, `417214922753`, `baton-local`, App Events `2026-07`). Exporting `APP_EVENTS_API_VERSION` as a code constant is new: a deviation the research approved (Q7).
+- The stores runbook lists the `mw10013-*` stores under the Dev Dashboard organization `130059740`, and legacy's Partner org is `2798461`. Human step 2 asks whether these are one organization. If they are not, `activeSubscription` answers null or an error, and Step 0's `WAITING: Partner API` applies.
+
+**Step 1**
+
+- `src/domain/billing.ts` and `test/unit/domain/billing.test.ts` already exist (`membersAtCeiling` and its title). Step 1 extends both files rather than creating them.
+- Legacy's `ENTITLEMENTS` is **not exported** (`const … satisfies Record<Plan, Entitlements>`); keep it module-private. Every other symbol in §3 matches legacy's exports.
+- `openOrdersAtCeiling` stays in `src/backend/shop-actor/order-repository.ts`. `ShopUsage`'s two `{@link openOrdersAtCeiling}` therefore name it in backticks, because the domain may not import from the backend.
+- Domain titles:
+  - Legacy's third title is "the shop is at **its** order ceiling when the open orders have reached maxOpenOrders". The research has "the order ceiling" and calls it existing. It is not here; port it with legacy's text, against `openOrdersAtCeiling`'s home or as a plain domain test.
+  - Legacy has no tests for `provisionalCycleStart`, `usageEventIsExpired`, `planOfHandle` or `adminShopPlanCache`. Those titles are new.
+
+**Step 2**
+
+- `makeUsageRepository` also needs the following privates and SQL:
+  - legacy's `ShopUsageCycle` schema and `decodeCycle`;
+  - `readUsage`;
+  - `getUsage`'s open-orders count, with legacy's literal `fulfillmentStatus <> 'FULFILLED' and cancelledAt is null`.
+- `markOrdersLimited`, `clearOrdersLimited` and `lastSweepAt` stay on the order repository (research Q2). Legacy's `markSeedOrdersCounted` is not needed, because the fixture writes `countedAt: 0` (`src/backend/fixture.ts`).
+- `flushUsageEvents(shop)` takes the shop, as legacy's does. `sweepBatch` is `ShopLimits.sweepBatch` (200, `src/domain/platform.ts`).
+- "OrderRepository usage" has 18 titles. **Two** are already ported in `test/unit/backend/shop-actor/order-repository.test.ts`: the ceiling title and "reports whether the upsert created the row". Port the other 16 into that `describe`.
+- "RunRepository metering" has 5 titles, as the research says. It sits beside the existing "RunRepository countOrder" describe (4 titles), which used the recording stub.
+- `ShopifyAppEvents` facts from legacy:
+  - token endpoint `https://api.shopify.com/auth/access_token`, client credentials;
+  - events endpoint `https://api.shopify.com/app/<version>/events`;
+  - `User-Agent: Baton/<handle>`;
+  - service method `send(event)`.
+  - It needs the app handle, so the handle is a per-app constant the Backend binds (Step 4's configuration); in Step 2, pass the handle in through the layer.
+
+**Step 3**
+
+- **The fixture contradicts the step.** `ShopActor.loadFixture` today runs `DELETE FROM UsageEvent`, `DELETE FROM ShopUsage` and `INSERT INTO ShopUsage (id) VALUES (1)` (`src/backend/shop-actor.ts`, `loadFixture`). That wipes the cycle and the `shopGid`, so a dev or e2e shop's outbox waits up to 24 h for the next revalidation.
+  - Build to legacy instead: `LoadFixture` leaves `ShopUsage` and `UsageEvent` untouched, and fix its JSDoc.
+  - Lowercase the SQL lines touched.
+  - Port "reseeding leaves the usage counter unchanged". It is from legacy `shop-agent-workflows.test.ts`, a file the plan does not name; put it in integ, or in unit over the actor's fixture path.
+- **`ShopActors.revoke` is positional**: `(key, by: "member" | "session", id)`, and `ShopActorShape.revoke({ by, id })` (`src/backend/shop-actor/tag.ts`).
+  - Change both to take `{ by: "member" | "session"; id } | { by: "all" }`. `"all"` closes every socket (merchant and members) with `3401`, using the reason "app subscription lapsed" (legacy).
+  - `ShopActors.layerTest` grows the three new methods and records `"all"`.
+- **F's flush sites are four plus one.** `runs.ts` has `reconcileAll` and Attach; `orders.ts` has the webhook and Sync from Shopify. The fifth is `ShopActor.onOrdersStream`'s `Effect.ensuring(flushUsage)` in `shop-actor.ts`, which no unit test pins.
+- `databaseSize` is exposed: Alchemy's `DurableObjectStorage` has `sql.databaseSize`, and the actor already holds `state.raw.storage`.
+- `ShopifyAppEvents` is yielded in `makeShopActor`'s outer phase beside `ShopifyAdmin` and provided in `provideBackend`'s `Layer.mergeAll`. Its `HttpClient` is satisfied at its own layer, because the actor provides `FetchHttpClient` only inside.
+- **Uninstall.** `Webhooks.appUninstalled` runs `shopSessions.remove`, then `actors.destroy`. The flush goes **first**, before `remove`. Its JSDoc already promises this.
+- Uninstall log lines are legacy's:
+  - `webhooks.app.uninstalled: shop=… pending=…: usage events unsent at uninstall` (Warn, only when more than 0);
+  - `webhooks.app.uninstalled: shop=…: usage event flush failed`.
+- **The test Backend cannot swap services today.** `ShopifyFake` patches the Shopify library's module-global `fetch`, and `provideBackend` builds the real layers. Change `provideBackend` to take the `ShopifyPartner | ShopifyAppEvents` layer as an argument:
+  - `makeBackend` passes the real ones;
+  - `TestBackend` passes `PartnerFake` and `AppEventsFake` from `test/integ/`;
+  - the bundle check (§5) then holds by construction.
+  - `IntegRpcs`' handler context (`test/integ/backend.ts`, `Effect.context<…>`) grows the two fakes.
+- The `makeBilling` notify on `ORDERS_KEY` is research Q11, **not legacy**: legacy's `setBillingCycle` writes, then flushes. Record it as a deviation from legacy, by design.
+- Shop-agent-usage-flush has 6 titles. Two of them ("attaching a workflow sends the usage event it queued", "a cycle push sends the seat event it queued") are also research §4 row 2's integ titles. Port each title **once**, in unit over the services, and give the integ end-to-end tests their own new titles. A title duplicated across layers fails §5's byte-for-byte count.
+
+**Step 4**
+
+- Cron:
+  - `Cloudflare.Workers.cron(expr, handler)` exists (`CronEventSource.ts`). It needs `Cloudflare.Workers.CronEventSourceLive` provided, which nothing provides today.
+  - It **swallows the handler's failures** (`catchCause(() => Effect.void)`), so `revalidateStalePlans`'s caller logs its own failures (legacy's `scheduled.revalidatePlans: <cause>` at Error).
+  - Declare it in `backendBody`. `TestBackend` then carries it too.
+  - The local runtime supports crons and fires them on timers. `/cdn-cgi/handler/scheduled?cron=…` fires one by hand.
+- `SubscriptionPlan` exports in legacy: `SubscriptionPlanError`, `SubscriptionPlan`, `revalidateStalePlans`, `resolveEntitlements`, `entitlementsOfStatus`. The constants, `planHandleExpiresAt` and `cachedStatus` are **private** there. Export them only if a test needs them; that is the implementer's call, recorded.
+  - **`resolveEntitlements` is missing from §3**: it is what legacy's `/app` loaders used. Port it, for `homePlan` and the orders index's `usage`.
+- `matchPlanHandle` is private in legacy and has **no legacy test**, so "zero and two matches" are new titles. Test them through `activeSubscription` with a fake `HttpClient`, or export it, and record which.
+- `MembershipRepository.countMembers` exists only as a private closure. Expose it on the service, and change `membership-repository.test.ts`'s note that it is "not ported".
+- `ShopSessionRepository`:
+  - `layerTest` (an in-memory map) grows the three methods too;
+  - `shop-session-repository.test.ts` uses only `layerTest`, so the two plan-column titles run over `makeD1Test` plus `layerWith` (`test/unit/backend/layers.ts`), which exercises the real SQL.
+  - Legacy's title "updateShopSessionPlan rewrites only the plan cache fields" names legacy's method. Keep it byte for byte (§0: titles unchanged), and record the stale name.
+- `ShopAccess` exposes only `resolve` and `resolveMember`; `merchant` and `member` are private.
+  - The merchant branch: decode (401), host (403), then `shopExists` (404, its own D1 query), then the plan (402 or 503).
+  - `unavailable` maps only defects to 503, so a typed `SubscriptionPlanError` needs its own mapping to 503. Log it as legacy does (`…: plan resolution failed`).
+- **Three exhaustive matches** on `ShopAccessDenied.status` grow a `402` arm:
+  - `refusalClose` in `src/backend/backend.ts`: 402 → `4402`. The plan says "the upgrade route", which lives here.
+  - `BackendApi.shopAccess` (the merchant and member layouts' loader gate) in `src/backend/api.ts`: a new tagged error, e.g. `PaymentRequired`, which the member layout turns into the redirect to `/shop/$key/lapsed`. The merchant layout never sees it, because `/app`'s `beforeLoad` redirects first, but it must still compile.
+  - `BackendApi.memberOf` in `src/backend/api.ts`: likewise.
+- `authenticateAdmin` today answers `AdminSession { shop, shopGid }` (`src/contract/shop.ts`) through the `shopifyAdmin` middleware in `src/web/server/shopify.ts`. That middleware is the Website-side reader of the new union; `authenticateApp` is its only user.
+- `ExitIframeDestination` (`src/web/server/shopify-urls.ts`) already admits the pricing URL.
+- `src/web/server/home.ts` **exists** (it holds `setupFacts`). Add `homePlan` there.
+- The orders index and the home page share `listOrders` (`BackendApi.listOrders`). Put the orders index's `usage` on a separate read (`BackendApi.usage` with a server function, `ApiUsage`) rather than growing `listOrders`, so the home page does not read usage twice.
+- Configuration:
+  - `SHOPIFY_DEV_STORE` is not read through `Config`. Only `app:dev` sources `.env`; the e2e server runs with `--env-file=.env`.
+  - Read the token through Alchemy `Config` at stack time in `wireBackend` (Alchemy loads `.env`) and bind it as a Worker secret, as `StageConfigValues` binds `SHOPIFY_API_SECRET`.
+  - Confirm the value reaches the Backend under both `vp run dev` and the e2e server, and record how.
+- Step 4's verify line: the count is 971 (75 files) at HEAD, recorded in slice F.
+
+**Step 5**
+
+- `ShopSocket` holds no close handling. Close outcomes are mapped in `src/web/client/shop-actor-client.ts` (`retryPolicy` → `applyCloseOutcome`), which cannot reach a router. Thread an `onPaymentRequired` callback (or the router) from the layouts into the client layer, so that `4402` calls `router.invalidate()`. Add `4402` to `TERMINAL_CODES` with its own `CloseOutcome`.
+- Legacy's `3401` also invalidated the router (`onSocketClose`). Here `3401` keeps today's reconnect, and the reconnect meets `4402`; that is enough.
+- "the tab reconnects on 3401 and not on 4403" is **not** in this repo; it lives only in a JSDoc table (`src/domain/platform.ts`). Its coverage is the unit tables in `test/unit/web/client/actor-connection.test.ts` ("retry policy", "close outcome"). Add `4402` rows there, and port the legacy title as a browser test in `test/browser/web/components/ShopSocket.test.tsx` beside a `4402` case.
+- Legacy's `/app` context carried `plan` and `planHandle`. Carrying only `managePlanUrl` is this plan's deliberate change (§0 rule).
+
+**Step 6**
+
+- `MeterTile`'s `<progress className="capacity-meter">` needs legacy's `.capacity-meter` rules (legacy `src/styles.css`). Port them into `src/web/styles.css`.
+- "their `Screen.ts` rows" means the JSDoc parts-table row each part carries (as `Strip.tsx` does), taken from legacy `src/lib/Screen.ts`. This repo has no `Screen.ts`.
+- Copy details:
+  - the Members headline is singular at one ("1 member, 3 included");
+  - the orders detail is "`K` over. Extra orders are billed at your plan's rate. Resets `<date>`." (one string with a trailing space before "Resets").
+- Spacing comes from `screen/layout.ts`. `Tiles` uses `repeat(auto-fit, minmax(300px, 1fr))`.
+- The members e2e title does **not** read the meter's `max`. Legacy seeds `MAX_ENTITLEMENTS.membersIncluded + 1` members (past every plan) and expects /Extra members are billed at your plan's rate/. Port it as legacy wrote it; only `plan.billing.spec.ts` reads `max`.
+
+**Step 8**
+
+- Legacy's lapsed page links with a TanStack `<Link to="/shop">Your stores</Link>` and uses a curly ’ in "store’s".
+- Integ titles, both present in legacy `member-area.test.ts`:
+  - "requireMember admits every member of a subscribed shop";
+  - "redirects a member of a lapsed shop to the lapsed page".
+
+**Step 9**
+
+- Playwright runs every project by default.
+  - A `*.billing.spec.ts` under `embedded/` matches `embedded`, and one elsewhere matches `chromium`. Add a `testIgnore` for `**/*.billing.spec.ts` to both.
+  - Define the `billing` project only when the script asks for it (an env flag set by `test:e2e:billing`), so that plain `vp run test:e2e` cannot pick it up.
+- Legacy's titles say "Plan card", legacy's own stale word. Keep them byte for byte.
+
+**Cross-cutting**
+
+- `shop-actor.ts`'s `loadFixture` has uppercase SQL (`INSERT INTO ShopOrder`, the `DELETE FROM`s). Lowercase it only where Step 3 edits it; otherwise leave it.
+- In legacy, "the daily check re-reads every shop whose cached plan is stale, and only those" is one of `subscription-plan.test.ts`'s 21 titles. Port it there, in unit. The integ test through `RevalidateStalePlans` gets its own new title.
+
 ### Deviations
 
 ### Issues
@@ -183,6 +309,12 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 ### Command results
 
 ### Human steps requested
+
+**2026-10-18, Step 0 (pending; unblocks the spike and every step after Step 3's unit work).** Check: `sed -E 's/=.*/=<hidden>/' .env` lists `SHOPIFY_PARTNER_API_TOKEN` (today it lists only `WEBSITE_PORT`, `SHOPIFY_DEV_STORE`, `SHOPIFY_E2E_STORE`).
+
+1. **Partner API token.** Partner Dashboard → Settings → Partner API clients → Create API client, permission **Manage apps** (nothing else). Copy the token and add one line to the main checkout's `.env` (`/Users/mw/Documents/src/baton/.env`): `SHOPIFY_PARTNER_API_TOKEN=<token>`. Worktrees: `vp run worktree:init` _copies_ the main checkout's `.env` (rewriting `WEBSITE_PORT` and the store keys), so a worktree created afterwards gets it; an existing worktree (`wt-01`) needs the line added to its own `.env` by hand.
+2. **Partner ids.** In the Partner Dashboard confirm (a) the organization id (the number in `partners.shopify.com/<org id>/…`; legacy `2798461`), (b) Baton Dev's app id (the number in `…/apps/<app id>`; legacy `417214922753`) and its handle (Apps → Baton Dev → App setup → URL handle, or the `handle` in `shopify.app.toml`; legacy `baton-local`), and (c) under Baton Dev → Pricing (App Pricing / managed pricing) that plans with handles `baton-basic` and `baton-pro` exist, each with the two usage meters `production-orders` and `members`. Reply with the three values and "plans ok" or what differs. Also confirm the `mw10013-*` stores are development stores of **that** organization: `docs/shopify-stores-runbook.md` records them under the Dev Dashboard organization `mw10013` (id `130059740`), which is not legacy's Partner id `2798461`; if they are two organizations, say so (Step 0 then stops at `WAITING: Partner API`).
+3. **A plan on each store.** Signed in as the store owner, open `https://admin.shopify.com/store/mw10013-dev-shop-00/charges/<handle>/pricing_plans` and `https://admin.shopify.com/store/mw10013-e2e-shop-00/charges/<handle>/pricing_plans` (`<handle>` from 2), choose a plan on each (e.g. `baton-pro`), approve the $0 charge. Reply with the plan picked on each store.
 
 ### Implementation review
 
