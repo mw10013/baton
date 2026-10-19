@@ -8,9 +8,10 @@ import { gotoApp, openApp } from "./app.ts";
 /**
  * The orders index's pages inside the Shopify admin, over fixture orders the spec adds with
  * `AddToFixture`: 25 placed yesterday, then two older ones, an open one and a cancelled one, each
- * with one item whose title is the spec's own. The index opens on a search for that title, which
- * reads every stored order whatever the Show filter, so the list is the spec's 27 orders alone
- * whatever else the store holds: 25 on the first page, the two old ones on the second.
+ * with one item whose title is the spec's own. The index opens on a search for that title, put in
+ * the URL rather than typed, which reads every stored order whatever the Show filter, so the list
+ * is the spec's 27 orders alone whatever else the store holds: 25 on the first page, the two old
+ * ones on the second.
  */
 test.describe.configure({ mode: "serial" });
 
@@ -46,9 +47,7 @@ test.beforeAll(async ({ browser, backend }) => {
     ),
   );
   ({ context, page } = await openApp(browser));
-  frame = await gotoApp(page, "app/orders");
-  await frame.getByRole("searchbox", { name: "Search" }).fill(title.toLowerCase());
-  await frame.getByRole("searchbox", { name: "Search" }).press("Enter");
+  frame = await gotoApp(page, `app/orders?q=${encodeURIComponent(title.toLowerCase())}`);
 });
 
 test.afterAll(async () => {
