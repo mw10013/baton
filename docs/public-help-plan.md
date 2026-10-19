@@ -144,11 +144,20 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 
 ### Deviations
 
+- **2026-10-19, Step 1 (corrects §2 "The name"):** `shopify app dev` does not push `name`; the admin shows the name of the deployed config, and the Dev Dashboard has no rename. The user ran `shopify app deploy --config shopify.app.toml`.
+- **2026-10-19, Step 3 (§3 Names, accepted by the lead):** `pages.ts`, `pictures.ts` and `reference.ts` live in `src/web/components/help/` beside the bodies, not a new `src/web/help/`: the source layout lists only `routes/`, `components/`, `client/`, `server/` under `src/web/`. Unit tests under `test/unit/web/components/help/`.
+
 ### Issues
+
+- **2026-10-19, Step 1, resolved:** after `name = "Baton"` and a restart (`vp run dev:stop`, `vp run dev`, 10:21), the Shopify admin on `mw10013-dev-shop-00` still reads **Baton Dev** in the sidebar, the breadcrumb ("Breadcrumbs for Baton Dev"), the app settings card and the apps table (checked with the Playwright CLI after two full reloads, 10:22–10:25). What the CLI says (its herdr pane; `.logs/dev/current` holds only Alchemy's output): the old session printed `app-config │ App config updated` at 10:20:57 when the toml changed under it; the new session's header still reads `App: Baton Dev` (the Dev Dashboard's name for the app, read before the push), then `app-preview │ Preparing dev preview …` and `✅ Ready`. So the dev preview took the config but the app's name in the admin did not follow: the name the admin shows appears to be the Dev Dashboard app's (its released version's), which a dev preview does not change. Stopped at `WAITING: name`. Resolved by the user's `shopify app deploy --config shopify.app.toml`; on reload the sidebar, breadcrumb, App Home title bar and apps table read **Baton**.
 
 ### Command results
 
+- **2026-10-19, Step 1:** `vp run dev:stop` ok 1.5s; `vp run dev` ok, server answering 34.1s; `vp run browser open` ready.
+
 ### Human steps requested
+
+- **2026-10-19, Step 1, done by the user (app deploy):** make the dev app's name **Baton** in the Shopify admin. Either (a) in the Dev Dashboard (dev.shopify.com → mw10013 → the app now named "Baton Dev", client id of `shopify.app.toml`) rename it to "Baton", or (b) from the main checkout run `shopify app deploy --config shopify.app.toml`, read its summary (the name change, and the `baton-order-link` extension as it is today) and confirm; it releases a new version of the dev app, installed only on dev and e2e stores. Then reload `https://admin.shopify.com/store/mw10013-dev-shop-00/apps/baton-local/app` and check the sidebar reads "Baton". Recommendation: (a), since it touches nothing but the name. Then restart this thread at Step 1.3's check.
 
 Known before the run:
 

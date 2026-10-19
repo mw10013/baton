@@ -8,15 +8,15 @@ How this project's Shopify dev stores are named, claimed, authorized and given t
 - **Claimed, all on `basic`:** `mw10013-dev-shop-00` to `-09`, `mw10013-e2e-shop-00` to `-09`, `mw10013-staging-shop-00`, `mw10013-production-shop-00`. They belong to the organization `mw10013` (id `130059740`) in the Dev Dashboard. `dev-shop-00` and `e2e-shop-00` are from an earlier scheme, kept and unused.
 - **Per checkout:** `.env` names `SHOPIFY_DEV_STORE` (the dev server's store) and `SHOPIFY_E2E_STORE` (the e2e server's). `worktree:init` writes both.
 - **Two apps on every store, each with its own access:**
-  - **Baton Dev**, the app itself. `shopify app dev` installs it on its store and grants its scopes with no click. Its scopes come from `shopify.app.toml`.
-  - **Shopify CLI Connector App**, installed by `shopify store auth` with the scopes the fixture's store half needs. `store execute` writes store data as this app, so the fixture never widens Baton Dev's scopes. Its token lives inside the CLI and renews itself.
+  - **Baton**, the app itself. `shopify app dev` installs it on its store and grants its scopes with no click. Its scopes come from `shopify.app.toml`.
+  - **Shopify CLI Connector App**, installed by `shopify store auth` with the scopes the fixture's store half needs. `store execute` writes store data as this app, so the fixture never widens Baton's scopes. Its token lives inside the CLI and renews itself.
 - **No script creates or deletes a store.** `vp run stores:check` only reads; a missing store is an error, with the command to create it by hand.
 - **One `shopify app dev` per store.** The CLI points the app's URL at its own tunnel per store, so two sessions on one store overwrite each other.
 
 ## Set up a checkout's stores (once per checkout)
 
 1. `vp run worktree:init` in a new worktree (main's `.env` is set by hand). It writes both store keys and checks both stores exist.
-2. `vp run dev`: the first start installs Baton Dev on the dev store ("Access scopes auto-granted").
+2. `vp run dev`: the first start installs Baton on the dev store ("Access scopes auto-granted").
 3. Authorize the fixture's store writes on the dev store, once. A browser page asks to install the Shopify CLI Connector App; a person clicks **Install**:
 
    ```sh
