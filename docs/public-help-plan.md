@@ -1,0 +1,159 @@
+# Plan: public pages and help
+
+Implements `docs/public-help-research.md` (slice I, the roadmap's last). Every question in its §5 was settled on 2026-10-19, all as recommended (§0 there has the one-line forms). Read the research's §0.1, §1 and §2 first; this plan does not repeat their reasoning.
+
+Legacy paths are relative to `refs/baton-legacy/`. Legacy is the spec: read the legacy file before building its counterpart, and port its copy, structure and JSDoc reasons, translated to this repo's idioms and the glossary's words.
+
+## 0. Rules for the implementer
+
+- **AGENTS.md.**
+  - Vite+ only; `vp check --fix` after every change.
+  - Effect Schema for parsing (no hand trimming); `Match` for tag dispatch; `Schema.TaggedError`; `Effect.fn("name")`.
+  - Layout only in `src/web/components/screen/` parts; every in-site link through `useNavigateOnClick` or a TanStack `<Link>` (the help pages are outside the admin, so a bare Polaris anchor is a full page load). A link from inside the embed into help keeps `target="_blank"` and a relative `href`.
+  - The JSDoc rules: never cite this plan, the research or any `docs/` file in code.
+- **Commits.** Work on `main`. Commit at the end of each green step. Stage paths explicitly; never `git add -A` or `git commit -a`. Do not push.
+- **Each step ends green.**
+  - `vp check --fix`, and `vp test <files>` for the tests the step touches.
+  - e2e only where a step changes what a spec exercises, and then that spec alone (`vp run test:e2e <spec>`, no `--`). Never the full e2e suite.
+  - The full `vp test` once, in Step 7.
+  - A step that cannot end green is recorded in §7 before moving on. Do not re-run a test through a failure you understand; record it.
+- **What does not change.** No table, no procedure, no `DevRpcs` growth, no stage config value. Never `db:reset` staging, `cloud:reset`, `deploy:staging` or `vp run stage-config`. `shopify.app.staging.toml` is untouched.
+- **The dev store is yours for the pictures**, and only through `vp run dev` and `vp run fixture`: the script ends with the dev fixture reloaded, also on failure.
+- **Bodies (research Q5):** legacy's prose is the spec. Read each body beside the screen it describes on the dev server and correct only what this repo's screen does differently (a label, a menu entry, a path such as legacy `/login` → `/sign-in`). Record each correction in §7 under Deviations, one line each. A difference in **behaviour** (the screen does something the prose says it does not, or lacks a feature the prose describes) is not yours to decide: record it under Issues as `DECISION:` and keep going with legacy's prose.
+- Do not rewrite the steps. Record in §7 what you built differently, and what surprised you, as you go.
+
+## 1. Outcome
+
+- The dev app is named **Baton** in the admin (sidebar, App Home title bar); its handle is still `baton-local`.
+- `/` is legacy's landing page (Baton mark, the one sentence, Sign in, Help, Privacy policy) with this repo's session-aware actions (Dashboard and Sign out when signed in). The playground is gone, Backend methods included.
+- `/privacy` is legacy's policy, "Last updated" the ship date.
+- `/help`, `/help/$section`, `/help/$section/$page`: legacy's tree (6 sections, 26 pages), every page's body, every reference table derived from the domain's labels, the not-found page.
+- 42 pictures under `public/assets/help/`, shot on this repo's screens by `vp run help:screenshots`, each in the inventory with an alt text that matches it.
+- Seven links into help (research Q8): App Home foot line; the setup guide's three help links; order page foot line; workflow editor foot line; sign-in page foot line; the member bar's Help; the landing's Help.
+- Tests: `test/unit/help.test.ts`, `test/e2e/help.spec.ts` (research Q10).
+
+## 2. What this plan rests on
+
+- **The name** is `name` in `shopify.app.toml`; `shopify app dev` (started by `vp run dev`) pushes it once and it stays. No code reads it (checked: `git grep "Baton Dev"` finds only `shopify.app.toml` and docs).
+- **The showcase is the dev fixture** (`src/contract/fixture.ts`'s data, loaded by `vp run fixture`, `scripts/fixture.ts` → `scripts/lib/fixture.ts` → `loadFixtureWhenInstalled`). Its orders are not in Shopify (`isFixtureOrder`), so the order page and the orders index show no Shopify controls on them (research Q4).
+- **The admin session** for the merchant pictures: `scripts/lib/shopify-admin-auth.ts` (`adminSessionFresh`, `exportShopifyAdminAuth`, `CHROME_PROFILE`), the same export the `shopify-admin` e2e setup writes to `storageStatePath` (`playwright.config.ts`). A stale export reads Chrome's cookies and may raise a macOS Keychain prompt.
+- **Embedded helpers** shared by scripts and e2e: `scripts/lib/embedded-app.ts` (`appFrame`, `awaitHydration`, `closeDevConsole`), `test/e2e/embedded/app.ts` (`gotoApp`, `editorFrame`, `clickHoisted`, `openEditor`, `closeEditor`), `test/e2e/embedded/orders-screens.ts` (`openOrder`, `openScreen`).
+- **Member sign-in on dev** is inline magic-link delivery (`MagicLinkDelivery`, `inline`): the sign-in page shows the link, as e2e's `requestMagicLink` uses.
+- **Existing parts:** `FootLine` (ported, unused outside the kit), `SetupGuide` (its `help` link is optional, today unset), `Things`, `Prose`, `MemberBar` → `TopBar`. Missing: `BatonMark`, `HelpList`, `HelpPicture`, `HelpTable`.
+- **Static assets:** `public/` is served by the Website (the app icons are there today).
+- **The public e2e specs** run in the `chromium` project (`http.spec.ts`, `sign-in.spec.ts`), against the e2e server.
+
+## 3. Names
+
+| Where                        | Name                                                                                                                                                          |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/web/help/pages.ts`      | `HelpPage`, `HelpSection`, `HELP_SECTIONS`, `findHelpSection`, `findHelpPage`, `helpTabTitle` (legacy `lib/helpPages.ts`)                                     |
+| `src/web/help/pictures.ts`   | `HelpPictureKind`, `HelpPicture`, `HELP_PICTURES`, `HelpPictureName`, `MERCHANT_WINDOW`, `MEMBER_SCREEN`, `HELP_PICTURES_PATH` (legacy `lib/helpPictures.ts`) |
+| `src/web/help/reference.ts`  | legacy `lib/helpReference.ts`'s exports, reading this repo's domain label constants                                                                           |
+| `src/web/components/help/`   | `bodies.tsx` (`HELP_BODIES`), one file per page under `<section>/<page>.tsx` (legacy `components/help/**`)                                                    |
+| `src/web/components/screen/` | `BatonMark`, `HelpList`, `HelpPicture`, `HelpTable` (legacy's parts), each with a kit entry in `KitPage`                                                      |
+| Routes                       | `help.tsx`, `help.index.tsx`, `help.$section.index.tsx`, `help.$section.$page.tsx`, `privacy.tsx`; `index.tsx` rewritten                                      |
+| Script                       | `scripts/help-screenshots.ts`; `package.json` `"help:screenshots": "node --env-file=.env scripts/help-screenshots.ts"`; `--section <slug>`                    |
+| Tests                        | `test/unit/help.test.ts`, `test/e2e/help.spec.ts`                                                                                                             |
+| Deleted                      | `src/web/components/Playground.tsx`, `src/web/server/playground.ts`, `src/contract/playground.ts`, `BackendApi`'s `hello` and `shout` and their wiring        |
+
+If `src/web/help/` does not fit the source layout (glossary "Source layout"), put the three modules where the layout says and record it.
+
+## 4. Steps
+
+### Step 1: The name (research Q3)
+
+1. `shopify.app.toml`: `name = "Baton"`. `handle` unchanged.
+2. `docs/shopify-stores-runbook.md`: "Baton Dev" → "Baton".
+3. Restart the dev server (`vp run dev:stop`, `vp run dev`). Check the App Home on `mw10013-dev-shop-00` reads **Baton** in the admin's title bar and sidebar (Chrome DevTools MCP or Playwright CLI). If it still reads Baton Dev, record what `.logs/dev/current` says about the config push and stop at `WAITING: name`.
+
+### Step 2: Landing and privacy (research Q6, Q7)
+
+1. Port `BatonMark` into `screen/` with a kit entry.
+2. `index.tsx` and `HomePage`: legacy `routes/index.tsx`'s content and `head` title, keeping the `shop=` redirect and the session-aware actions (Dashboard and Sign out signed in, Sign in signed out; Sign in also as legacy's link). Links to `/help` and `/privacy` through the router.
+3. Delete the playground (§3 Deleted). `git grep -i "hello\|shout\|playground" -- src test scripts` finds nothing of it afterwards.
+4. `privacy.tsx`: legacy's text verbatim; "Last updated" the date this step lands; breadcrumb to `/`.
+5. Update `HomePage`'s browser test if one exists; add none otherwise (the e2e covers it in Step 6).
+
+### Step 3: Help skeleton
+
+1. `pages.ts` with legacy's tree verbatim.
+2. `HelpList`, `HelpTable` (and `HelpPicture` in Step 6) into `screen/` with kit entries.
+3. The four help routes as legacy's, the not-found page included, links through the router.
+4. `test/unit/help.test.ts`: "every help page has a unique route and a title that is its heading", "a page body is registered only for a page the tree has" (lands with Step 4's registry).
+
+### Step 4: Bodies (research Q5)
+
+1. `reference.ts` from legacy's, reading this repo's label constants (`src/domain/`).
+2. The 26 bodies, one commit per section. Each read beside its screen on the dev server with the dev fixture loaded (`vp run fixture`); corrections per §0.
+3. `HelpPicture` placements: port them with the bodies, against `pictures.ts` ported now with legacy's entries (files, kinds, alts); the part renders nothing for a file not on disk yet, so the step stays green. (If that needs a branch in the part, it is removed in Step 6.)
+
+### Step 5: Links into help (research Q8)
+
+1. App Home: `FootLine` "Learn more in Help." (`/help`, `target="_blank"`); the setup guide's help links, legacy `app.index.tsx`'s `helpLink`, to the Getting started pages; remove the `SetupGuide` and `app.index.tsx` JSDoc that says help is missing.
+2. Order page: "Learn more in Reading an order." Workflow editor: "Learn more in Editing steps and tasks." Both `target="_blank"`.
+3. Sign-in page: "Learn more in Signing in." (same tab, router).
+4. `MemberBar`: **Help** → `/help/members`, as legacy's `MemberBar`.
+5. Browser tests for the parts and pages touched, where a test file exists for them.
+
+### Step 6: Pictures (research Q2, Q4, Q9)
+
+Human step first: the admin session export may need the Keychain. If `adminSessionFresh` says the export is stale and the export fails, record under Human steps ("accept the Keychain prompt, or run `vp run test:e2e --project shopify-admin`") and stop at `WAITING: admin session`.
+
+1. `scripts/help-screenshots.ts`: port legacy's script (its JSDoc, gates, `MERCHANT_SHAPES`, `overlapCheck`, `--section`, the closing fixture reload in a finalizer) onto this repo's helpers (§2). The store is `SHOPIFY_DEV_STORE`; the server is this checkout's dev server (`WEBSITE_PORT`); the member is `ana@example.com`. Port it section by section, shooting each section as you go (`--section <slug>`).
+2. Shoot all 42. Set every merchant entry's `aspectRatio` from the script's output. Rewrite every alt that no longer matches its new picture, in the same 30 to 60 words; the four fixture-order pictures (`how-baton-works-1`, `first-order-1`, `orders-list-1`, `order-page-1`) lose their Shopify controls (Q4). Look at each picture before accepting it.
+3. Add the remaining unit titles: "every picture in the inventory is a file under public/assets/help, and every file there is in the inventory", "every picture in the inventory is placed by a help page body", "a merchant picture's aspect ratio is its file's" (read the PNG's IHDR; no new dependency), "every picture's alt text is 30 to 60 words".
+4. Check the App Home picture reads **Baton** in its title bar.
+
+### Step 7: e2e and close (research Q10)
+
+1. `test/e2e/help.spec.ts`, legacy `e2e/help.public.spec.ts`'s six titles, signed out: "the hub lists every section", "a section hub lists its pages and a page's foot lists its siblings", "an unknown page is not found", "the landing page links to help", "the sign-in page links to Signing in", "each page with a body renders it and its pictures load". Run it alone.
+2. Full `vp test`; record counts and times.
+3. `docs/legacy-port-research.md`: §1.1 rows for landing, privacy, help; §3's I row as implemented; Status line "every slice done" (research Q11: no pruning).
+4. Record the staging Human steps (§7).
+
+## 5. Verification checklist
+
+- `grep '^name\|^handle' shopify.app.toml` → `name = "Baton"`, `handle = "baton-local"`; `shopify.app.staging.toml` unchanged (`git diff --stat`).
+- No playground left (`git grep -i -E "playground|\bshout\b|getHello" -- src test scripts` empty).
+- No `s-stack`, `s-grid`, `s-box` or layout prop outside `screen/` (`git grep -n -E "<s-(stack|grid|box)" -- src/web | grep -v components/screen/`).
+- No bare in-site Polaris anchor on the help and public pages without the router's `onClick` (read them).
+- 42 files under `public/assets/help/`, 42 inventory entries; every §4 test title exists (`rg -F`).
+- The App Home picture shows "Baton".
+
+## 6. Done when
+
+- §1 holds on the dev stage, every step is green and committed, §7 is filled in, and the staging Human steps are listed.
+
+## 7. Deviations and issues
+
+For the implementer. Append as you go. Keep each entry short, dated and tagged with its step (`**2026-10-19, Step 2:** …`).
+
+- A **deviation** is anything built differently from the step that specified it, and each body correction (§0). Say what, and why.
+- An **issue** is anything the plan did not predict. Say what you saw, what you did, and whether it is open. A behaviour difference is `DECISION:`.
+- **Command results** carry counts and times.
+- **Human steps requested** lists what only the lead or the user can do.
+
+### Plan review
+
+### Deviations
+
+### Issues
+
+### Command results
+
+### Human steps requested
+
+Known before the run:
+
+1. Possibly, the Keychain prompt for the admin session export (Step 6).
+2. Staging, after the push: `/`, `/privacy`, `/help` and a page with pictures on `https://baton-website-staging.mw10013.workers.dev`; from the embedded staging app, the App Home's foot line opens `/help` in a new tab; a member's Help link.
+
+### Implementation review
+
+## 8. Out of scope
+
+- The App Store listing and its assets.
+- Help search, "On this page", next and previous links.
+- Renaming Baton Staging, or any production app.
+- Pruning the research and plan docs (research Q11).
