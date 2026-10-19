@@ -435,6 +435,13 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 3. **`.env.staging`** (main checkout, untracked; check by names only, `sed -E 's/=.*/=<hidden>/' .env.staging`): `SHOPIFY_PARTNER_ORG_ID` (`2798461`), `SHOPIFY_PARTNER_APP_ID` (Baton Staging's id, already there), `SHOPIFY_APP_HANDLE` (Baton Staging's URL handle from Apps → Baton Staging → App setup; today it is not `baton-local`, so confirm it is Baton Staging's), `SHOPIFY_PARTNER_API_TOKEN` (the same organization token as `.env`, already there). `SHOPIFY_API_KEY` and `SHOPIFY_API_SECRET` stay as they are.
 4. **`vp run stage-config --stage staging`** (writes the record with the four new fields; the app stack's staging deploy fails without them).
 5. **Push `main`** (Workers Builds deploys staging).
+
+**2026-10-18, lead, checked in the user's Chrome (Chrome DevTools MCP):**
+
+- **Steps 1–3 are done.** Baton Staging's pricing page on `mw10013-staging-shop-00` (`…/charges/baton-staging/pricing_plans`) lists Baton Basic ($29, 200 orders and 3 members included) and Baton Pro ($79, 1,500 and 10), each with a 14-day trial and both meters ("Production orders", "Members"). It shows "Free to test", which a dev store sees on a public app.
+- **The handle is `baton-staging`**, read off the staging store's installed apps (`settings/apps/app_installations/app/baton-staging`). It matches `.env.staging`'s `SHOPIFY_APP_HANDLE`, and is now pinned in `shopify.app.staging.toml`. That is the same value Shopify already holds, so `shopify app deploy --config staging` is not needed for it.
+- **Still owed:** step 4 onward. Step 6's URL is `https://admin.shopify.com/store/mw10013-staging-shop-00/charges/baton-staging/pricing_plans`.
+
 6. **A plan on `mw10013-staging-shop-00`:** signed in as the owner, open `https://admin.shopify.com/store/mw10013-staging-shop-00/charges/<Baton Staging's handle>/pricing_plans`, choose a plan, approve the $0 charge.
 7. **Verify on staging:** the app opens on the plan (the home page's **Your plan** shows the tier's numbers); the Backend's logs show `SubscriptionPlan.revalidate: shop=mw10013-staging-shop-00.myshopify.com handle=…` and no init failure (`the ShopifyPartner binding is not bound`, a decode error, or 500s on every request), which checks the digits-only binding workaround (Issues, Step 4 and Step 5) on real Cloudflare; Manage plan opens the pricing page and a switch comes back refreshed; a real paid order whose item gets a run counts (Orders this billing cycle +1) and, once the shop is past its trial, its event shows `OK` in the Dev Dashboard's App Events log; a member of a lapsed shop reads Subscription inactive.
 

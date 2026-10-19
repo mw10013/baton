@@ -12,11 +12,14 @@
 # "shopify.web.toml", "./shopify.web.toml" does not match, and the app silently loads zero webs.
 # See refs/baton-legacy/docs/shopify-web-toml-conflict-research.md.
 #
-# Everything else mirrors shopify.app.toml (scopes, webhooks); keep the two in step. No `handle`: it
-# sets the App Home's admin URL slug, and changing one later breaks admin links.
+# Everything else mirrors shopify.app.toml (scopes, webhooks); keep the two in step. `handle` is the
+# one Shopify assigned (read off the staging store's installed apps, 2026-10-18), pinned because
+# billing builds the plan selection URL from it (`SHOPIFY_APP_HANDLE` in `.env.staging` must match).
+# Never change it: it is the App Home's admin URL slug, and a new one breaks admin links.
 
 client_id = "54b4c701f5c568d4cf4a11fd42d6fe7b"
 name = "Baton Staging"
+handle = "baton-staging"
 application_url = "https://baton-website-staging.mw10013.workers.dev"
 embedded = true
 web_directories = ["."]
