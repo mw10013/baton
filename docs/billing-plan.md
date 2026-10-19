@@ -306,9 +306,25 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 
 ### Issues
 
+- **2026-10-18, Step 0: `activeSubscription` answers null for both stores. `WAITING: Partner API`.** Spike (a scratch script outside the repo, deleted after; the token and the app secret read into the environment, never printed) for Baton Dev (org `2798461`, app `417214922753`, handle `baton-local`):
+  - `activeSubscription` for `mw10013-dev-shop-00` (`gid://shopify/Shop/85265907941`) and `mw10013-e2e-shop-00` (`gid://shopify/Shop/77133480030`, both GIDs from the local dev D1 `ShopSession`): `200 {"data":{"activeSubscription":null}}` at `2026-10` and at `2026-07`, for both stores. No error, so the query exists at `2026-10` and the token is accepted.
+  - The ids are right: `app(id: "gid://partners/App/417214922753")` answers `{ name: "Baton Dev", apiKey: "7c6cceb7…" }`, the `client_id` in `shopify.app.toml`. (The Partner API's own app GID is `gid://partners/App/…`; `activeSubscription(appId:)` takes `gid://shopify/App/…`, legacy's form, and did not complain.)
+  - The stores are in that organization: Baton Dev's Partner `app.events` lists `RELATIONSHIP_INSTALLED` for `mw10013-dev-shop-00` (2026-10-15T21:45Z) and `mw10013-e2e-shop-00` (2026-10-15T22:26Z), and dev/e2e shops 01–03. It lists **no `SUBSCRIPTION_CHARGE_ACTIVATED` for any `mw10013-*` store**; the last activations are `sandbox-shop-01`'s (2026-10-08). So the cause is human step 3 not done (no plan picked on either store), not a second organization.
+  - Stopped before Step 1, as the step says.
+
 ### Command results
 
+- **2026-10-18, Step 0, App Events at `2026-10`** (measured, for Step 2's JSDoc):
+  - Token mint (`POST https://api.shopify.com/auth/access_token`, client credentials, `User-Agent: Baton/baton-local`): `200`, body keys `access_token,token_type` (no `expires_in`, no `scope`: legacy's 2026-09-19 measurement still holds).
+  - A custom event `baton_spike` (value 1) for `mw10013-e2e-shop-00`: `202 {"success":true}`.
+  - The same for an unknown shop (`gid://shopify/Shop/1`): `403 {"success":false,"error":"Forbidden","errors":[{"field":"shop_id","code":"not_installed","message":"app is not installed on this shop"}]}`. So a refusal is **not** `202`: legacy's "answers `202` to an event it will later refuse" is wrong for a shop without the app. Whether an unknown handle or an out-of-cycle timestamp on an installed shop is `202` is still unmeasured (`baton_spike` matches no meter and answered `202`).
+  - A bad bearer: `401 {"error":"Unauthorized","message":"Invalid token signature: …"}`.
+  - Versions chosen: Partner API `2026-10`, App Events `2026-10`.
+- **2026-10-18, Step 0:** `WAITING: Partner API` (no commit for the spike; this §7 record committed alone). `CHECKPOINT: spike answered` is owed after a plan is picked on both stores and `activeSubscription` re-checked.
+
 ### Human steps requested
+
+**2026-10-18, Step 0, still pending: step 3 below (a plan on each store).** `SHOPIFY_PARTNER_API_TOKEN` is in `.env` and works; steps 1 and 2 are answered by the spike (org `2798461`, app `417214922753` "Baton Dev", handle `baton-local`, the stores in that organization; the plans' existence is checked by the next spike, since `activeSubscription` cannot see a plan no store holds). Unblocks Step 0's re-check and Step 1 onward. For each of `mw10013-dev-shop-00` and `mw10013-e2e-shop-00`: signed in as the store owner, open `https://admin.shopify.com/store/<store>/charges/baton-local/pricing_plans`, choose `baton-pro` (or `baton-basic`), approve the $0 charge. If the page shows no plans, Baton Dev's plans are missing (step 2c): create `baton-basic` and `baton-pro` with the meters `production-orders` and `members` first. Reply with the plan picked on each store.
 
 **2026-10-18, Step 0 (pending; unblocks the spike and every step after Step 3's unit work).** Check: `sed -E 's/=.*/=<hidden>/' .env` lists `SHOPIFY_PARTNER_API_TOKEN` (today it lists only `WEBSITE_PORT`, `SHOPIFY_DEV_STORE`, `SHOPIFY_E2E_STORE`).
 
