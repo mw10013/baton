@@ -408,7 +408,7 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - **2026-10-18, Step 9:** `vp check` green (366 files). `vp exec playwright test --list` names no billing test; with `E2E_BILLING=1 --project=billing` it lists the two. Run once by hand, headed: `vp run test:e2e:billing` 4 passed (the two setup projects and both titles), 1.8 min, no bot challenge; the e2e store went Basic → Pro → Basic and ends where it started (Basic).
 
 - **2026-10-18, Step 10, final:** `vp check` green (366 files); `vp test` 1073 passed, 83 files, 63 s (971 at the slice's start); `vp run test:e2e` 72 passed, 5.7 min; `vp run test:e2e:billing` 4 passed, 1.8 min (Step 9, by hand). §5: `MerchantRpcs` gained only `MerchantGetUsage`; `DevRpcs` unchanged (`git diff 0776f4e -- src/contract/dev.ts` empty); `ShopActorShape` gained `getUsage`, `setBillingCycle`, `flushUsageEvents` and `revoke`'s `"all"`; no transaction nested and no network, D1 or flush inside one (`countOrder` writes storage only inside the run repository's caller's transaction; `setBillingCycle` flushes after its own commits); every legacy title of §4 is present exactly once (`grep -rlF` over `test/`, 70 titles); no uppercase SQL in `usage-repository.ts` or the `ShopSessionRepository` plan methods; `grep -rn "PARTNER_API_TOKEN\|access_token" src test` shows names, the token endpoint and test fakes only; `.alchemy/bundles/Backend` holds no `IntegRpcs`, `PartnerFake` or `AppEventsFake`.
-- **2026-10-18, Step 10:** `CHECKPOINT: ready for staging (see the Step 10 commit)`.
+- **2026-10-18, Step 10:** `CHECKPOINT: ready for staging (402dc80)`.
 
 ### Human steps requested
 
