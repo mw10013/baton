@@ -7,6 +7,7 @@ import {
   add,
   chooseTeam,
   listContext,
+  listOrdersAnswer,
   openOrders,
   openScreen,
   own,
@@ -18,6 +19,7 @@ import {
   stripCell,
   stripChosen,
   stripCount,
+  tableIdle,
 } from "./orders-screens.ts";
 import { cancelTestOrder, createTestOrder, type TestOrder } from "./test-orders.ts";
 
@@ -471,14 +473,21 @@ test("the orders index keeps its filters and page across the order page", async 
   await expect(frame.locator(`s-page[heading="${name}"]`)).toBeVisible();
   await expect.poll(() => listContext(page)).toEqual(expected);
 
-  // Back once more to the page Next pushed: Previous there is the browser's Back, to page one
-  // with the filters.
+  // Back once more to the page Next pushed, then Previous, to page one with the filters. Previous
+  // is the browser's Back only before a history move: App Bridge replays an admin Back as a new
+  // navigation in the frame, so this entry no longer carries `nextPage` and Previous goes to page
+  // one by URL.
+  const reloaded = listOrdersAnswer(page);
   await page.goBack();
   await expect(rows).toHaveCount(5);
   await expect.poll(() => listContext(page)).toEqual(expected);
   // A move through the admin's history can load the frame afresh, and a press before hydration
   // is dropped.
   await awaitHydration(frame);
+  // A page shown before is refreshed twice on return: its live read at once, then again with the
+  // router's background reload. Wait out both before the press.
+  await (await reloaded).finished();
+  await tableIdle(frame);
   await frame.getByRole("button", { name: "Go to previous page" }).click();
   await expect(rows).toHaveCount(25);
   await expect.poll(() => listContext(page)).toEqual({ ...expected, after: null });
