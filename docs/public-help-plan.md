@@ -195,6 +195,9 @@ Known before the run:
 - **2026-10-19, lead, fixed:** `shell.spec.ts` "sign out ends the session" broke on the new landing: two **Sign in** links (page action and the member sign-in section, Q6), a strict-mode violation. It now expects both. Alone: 8 passed, 47.8 s. Step 2 ran `sign-in.spec.ts` but not `shell.spec.ts`, which also reads the landing.
 - **2026-10-19, lead, open (e2e infra, not this slice):** two full runs (11:05, 11:06) failed in `install` before any spec: the admin loaded the app ~100 ms after the CLI's Ready, while the fresh `trycloudflare.com` hostname did not resolve yet (`ERR_NAME_NOT_RESOLVED`; resolver 1.1.1.2, negative TTL 60 s). The names resolved a minute later. Nothing waits for the tunnel's DNS. Also seen: a Polaris warning that `TeamsIndexScreen` puts a non-primary button in the `primary-action` slot.
 - **2026-10-19, lead, full e2e (third run, 11:07–11:13):** 82 passed, 1 failed (the `shell.spec` above, fixed and passed alone), 6.3 min.
+- **2026-10-19, lead, staging:** pushed 7ca7a83; Workers Builds `success`. On `baton-website-staging`: `/`, `/privacy`, `/help`, `/help/orders/order-page` 200, `/help/nope` 404, `order-page-1.png` served. Embedded staging App Home (`mw10013-staging-shop-00`) shows the setup guide's help link and "Learn more in Help." → `https://baton-website-staging…/help`. A DevTools click into the cross-origin frame opened no tab, which says nothing either way; the user closed the slice without a manual click. The member bar's Help on staging was not checked (covered by its browser test).
+- **2026-10-19, lead:** the e2e environment problems above are taken up in `docs/e2e-environment-research.md`. Three idle worktree dev servers (wt-01…03, up since 10-16/10-17) were stopped.
+- **2026-10-19, closed.** Every slice of the legacy port is done.
 
 ## 8. Out of scope
 

@@ -1,6 +1,6 @@
 # Public pages and help slice: research
 
-Status: research, written 2026-10-19. **Settled** 2026-10-19 in one review round: Q1–Q11 accepted as recommended (§0). No code has changed.
+Status: research, written 2026-10-19. **Settled** 2026-10-19 in one review round: Q1–Q11 accepted as recommended (§0). **Implemented** 2026-10-19 (`docs/public-help-plan.md`), pushed 7ca7a83, staging verified; closed. One correction to §2: `shopify app dev` does not push `name`; the rename took `shopify app deploy`.
 
 The work itself: roadmap §3 row I, the last slice. The public landing page, the privacy policy, the help (hub, six section hubs, 26 pages with bodies, 42 pictures), the links from the merchant and member screens into help, and the script that shoots the pictures. Plus one Shopify-side change the pictures need: the dev app is named **Baton** again, not Baton Dev.
 
