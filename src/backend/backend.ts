@@ -17,6 +17,7 @@ import {
   CONNECTION_CLOSE_FORBIDDEN,
   CONNECTION_CLOSE_NOT_A_MEMBER,
   CONNECTION_CLOSE_TRY_AGAIN,
+  CONNECTION_CLOSE_PAYMENT_REQUIRED,
   CONNECTION_CLOSE_UNAUTHENTICATED,
   CONNECTION_HEADER,
   ConnectionCaller,
@@ -37,6 +38,8 @@ import { ShopAccess, type ShopAccessDenied } from "./shop-access.ts";
 import { Shopify } from "./shopify.ts";
 import { ShopifyAdmin } from "./shopify-admin.ts";
 import { ShopifyAppEvents } from "./shopify-app-events.ts";
+import { ShopifyPartner } from "./shopify-partner.ts";
+import { revalidateStalePlans, SubscriptionPlan } from "./subscription-plan.ts";
 import { ShopSessionRepository } from "./shop-session-repository.ts";
 import { workerNameOf } from "./stage.ts";
 import { Webhooks } from "./webhooks.ts";
@@ -91,6 +94,10 @@ const encodeConnectionHeader = Schema.encodeSync(Schema.fromJsonString(Connectio
 const refusalClose = (status: ShopAccessDenied["status"]) =>
   Match.value(status).pipe(
     Match.when(401, () => ({ code: CONNECTION_CLOSE_UNAUTHENTICATED, reason: "unauthenticated" })),
+    Match.when(402, () => ({
+      code: CONNECTION_CLOSE_PAYMENT_REQUIRED,
+      reason: "payment required",
+    })),
     Match.when(403, () => ({ code: CONNECTION_CLOSE_FORBIDDEN, reason: "forbidden" })),
     Match.when(404, () => ({ code: CONNECTION_CLOSE_NOT_A_MEMBER, reason: "not a member" })),
     Match.when(503, () => ({ code: CONNECTION_CLOSE_TRY_AGAIN, reason: "try again" })),
@@ -179,6 +186,8 @@ export const backendProps = {
  * instance in. Alchemy memoizes by logical id, so the two yields are one Workflow.
  *
  * {@link DevRpcs} on `/api/dev` exists only with the `DEV_ENDPOINT` binding; see there.
+ *
+ * It runs the daily plan check on a cron, `17 4 * * *` ({@link revalidateStalePlans}).
  */
 export const backendBody = Effect.gen(function* () {
   // Built once per isolate. Yielding the bindings here attaches them to the Worker.
@@ -191,6 +200,15 @@ export const backendBody = Effect.gen(function* () {
   const services = yield* Effect.context<
     MembershipRepository | ShopifyAdmin | ShopActors | ShopSessionRepository
   >();
+  const planServices = yield* Effect.context<ShopSessionRepository | SubscriptionPlan>();
+  // The daily plan check (`revalidateStalePlans`). The event source swallows a handler's failure,
+  // so the failure is logged here.
+  yield* Cloudflare.Workers.cron("17 4 * * *", () =>
+    revalidateStalePlans().pipe(
+      Effect.provide(planServices),
+      Effect.catchCause((cause) => Effect.logError("scheduled.revalidatePlans", cause)),
+    ),
+  );
   const devEndpoint = Option.isSome(yield* Config.option(Config.String("DEV_ENDPOINT")));
   // The RPC server is built per request, inside the request's scope (workerd pins I/O to
   // the request that created it).
@@ -256,7 +274,7 @@ export const backendBody = Effect.gen(function* () {
  * entry passes the real ones, and the test Backend its fakes, so a fake never reaches the
  * production bundle.
  */
-export type ShopifyBilling = ShopifyAppEvents;
+export type ShopifyBilling = ShopifyAppEvents | ShopifyPartner;
 
 /**
  * Provides everything {@link backendBody} needs, `billing` included (whose extra services, a
@@ -273,6 +291,7 @@ export const provideBackend = <A, E, R, B = never>(
     Effect.provide(BackendApi.layer),
     Effect.provide(Webhooks.layer),
     Effect.provide(ShopAccess.layer),
+    Effect.provide(SubscriptionPlan.layer),
     Effect.provide(Auth.layer),
     Effect.provide(ShopActors.layer),
     Effect.provide(ShopActorLive),
@@ -290,10 +309,12 @@ export const provideBackend = <A, E, R, B = never>(
       ),
     ),
     Effect.provide(CloudflareD1(AuthDb)),
+    Effect.provide(Cloudflare.Workers.CronEventSourceLive),
     Effect.provide(Cloudflare.Email.SendBinding),
     Effect.provide(Cloudflare.Workers.RateLimitBinding),
     Effect.provide(Cloudflare.D1.QueryDatabaseBinding),
   );
 
 /** The Backend's init as the production entry runs it: {@link backendBody}, provided. */
-export const makeBackend = () => provideBackend(backendBody, ShopifyAppEvents.layer);
+export const makeBackend = () =>
+  provideBackend(backendBody, Layer.mergeAll(ShopifyAppEvents.layer, ShopifyPartner.layer));

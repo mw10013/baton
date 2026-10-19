@@ -214,6 +214,10 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
       return page;
     }, Effect.orDie);
 
+    /**
+     * The shop's member count: what the ceiling ({@link membersAtCeiling}) reads, and the seats
+     * `SubscriptionPlan` pushes into the actor with a billing cycle.
+     */
     const countMembers = (shop: ShopKey) =>
       Effect.map(sql`select count(*) from Member where shop = ${shop}`.values, countOf);
 
@@ -863,6 +867,9 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
 
     return {
       listShopsOf,
+      countMembers: Effect.fn("MembershipRepository.countMembers")(function* (shop: ShopKey) {
+        return yield* countMembers(shop);
+      }, Effect.orDie),
       findMember,
       list,
       listMembersPage,

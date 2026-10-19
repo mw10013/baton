@@ -13,13 +13,14 @@ import { MembershipRepository } from "./membership-repository.ts";
 import { sessionFromCookie } from "./auth.ts";
 import { AuthDb } from "./resources.ts";
 import { Shopify } from "./shopify.ts";
+import { SubscriptionPlan } from "./subscription-plan.ts";
 
 /**
  * The gate's refusal, as the HTTP status Baton's gate answers with. Internal to the Backend:
  * the upgrade route turns it into a close code, `BackendApi.shopAccess` into a typed failure.
  */
 export class ShopAccessDenied extends Schema.TaggedError<ShopAccessDenied>()("ShopAccessDenied", {
-  status: Schema.Literals([401, 403, 404, 503]),
+  status: Schema.Literals([401, 402, 403, 404, 503]),
 }) {}
 
 const decodeShops = Schema.decodeUnknownEffect(
@@ -33,6 +34,7 @@ const make = Effect.gen(function* () {
   const auth = yield* Auth;
   const members = yield* MembershipRepository;
   const shopify = yield* Shopify;
+  const plans = yield* SubscriptionPlan;
   const d1 = yield* Cloudflare.D1.QueryDatabase(AuthDb);
   const sql = yield* SQL.D1(d1);
 
@@ -41,14 +43,31 @@ const make = Effect.gen(function* () {
     return rows.length > 0;
   }, Effect.orDie);
 
+  /**
+   * The shop's plan at the gate: `Unsubscribed` is 402. A plan that could not be read is 503,
+   * never 402, because 402 closes the tab's socket for good (`SubscriptionPlanError`).
+   */
+  const subscribed = Effect.fn("ShopAccess.subscribed")(function* (key: ShopKey) {
+    const status = yield* plans
+      .resolve(key)
+      .pipe(
+        Effect.catchTag("SubscriptionPlanError", (error) =>
+          Effect.logError(`ShopAccess: shop=${key}: plan resolution failed`, error).pipe(
+            Effect.annotateLogs({ shop: key }),
+            Effect.andThen(denied(503)),
+          ),
+        ),
+      );
+    if (status._tag === "Unsubscribed") return yield* denied(402);
+  });
+
   const merchant = Effect.fn("ShopAccess.merchant")(function* (key: ShopKey, token: string) {
     const decoded = yield* shopify
       .decodeSessionToken(token)
       .pipe(Effect.catchTag("InvalidSessionToken", () => denied(401)));
     if (new URL(decoded.dest).hostname !== key) return yield* denied(403);
-    // Baton resolves the shop's subscription plan here and answers 402 for a lapsed one; plans
-    // come with the Shopify slice.
     if (!(yield* shopExists(key))) return yield* denied(404);
+    yield* subscribed(key);
     return { role: "merchant" } satisfies ConnectionCaller;
   });
 
@@ -63,6 +82,8 @@ const make = Effect.gen(function* () {
     if (session.me.role === "admin") return yield* denied(403);
     const access = yield* members.findMemberAccess({ shop: key, email: session.me.email });
     if (Option.isNone(access)) return yield* denied(404);
+    // Membership first, so a stranger to a lapsed shop still gets 404.
+    yield* subscribed(key);
     const caller: MemberCaller = {
       role: "member",
       memberId: access.value.memberId,
@@ -120,11 +141,13 @@ const make = Effect.gen(function* () {
  * open a shop's actor, decided from the credential the caller presents.
  *
  * - A Shopify session token selects the merchant branch: a bad token is 401, a token for
- *   another shop 403, a shop with no `ShopSession` row 404; otherwise a merchant.
+ *   another shop 403, a shop with no `ShopSession` row 404, a shop with no app subscription
+ *   (`SubscriptionPlan`) 402; otherwise a merchant.
  * - Otherwise the member branch, on the Better Auth cookie: no session is 401, an admin 403
  *   (the admin role is never a member), no `Member` row for this shop 404, the same answer
- *   as a shop that does not exist; otherwise a member, with its teams and session.
- * - A failure that is not an answer (D1 unreachable) is 503.
+ *   as a shop that does not exist, then a lapsed shop 402; otherwise a member, with its teams
+ *   and session.
+ * - A failure that is not an answer (D1 unreachable, a plan that could not be read) is 503.
  */
 export class ShopAccess extends Context.Service<ShopAccess, Effect.Success<typeof make>>()(
   "app/ShopAccess",

@@ -25,6 +25,7 @@ import {
   seedD1,
   TEST_ORIGIN,
   testAuth,
+  testPlan,
   testShopify,
 } from "./layers.ts";
 import { MembershipRepository } from "../../../src/backend/membership-repository.ts";
@@ -77,6 +78,7 @@ const TestBackend = ({
         delivery,
         extra: Layer.mergeAll(
           SignInLimiter.layerTest(allow),
+          testPlan(),
           Layer.succeed(ShopAccess, {
             resolve: () => Effect.die("ShopAccess needs D1"),
             resolveMember: () => Effect.die("ShopAccess needs D1"),

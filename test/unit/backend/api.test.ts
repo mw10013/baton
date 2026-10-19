@@ -19,6 +19,11 @@ import { OTHER_SHOP, SEED_SHOP } from "../../seed-shops.ts";
 import type { ConnectionCaller, MemberCaller } from "../../../src/contract/shop-actor.ts";
 import { ShopActors } from "../../../src/backend/shop-actors.ts";
 import { BackendApi, SignInLimiter } from "../../../src/backend/api.ts";
+import {
+  planSelectionExitIframeHref,
+  ShopifyPartner,
+} from "../../../src/backend/shopify-partner.ts";
+import { SubscriptionPlan, SubscriptionPlanError } from "../../../src/backend/subscription-plan.ts";
 import { mintSessionToken } from "../../shopify-session-token.ts";
 import {
   type MemberRow,
@@ -26,6 +31,8 @@ import {
   TEST_SHOPIFY_APP,
   testAuth,
   testMembershipRepository,
+  testPlan,
+  testPlanSelectionUrl,
   testShopify,
 } from "./layers.ts";
 import { MembershipRepository } from "../../../src/backend/membership-repository.ts";
@@ -89,6 +96,7 @@ const TestBackend = ({
   membershipRepositoryLayer,
   actors = ShopActors.layerTest([]),
   memberGate = Effect.die("no member gate in this test"),
+  plan = testPlan(),
 }: {
   delivery?: "inline" | "mailed";
   allow?: boolean;
@@ -100,6 +108,7 @@ const TestBackend = ({
     { readonly caller: MemberCaller; readonly teams: MemberAccess["teams"] },
     ShopAccessDenied
   >;
+  plan?: Layer.Layer<SubscriptionPlan | ShopifyPartner>;
 } = {}) =>
   BackendApi.layer.pipe(
     Layer.provideMerge(
@@ -110,6 +119,7 @@ const TestBackend = ({
         delivery,
         extra: Layer.mergeAll(
           SignInLimiter.layerTest(allow),
+          plan,
           Layer.succeed(ShopAccess, { resolve: () => gate, resolveMember: () => memberGate }),
           testShopify([seedSession]),
         ),
@@ -243,6 +253,7 @@ describe("BackendApi.shopAccess", () => {
 
   it.live.each([
     { status: 401, tag: "Unauthorized" },
+    { status: 402, tag: "PaymentRequired" },
     { status: 403, tag: "Forbidden" },
     { status: 404, tag: "NotAShopMember" },
   ] as const)("the gate's $status is $tag", ({ status, tag }) =>
@@ -273,8 +284,16 @@ describe("BackendApi.authenticateAdmin", () => {
     Effect.gen(function* () {
       const api = yield* BackendApi;
       const sessionToken = yield* tokenFrom(TEST_SHOPIFY_APP);
-      const answer = yield* api.authenticateAdmin(withCookie(undefined), { sessionToken });
-      assert.deepStrictEqual(answer, { shop: SEED_SHOP, shopGid: seedSession.shopGid });
+      const answer = yield* api.authenticateAdmin(withCookie(undefined), {
+        sessionToken,
+        billingRedirect: false,
+      });
+      assert.deepStrictEqual(answer, {
+        _tag: "Subscribed",
+        shop: SEED_SHOP,
+        shopGid: seedSession.shopGid,
+        managePlanUrl: testPlanSelectionUrl(SEED_SHOP),
+      });
       const row = yield* (yield* ShopSessionRepository).find(SEED_SHOP);
       assert.deepStrictEqual(row, Option.some(seedSession));
     }).pipe(Effect.provide(TestBackend())),
@@ -285,10 +304,88 @@ describe("BackendApi.authenticateAdmin", () => {
       const api = yield* BackendApi;
       const sessionToken = yield* tokenFrom({ ...TEST_SHOPIFY_APP, apiSecret: "other-secret" });
       const error = yield* api
-        .authenticateAdmin(withCookie(undefined), { sessionToken })
+        .authenticateAdmin(withCookie(undefined), { sessionToken, billingRedirect: false })
         .pipe(Effect.flip);
       assert.strictEqual(error._tag, "InvalidSessionToken");
     }).pipe(Effect.provide(TestBackend())),
+  );
+
+  it.live("an unsubscribed shop answers the plan selection page, out of the frame", () =>
+    Effect.gen(function* () {
+      const api = yield* BackendApi;
+      const sessionToken = yield* tokenFrom(TEST_SHOPIFY_APP);
+      const answer = yield* api.authenticateAdmin(withCookie(undefined), {
+        sessionToken,
+        billingRedirect: false,
+      });
+      assert.deepStrictEqual(answer, {
+        _tag: "Unsubscribed",
+        href: planSelectionExitIframeHref(testPlanSelectionUrl(SEED_SHOP), SEED_SHOP),
+      });
+    }).pipe(Effect.provide(TestBackend({ plan: testPlan({ _tag: "Unsubscribed" }) }))),
+  );
+
+  it.live("a plan that could not be read fails the call, never Unsubscribed", () =>
+    Effect.gen(function* () {
+      const api = yield* BackendApi;
+      const sessionToken = yield* tokenFrom(TEST_SHOPIFY_APP);
+      const exit = yield* api
+        .authenticateAdmin(withCookie(undefined), { sessionToken, billingRedirect: false })
+        .pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(exit) && Cause.hasDies(exit.cause));
+    }).pipe(
+      Effect.provide(
+        TestBackend({
+          plan: Layer.merge(
+            testPlan(),
+            Layer.succeed(SubscriptionPlan, {
+              resolve: () =>
+                Effect.fail(new SubscriptionPlanError({ message: "unavailable", cause: null })),
+              refresh: () => Effect.die(new Error("not on this path")),
+              expectChange: () => Effect.void,
+            }),
+          ),
+        }),
+      ),
+    ),
+  );
+
+  it.live("Shopify's billing redirect re-reads the plan instead of reading the cache", () =>
+    Effect.gen(function* () {
+      const reads: Array<string> = [];
+      const subscribed = {
+        _tag: "Subscribed" as const,
+        handle: "baton-basic" as const,
+        plan: "basic" as const,
+        boundaryAt: null,
+      };
+      yield* Effect.gen(function* () {
+        const api = yield* BackendApi;
+        const sessionToken = yield* tokenFrom(TEST_SHOPIFY_APP);
+        yield* api.authenticateAdmin(withCookie(undefined), {
+          sessionToken,
+          billingRedirect: true,
+        });
+        yield* api.authenticateAdmin(withCookie(undefined), {
+          sessionToken,
+          billingRedirect: false,
+        });
+      }).pipe(
+        Effect.provide(
+          TestBackend({
+            plan: Layer.merge(
+              testPlan(),
+              Layer.succeed(SubscriptionPlan, {
+                resolve: () => Effect.sync(() => reads.push("resolve")).pipe(Effect.as(subscribed)),
+                refresh: () => Effect.sync(() => reads.push("refresh")).pipe(Effect.as(subscribed)),
+                expectChange: () => Effect.void,
+              }),
+            ),
+          }),
+        ),
+      );
+      assert.deepStrictEqual(reads, ["refresh", "resolve"]);
+    }),
   );
 });
 
@@ -487,6 +584,7 @@ describe("BackendApi run loaders", () => {
 
   it.live.each([
     { status: 401, tag: "Unauthorized" },
+    { status: 402, tag: "PaymentRequired" },
     { status: 403, tag: "Forbidden" },
     { status: 404, tag: "NotAShopMember" },
   ] as const)(

@@ -138,7 +138,7 @@ export const ShopSession = Schema.Struct({
   planHandleExpiresAt: Schema.NullOr(Schema.Number),
   /**
    * The app subscription's boundary, cached beside the handle and written only
-   * by `Repository.updateShopSessionPlan`, so a cache hit answers "when does
+   * by `ShopSessionRepository.updatePlan`, so a cache hit answers "when does
    * this expire" without a second Partner call. Null means none or unknown, and
    * it is only meaningful while `planHandleExpiresAt` is in the future — a
    * stale row's date is as untrustworthy as its handle. The cycle start is not
@@ -150,7 +150,7 @@ export type ShopSession = typeof ShopSession.Type;
 
 /**
  * A `ShopSession` as the authentication path knows it: everything except the
- * plan cache columns, which `Repository.updateShopSessionPlan` owns alone.
+ * plan cache columns, which `ShopSessionRepository.updatePlan` owns alone.
  *
  * A named schema rather than an inline omit because two places have to agree
  * about the boundary — the decode in `Shopify.ts` that turns a library session

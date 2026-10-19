@@ -17,6 +17,10 @@ const decodeToken = Schema.decodeUnknownOption(Schema.NonEmptyString);
 const IdTokenData = Schema.Struct({ idToken: Schema.NonEmptyString });
 const decodeIdTokenData = Schema.decodeUnknownOption(IdTokenData);
 
+/** A server function's data saying the page is Shopify's billing redirect, as `authenticateApp` takes it. */
+const BillingRedirectData = Schema.Struct({ billingRedirect: Schema.Literal(true) });
+const decodeBillingRedirectData = Schema.decodeUnknownOption(BillingRedirectData);
+
 /** The header App Bridge answers by retrying the request with a fresh session token. */
 const RETRY_INVALID_SESSION_HEADER = "X-Shopify-Retry-Invalid-Session-Request";
 
@@ -65,26 +69,50 @@ export const embeddedSessionToken = createMiddleware({ type: "function" }).serve
 
 /**
  * Baton's `ShopifyServerFnMiddleware`: authenticates the embedded admin before a server function
- * runs and puts its shop in context. The token comes from {@link embeddedSessionToken}; the
- * Backend verifies and exchanges it, and a refusal is {@link refuse}.
+ * runs and puts its shop and plan answer in context (`AdminAuthenticated`: `Subscribed` with the
+ * shop and the Manage plan URL, or `Unsubscribed` with where to go). The token comes from
+ * {@link embeddedSessionToken}; the Backend verifies and exchanges it, and a refusal is
+ * {@link refuse}. `billingRedirect` in the data re-reads the plan at once.
  */
 export const shopifyAdmin = createMiddleware({ type: "function" })
   .middleware([embeddedSessionToken])
-  .server(async ({ next, context }) => {
-    const session = await backend()
-      .authenticateAdmin(requestInfo(), { sessionToken: context.sessionToken })
+  .server(async ({ next, context, data }) => {
+    const admin = await backend()
+      .authenticateAdmin(requestInfo(), {
+        sessionToken: context.sessionToken,
+        billingRedirect: Option.isSome(decodeBillingRedirectData(data)),
+      })
       .catch(context.rescueToken);
-    return next({ context: { shop: session.shop, shopGid: session.shopGid } });
+    return next({ context: { admin } });
   });
 
-/** `authenticateApp`'s input: the document's `id_token`, absent on a call App Bridge made. */
-const AuthenticateAppInput = Schema.Struct({ idToken: Schema.optional(Schema.NonEmptyString) });
+/**
+ * `authenticateApp`'s input: the document's `id_token`, absent on a call App Bridge made, and
+ * `billingRedirect` when the page is Shopify's billing redirect (its search carries
+ * `plan_handle`). Neither names a plan.
+ */
+const AuthenticateAppInput = Schema.Struct({
+  idToken: Schema.optional(Schema.NonEmptyString),
+  billingRedirect: Schema.optional(Schema.Boolean),
+});
 
-/** The App Home's authenticated admin: its shop, and the API key for App Bridge's meta tag. */
+/**
+ * The App Home's authenticated admin: its shop, the API key for App Bridge's meta tag and the
+ * Manage plan URL; or, for a shop with no app subscription, where `/app` redirects.
+ */
 export const authenticateApp = createServerFn({ method: "GET" })
   .middleware([shopifyAdmin])
   .validator(Schema.toStandardSchemaV1(AuthenticateAppInput))
-  .handler(({ context }) => ({ shop: context.shop, apiKey: env.SHOPIFY_API_KEY }));
+  .handler(({ context: { admin } }) =>
+    admin._tag === "Unsubscribed"
+      ? { _tag: "Unsubscribed" as const, href: admin.href }
+      : {
+          _tag: "Subscribed" as const,
+          shop: admin.shop,
+          apiKey: env.SHOPIFY_API_KEY,
+          managePlanUrl: admin.managePlanUrl,
+        },
+  );
 
 /**
  * The app's API key and public URL, from the Website's bindings, for the App Home's guards that

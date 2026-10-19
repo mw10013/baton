@@ -184,6 +184,14 @@ export const CONNECTION_CLOSE_UNAUTHENTICATED = 4401;
 export const CONNECTION_CLOSE_NOT_A_MEMBER = 4404;
 
 /**
+ * Close code the gate sends for a 402: the shop holds no app subscription (a merchant's shop,
+ * or the shop of a member). Terminal to the browser, which re-runs its route guards instead:
+ * `/app` sends the merchant to plan selection, the member layout to Subscription inactive. A
+ * revoke's 3401 after a plan change reconnects into this answer.
+ */
+export const CONNECTION_CLOSE_PAYMENT_REQUIRED = 4402;
+
+/**
  * Close code the gate sends for a 503, when it could not answer (WebSocket's "try again
  * later"). The browser retries.
  */

@@ -32,6 +32,9 @@ import {
   type ShopSessionRow,
 } from "../../../src/backend/shop-session-repository.ts";
 import { SHOPIFY_API_KEY, SHOPIFY_API_SECRET_FAKE, Shopify } from "../../../src/backend/shopify.ts";
+import type { PlanStatus } from "../../../src/domain/billing.ts";
+import { ShopifyPartner } from "../../../src/backend/shopify-partner.ts";
+import { SubscriptionPlan } from "../../../src/backend/subscription-plan.ts";
 
 /**
  * A `reconciler` for `makeOrders` that reconciles nothing: what a test of the orders service
@@ -390,3 +393,23 @@ export const testOrdersSyncWorkflows = (
       return create;
     }),
 });
+
+/** The pricing page's URL {@link testPlan}'s Partner client names: Baton Dev's handle. */
+export const testPlanSelectionUrl = (shop: ShopKey) =>
+  `https://admin.shopify.com/store/${shop.replace(/\.myshopify\.com$/u, "")}/charges/baton-local/pricing_plans`;
+
+/**
+ * {@link SubscriptionPlan} answering every shop `status` (by default `baton-pro`, no boundary),
+ * and a {@link ShopifyPartner} that names the pricing page and dies on a Partner call: for the
+ * tests that do not exercise the plan itself.
+ */
+export const testPlan = (
+  status: PlanStatus = { _tag: "Subscribed", handle: "baton-pro", plan: "pro", boundaryAt: null },
+) =>
+  Layer.mergeAll(
+    SubscriptionPlan.layerTest(status),
+    Layer.succeed(ShopifyPartner, {
+      activeSubscription: () => Effect.die(new Error("testPlan: no Partner call")),
+      planSelectionUrl: testPlanSelectionUrl,
+    }),
+  );

@@ -37,8 +37,15 @@ export class InvalidSessionToken extends Schema.TaggedError<InvalidSessionToken>
   {},
 ) {}
 
-/** `authenticateAdmin`'s input: the session token App Bridge issued to the embedded page. */
-export const AuthenticateAdminInput = Schema.Struct({ sessionToken: Schema.NonEmptyString });
+/**
+ * `authenticateAdmin`'s input: the session token App Bridge issued to the embedded page, and
+ * `billingRedirect`, true when the page is Shopify's billing redirect back from the plan
+ * selection page (its search carries `plan_handle`), which re-reads the plan at once.
+ */
+export const AuthenticateAdminInput = Schema.Struct({
+  sessionToken: Schema.NonEmptyString,
+  billingRedirect: Schema.Boolean,
+});
 export type AuthenticateAdminInput = typeof AuthenticateAdminInput.Type;
 
 /** What the Website learns about an authenticated admin: its shop and the shop's Admin API id. */

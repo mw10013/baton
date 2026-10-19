@@ -48,6 +48,9 @@ export const ShopSessionUpsert = Schema.Struct(
 );
 export type ShopSessionUpsert = typeof ShopSessionUpsert.Type;
 
+/** The plan cache columns, which only {@link ShopSessionRepository}' plan methods write. */
+type PlanCacheColumn = "planHandle" | "planHandleExpiresAt" | "planBoundaryAt";
+
 /** The token columns {@link ShopSessionRepository}' `rotateTokens` rewrites, by shop. */
 export type ShopSessionTokens = Pick<
   ShopSessionRow,
@@ -170,6 +173,71 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
       yield* sql`UPDATE ShopSession SET scope = ${scope} WHERE shop = ${shop}`;
     }, Effect.orDie);
 
+    /**
+     * Legacy's `updateShopSessionPlan`: writes the three plan cache columns, and only them.
+     *
+     * Deliberately its own statement rather than columns folded into
+     * `upsert`: D1 bills index B-tree writes as `rows_written`, and
+     * `upsert` runs on the hot authentication path where every extra
+     * column in a `SET` list is billed on every token re-exchange. Plan
+     * revalidation happens on the order of once per shop per day, so it pays
+     * for its own narrow update instead of taxing the path that does not.
+     */
+    const updatePlan = Effect.fn("ShopSessionRepository.updatePlan")(function* (
+      plan: Pick<ShopSessionRow, "shop" | PlanCacheColumn>,
+    ) {
+      yield* sql`
+        update ShopSession set
+          planHandle = ${plan.planHandle},
+          planHandleExpiresAt = ${plan.planHandleExpiresAt},
+          planBoundaryAt = ${plan.planBoundaryAt}
+        where shop = ${plan.shop}
+      `;
+    }, Effect.orDie);
+
+    /**
+     * Legacy's `shortenShopSessionPlanExpiry`: pulls the plan cache deadline forward to at most
+     * `notAfter`, never backward, and never on a never-fetched row.
+     *
+     * The `min` is what makes it safe to call speculatively: a shop whose app
+     * subscription boundary already falls sooner keeps that tighter deadline,
+     * and a row that has never been fetched stays "never fetched" rather than
+     * acquiring a deadline that would make an absent handle look like a
+     * verified absence of any app subscription.
+     */
+    const shortenPlanExpiry = Effect.fn("ShopSessionRepository.shortenPlanExpiry")(
+      function* (input: { readonly shop: ShopKey; readonly notAfter: number }) {
+        yield* sql`
+        update ShopSession
+        set planHandleExpiresAt = min(planHandleExpiresAt, ${input.notAfter})
+        where shop = ${input.shop} and planHandleExpiresAt is not null
+      `;
+      },
+      Effect.orDie,
+    );
+
+    /**
+     * The shops whose cached plan is stale at `now`: never fetched, or past
+     * its deadline. The daily check's list (`revalidateStalePlans`). A scan
+     * of `ShopSession`, with no index on `planHandleExpiresAt`: the table
+     * holds one row per installed shop, and the query runs once a day, so an
+     * index would cost a write on every revalidation to save a read nobody
+     * waits on.
+     */
+    const listShopsWithStalePlan = Effect.fn("ShopSessionRepository.listShopsWithStalePlan")(
+      function* (now: number) {
+        const rows = yield* decodeWon(
+          yield* sql`
+            select shop from ShopSession
+            where planHandleExpiresAt is null or planHandleExpiresAt <= ${now}
+            order by shop
+          `,
+        );
+        return rows.map(({ shop }) => shop);
+      },
+      Effect.orDie,
+    );
+
     const remove = Effect.fn("ShopSessionRepository.remove")(function* (shop: ShopKey) {
       yield* sql`DELETE FROM ShopSession WHERE shop = ${shop}`;
     }, Effect.orDie);
@@ -183,6 +251,9 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
       releaseRefreshLease,
       expireAccessToken,
       updateScope,
+      updatePlan,
+      shortenPlanExpiry,
+      listShopsWithStalePlan,
       remove,
     };
   });
@@ -271,6 +342,30 @@ export class ShopSessionRepository extends Context.Service<
             ...(refreshToken === undefined ? {} : { refreshToken }),
           }),
         updateScope: (shop: ShopKey, scope: string | null) => edit(shop, { scope }),
+        updatePlan: ({ shop, ...plan }: Pick<ShopSessionRow, "shop" | PlanCacheColumn>) =>
+          edit(shop, plan),
+        shortenPlanExpiry: ({
+          shop,
+          notAfter,
+        }: {
+          readonly shop: ShopKey;
+          readonly notAfter: number;
+        }) =>
+          Effect.sync(() => {
+            const row = rows.get(shop);
+            if (row?.planHandleExpiresAt != null)
+              rows.set(shop, {
+                ...row,
+                planHandleExpiresAt: Math.min(row.planHandleExpiresAt, notAfter),
+              });
+          }),
+        listShopsWithStalePlan: (now: number) =>
+          Effect.sync(() =>
+            [...rows.values()]
+              .filter((row) => row.planHandleExpiresAt === null || row.planHandleExpiresAt <= now)
+              .map((row) => row.shop)
+              .toSorted(),
+          ),
         remove: (shop: ShopKey) =>
           Effect.sync(() => {
             rows.delete(shop);

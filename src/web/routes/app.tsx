@@ -15,7 +15,10 @@ import { embeddedAppUrl, frameAncestors, sessionTokenBounce } from "../server/sh
  * `beforeLoad` runs, for every one of them, Baton's document guards,
  * first match wins, each a redirect: no `shop` or `host` goes to the App Bridge-only page, which
  * re-embeds; `embedded !== "1"` goes to the app inside the Shopify admin; no `id_token` goes to the
- * session-token bounce; otherwise the token is authenticated (`authenticateApp`). App Bridge is
+ * session-token bounce; otherwise the token is authenticated (`authenticateApp`), and a shop with
+ * no app subscription goes, out of the frame, to plan selection. Shopify's billing redirect back
+ * (its search carries `plan_handle`) re-reads the plan first. Route context carries the Manage
+ * plan URL and never the plan: the browser never names its own tier. App Bridge is
  * the document's first script, which the Shopify admin requires; the root document places
  * `HeadContent` ahead of Polaris for it. It holds the merchant's socket ({@link ShopSocket}) for
  * every page under it, its token minted from App Bridge per connect.
@@ -32,7 +35,14 @@ export const Route = createFileRoute("/app")({
       });
     if (search.id_token === undefined)
       throw redirect({ href: sessionTokenBounce(appUrl, location.pathname, location.searchStr) });
-    return await authenticateApp({ data: { idToken: search.id_token } });
+    const admin = await authenticateApp({
+      data: {
+        idToken: search.id_token,
+        billingRedirect: location.searchStr.includes("plan_handle"),
+      },
+    });
+    if (admin._tag === "Unsubscribed") throw redirect({ href: admin.href });
+    return { shop: admin.shop, apiKey: admin.apiKey, managePlanUrl: admin.managePlanUrl };
   },
   head: ({ match }) => ({
     meta: [{ name: "shopify-api-key", content: match.context.apiKey }],

@@ -15,7 +15,11 @@ import * as Redacted from "effect/Redacted";
 import type { DeliveryMode } from "./magic-link-delivery.ts";
 import { seed } from "./seed.ts";
 import { SHOPIFY_API_KEY, SHOPIFY_API_SECRET_FAKE } from "./shopify.ts";
-import { SHOPIFY_PARTNER_CONFIG_FAKE, ShopifyPartnerConfig } from "./shopify-partner.ts";
+import {
+  SHOPIFY_PARTNER_CONFIG_FAKE,
+  type ShopifyPartnerConfig,
+  shopifyPartnerConfig,
+} from "./shopify-partner.ts";
 import { environmentOf } from "./stage.ts";
 import type Backend from "./worker.ts";
 
@@ -155,7 +159,7 @@ const shopifyPartnerBinding: Effect.Effect<
       })),
     ),
     Match.whenOr("dev", "e2e", () =>
-      Config.option(Config.schema(ShopifyPartnerConfig)).pipe(
+      Config.option(shopifyPartnerConfig).pipe(
         Effect.map(
           Option.match({
             onNone: () => fake,

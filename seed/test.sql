@@ -7,8 +7,8 @@
 -- expires". The admin's timestamp is fixed so the file's content, which `Seed` hashes, stays
 -- stable.
 INSERT OR IGNORE INTO ShopSession (shop, shopGid, shopActorId, scope, accessTokenExpiresAt, accessToken, refreshToken, refreshTokenExpiresAt, planHandle, planHandleExpiresAt, planBoundaryAt) VALUES
-  ('seed-shop.myshopify.com', 'gid://shopify/Shop/1', 'seed-shop.myshopify.com', 'read_orders,write_orders', 4102444800000, 'shpat_fake_seed_shop', 'shprt_fake_seed_shop', 4102444800000, 'basic', 4102444800000, NULL),
-  ('other-shop.myshopify.com', 'gid://shopify/Shop/2', 'other-shop.myshopify.com', 'read_orders,write_orders', 4102444800000, 'shpat_fake_other_shop', 'shprt_fake_other_shop', 4102444800000, 'basic', 4102444800000, NULL);
+  ('seed-shop.myshopify.com', 'gid://shopify/Shop/1', 'seed-shop.myshopify.com', 'read_orders,write_orders', 4102444800000, 'shpat_fake_seed_shop', 'shprt_fake_seed_shop', 4102444800000, 'baton-pro', 4102444800000, NULL),
+  ('other-shop.myshopify.com', 'gid://shopify/Shop/2', 'other-shop.myshopify.com', 'read_orders,write_orders', 4102444800000, 'shpat_fake_other_shop', 'shprt_fake_other_shop', 4102444800000, 'baton-pro', 4102444800000, NULL);
 
 INSERT OR IGNORE INTO Member (id, shop, email, createdAt) VALUES
   ('mem-1', 'seed-shop.myshopify.com', 'm1@m.com', 1760227200000),

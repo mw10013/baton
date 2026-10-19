@@ -291,7 +291,10 @@ export class ShopifyAppEvents extends Context.Service<
         apiKey: Config.option(Config.String("SHOPIFY_API_KEY")),
         apiSecret: Config.option(Config.Redacted("SHOPIFY_API_SECRET")),
         appHandle: Config.option(Config.schema(AppHandle, "SHOPIFY_APP_HANDLE")),
-      }).pipe(Effect.orDie);
+      }).pipe(
+        Effect.mapError((error) => new Error(`ShopifyAppEvents: ${error.message}`)),
+        Effect.orDie,
+      );
       if (
         globalThis.__ALCHEMY_RUNTIME__ &&
         (Option.isNone(apiKey) || Option.isNone(apiSecret) || Option.isNone(appHandle))

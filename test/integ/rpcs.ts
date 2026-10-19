@@ -35,11 +35,15 @@ import {
   WorkflowsIndexData,
 } from "../../src/domain/shop-work.ts";
 import { BackendApi } from "../../src/backend/api.ts";
-import { UsageEvent } from "../../src/domain/billing.ts";
+import { ShopUsage, UsageEvent } from "../../src/domain/billing.ts";
 import { OrderDetail } from "../../src/domain/orders.ts";
 import { ShopNotInstalled } from "../../src/contract/fixture.ts";
 import { ShopActors } from "../../src/backend/shop-actors.ts";
 import { AppEventsFake } from "./app-events-fake.ts";
+import { PartnerAnswer, PartnerFake } from "./partner-fake.ts";
+import { HomePlan, PaymentRequired, PlanRequest } from "../../src/contract/billing.ts";
+import { ShopSessionRepository } from "../../src/backend/shop-session-repository.ts";
+import { revalidateStalePlans, SubscriptionPlan } from "../../src/backend/subscription-plan.ts";
 import { ShopifyFake } from "./shopify-fake.ts";
 
 /**
@@ -87,8 +91,15 @@ export type ShopifyFakeCall = typeof ShopifyFakeCall.Type;
  * - `ApiWorkflowsList` and `ApiMemberWorkflowPage` are the `BackendApi` methods the member
  *   screens' loaders call. Their payload carries the member's session `cookie`, which the
  *   request would carry, because the test Backend has no request to read it from.
+ * - `ScriptPartner` sets {@link PartnerFake}'s answer for `shop` (its `ShopSession`'s GID) and makes
+ *   the shop's cached plan stale, keeping its handle, so the next gate, `/app` load or
+ *   `RevalidateStalePlans` re-reads it as a real expiry would. A shop with no row is a defect.
+ * - `RevalidateStalePlans` runs the daily cron's body (`revalidateStalePlans`) and answers its counts.
+ * - `ApiHomePlan` and `ApiUsage` are the home page's and the orders index's `BackendApi` reads, as
+ *   `ApiListOrders`.
  * - `AppEventsSent` answers the usage events {@link AppEventsFake} accepted since the last call,
- *   oldest first, and clears them: what the actor's flush sent to App Events.
+ *   oldest first, and clears them: what the actor's flush sent to App Events. `refuse` sets
+ *   whether the fake refuses every send from then on.
  * - `ShopIdentityNames` answers the emails of `shop`'s `Member` rows and the names of its `Team`
  *   rows, read from D1 alone ({@link MembershipRepository}' `identityNames`), so it never reaches the actor.
  */
@@ -145,15 +156,33 @@ export const IntegRpcs = RpcGroup.make(
   Rpc.make("ApiWorkflowsList", {
     payload: { cookie: Schema.String, ...WorkflowsListRequest.fields },
     success: WorkflowsListPageData,
-    error: Schema.Union([Unauthorized, Forbidden, NotAShopMember]),
+    error: Schema.Union([Unauthorized, PaymentRequired, Forbidden, NotAShopMember]),
   }),
   Rpc.make("ApiMemberWorkflowPage", {
     payload: { cookie: Schema.String, ...MemberWorkflowPageRequest.fields },
     success: MemberWorkflowPageData,
-    error: Schema.Union([Unauthorized, Forbidden, NotAShopMember]),
+    error: Schema.Union([Unauthorized, PaymentRequired, Forbidden, NotAShopMember]),
+  }),
+  Rpc.make("ScriptPartner", {
+    payload: { shop: ShopKey, answer: PartnerAnswer },
+    success: Schema.Struct({}),
+  }),
+  Rpc.make("RevalidateStalePlans", {
+    payload: {},
+    success: Schema.Struct({ shops: Schema.Number, failed: Schema.Number }),
+  }),
+  Rpc.make("ApiHomePlan", {
+    payload: PlanRequest,
+    success: HomePlan,
+    error: Schema.Union([InvalidSessionToken, ShopNotInstalled]),
+  }),
+  Rpc.make("ApiUsage", {
+    payload: PlanRequest,
+    success: ShopUsage,
+    error: Schema.Union([InvalidSessionToken, ShopNotInstalled]),
   }),
   Rpc.make("AppEventsSent", {
-    payload: {},
+    payload: { refuse: Schema.optional(Schema.Boolean) },
     success: Schema.Array(UsageEvent),
   }),
   Rpc.make("ShopIdentityNames", {
@@ -162,12 +191,17 @@ export const IntegRpcs = RpcGroup.make(
   }),
 );
 
+const decodeHomePlan = Schema.decodeUnknownSync(HomePlan);
+
 export const IntegHandlers = IntegRpcs.toLayer(
   Effect.gen(function* () {
     const { auth, maySignIn } = yield* Auth;
     const delivery = yield* MagicLinkDelivery;
     const shopifyFake = yield* ShopifyFake;
     const appEventsFake = yield* AppEventsFake;
+    const partnerFake = yield* PartnerFake;
+    const shopSessions = yield* ShopSessionRepository;
+    const plans = yield* SubscriptionPlan;
     const actors = yield* ShopActors;
     const members = yield* MembershipRepository;
     const api = yield* BackendApi;
@@ -207,7 +241,27 @@ export const IntegHandlers = IntegRpcs.toLayer(
         api.workflowsList({ cookie, ip: undefined }, payload),
       ApiMemberWorkflowPage: ({ cookie, ...payload }) =>
         api.memberWorkflowPage({ cookie, ip: undefined }, payload),
-      AppEventsSent: () => appEventsFake.takeSent,
+      ScriptPartner: ({ shop, answer }) =>
+        Effect.gen(function* () {
+          const row = yield* shopSessions.find(shop);
+          if (Option.isNone(row)) return yield* Effect.die(new Error(`no ShopSession for ${shop}`));
+          yield* partnerFake.script(row.value.shopGid, answer);
+          yield* shopSessions.updatePlan({
+            shop,
+            planHandle: row.value.planHandle,
+            planHandleExpiresAt: 0,
+            planBoundaryAt: row.value.planBoundaryAt,
+          });
+          return {};
+        }),
+      RevalidateStalePlans: () =>
+        revalidateStalePlans().pipe(
+          Effect.provideService(ShopSessionRepository, shopSessions),
+          Effect.provideService(SubscriptionPlan, plans),
+        ),
+      ApiHomePlan: (payload) => api.homePlan(noRequest, payload).pipe(Effect.map(decodeHomePlan)),
+      ApiUsage: (payload) => api.usage(noRequest, payload),
+      AppEventsSent: ({ refuse }) => appEventsFake.takeSent(refuse),
       ShopIdentityNames: ({ shop }) => members.identityNames(shop),
     });
   }),

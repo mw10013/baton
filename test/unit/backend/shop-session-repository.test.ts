@@ -6,6 +6,7 @@ import {
   ShopSessionRepository,
   type ShopSessionRow,
 } from "../../../src/backend/shop-session-repository.ts";
+import { makeD1Test } from "./layers.ts";
 
 const row: ShopSessionRow = {
   shop: SEED_SHOP,
@@ -104,5 +105,70 @@ describe("ShopSessionRepository refresh writes", () => {
       assert.strictEqual(after.refreshLeaseUntil, 200);
       assert.strictEqual(after.accessToken, "shpat_c");
     }).pipe(Effect.provide(ShopSessionRepository.layerTest([row]))),
+  );
+});
+
+/**
+ * The plan cache columns over the real SQL on an in-memory D1: legacy `repository.test.ts`'s two
+ * plan titles, unchanged. "updateShopSessionPlan" is legacy's name for `updatePlan`.
+ */
+describe("ShopSessionRepository plan cache", () => {
+  const inD1 = <A, E>(body: Effect.Effect<A, E, ShopSessionRepository>) =>
+    Effect.gen(function* () {
+      const { raw } = yield* makeD1Test;
+      return yield* body.pipe(Effect.provide(ShopSessionRepository.layerWith(raw)));
+    });
+
+  const {
+    refreshLeaseUntil: _,
+    planHandle: _p,
+    planHandleExpiresAt: _e,
+    planBoundaryAt: _b,
+    ...upsert
+  } = row;
+
+  it.effect("shortens the plan deadline but never extends it or writes a never-fetched row", () =>
+    inD1(
+      Effect.gen(function* () {
+        const sessions = yield* ShopSessionRepository;
+        yield* sessions.upsert(upsert);
+        const deadline = () => Effect.map(stored, (session) => session.planHandleExpiresAt);
+        // Never fetched: stays never fetched, or an absent handle would
+        // start reading as a verified absence of any app subscription.
+        yield* sessions.shortenPlanExpiry({ shop: SEED_SHOP, notAfter: 500 });
+        assert.strictEqual(yield* deadline(), null);
+        yield* sessions.updatePlan({
+          shop: SEED_SHOP,
+          planHandle: "baton-pro",
+          planHandleExpiresAt: 3000,
+          planBoundaryAt: null,
+        });
+        yield* sessions.shortenPlanExpiry({ shop: SEED_SHOP, notAfter: 4000 });
+        assert.strictEqual(yield* deadline(), 3000);
+        yield* sessions.shortenPlanExpiry({ shop: SEED_SHOP, notAfter: 2000 });
+        assert.strictEqual(yield* deadline(), 2000);
+      }),
+    ),
+  );
+
+  it.effect("updateShopSessionPlan rewrites only the plan cache fields", () =>
+    inD1(
+      Effect.gen(function* () {
+        const sessions = yield* ShopSessionRepository;
+        yield* sessions.upsert(upsert);
+        yield* sessions.updatePlan({
+          shop: SEED_SHOP,
+          planHandle: "baton-pro",
+          planHandleExpiresAt: 3000,
+          planBoundaryAt: null,
+        });
+        const session = yield* stored;
+        assert.strictEqual(session.planHandle, "baton-pro");
+        assert.strictEqual(session.planHandleExpiresAt, 3000);
+        assert.strictEqual(session.accessToken, "shpat_a");
+        assert.strictEqual(session.refreshToken, "shprt_a");
+        assert.strictEqual(session.scope, "read_orders");
+      }),
+    ),
   );
 });

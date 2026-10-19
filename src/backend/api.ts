@@ -14,12 +14,8 @@ import {
   TooManyRequests,
   Unauthorized,
 } from "../contract/auth.ts";
-import {
-  AdminSession,
-  AuthenticateAdminInput,
-  NotAShopMember,
-  ShopAccessInput,
-} from "../contract/shop.ts";
+import { AdminAuthenticated, HomePlan, PaymentRequired, PlanRequest } from "../contract/billing.ts";
+import { AuthenticateAdminInput, NotAShopMember, ShopAccessInput } from "../contract/shop.ts";
 import { ShoutInput } from "../contract/playground.ts";
 import { ShopNotInstalled } from "../contract/fixture.ts";
 import {
@@ -54,6 +50,8 @@ import { SignInLimit } from "./resources.ts";
 import { ShopAccess } from "./shop-access.ts";
 import { ShopSessionRepository } from "./shop-session-repository.ts";
 import { Shopify } from "./shopify.ts";
+import { planSelectionExitIframeHref, ShopifyPartner } from "./shopify-partner.ts";
+import { resolveEntitlements, SubscriptionPlan } from "./subscription-plan.ts";
 
 /**
  * The {@link SignInLimit} client. Yielding the binding attaches it to the Worker, so the layer
@@ -108,7 +106,9 @@ const decodeMemberWorkflowPageRequest = Schema.decodeUnknownEffect(MemberWorkflo
 const decodeMemberIdentity = Schema.decodeUnknownEffect(
   Schema.Struct({ memberId: MemberId, memberEmail: Email, teamIds: Schema.Array(TeamId) }),
 );
-const encodeAdminSession = Schema.encodeSync(AdminSession);
+const encodeAdminAuthenticated = Schema.encodeSync(AdminAuthenticated);
+const encodeHomePlan = Schema.encodeSync(HomePlan);
+const decodePlanRequest = Schema.decodeUnknownEffect(PlanRequest);
 const encodeMagicLinkRequested = Schema.encodeSync(MagicLinkRequested);
 
 const make = Effect.gen(function* () {
@@ -121,6 +121,8 @@ const make = Effect.gen(function* () {
   const actors = yield* ShopActors;
   const shopify = yield* Shopify;
   const shopSessions = yield* ShopSessionRepository;
+  const plans = yield* SubscriptionPlan;
+  const shopifyPartner = yield* ShopifyPartner;
 
   /** The signed-in user and session from the request's cookie; see {@link sessionFromCookie}. */
   const session = (request: RequestInfo) =>
@@ -211,6 +213,7 @@ const make = Effect.gen(function* () {
     Effect.catchTag("ShopAccessDenied", ({ status }) =>
       Match.value(status).pipe(
         Match.when(401, () => Effect.fail(new Unauthorized())),
+        Match.when(402, () => Effect.fail(new PaymentRequired())),
         Match.when(403, () => Effect.fail(new Forbidden())),
         Match.when(404, () => Effect.fail(new NotAShopMember())),
         Match.when(503, () => Effect.die(new Error("the actor gate is unavailable"))),
@@ -220,15 +223,103 @@ const make = Effect.gen(function* () {
   );
 
   /**
-   * The embedded App Home's admin: the session token is the credential, so the request is
-   * ignored; see `Shopify.authenticateAdmin`.
+   * The embedded App Home's admin and its plan: the session token is the credential, so the
+   * request is ignored; see `Shopify.authenticateAdmin`. After authenticating, the plan is
+   * re-read when `billingRedirect` says Shopify's billing redirect brought the merchant back
+   * (`SubscriptionPlan.refresh`), and resolved otherwise. `Subscribed` carries the Manage plan
+   * URL and nothing about the plan; `Unsubscribed` carries the plan selection href. A plan that
+   * could not be read fails the call (a defect, the error page), never `Unsubscribed`.
    */
   const authenticateAdmin = Effect.fn("BackendApi.authenticateAdmin")(function* (
     _request: RequestInfo,
     payload: AuthenticateAdminInput,
   ) {
-    const { sessionToken } = yield* decodeAuthenticateAdminInput(payload).pipe(Effect.orDie);
-    return encodeAdminSession(yield* shopify.authenticateAdmin(sessionToken));
+    const { sessionToken, billingRedirect } = yield* decodeAuthenticateAdminInput(payload).pipe(
+      Effect.orDie,
+    );
+    const admin = yield* shopify.authenticateAdmin(sessionToken);
+    const status = yield* (
+      billingRedirect ? plans.refresh(admin.shop) : plans.resolve(admin.shop)
+    ).pipe(Effect.orDie);
+    const planSelectionUrl = shopifyPartner.planSelectionUrl(admin.shop);
+    const answer: AdminAuthenticated = Match.value(status).pipe(
+      Match.tagsExhaustive({
+        Subscribed: () => ({
+          _tag: "Subscribed" as const,
+          ...admin,
+          managePlanUrl: planSelectionUrl,
+        }),
+        Unsubscribed: () => ({
+          _tag: "Unsubscribed" as const,
+          href: planSelectionExitIframeHref(planSelectionUrl, admin.shop),
+        }),
+      }),
+    );
+    return encodeAdminAuthenticated(answer);
+  });
+
+  /**
+   * The home page's **Your plan**, its first render: the plan resolved again (legacy's
+   * `resolveEntitlements`, a separate request from `/app`'s gate), the actor's usage and the D1
+   * member count. The plan is compared on the screen through its included numbers and never
+   * named. A plan that could not be read is a defect.
+   */
+  const homePlan = Effect.fn("BackendApi.homePlan")(function* (
+    _request: RequestInfo,
+    payload: PlanRequest,
+  ) {
+    const { sessionToken } = yield* decodePlanRequest(payload).pipe(Effect.orDie);
+    const shop = yield* installedShop(sessionToken);
+    const answer: HomePlan = yield* resolveEntitlements(shop).pipe(
+      Effect.flatMap((entitlements) =>
+        Effect.all(
+          { usage: actors.getUsage(shop), memberCount: members.countMembers(shop) },
+          { concurrency: "unbounded" },
+        ).pipe(
+          Effect.map(({ usage, memberCount }) => ({
+            _tag: "Subscribed" as const,
+            entitlements,
+            usage,
+            memberCount,
+          })),
+        ),
+      ),
+      Effect.catchTag("PlanUnsubscribed", ({ href }) =>
+        Effect.succeed({ _tag: "Unsubscribed" as const, href }),
+      ),
+      Effect.catchTag("SubscriptionPlanError", Effect.die),
+      Effect.provideService(SubscriptionPlan, plans),
+      Effect.provideService(ShopifyPartner, shopifyPartner),
+    );
+    return encodeHomePlan(answer);
+  });
+
+  /**
+   * The orders index's usage, its first render: the actor's `ShopUsage` (the order ceiling's
+   * flag is what the page shows). A separate read from `listOrders`, so the home page, which
+   * shares that read, does not read usage twice.
+   */
+  const usage = Effect.fn("BackendApi.usage")(function* (
+    _request: RequestInfo,
+    payload: PlanRequest,
+  ) {
+    const { sessionToken } = yield* decodePlanRequest(payload).pipe(Effect.orDie);
+    const shop = yield* installedShop(sessionToken);
+    return yield* actors.getUsage(shop);
+  });
+
+  /**
+   * Manage plan's press: `SubscriptionPlan.expectChange` (the plan deadline pulled to minutes,
+   * then the usage queue sent). Its failure is a defect; the button opens the pricing page
+   * either way.
+   */
+  const expectPlanChange = Effect.fn("BackendApi.expectPlanChange")(function* (
+    _request: RequestInfo,
+    payload: PlanRequest,
+  ) {
+    const { sessionToken } = yield* decodePlanRequest(payload).pipe(Effect.orDie);
+    const shop = yield* installedShop(sessionToken);
+    yield* plans.expectChange(shop).pipe(Effect.orDie);
   });
 
   /**
@@ -405,6 +496,7 @@ const make = Effect.gen(function* () {
     Effect.catchTag("ShopAccessDenied", ({ status }) =>
       Match.value(status).pipe(
         Match.when(401, () => Effect.fail(new Unauthorized())),
+        Match.when(402, () => Effect.fail(new PaymentRequired())),
         Match.when(403, () => Effect.fail(new Forbidden())),
         Match.when(404, () => Effect.fail(new NotAShopMember())),
         Match.when(503, () => Effect.die(new Error("the actor gate is unavailable"))),
@@ -462,6 +554,9 @@ const make = Effect.gen(function* () {
     myShops,
     shopAccess,
     authenticateAdmin,
+    homePlan,
+    usage,
+    expectPlanChange,
     listOrders,
     orderDetail,
     workflowsList,

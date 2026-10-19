@@ -32,8 +32,9 @@ import { makeD1Test, seedD1 } from "./layers.ts";
 /**
  * Legacy `repository.test.ts`'s `Member` and `Team` blocks, titles unchanged, over the real
  * {@link MembershipRepository} on a fresh in-memory D1 per test. Legacy's `listMembers` and
- * `countMembers`/`countTeams` are not ported (no production caller): the tests read back
- * through `listMembersPage`, `listTeams` or raw SQL. Legacy's `deleteShopSession` is
+ * `countTeams` are not ported (no production caller); `countMembers` is, for
+ * `SubscriptionPlan`'s billing cycle push. The tests read back through `listMembersPage`,
+ * `listTeams` or raw SQL. Legacy's `deleteShopSession` is
  * `ShopSessionRepository.remove` over the same database.
  */
 const run = <A, E>(
