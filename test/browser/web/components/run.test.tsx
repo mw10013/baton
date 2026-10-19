@@ -145,7 +145,11 @@ describe("RunNoteModal", () => {
     await expect.element(field).toHaveValue("Rush");
     expect(primaryOf(modal).disabled).toBe(true);
     expect(modal.dirty).toBeUndefined();
+    // Under the full run's load a lone `fill` has appended to the saved note instead of replacing it.
+    await field.clear();
+    await expect.element(field).toHaveValue("");
     await field.fill("  Rush, gift wrap  ");
+    await expect.element(field).toHaveValue("  Rush, gift wrap  ");
     await expect.poll(() => modal.dirty).toBe(true);
     expect(primaryOf(modal).disabled).toBe(false);
     primaryOf(modal).click();

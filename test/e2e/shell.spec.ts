@@ -39,7 +39,8 @@ test.describe("as an admin", () => {
     await page.waitForURL(/\/admin$/);
     await shell(page).signOut.click();
     await page.waitForURL(/\/$/);
-    await expect(page.getByRole("link", { name: "Sign in" })).toBeVisible();
+    // The landing offers Sign in twice: as a page action and in its member sign-in section.
+    await expect(page.getByRole("link", { name: "Sign in" })).toHaveCount(2);
     expect(await page.context().cookies()).toEqual([]);
   });
 });

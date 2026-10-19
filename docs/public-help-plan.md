@@ -190,6 +190,12 @@ Known before the run:
 
 ### Implementation review
 
+- **2026-10-19, lead:** §7 triaged; every deviation is routine and accepted (`NumberedList`, `HelpLink`, `HelpPages.tsx`, the wrapping table cell, the script's admin-forced changes). No `DECISION:`. Pictures looked at (`installing-1` reads **Baton**; `order-page-1` has no Shopify controls). The corner wedge and 1 px modal line are left as they are (cosmetic).
+- **2026-10-19, lead, fixed:** `run.test.tsx`'s note modal flake (also in the admin console slice) has a cause: under load `fill` appended to the saved "Rush" instead of replacing it. The test now clears, waits for the empty value, fills, and waits for the typed value. 9 passed, three runs alone.
+- **2026-10-19, lead, fixed:** `shell.spec.ts` "sign out ends the session" broke on the new landing: two **Sign in** links (page action and the member sign-in section, Q6), a strict-mode violation. It now expects both. Alone: 8 passed, 47.8 s. Step 2 ran `sign-in.spec.ts` but not `shell.spec.ts`, which also reads the landing.
+- **2026-10-19, lead, open (e2e infra, not this slice):** two full runs (11:05, 11:06) failed in `install` before any spec: the admin loaded the app ~100 ms after the CLI's Ready, while the fresh `trycloudflare.com` hostname did not resolve yet (`ERR_NAME_NOT_RESOLVED`; resolver 1.1.1.2, negative TTL 60 s). The names resolved a minute later. Nothing waits for the tunnel's DNS. Also seen: a Polaris warning that `TeamsIndexScreen` puts a non-primary button in the `primary-action` slot.
+- **2026-10-19, lead, full e2e (third run, 11:07–11:13):** 82 passed, 1 failed (the `shell.spec` above, fixed and passed alone), 6.3 min.
+
 ## 8. Out of scope
 
 - The App Store listing and its assets.
