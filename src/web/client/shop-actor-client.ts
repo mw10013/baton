@@ -1,7 +1,9 @@
 import { createIsomorphicFn } from "@tanstack/react-start";
 import * as Arr from "effect/Array";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
@@ -54,14 +56,23 @@ import type {
 import { LIVE_RETENTION } from "./query.ts";
 
 /**
- * Notices pulled off the socket by {@link layerSocketWithNotices}; one per registry, like the
- * socket, so a test registry never sees another's. The last one is replayed to a new
- * subscriber: the first connect's refresh notice is published while {@link noticesAtom} may
- * still be subscribing, and dropping it would leave a seeded read unchecked until the next
- * write.
+ * What {@link noticesAtom} hears: the actor's notices, and `Connected`, which the socket
+ * publishes itself on every (re)connect, naming every key, because a notice sent while this
+ * browser was disconnected is lost.
+ */
+export type BusNotice =
+  | Notice
+  | { readonly _tag: "Connected"; readonly invalidated: ReadonlyArray<string> };
+
+/**
+ * Notices pulled off the socket by {@link layerSocketWithNotices}, and the socket's
+ * `Connected`; one per registry, like the socket, so a test registry never sees another's. The
+ * last one is replayed to a new subscriber: the first `Connected` is published while
+ * {@link noticesAtom} may still be subscribing, and dropping it would leave a seeded read
+ * unchecked until the next write.
  */
 export const noticeBus = Atom.make(() =>
-  Effect.runSync(PubSub.unbounded<Notice>({ replay: 1 })),
+  Effect.runSync(PubSub.unbounded<BusNotice>({ replay: 1 })),
 ).pipe(Atom.keepAlive);
 
 const decodeNotice = Schema.decodeUnknownOption(NoticeFrame);
@@ -72,7 +83,7 @@ const decodeNotice = Schema.decodeUnknownOption(NoticeFrame);
  * protocol sees only its own messages. Pull again when a chunk held nothing else, because a
  * reader's pull must return a non-empty array.
  */
-const layerSocketWithNotices = (url: Effect.Effect<string>, notices: PubSub.PubSub<Notice>) =>
+const layerSocketWithNotices = (url: Effect.Effect<string>, notices: PubSub.PubSub<BusNotice>) =>
   Layer.effect(
     Socket.Socket,
     Effect.gen(function* () {
@@ -108,7 +119,7 @@ const wsOrigin = () => {
 
 type ProtocolInput = {
   readonly registry: AtomRegistry.AtomRegistry;
-  readonly notices: PubSub.PubSub<Notice>;
+  readonly notices: PubSub.PubSub<BusNotice>;
   readonly key: ShopKey;
   readonly merchantToken: Option.Option<Effect.Effect<string>>;
 };
@@ -146,13 +157,11 @@ const browserProtocol = (input: ProtocolInput) => {
       Layer.mergeAll(
         layerSocketWithNotices(url, input.notices),
         RpcSerialization.layerJson,
-        // Refetch after every (re)connect: a notice sent while this browser was disconnected
-        // is lost.
         Layer.succeed(RpcClient.ConnectionHooks)({
           onConnect: setState("open").pipe(
             Effect.andThen(
               PubSub.publish(input.notices, {
-                _tag: "ShopActorNotice",
+                _tag: "Connected",
                 invalidated: [ORDERS_KEY, SYNC_KEY],
               }),
             ),
@@ -247,11 +256,14 @@ export const liveQuery = <A, E>(
  * many of its keys a notice names: a second refresh would interrupt the first one's read.
  */
 export const refreshLive = (registry: AtomRegistry.AtomRegistry, keys: ReadonlyArray<string>) => {
-  for (const node of registry.getNodes().values()) {
-    const own = liveKeys.get(node.atom);
-    if (own !== undefined && own.some((key) => keys.includes(key))) registry.refresh(node.atom);
-  }
+  for (const node of liveNodes(registry, keys)) registry.refresh(node.atom);
 };
+
+/** The kept live queries' nodes whose keys meet `keys` ({@link liveQuery}). */
+const liveNodes = (registry: AtomRegistry.AtomRegistry, keys: ReadonlyArray<string>) =>
+  Array.from(registry.getNodes().values()).filter((node) =>
+    (liveKeys.get(node.atom) ?? []).some((key) => keys.includes(key)),
+  );
 
 /**
  * Fills a query atom's node with a value the page already has, as if the query had answered.
@@ -735,13 +747,145 @@ export const seedOrders = (
 ) => seed(registry, merchantOrdersQuery(input.input), input.data);
 
 /**
- * Turns notices into invalidations; mounted by the socket holder for as long as the layout is,
- * which is also what keeps the client's runtime, and so the socket, alive. The stream never ends. It sees the
- * last notice published before it subscribed (see {@link noticeBus}), so every connect, the
- * first included, refetches what the page shows.
+ * How long a notice key's window lasts: the first notice for a key refreshes at once and opens
+ * it; any more inside it cost one refresh when it ends, which opens the next. A burst of webhooks
+ * then costs two reads of each shown page, not one per notice, and the last state is still read.
+ * The first refresh is also what lets every tab of a shop join one memo entry in the actor: each
+ * arrives one round trip after the notice that cleared it.
+ *
+ * @see refs/baton-legacy/src/lib/useLiveQuery.ts (`INVALIDATION_THROTTLE_MS`)
  */
-export const noticesAtom = ShopActorClient.runtime.atom((get) =>
-  Stream.fromPubSub(get(noticeBus)).pipe(
-    Stream.tap((notice) => Effect.sync(() => refreshLive(get.registry, notice.invalidated))),
-  ),
-);
+export const NOTICE_THROTTLE = Duration.seconds(2);
+
+/** Whether the tab is hidden (the Page Visibility API's `document.visibilityState`). */
+const tabIsHidden = () => document.visibilityState === "hidden";
+
+/**
+ * {@link refreshLive}, except that a node whose read is in flight is not interrupted: it is
+ * refreshed once when that read settles. An interrupt would reach the actor after its SQL may
+ * have run, and the read in flight may already predate the notice, so it is replayed, not
+ * dropped. `pending` holds the nodes waiting to be replayed, so a second notice adds nothing.
+ *
+ * @see https://github.com/effect-app/libs `packages/vue/src/liveQueryInvalidation.ts` (`beginLiveQueryFetch`, `endLiveQueryFetch`)
+ */
+const refreshLiveAfterReads = (
+  registry: AtomRegistry.AtomRegistry,
+  pending: Set<Atom.Atom<any>>,
+  keys: ReadonlyArray<string>,
+) => {
+  for (const node of liveNodes(registry, keys)) {
+    const atom: Atom.Atom<AsyncResult.AsyncResult<unknown, unknown>> = node.atom;
+    // Only a valid node is read here: reading a stale one would build it, which is a fetch.
+    const reading = node.currentState() === "valid" && AsyncResult.isWaiting(node.value());
+    if (!reading) {
+      registry.refresh(atom);
+      continue;
+    }
+    if (pending.has(atom)) continue;
+    pending.add(atom);
+    const stop = registry.subscribe(atom, (result) => {
+      if (AsyncResult.isWaiting(result)) return;
+      stop();
+      pending.delete(atom);
+      registry.refresh(atom);
+    });
+  }
+};
+
+/**
+ * Notices, per registry, as legacy's `useLiveQuery` takes invalidations: each key is throttled
+ * over {@link NOTICE_THROTTLE}, leading and trailing; while the tab is hidden its keys are held,
+ * and released through the throttle on the next `visibilitychange` to visible, so a background
+ * tab reads nothing for a screen nobody is looking at. `Connected` is neither throttled nor held:
+ * it is rare, and whatever is shown may be stale by however long the socket was down. Every
+ * refresh goes through {@link refreshLiveAfterReads}. Windows that end together refresh together,
+ * so a node under two keys is refreshed once.
+ *
+ * @see refs/baton-legacy/src/lib/useLiveQuery.ts (`useLiveQuery`)
+ */
+const makeNoticeDispatch = (registry: AtomRegistry.AtomRegistry) => {
+  const pending = new Set<Atom.Atom<any>>();
+  /** Each open window's end, and whether a notice came in during it. */
+  const windows = new Map<string, { readonly until: number; trailing: boolean }>();
+  const held = new Set<string>();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const refresh = (keys: ReadonlyArray<string>) => {
+    if (keys.length > 0) refreshLiveAfterReads(registry, pending, keys);
+  };
+  const open = (key: string, now: number) => {
+    windows.set(key, { until: now + Duration.toMillis(NOTICE_THROTTLE), trailing: false });
+  };
+  const schedule = () => {
+    if (timer !== undefined) clearTimeout(timer);
+    timer = undefined;
+    const ends = Array.from(windows.values(), ({ until }) => until);
+    if (ends.length > 0) timer = setTimeout(close, Math.max(0, Math.min(...ends) - Date.now()));
+  };
+  const close = () => {
+    timer = undefined;
+    const now = Date.now();
+    const due: string[] = [];
+    for (const [key, window] of windows) {
+      if (window.until > now) continue;
+      windows.delete(key);
+      if (!window.trailing) continue;
+      if (tabIsHidden()) held.add(key);
+      else {
+        due.push(key);
+        open(key, now);
+      }
+    }
+    refresh(due);
+    schedule();
+  };
+  const throttled = (keys: ReadonlyArray<string>) => {
+    const now = Date.now();
+    const lead: string[] = [];
+    for (const key of keys) {
+      const window = windows.get(key);
+      if (window !== undefined) window.trailing = true;
+      else {
+        lead.push(key);
+        open(key, now);
+      }
+    }
+    refresh(lead);
+    schedule();
+  };
+  const onVisibilityChange = () => {
+    if (tabIsHidden() || held.size === 0) return;
+    const keys = [...held];
+    held.clear();
+    throttled(keys);
+  };
+  document.addEventListener("visibilitychange", onVisibilityChange);
+  return {
+    notice: (notice: BusNotice) =>
+      Match.valueTags(notice, {
+        Connected: ({ invalidated }) => refresh(invalidated),
+        ShopActorNotice: ({ invalidated }) => {
+          if (!tabIsHidden()) throttled(invalidated);
+          else for (const key of invalidated) held.add(key);
+        },
+      }),
+    dispose: () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      if (timer !== undefined) clearTimeout(timer);
+    },
+  };
+};
+
+/**
+ * Turns notices into refreshes of the live reads they name ({@link makeNoticeDispatch});
+ * mounted by the socket holder for as long as the layout is, which is also what keeps the
+ * client's runtime, and so the socket, alive. Browser only, as the holder is. The stream never
+ * ends. It sees the last notice published before it subscribed (see {@link noticeBus}), so every
+ * connect, the first included, refetches what the page shows.
+ */
+export const noticesAtom = ShopActorClient.runtime.atom((get) => {
+  const dispatch = makeNoticeDispatch(get.registry);
+  get.addFinalizer(dispatch.dispose);
+  return Stream.fromPubSub(get(noticeBus)).pipe(
+    Stream.tap((notice) => Effect.sync(() => dispatch.notice(notice))),
+  );
+});

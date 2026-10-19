@@ -2,7 +2,6 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Atom from "effect/reactivity/Atom";
 import * as AtomRegistry from "effect/reactivity/AtomRegistry";
-import * as Reactivity from "effect/reactivity/Reactivity";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcTest from "effect/rpc/RpcTest";
 import { onTestFinished } from "vite-plus/test";
@@ -37,19 +36,12 @@ const roleMiddlewares = Layer.mergeAll(
   Layer.succeed(RequireMerchant)(RequireMerchant.of((effect) => effect)),
 );
 
-/**
- * {@link ShopActorClient} over the given handlers, in memory: no socket, notice tap or actor.
- * `Reactivity.layer` is merged in because a seeded runtime layer replaces the factory's own,
- * and `noticesAtom` invalidates through the runtime's `Reactivity`; the registry's memo map
- * makes it the instance `Atom.withReactivity` listens on.
- */
+/** {@link ShopActorClient} over the given handlers, in memory: no socket, notice tap or actor. */
 export const shopActorClientLayer = (handlers: Partial<Handlers>) =>
   Layer.effect(ShopActorClient, RpcTest.makeClient(ShopActorRpcs, { flatten: true })).pipe(
     Layer.provide(ShopActorRpcs.toLayer({ ...unexpected, ...handlers })),
     Layer.provide(roleMiddlewares),
-    Layer.merge(Reactivity.layer),
-    // The runtime's layer type names only the client, though the factory always adds Reactivity.
-  ) as Layer.Layer<ShopActorClient>;
+  );
 
 /**
  * A registry whose {@link ShopActorClient} atoms run on {@link shopActorClientLayer}, disposed
