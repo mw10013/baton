@@ -4,6 +4,7 @@ How a deployed stage gets the values another service issues for it, today the st
 
 ## How it works
 
+- What goes here: every value another service issues for a deployed stage (the Shopify app's key and secret, its handle and Partner ids, the Partner API token). Values Baton defines (plan and meter handles, entitlements, API versions) live in code.
 - The values live in `.env.<stage>` (`.env.staging`) in the main checkout, untracked. Each worktree has a symlink to it, made by `vp run worktree:init`.
 - `vp run stage-config --stage <stage>` runs `stacks/stage-config.ts`, a stack with no resources. It reads every declared value from `.env.<stage>` and saves them as the stack's output record for that stage in the Cloudflare state store. Every run writes the whole record. A missing or empty value fails the run by name; a stage that is not deployed (`dev-mw`, `test-mw`) is refused.
 - The app stack's deploy on that stage (Workers Builds, on a push to `main`) reads the record and binds the values: the secret as a Worker secret, the key as plain text. Workers Builds never sees `.env.<stage>`.

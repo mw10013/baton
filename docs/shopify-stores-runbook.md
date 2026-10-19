@@ -31,6 +31,7 @@ How this project's Shopify dev stores are named, claimed, authorized and given t
 
 4. With `vp run dev` running, open the app in the dev store once (the admin URL `vp run dev` prints), which installs it on this checkout's dev stage.
 5. `vp run fixture`. A second run reports the store as already there and replaces the shop's data again.
+6. Subscribe both stores to a plan, once each: signed in as the owner, open `https://admin.shopify.com/store/<store>/charges/baton-local/pricing_plans`, choose a plan ("Test with this plan"), approve the $0 charge (`docs/billing-runbook.md`, "Subscribe a store"). Without one, `/app` redirects to that page and the e2e `install` setup fails with "pick a plan on <store>".
 
 The e2e store needs the e2e server (`vp run test:e2e` starts it) and the store auth above; it gets no fixture.
 
