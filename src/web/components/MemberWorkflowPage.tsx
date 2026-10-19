@@ -9,7 +9,7 @@ import {
   VERB_LABEL,
 } from "../../domain/shop-work.ts";
 import { showModal } from "../client/polaris-modal.ts";
-import { memberRunAtom, seedMemberRun } from "../client/shop-actor-client.ts";
+import { memberRunAtom, memberRunQuery } from "../client/shop-actor-client.ts";
 import { useLiveRead } from "./live-read.ts";
 import { useMemberRunActions } from "./member-run-actions.ts";
 import { BlockBanner, ClosedLine, RunItem, RunNote } from "./MemberRun.tsx";
@@ -45,11 +45,8 @@ export default function MemberWorkflowPage({
   const { memberId, memberEmail, teams } = data;
   const read = useLiveRead({
     atom: memberRunAtom(runId),
-    key: runId,
+    query: memberRunQuery(runId),
     loaded: data.page,
-    seed: (registry, page) => {
-      seedMemberRun(registry, { runId, page });
-    },
   });
   const page = read.value;
   const actions = useMemberRunActions();

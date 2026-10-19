@@ -7,7 +7,6 @@ import {
   add,
   chooseTeam,
   listContext,
-  listOrdersAnswer,
   openOrders,
   openScreen,
   own,
@@ -477,16 +476,15 @@ test("the orders index keeps its filters and page across the order page", async 
   // is the browser's Back only before a history move: App Bridge replays an admin Back as a new
   // navigation in the frame, so this entry no longer carries `nextPage` and Previous goes to page
   // one by URL.
-  const reloaded = listOrdersAnswer(page);
   await page.goBack();
   await expect(rows).toHaveCount(5);
   await expect.poll(() => listContext(page)).toEqual(expected);
   // A move through the admin's history can load the frame afresh, and a press before hydration
   // is dropped.
   await awaitHydration(frame);
-  // A page shown before is refreshed twice on return: its live read at once, then again with the
-  // router's background reload. Wait out both before the press.
-  await (await reloaded).finished();
+  // A page shown before answers from its kept read; if a notice came in since, or the frame
+  // loaded afresh and its socket connected, it is read once more over the socket, the table
+  // loading meanwhile. Wait that out before the press.
   await tableIdle(frame);
   await frame.getByRole("button", { name: "Go to previous page" }).click();
   await expect(rows).toHaveCount(25);

@@ -31,7 +31,7 @@ import {
   type WorkflowsListState,
   workflowsListStateIsDone,
 } from "../../domain/shop-work.ts";
-import { memberRunsAtom, seedWorkflowsList } from "../client/shop-actor-client.ts";
+import { memberRunsAtom, memberRunsQuery } from "../client/shop-actor-client.ts";
 import { ANY_OPTION_VALUE } from "./form.ts";
 import { useLiveRead } from "./live-read.ts";
 import { LocalDateTime } from "./LocalDateTime.tsx";
@@ -127,11 +127,8 @@ export default function WorkflowsListPage({
   const { state, team, limit, q } = query;
   const read = useLiveRead({
     atom: memberRunsAtom(query),
-    key: JSON.stringify([state, team, limit, q]),
+    query: memberRunsQuery(query),
     loaded: data.list,
-    seed: (registry, list) => {
-      seedWorkflowsList(registry, { query, list });
-    },
   });
   const list = read.value;
   const actions = useMemberRunActions();

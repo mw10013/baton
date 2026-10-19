@@ -26,10 +26,10 @@ import {
   merchantOrdersAtom,
   merchantSyncStatusAtom,
   merchantUsageAtom,
-  seedUsage,
+  merchantUsageQuery,
   ORDERS_STRIP,
   ordersIndexInput,
-  seedOrders,
+  merchantOrdersQuery,
   syncOpenOrdersAtom,
 } from "../client/shop-actor-client.ts";
 import { ANY_OPTION_VALUE } from "./form.ts";
@@ -180,23 +180,14 @@ export default function OrdersIndexPage(props: OrdersIndexProps) {
   const input = ordersIndexInput({ after, q, show, team });
   const read = useLiveRead({
     atom: merchantOrdersAtom(input),
-    key: JSON.stringify([input.cursor, input.q, input.show, input.team]),
+    query: merchantOrdersQuery(input),
     loaded: props.data,
-    seed: (registry, data) => {
-      seedOrders(registry, { input, data });
-    },
   });
-  const status = useLiveRead({
-    atom: merchantSyncStatusAtom,
-    key: "sync-status",
-    loaded: props.data.syncState,
-    seed: () => {},
-  });
+  const status = useLiveRead({ atom: merchantSyncStatusAtom, loaded: props.data.syncState });
   const usage = useLiveRead({
     atom: merchantUsageAtom,
-    key: "usage",
+    query: merchantUsageQuery,
     loaded: props.usage,
-    seed: seedUsage,
   });
   const sync = useSyncOpenOrders();
   const resourceLinkTarget = useResourceLinkTarget();

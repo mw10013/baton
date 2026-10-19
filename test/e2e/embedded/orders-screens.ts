@@ -153,16 +153,6 @@ export const listContext = (page: Page) => {
 };
 
 /**
- * The next answer of the orders index's loader (`listOrders`), whose server-function id is the
- * base64url JSON in its `/_serverFn/` path. Register it before the move that triggers the load.
- */
-export const listOrdersAnswer = (page: Page) =>
-  page.waitForResponse((response) => {
-    const id = new URL(response.url()).pathname.split("/_serverFn/")[1];
-    return id !== undefined && Buffer.from(id, "base64url").toString().includes('"listOrders_');
-  });
-
-/**
  * Waits for the orders table to stop loading. While `s-table` is `loading`, Polaris keeps its
  * pagination buttons enabled but ignores a press, so a press must wait for this.
  */

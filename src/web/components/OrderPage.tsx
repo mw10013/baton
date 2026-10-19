@@ -52,7 +52,7 @@ import {
   merchantReopenTaskAtom,
   merchantSetRunNoteAtom,
   merchantUnblockRunAtom,
-  seedOrderDetail,
+  merchantOrderDetailQuery,
   syncOrderAtom,
 } from "../client/shop-actor-client.ts";
 import { CANCEL_WARNING, cancelHeading, changeWarning } from "./change-warning.ts";
@@ -275,11 +275,8 @@ export interface OrderPageProps {
 export default function OrderPage(props: OrderPageProps) {
   const read = useLiveRead({
     atom: merchantOrderDetailAtom(props.legacyId),
-    key: props.legacyId,
+    query: merchantOrderDetailQuery(props.legacyId),
     loaded: props.data,
-    seed: (registry, data) => {
-      seedOrderDetail(registry, { legacyId: props.legacyId, data });
-    },
   });
   const presses = useKeyedPresses();
   const resourceLinkTarget = useResourceLinkTarget();

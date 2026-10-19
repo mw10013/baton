@@ -27,7 +27,6 @@ import {
 } from "./actor-connection.ts";
 import type { SetTeamMemberInput } from "../../contract/members.ts";
 import type { ShopKey } from "../../contract/shop.ts";
-import type { ShopUsage } from "../../domain/billing.ts";
 import {
   type Notice,
   NoticeFrame,
@@ -42,16 +41,12 @@ import type {
   ListOrdersInput,
   MarkTaskDoneInput,
   OrderCounts,
-  OrderPageData,
-  OrdersIndexData,
   PutBackTaskInput,
   ReopenTaskInput,
   RunIdInput,
-  RunPageData,
   RunQuery,
   SetRunNoteInput,
   StartTaskInput,
-  WorkflowsListData,
 } from "../../domain/shop-work.ts";
 import { LIVE_RETENTION } from "./query.ts";
 
@@ -266,22 +261,6 @@ const liveNodes = (registry: AtomRegistry.AtomRegistry, keys: ReadonlyArray<stri
   );
 
 /**
- * Fills a query atom's node with a value the page already has, as if the query had answered.
- * The registry consumes the value when it first creates the node; a node that is already
- * there (a page left less than its idle TTL ago) is refetched instead.
- */
-const seed = <A, E>(
-  registry: AtomRegistry.AtomRegistry,
-  atom: Atom.Atom<AsyncResult.AsyncResult<A, E>>,
-  value: A,
-) => {
-  if (!Atom.isSerializable(atom)) throw new Error("only a query with a serializationKey is seeded");
-  const { key, encode } = atom[Atom.SerializableTypeId];
-  if (registry.getNodes().has(key)) registry.refresh(atom);
-  else registry.setSerializable(key, encode(AsyncResult.success(value)));
-};
-
-/**
  * Names the shop and credential the protocol connects with, and starts the connection state
  * afresh. Only the socket holder (`ShopSocket`, in the layout) runs it, once per shop and
  * credential, in the browser, before anything reads a socket atom; a page never does.
@@ -353,7 +332,7 @@ export const ORDERS_STRIP: readonly (keyof OrderCounts)[] = [
 
 /**
  * One page of the orders index, the query itself, by its whole input; the node
- * {@link seedOrders} fills. Each input is its own node under its own serialization key, so a
+ * the orders index's loader seeds (`liveLoad`). Each input is its own node under its own serialization key, so a
  * refetch on page two, or under a filter, reads that page.
  */
 export const merchantOrdersQuery = Atom.family((input: ListOrdersInput) =>
@@ -383,7 +362,7 @@ export const merchantSyncStatusAtom = liveQuery(
 
 /**
  * The shop's usage (`ShopUsage`): the home page's meters and both pages' `QuotaBanners`; seeded
- * from the page's loader ({@link seedUsage}).
+ * by the page's loader.
  */
 export const merchantUsageQuery = ShopActorClient.query("MerchantGetUsage", undefined, {
   serializationKey: "merchant-usage",
@@ -501,7 +480,7 @@ export const setTeamMemberAtom = Atom.family((_pair: string) =>
   ),
 );
 
-/** The order page, by its `legacyId`; the node {@link seedOrderDetail} fills. */
+/** The order page, by its `legacyId`; the node the order page's loader seeds. */
 export const merchantOrderDetailQuery = Atom.family((legacyId: string) =>
   ShopActorClient.query(
     "MerchantGetOrderDetail",
@@ -518,14 +497,8 @@ export const merchantOrderDetailAtom = Atom.family((legacyId: string) =>
   liveQuery(merchantOrderDetailQuery(legacyId), [ORDERS_KEY]),
 );
 
-/** Seeds the order page's node from the loader, as {@link seedOrders} does the orders index's. */
-export const seedOrderDetail = (
-  registry: AtomRegistry.AtomRegistry,
-  input: { readonly legacyId: string; readonly data: OrderPageData | null },
-) => seed(registry, merchantOrderDetailQuery(input.legacyId), input.data);
-
 /**
- * The member's workflows list, by its whole query; the node {@link seedWorkflowsList} fills.
+ * The member's workflows list, by its whole query; the node the list's loader seeds.
  * The member is the socket's caller, never the payload.
  */
 export const memberRunsQuery = Atom.family((query: RunQuery) =>
@@ -544,13 +517,7 @@ export const memberRunsAtom = Atom.family((query: RunQuery) =>
   liveQuery(memberRunsQuery(query), [ORDERS_KEY]),
 );
 
-/** Seeds the workflows list's node from the loader, for the query the loader resolved. */
-export const seedWorkflowsList = (
-  registry: AtomRegistry.AtomRegistry,
-  input: { readonly query: RunQuery; readonly list: WorkflowsListData },
-) => seed(registry, memberRunsQuery(input.query), input.list);
-
-/** The member's workflow page, by run; the node {@link seedMemberRun} fills. */
+/** The member's workflow page, by run; the node its loader seeds. */
 export const memberRunQuery = Atom.family((runId: string) =>
   ShopActorClient.query(
     "MemberGetRun",
@@ -563,12 +530,6 @@ export const memberRunQuery = Atom.family((runId: string) =>
 export const memberRunAtom = Atom.family((runId: string) =>
   liveQuery(memberRunQuery(runId), [ORDERS_KEY]),
 );
-
-/** Seeds the member's workflow page's node from the loader. */
-export const seedMemberRun = (
-  registry: AtomRegistry.AtomRegistry,
-  input: { readonly runId: string; readonly page: RunPageData | null },
-) => seed(registry, memberRunQuery(input.runId), input.page);
 
 /** Attach or Change workflow on the order page, one atom per item (`lineItemId`), for {@link syncOrderAtom}'s reason. */
 export const attachWorkflowAtom = Atom.family((_key: string) =>
@@ -729,22 +690,6 @@ export const memberUnblockRunAtom = Atom.family((_key: string) =>
     }),
   ),
 );
-
-/**
- * Seeds one page of the merchant orders screen from the loader, so the table shows at once and
- * the socket only keeps it current. Run it for each page the screen shows, before the screen
- * reads that page's atom. A second run on the same registry (React's StrictMode doubles a state
- * initializer in development, and a page shown again within the idle TTL) finds the node and
- * refetches instead, which costs one round trip and nothing else.
- */
-/** Seeds {@link merchantUsageQuery} with the usage a loader read. */
-export const seedUsage = (registry: AtomRegistry.AtomRegistry, usage: ShopUsage) =>
-  seed(registry, merchantUsageQuery, usage);
-
-export const seedOrders = (
-  registry: AtomRegistry.AtomRegistry,
-  input: { readonly input: ListOrdersInput; readonly data: OrdersIndexData },
-) => seed(registry, merchantOrdersQuery(input.input), input.data);
 
 /**
  * How long a notice key's window lasts: the first notice for a key refreshes at once and opens

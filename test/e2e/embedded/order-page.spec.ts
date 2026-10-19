@@ -418,9 +418,12 @@ test("an item matching two workflows waits for the merchant to choose, then chan
   await expect(changeModal.getByText("will not carry over")).toHaveCount(0);
   await changeModal.getByRole("button", { name: "Change workflow", exact: true }).click();
 
-  // The change replaces the run, so the drawer the old one had open closes with it. The modal
-  // hiding is the gate: Manage is on the card in every state.
+  // The change replaces the run, so the drawer the old one had open closes with it once the page
+  // reads the new run. That read can come up to two seconds after the press: the attach's notice
+  // opened the orders key's throttle window, and a notice inside it is read when it ends. The old
+  // drawer's heading going is the gate: Manage is on the card in every state.
   await expect(changeModal.getByRole("combobox", { name: "Workflow" })).toBeHidden();
+  await expect(item.getByText(`${engraving} workflow`, { exact: true })).toHaveCount(0);
   await expect(manage).toBeVisible();
   await manage.click();
   await expect(item.getByText(`${rush} workflow`, { exact: true })).toBeVisible();

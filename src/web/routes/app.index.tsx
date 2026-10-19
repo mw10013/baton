@@ -11,13 +11,14 @@ import {
   setupFactHolds,
   setupIsComplete,
 } from "../../domain/shop-work.ts";
+import { liveLoad, seedIfAbsentInBrowser } from "../client/live-load.ts";
 import {
   merchantOrdersAtom,
+  merchantOrdersQuery,
   merchantUsageAtom,
+  merchantUsageQuery,
   ORDERS_ARRIVAL_INPUT,
   ORDERS_STRIP,
-  seedOrders,
-  seedUsage,
 } from "../client/shop-actor-client.ts";
 import { useLiveRead } from "../components/live-read.ts";
 import { LocalDateTime } from "../components/LocalDateTime.tsx";
@@ -97,11 +98,8 @@ function OrdersStrip({ orders }: { readonly orders: OrdersIndexData }) {
   const navigate = useNavigateOnClick();
   const read = useLiveRead({
     atom: merchantOrdersAtom(ORDERS_ARRIVAL_INPUT),
-    key: "arrival",
+    query: merchantOrdersQuery(ORDERS_ARRIVAL_INPUT),
     loaded: orders,
-    seed: (registry, data) => {
-      seedOrders(registry, { input: ORDERS_ARRIVAL_INPUT, data });
-    },
   });
   return (
     <Strip
@@ -202,15 +200,23 @@ function YourPlan({
  * the socket holder's banner above every page says when its counts are stale.
  */
 export const Route = createFileRoute("/app/")({
-  loader: async ({ location }) => {
+  loader: async ({ location, context: { registry }, cause }) => {
     const idToken = appSearch(location.searchStr).id_token;
     const [facts, orders, plan] = await Promise.all([
       setupFacts({ data: { idToken } }),
-      listOrders({ data: { idToken, ...ORDERS_ARRIVAL_INPUT } }),
+      liveLoad({
+        registry,
+        cause,
+        query: merchantOrdersQuery(ORDERS_ARRIVAL_INPUT),
+        fetch: () => listOrders({ data: { idToken, ...ORDERS_ARRIVAL_INPUT } }),
+      }),
       homePlan({ data: { idToken } }),
     ]);
     // The plan lapsed between `/app`'s guard and this read: the same way out as the guard's.
     if (plan._tag === "Unsubscribed") throw redirect({ href: plan.href });
+    // The orders index's usage node, when it is kept, is the live one; the plan's copy only
+    // fills it when there is none.
+    seedIfAbsentInBrowser(registry, merchantUsageQuery, plan.usage, Date.now());
     return { facts, orders, plan };
   },
   component: function AppHome() {
@@ -223,9 +229,8 @@ export const Route = createFileRoute("/app/")({
     const doneCount = steps.filter(({ done }) => done).length;
     const usage = useLiveRead({
       atom: merchantUsageAtom,
-      key: "usage",
+      query: merchantUsageQuery,
       loaded: plan.usage,
-      seed: seedUsage,
     }).value;
     return (
       <s-page heading="Baton">
