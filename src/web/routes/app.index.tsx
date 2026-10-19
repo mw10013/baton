@@ -200,13 +200,12 @@ function YourPlan({
  * the socket holder's banner above every page says when its counts are stale.
  */
 export const Route = createFileRoute("/app/")({
-  loader: async ({ location, context: { registry }, cause }) => {
+  loader: async ({ location, context: { registry } }) => {
     const idToken = appSearch(location.searchStr).id_token;
     const [facts, orders, plan] = await Promise.all([
       setupFacts({ data: { idToken } }),
       liveLoad({
         registry,
-        cause,
         query: merchantOrdersQuery(ORDERS_ARRIVAL_INPUT),
         fetch: () => listOrders({ data: { idToken, ...ORDERS_ARRIVAL_INPUT } }),
       }),

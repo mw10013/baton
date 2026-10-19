@@ -23,7 +23,6 @@ describe("liveLoad on the server", () => {
     let fetched = 0;
     const answer = await liveLoad({
       registry,
-      cause: "enter",
       query,
       fetch: () => {
         fetched++;

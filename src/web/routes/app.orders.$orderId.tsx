@@ -13,10 +13,9 @@ import { appHref, appSearch } from "./-app-search.ts";
  * search, filters and page the link here came with, so it lands on the list as it was.
  */
 export const Route = createFileRoute("/app/orders/$orderId")({
-  loader: ({ location, params, context: { registry }, cause }) =>
+  loader: ({ location, params, context: { registry } }) =>
     liveLoad({
       registry,
-      cause,
       query: merchantOrderDetailQuery(params.orderId),
       fetch: () =>
         orderDetail({

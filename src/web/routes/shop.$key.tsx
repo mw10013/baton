@@ -1,4 +1,4 @@
-import { useAtomValue } from "@effect/atom-react";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import {
   createFileRoute,
   Link,
@@ -10,10 +10,11 @@ import {
 } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { useEffect, useRef } from "react";
+import { useContext, useEffect, useRef } from "react";
 import { ShopKey } from "../../contract/shop.ts";
 import { DEFAULT_WORKFLOWS_LIST_STATE, RUN_PAGE } from "../../domain/shop-work.ts";
 import { membershipChangedAtom } from "../client/actor-connection.ts";
+import { reloadFromServer } from "../client/live-load.ts";
 import { ShopSocket } from "../components/ShopSocket.tsx";
 import { Things } from "../components/screen/Things.tsx";
 import { getShopAccess } from "../server/workflows-list.ts";
@@ -60,20 +61,21 @@ export const Route = createFileRoute("/shop/$key")({
 /**
  * Reruns the router's loaders when the socket learns the member's membership changed
  * ({@link membershipChangedAtom}): the pages' loader data was resolved from the old membership
- * and nothing else would refetch it. The loader is also where a removed member finds out they are
+ * and nothing else would refetch it, so they read over HTTP ({@link reloadFromServer}). The loader is also where a removed member finds out they are
  * gone: the gate answers not found and the layout renders {@link NoAccess}, so the socket's own
  * close never has to be read as an authorization answer. Rendered once hydrated: the socket is
  * the browser's.
  */
 function MembershipWatch() {
   const changed = useAtomValue(membershipChangedAtom);
+  const registry = useContext(RegistryContext);
   const router = useRouter();
   const seen = useRef(changed);
   useEffect(() => {
     if (changed === seen.current) return;
     seen.current = changed;
-    void router.invalidate();
-  }, [changed, router]);
+    void reloadFromServer(registry, router);
+  }, [changed, registry, router]);
   return null;
 }
 

@@ -17,10 +17,9 @@ import { useFromWorkflowsList } from "./-table-pages.ts";
  * the `href` is that second target, so open-in-new-tab gets it too.
  */
 export const Route = createFileRoute("/shop/$key/workflows/$runId")({
-  loader: ({ params, context: { registry }, cause }) =>
+  loader: ({ params, context: { registry } }) =>
     liveLoadAnswer({
       registry,
-      cause,
       request: `member-run:${params.key}:${params.runId}`,
       fetch: () => memberWorkflowPage({ data: { key: params.key, runId: params.runId } }),
       live: (answer) => ({ query: memberRunQuery(params.runId), value: answer.page }),

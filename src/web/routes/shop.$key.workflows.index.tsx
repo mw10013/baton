@@ -24,10 +24,9 @@ export const Route = createFileRoute("/shop/$key/workflows/")({
     limit: search.limit ?? RUN_PAGE,
     q: search.q ?? null,
   }),
-  loader: ({ params, deps, context: { registry }, cause }) =>
+  loader: ({ params, deps, context: { registry } }) =>
     liveLoadAnswer({
       registry,
-      cause,
       request: `workflows-list:${params.key}:${JSON.stringify([deps.state, deps.team, deps.limit, deps.q])}`,
       fetch: () => workflowsList({ data: { key: params.key, ...deps } }),
       live: (answer) => ({ query: memberRunsQuery(answer.query), value: answer.list }),

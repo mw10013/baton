@@ -70,9 +70,33 @@ export interface LiveRead<A, E> {
 interface LoaderInput {
   /** The router context's registry. */
   readonly registry: AtomRegistry.AtomRegistry;
-  /** The loader's `cause`. */
-  readonly cause: "enter" | "stay" | "preload";
 }
+
+/** How many {@link reloadFromServer} reloads are running in a registry. */
+const serverReloads = Atom.make(0).pipe(Atom.keepAlive);
+
+/** Whether a {@link reloadFromServer} is running, so a live loader reads over HTTP. */
+const readsFromServer = (registry: AtomRegistry.AtomRegistry) => registry.get(serverReloads) > 0;
+
+/**
+ * `router.invalidate()` for a caller that wants the server's answer, not the registry's (a
+ * membership change, a refused socket): every live loader it reruns reads over HTTP and reseeds.
+ * A loader's `cause` cannot say this: the router calls a match `stay` whenever the same route
+ * holds the same place in the tree, so a filter or a page change is a `stay` too.
+ *
+ * @see refs/tan-router/packages/router-core/src/router.ts (`matchRoutesInternal`, `previousAt`)
+ */
+export const reloadFromServer = async (
+  registry: AtomRegistry.AtomRegistry,
+  router: { readonly invalidate: () => Promise<void> },
+) => {
+  registry.set(serverReloads, registry.get(serverReloads) + 1);
+  try {
+    await router.invalidate();
+  } finally {
+    registry.set(serverReloads, registry.get(serverReloads) - 1);
+  }
+};
 
 /** A kept node's value, or undefined when there is no node or no value in it. */
 const keptValue = <A, E>(registry: AtomRegistry.AtomRegistry, query: Query<A, E>) => {
@@ -101,7 +125,9 @@ const liveLoadImpl = createIsomorphicFn()
     (
       input: LoaderInput & { readonly query: Query<any, any>; readonly fetch: () => Promise<any> },
     ) => {
-      const kept = input.cause === "stay" ? undefined : keptValue(input.registry, input.query);
+      const kept = readsFromServer(input.registry)
+        ? undefined
+        : keptValue(input.registry, input.query);
       if (kept !== undefined) return Promise.resolve(kept.value);
       return fetchAndSeed(input.registry, input.fetch, (value) => ({ query: input.query, value }));
     },
@@ -113,9 +139,8 @@ const liveLoadImpl = createIsomorphicFn()
  * On the server it calls the server function and never touches the registry (the page seeds its
  * node once hydrated, `useLiveRead`). In the browser, a query whose node is kept with a value
  * answers from it, with no request; one the registry has no value for is read over HTTP and
- * seeded, stamped with when the read came back. A `stay` (the same match loaded again:
- * `router.invalidate()`, or the same URL navigated to) always reads, because whoever
- * invalidated wants the server's answer.
+ * seeded, stamped with when the read came back. During a {@link reloadFromServer} it always
+ * reads.
  */
 export const liveLoad = <A, E>(
   input: LoaderInput & { readonly query: Query<A, E>; readonly fetch: () => Promise<A> },
@@ -135,7 +160,7 @@ const liveLoadAnswerImpl = createIsomorphicFn()
   .client(async (input: LiveLoadAnswerInput<any, any, any>) => {
     const answers = input.registry.get(lastAnswers);
     const last = answers.get(input.request);
-    if (input.cause !== "stay" && last !== undefined) {
+    if (!readsFromServer(input.registry) && last !== undefined) {
       const kept = keptValue(input.registry, input.live(last.answer).query);
       if (kept !== undefined) return input.withValue(last.answer, kept.value);
     }

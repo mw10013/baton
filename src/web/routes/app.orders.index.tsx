@@ -32,19 +32,17 @@ export const Route = createFileRoute("/app/orders/")({
     team: search.team ?? null,
     after: search.after ?? null,
   }),
-  loader: async ({ location, deps, context: { registry }, cause }) => {
+  loader: async ({ location, deps, context: { registry } }) => {
     const idToken = appSearch(location.searchStr).id_token;
     const input = ordersIndexInput(deps);
     const [data, usage] = await Promise.all([
       liveLoad({
         registry,
-        cause,
         query: merchantOrdersQuery(input),
         fetch: () => listOrders({ data: { idToken, ...input } }),
       }),
       liveLoad({
         registry,
-        cause,
         query: merchantUsageQuery,
         fetch: () => orderUsage({ data: { idToken } }),
       }),
