@@ -1,6 +1,7 @@
 import type { FrameLocator, Page } from "playwright/test";
 import { entitlementsOfPlan, Plan } from "../../../src/domain/billing.ts";
-import { dev, expect, test } from "../fixtures.ts";
+import { e2eServerURL } from "../../../playwright.config.ts";
+import { expect, test } from "../fixtures.ts";
 import { E2E_SHOP as shop } from "../shop-fixture.ts";
 import { appFrame, awaitHydration, closeDevConsole, gotoApp } from "./app.ts";
 
@@ -28,7 +29,8 @@ import { appFrame, awaitHydration, closeDevConsole, gotoApp } from "./app.ts";
  *
  * The second test pins a Shopify rule Baton relies on: a paid-to-paid downgrade applies at once,
  * not at the end of the cycle (App Pricing defers only a downgrade to a free plan, and Baton has
- * none). Pro to Basic must reach the home page on the redirect back and the cached plan.
+ * none). Pro to Basic must reach the home page on the redirect back, and the admin console's shop
+ * page after Refresh plan.
  */
 
 /** Display names from the Partner Dashboard listing. UI labels, not entitlements. */
@@ -113,22 +115,80 @@ test("switching plans on Shopify's pricing page moves the ceiling on the Plan ca
 });
 
 /**
- * Legacy read the plan cache and the pending usage events off the operator console's shop page
- * (Refresh plan), which comes with the admin console. Here the downgrade is read off the home page
- * on the redirect back and again on a fresh load, which re-reads the plan the redirect cached; the
- * outbox half waits for that page.
+ * A field of the admin console's shop page, its label stripped: each field is a `Lines` stack (a
+ * label over its value) inside the section's `Tiles` grid.
+ */
+const readAdminFields = async (page: Page, labels: ReadonlyArray<string>) => {
+  const fields: Record<string, string> = {};
+  for (const label of labels) {
+    const field = page
+      .locator("s-grid > s-stack")
+      .filter({ hasText: new RegExp(`^${label}`, "u") })
+      .first();
+    await expect(field).toBeVisible({ timeout: 30_000 });
+    fields[label] = ((await field.textContent()) ?? "").replace(label, "").trim();
+  }
+  return fields;
+};
+
+const ADMIN_FIELDS = [
+  "Cached plan",
+  "Plan boundary",
+  "Billing cycle",
+  "Orders this billing cycle",
+  "Usage events pending",
+] as const;
+
+/**
+ * After Pro to Basic, the admin console's shop page, in a new context signed in as the admin,
+ * presses Refresh plan, so the Partner API itself must report Basic now, not the row the redirect
+ * cached, and reads the cached plan and the usage outbox: no usage event is left pending once the
+ * plan change pushed the new billing cycle.
  */
 test("a paid-to-paid downgrade applies at once, and the usage outbox drains", async ({
+  browser,
   page,
-  backend,
-}) => {
+}, testInfo) => {
   test.setTimeout(360_000);
   const start = await readPlan(await gotoApp(page));
   try {
     if (start !== "pro") await switchPlan(page, "pro");
     await switchPlan(page, "basic");
     expect(await readPlan(await gotoApp(page))).toBe("basic");
-    expect(await backend(dev((c) => c.GetShopSession({ shop })))).not.toBeNull();
+
+    const context = await browser.newContext({
+      baseURL: e2eServerURL,
+      storageState: "playwright/.auth/admin.json",
+    });
+    try {
+      const admin = await context.newPage();
+      await admin.goto(`/admin/shop/${shop}`);
+      await admin.locator("body[data-hydrated]").waitFor();
+      const refresh = admin.getByRole("button", { name: "Refresh plan" });
+      // The press re-reads the loader (`invalidate({ sync: true })`) before the fields change.
+      await Promise.all([
+        admin.waitForResponse((response) => response.request().method() === "POST"),
+        refresh.click(),
+      ]);
+      await expect
+        .poll(
+          async () =>
+            (await readAdminFields(admin, ["Usage events pending"]))["Usage events pending"],
+          {
+            timeout: 30_000,
+          },
+        )
+        .toBe("0");
+      const fields = await readAdminFields(admin, ADMIN_FIELDS);
+      await testInfo.attach("plan cache after Pro to Basic", {
+        body: JSON.stringify(fields, null, 2),
+        contentType: "application/json",
+      });
+      expect(fields["Cached plan"]).toContain("baton-basic");
+      expect(fields["Usage events pending"]).toBe("0");
+    } finally {
+      await context.close();
+    }
   } finally {
     if ((await readPlan(await gotoApp(page))) !== start) await switchPlan(page, start);
   }

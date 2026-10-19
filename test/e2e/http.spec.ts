@@ -13,6 +13,16 @@ test.describe("signed out", () => {
     const response = await request.get("/shop", { maxRedirects: 0 });
     expect(response.headers().location).toBe("/sign-in?redirect=%2Fshop");
   });
+
+  test("an anonymous visitor is bounced from /admin to /sign-in", async ({ request }) => {
+    const response = await request.get("/admin", { maxRedirects: 0 });
+    expect(response.headers().location).toBe("/sign-in?redirect=%2Fadmin");
+  });
+
+  test("an anonymous visitor is bounced from /admin/shops to /sign-in", async ({ request }) => {
+    const response = await request.get("/admin/shops", { maxRedirects: 0 });
+    expect(response.headers().location).toBe("/sign-in?redirect=%2Fadmin%2Fshops");
+  });
 });
 
 test.describe("as a member", () => {
