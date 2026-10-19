@@ -204,6 +204,10 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 
 ### Implementation review
 
+- **2026-10-19, reviewer:** triaged the implementer's three open items. (1) `chromium` overlap: confirmed in the full run, `chromium`'s 32 tests finished before the first `embedded` result was reported, so they share a phase and 6 global workers did not starve it; global `workers` unchanged. (2) `orders.spec`'s page-one search read: left as is; it held in the full run. (3) `db:reset` now reads `SHOPIFY_E2E_STORE`: accepted, `worktree:init` always writes it.
+- **2026-10-19, reviewer:** checklist (§5) holds: no `test:e2e:server`/`E2E_REUSE_SERVER` outside plans and research; `tunnel-url`/`cloudflared` only in JSDoc and a test name about the quick tunnel's process; `vp check` clean; `dev:status` prints as before plus `(ready)` on the tunnel, dev server untouched (herdr pane `wH:p2`); `e2e:status` stopped exits 1 with the start command.
+- **2026-10-19, reviewer, full run:** `vp run e2e:start` 23.4 s (herdr tab `e2e`); `vp run test:e2e` 83 passed in 3.1 min (185 s wall), against 6.0 min before; preflight ready in 0.1 s. `vp test` not re-run: no code changed after the implementer's full run (1127 passed). The e2e server is left running, as a long-lived server is meant to be.
+
 ## 8. Out of scope
 
 - Named Cloudflare tunnels, `--tunnel-url`, `--use-localhost` (rejected in review).
