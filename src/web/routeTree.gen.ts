@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as AppRouteImport } from './routes/app'
 import { Route as LoginCallbackRouteImport } from './routes/login-callback'
+import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as ShopRouteImport } from './routes/shop'
 import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
@@ -64,6 +65,11 @@ const AppRoute = AppRouteImport.update({
 const LoginCallbackRoute = LoginCallbackRouteImport.update({
   id: '/login-callback',
   path: '/login-callback',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PrivacyRoute = PrivacyRouteImport.update({
+  id: '/privacy',
+  path: '/privacy',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ShopRoute = ShopRouteImport.update({
@@ -233,6 +239,7 @@ export interface FileRoutesByFullPath {
   '/admin': typeof AdminRouteWithChildren
   '/app': typeof AppRouteWithChildren
   '/login-callback': typeof LoginCallbackRoute
+  '/privacy': typeof PrivacyRoute
   '/shop': typeof ShopRouteWithChildren
   '/sign-in': typeof SignInRoute
   '/admin/members': typeof AdminMembersRoute
@@ -269,6 +276,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login-callback': typeof LoginCallbackRoute
+  '/privacy': typeof PrivacyRoute
   '/sign-in': typeof SignInRoute
   '/admin/members': typeof AdminMembersRoute
   '/admin/shops': typeof AdminShopsRoute
@@ -304,6 +312,7 @@ export interface FileRoutesById {
   '/admin': typeof AdminRouteWithChildren
   '/app': typeof AppRouteWithChildren
   '/login-callback': typeof LoginCallbackRoute
+  '/privacy': typeof PrivacyRoute
   '/shop': typeof ShopRouteWithChildren
   '/sign-in': typeof SignInRoute
   '/admin/members': typeof AdminMembersRoute
@@ -344,6 +353,7 @@ export interface FileRouteTypes {
     | '/admin'
     | '/app'
     | '/login-callback'
+    | '/privacy'
     | '/shop'
     | '/sign-in'
     | '/admin/members'
@@ -380,6 +390,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/login-callback'
+    | '/privacy'
     | '/sign-in'
     | '/admin/members'
     | '/admin/shops'
@@ -414,6 +425,7 @@ export interface FileRouteTypes {
     | '/admin'
     | '/app'
     | '/login-callback'
+    | '/privacy'
     | '/shop'
     | '/sign-in'
     | '/admin/members'
@@ -453,6 +465,7 @@ export interface RootRouteChildren {
   AdminRoute: typeof AdminRouteWithChildren
   AppRoute: typeof AppRouteWithChildren
   LoginCallbackRoute: typeof LoginCallbackRoute
+  PrivacyRoute: typeof PrivacyRoute
   ShopRoute: typeof ShopRouteWithChildren
   SignInRoute: typeof SignInRoute
   ApiDevRoute: typeof ApiDevRoute
@@ -492,6 +505,13 @@ declare module '@tanstack/react-router' {
       path: '/login-callback'
       fullPath: '/login-callback'
       preLoaderRoute: typeof LoginCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/privacy': {
+      id: '/privacy'
+      path: '/privacy'
+      fullPath: '/privacy'
+      preLoaderRoute: typeof PrivacyRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/shop': {
@@ -825,6 +845,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminRoute: AdminRouteWithChildren,
   AppRoute: AppRouteWithChildren,
   LoginCallbackRoute: LoginCallbackRoute,
+  PrivacyRoute: PrivacyRoute,
   ShopRoute: ShopRouteWithChildren,
   SignInRoute: SignInRoute,
   ApiDevRoute: ApiDevRoute,

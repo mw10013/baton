@@ -1,7 +1,5 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
-import { useServerFn } from "@tanstack/react-start";
 import HomePage from "../components/HomePage";
-import { getHello, shout } from "../server/playground.ts";
 import { getMe } from "../server/session.ts";
 
 export const Route = createFileRoute("/")({
@@ -10,14 +8,9 @@ export const Route = createFileRoute("/")({
     if (new URLSearchParams(location.searchStr).has("shop"))
       throw redirect({ href: `/app${location.searchStr}` });
   },
-  // A failed Hello rejects, and the route error boundary shows it.
-  loader: async () => {
-    const [hello, me] = await Promise.all([getHello(), getMe()]);
-    return { hello, me: me ?? undefined };
-  },
+  head: () => ({ meta: [{ title: "Baton | Made-to-order production workflows" }] }),
+  loader: async () => ({ me: (await getMe()) ?? undefined }),
   component: function HomeRoute() {
-    const { hello, me } = Route.useLoaderData();
-    const shoutFn = useServerFn(shout);
-    return <HomePage me={me} hello={hello} shout={(input) => shoutFn({ data: { input } })} />;
+    return <HomePage me={Route.useLoaderData().me} />;
   },
 });

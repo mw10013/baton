@@ -1,7 +1,6 @@
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Match from "effect/Match";
@@ -25,7 +24,6 @@ import {
 } from "../contract/admin.ts";
 import { AdminAuthenticated, HomePlan, PaymentRequired, PlanRequest } from "../contract/billing.ts";
 import { AuthenticateAdminInput, NotAShopMember, ShopAccessInput } from "../contract/shop.ts";
-import { ShoutInput } from "../contract/playground.ts";
 import { ShopNotInstalled } from "../contract/fixture.ts";
 import {
   DETAILS_PAGE_SIZE,
@@ -97,7 +95,6 @@ export class SignInLimiter extends Context.Service<SignInLimiter, Cloudflare.Rat
  * is a defect.
  */
 const decodeRequest = Schema.decodeUnknownEffect(RequestInfo);
-const decodeShout = Schema.decodeUnknownEffect(ShoutInput);
 const decodeMagicLinkInput = Schema.decodeUnknownEffect(MagicLinkInput);
 const decodeAccessInput = Schema.decodeUnknownEffect(ShopAccessInput);
 const decodeAuthenticateAdminInput = Schema.decodeUnknownEffect(AuthenticateAdminInput);
@@ -143,21 +140,6 @@ const make = Effect.gen(function* () {
       Effect.flatMap(({ cookie }) => sessionFromCookie(cookie)),
       Effect.provideService(Auth, authService),
     );
-
-  const hello = Effect.fn("BackendApi.hello")(function* (_request: RequestInfo) {
-    yield* Effect.log("Backend.Hello"); // used to count calls in the dev log
-    const now = yield* DateTime.now;
-    return { message: "Hello from the backend Worker.", servedAt: DateTime.formatIso(now) };
-  });
-
-  const shout = Effect.fn("BackendApi.shout")(function* (
-    _request: RequestInfo,
-    payload: ShoutInput,
-  ) {
-    const { input } = yield* decodeShout(payload).pipe(Effect.orDie);
-    yield* Effect.log("Backend.Shout");
-    return { input, output: input.toUpperCase() };
-  });
 
   /**
    * A non-member gets the same reply as a member, minus the link: the caller must not learn who
@@ -651,8 +633,6 @@ const make = Effect.gen(function* () {
   });
 
   return {
-    hello,
-    shout,
     requestMagicLink,
     me,
     listMembers,

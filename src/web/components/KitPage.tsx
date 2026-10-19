@@ -16,6 +16,7 @@ import { BlockBanner, ClosedLine, RunItem, RunNote } from "./MemberRun.tsx";
 import { type RunStepTask, RunSteps } from "./RunSteps.tsx";
 import { BlockModal, RunNoteModal } from "./RunTextModals.tsx";
 import { BackLink } from "./screen/BackLink.tsx";
+import { BatonMark } from "./screen/BatonMark.tsx";
 import { Clamp } from "./screen/Clamp.tsx";
 import { ClampedProse } from "./screen/ClampedProse.tsx";
 import { Connector } from "./screen/Connector.tsx";
@@ -471,6 +472,12 @@ export function KitPage({ width }: { readonly width: "small" | "large" }) {
               {...textLimitProps(longDraft, TASK_INSTRUCTIONS_MAX_LENGTH)}
             />
           </Fields>
+        </s-section>
+        <s-section heading="Baton mark">
+          <Inline>
+            <BatonMark />
+            <BatonMark size={56} />
+          </Inline>
         </s-section>
         <EmptyAside />
         <FootLine>Learn more in Editing steps and tasks.</FootLine>

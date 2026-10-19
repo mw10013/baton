@@ -1,25 +1,17 @@
-import type { Hello, Shouted, ShoutText } from "../../contract/playground.ts";
 import type { Me } from "../../contract/auth.ts";
-import { useNavigateOnClick } from "./navigate.ts";
 import { homeFor } from "../client/session.ts";
-import Playground from "./Playground";
-import { Inline } from "./screen/Inline.tsx";
+import { useNavigateOnClick } from "./navigate.ts";
+import { BatonMark } from "./screen/BatonMark.tsx";
 import { Things } from "./screen/Things.tsx";
 import SignOutButton from "./SignOutButton.tsx";
 
 /**
- * The public landing page. Its page actions follow the session: a signed-out visitor is
- * offered sign-in, a member their {@link homeFor} dashboard and sign-out.
+ * The public landing page: what a merchant sees at the site's root when they arrive without a
+ * `shop` parameter, and the page the App Store listing and the privacy policy link back to. Its
+ * actions follow the session: a signed-out visitor is offered sign-in, a member their
+ * {@link homeFor} dashboard and sign-out.
  */
-export default function HomePage({
-  me,
-  hello,
-  shout,
-}: {
-  me: Me | undefined;
-  hello: typeof Hello.Type;
-  shout: (input: ShoutText) => Promise<typeof Shouted.Type>;
-}) {
+export default function HomePage({ me }: { me: Me | undefined }) {
   const navigate = useNavigateOnClick();
   const dashboard = me && homeFor(me.role);
 
@@ -37,25 +29,28 @@ export default function HomePage({
           Sign in
         </s-button>
       )}
-      <s-section heading="Build on the edge with Effect">
+      <s-section accessibilityLabel="Baton overview">
         <Things>
-          <s-paragraph color="subdued">
-            TanStack Start, Effect and Polaris on Cloudflare Workers.
+          <BatonMark size={56} />
+          <s-paragraph>
+            Baton gives made-to-order Shopify merchants a clear production workflow from order to
+            completion.
           </s-paragraph>
-          <Inline>
-            {dashboard ? (
-              <s-button variant="primary" {...navigate(dashboard)}>
-                Open dashboard
-              </s-button>
-            ) : (
-              <s-button variant="primary" {...navigate("/sign-in")}>
-                Get started
-              </s-button>
-            )}
-          </Inline>
         </Things>
       </s-section>
-      <Playground hello={hello} shout={shout} />
+      <s-section accessibilityLabel="Member sign-in">
+        {dashboard ? (
+          <s-link {...navigate(dashboard)}>Dashboard</s-link>
+        ) : (
+          <s-link {...navigate("/sign-in")}>Sign in</s-link>
+        )}
+      </s-section>
+      <s-section accessibilityLabel="Help">
+        <s-link {...navigate("/help")}>Help</s-link>
+      </s-section>
+      <s-section accessibilityLabel="Legal">
+        <s-link {...navigate("/privacy")}>Privacy policy</s-link>
+      </s-section>
     </s-page>
   );
 }

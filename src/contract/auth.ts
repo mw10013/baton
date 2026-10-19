@@ -35,7 +35,11 @@ export type Role = typeof Role.Type;
 export const Me = Schema.Struct({ id: Schema.String, email: Email, role: Role });
 export type Me = typeof Me.Type;
 
-/** `requestMagicLink`'s input, shared by both sides of the binding; see `ShoutInput`. */
+/**
+ * `requestMagicLink`'s input. A method's input is declared once in the API definition and decoded
+ * on both sides of the binding: the server function's validator and the Backend method read the
+ * same schema, so the two cannot drift. `ShopAccessInput` follows the same rule.
+ */
 export const MagicLinkInput = Schema.Struct({
   email: Email,
   returnTo: Schema.optional(ReturnPath),

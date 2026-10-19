@@ -61,7 +61,11 @@ export const Route = createRootRouteWithContext<{ registry: AtomRegistry.AtomReg
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { title: "Baton" },
-      { name: "description", content: "TanStack Start, Effect and Polaris on Cloudflare Workers." },
+      {
+        name: "description",
+        content:
+          "Baton gives made-to-order Shopify merchants a clear production workflow from order to completion.",
+      },
     ],
     links: [{ rel: "stylesheet", href: stylesheet }],
   }),

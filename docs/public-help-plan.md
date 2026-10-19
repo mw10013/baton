@@ -146,6 +146,7 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 
 - **2026-10-19, Step 1 (corrects §2 "The name"):** `shopify app dev` does not push `name`; the admin shows the name of the deployed config, and the Dev Dashboard has no rename. The user ran `shopify app deploy --config shopify.app.toml`.
 - **2026-10-19, Step 3 (§3 Names, accepted by the lead):** `pages.ts`, `pictures.ts` and `reference.ts` live in `src/web/components/help/` beside the bodies, not a new `src/web/help/`: the source layout lists only `routes/`, `components/`, `client/`, `server/` under `src/web/`. Unit tests under `test/unit/web/components/help/`.
+- **2026-10-19, Step 2:** landing: legacy's "Member login" section (one `Sign in` link) shows **Dashboard** to a signed-in visitor instead, beside the page actions (Dashboard and Sign out, or Sign in); its label is "Member sign-in". `BatonMark`'s JSDoc drops legacy's `pnpm icon` provenance (no icon script here) and points at `public/app-icon.svg`'s comment. The root's `description` meta is the landing sentence (was the scaffold's). Privacy's lists are `s-unordered-list` (legacy: bare `ul`). The `ShoutInput` JSDoc rule (a method's input declared once, decoded on both sides) moved to `MagicLinkInput`.
 
 ### Issues
 
@@ -154,6 +155,7 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 ### Command results
 
 - **2026-10-19, Step 1:** `vp run dev:stop` ok 1.5s; `vp run dev` ok, server answering 34.1s; `vp run browser open` ready.
+- **2026-10-19, Step 2:** `vp check --fix` clean (381 files); `/` and `/privacy` 200 on the dev server, landing looked at (Playwright CLI). No HomePage browser test exists; none added (Step 7's e2e covers it).
 
 ### Human steps requested
 

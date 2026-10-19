@@ -2,7 +2,7 @@ import * as Schema from "effect/Schema";
 import { ShopKey } from "../domain/platform.ts";
 
 /**
- * `shopAccess`'s input, shared by both sides of the binding; see `ShoutInput`. `sessionToken`
+ * `shopAccess`'s input, shared by both sides of the binding as `MagicLinkInput` is. `sessionToken`
  * is a merchant's Shopify session token; its absence makes the caller a member.
  */
 export const ShopAccessInput = Schema.Struct({

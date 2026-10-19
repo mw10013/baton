@@ -156,3 +156,9 @@
   border-radius: 4px;
   background: #303030;
 }
+
+/* The Baton mark (`BatonMark`): a block box, so it never sits on a text baseline, and never squeezed by a row. */
+.baton-mark {
+  display: block;
+  flex-shrink: 0;
+}
