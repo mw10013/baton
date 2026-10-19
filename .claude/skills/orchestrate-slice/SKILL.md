@@ -1,11 +1,11 @@
 ---
 name: orchestrate-slice
-description: Orchestrate one slice or phase of the Baton legacy port end to end (research, user review, plan, implementation thread, triage, staging, handoff to the next orchestrator). Use only when the user or a handoff brief explicitly asks to orchestrate a slice.
+description: Orchestrate one slice or phase of the Baton legacy port end to end (research, user review, plan, implementation by one subagent, triage, staging, handoff to the next orchestrator). Use only when the user or a handoff brief explicitly asks to orchestrate a slice.
 ---
 
 # Orchestrate a slice
 
-You are the orchestrator for one body of work (a slice of the legacy port, or a phase such as an architecture correction). You do not write product code. You research, get decisions from the user, plan, launch an implementation thread, watch it, triage what it reports, take it through staging, and hand off to the next orchestrator. You talk to the user directly whenever something needs them.
+You are the orchestrator for one body of work (a slice of the legacy port, or a phase such as an architecture correction). You do not write product code. You research, get decisions from the user, plan, run one implementation subagent, triage what it reports, take it through staging, and hand off to the next orchestrator. You talk to the user directly whenever something needs them.
 
 **First, find your host.** The steps below use neutral actions (launch a thread, wait for it, send it a message, watch a file). Each host maps them to its own tools:
 
@@ -53,22 +53,22 @@ A step that rests on something unverified (a binding, an API behaving as documen
 
 Commit the research and plan on `main` and push before launching anything: a worktree cannot see uncommitted files.
 
-## 4. Launch the implementation thread
+## 4. Implement, from this thread
 
-Launch it with the brief in [implementer-brief.md](implementer-brief.md), filled in. Choose the workspace: `main` when nothing else is in flight; the worktree when two threads touch disjoint files (fast-forward it to `main` first). Keep the thread id.
+The orchestrator implements in its own thread: no implementation thread, no follow-up threads (the user's rule, 2026-10-18: extra threads multiplied tokens, e2e runs and places to look). Run one subagent with the Agent tool, model opus, with the brief in [implementer-brief.md](implementer-brief.md) filled in, and wait for it. It works on `main` and does not delegate further.
 
 ## 5. Watch
 
-Launched threads cannot message you. Wait on the thread's terminal state in bounded waits, and watch the plan's §7 for mid-run markers: a `CHECKPOINT` line, text under "Human steps requested", an "Implementation review" entry. Re-arm a watch when it expires. Never poll in a tight loop.
+The subagent's result is its report; the plan's §7 is the record. A `CHECKPOINT` or a human step ends its run: relay the step, then resume the same subagent (SendMessage) rather than starting another.
 
 ## 6. Relay and merge
 
-- **A human step** (so far: the Chrome Shopify-admin login export for e2e; `shopify store auth` on an e2e store): give the user the exact command and what it unblocks, then resume the thread.
-- **Merging a worktree** into `main`: from the main checkout only. Check `git merge-tree --write-tree main wt-NN` first and that no dirty file in `main` overlaps; `git merge --ff-only wt-NN`, or `--no-ff` with a message when `main` has moved. Tell any other thread when a merge changes what it builds on.
+- **A human step** (so far: the Chrome Shopify-admin login export for e2e; `shopify store auth` on an e2e store; a plan picked on a store): give the user the exact command and what it unblocks, then resume the subagent.
+- **A worktree** is used only when the user asks for parallel work. Merge from the main checkout only, into a clean tree: `git merge-tree --write-tree main wt-NN` first, then `git merge --ff-only wt-NN`, or `--no-ff` with a message when `main` has moved.
 
 ## 7. Triage §7
 
-Read "needs a decision". Decide routine items yourself (legacy is the spec; keep what legacy did unless the roadmap says otherwise) and send them back as a numbered "Follow-up round N" with the same rules. Bring the user only what changes scope, data, product behaviour or architecture, with your recommendation first.
+Read "Deviations", "Issues" and "needs a decision" yourself. Decide routine items (legacy is the spec; keep what legacy did unless the roadmap says otherwise) and fix them yourself or send them back to the same subagent as a numbered "Follow-up round N" written into §7. Bring the user only what changes scope, data, product behaviour or architecture, with your recommendation first. Keep e2e runs few: a subset for the change, the full suite once at the end.
 
 ## 8. Staging, with the user's go
 
@@ -91,7 +91,7 @@ and print each event's `$metadata.message`. Verify on staging, not only in tests
 
 ## Rules you keep
 
-- Commit only the docs you write and merges; implementation threads commit their own code. Push `main` only at the checkpoints above (plan, staging, close). No branches but `main` and `wt-NN`.
+- Commit the docs you write and merges; the implementation subagent commits its own code. Push `main` only at the checkpoints above (plan, staging, close). No branches but `main` and `wt-NN`.
 - Never edit `refs/`. Never reference plans or research in code or JSDoc.
 - The user owns scope, behaviour and architecture: bring those with a recommendation first. Everything routine is yours, recorded in the plan's §7.
 - When blocked on the user, say exactly what you need in one message and end your turn.
@@ -121,3 +121,6 @@ Dated, newest last. Each orchestrator appends what the next should know.
 - 2026-10-18 (slice F) Root-cause a flake at each hop before raising timeouts: one was Alchemy's dev `WorkerProxy` truncating `Connection: close` responses (pnpm patch), the other Chrome holding a same-URL GET behind an in-flight one (`getShopifyApp` became a POST). Instrumented frame loads (`E2E_FRAME_LOG=1`) found both.
 - 2026-10-18 (slice F) Merge a worktree only into a clean main tree: a merge into the implementer's dirty tree autostashed and dropped its edits (recovered from the dangling stash commit via `git fsck --unreachable`).
 - 2026-10-18 (slice F) Staging is the push: Workers Builds deploys `main`. The skill once said to run `deploy:staging` first; the user stopped it.
+- 2026-10-18 (slice G) The user stopped the thread-per-role model: an implementation thread, its subagent and follow-up threads cost too many tokens and slow e2e runs. Steps 4–7 now run in the orchestrator's thread with one opus subagent.
+- 2026-10-18 (slice G) A Shopify-side prerequisite (a plan picked on a store, an app made public) blocks every suite once a gate lands: list them before the plan's first code step and get them done while the plan is reviewed.
+- 2026-10-18 (slice G) Check values pasted into `.env` against the live API in the spike: `.env`'s Partner app id was the staging app's, which looked like "no subscription" until checked by id.
