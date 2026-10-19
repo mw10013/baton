@@ -167,11 +167,30 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 
 ### Deviations
 
+- **2026-10-19, Step 0:** the token could not list, so the account and namespace ids came from `cf` (its own OAuth login, read-only: `cf accounts list`, `cf durable-objects namespaces list`), and one read-only `cf durable-objects namespaces objects list` on the staging namespace stood in for the inventory read the token could not make. No scratch script reached distilled's `listNamespaceObjects` with a working credential; the scratch scripts (raw `fetch`, outside the repo in `/tmp`) are deleted.
+- **2026-10-19, Step 0 → Step 3:** Step 3 waits for the token (Step 0.3). Steps 1 and 2 proceed; so do the parts of Steps 4 and 5 that do not touch the inventory (dashboard Shops and Members sections, `/admin/shops`, `/admin/shop/$shop`, `PlanCache`, their browser and e2e titles, the billing spec). The inventory's pages, dashboard sections and titles land with Step 3.
+
 ### Issues
+
+- **2026-10-19, Step 0: distilled drops `name`.** `NamespacesObjectsListResultItem` (distilled `durable_objects`, rc.13) declares only `id` and `hasStoredData`; Schema's `Struct` strips undeclared keys on decode, so `listNamespaceObjects` can never hand back a `name`, whatever Cloudflare sends. The by-name join (Q13) through distilled needs a `pnpm patch` adding `name: S.optional(S.NullOr(S.String))` to that item, or a direct read. Open until the token works and the raw body shows whether Cloudflare sends `name` at all.
+- **2026-10-19, Step 0: the staging object showed no `name`.** `cf`'s listing of the staging namespace answered one object, `{ id, hasStoredData: true }`, no `name`. `cf` may itself strip fields it does not declare, so this is not proof; legacy's JSDoc ("prod orphan rows typically carry no name") points the same way. If Cloudflare does not send `name`, Step 0.4 applies, and more than destroy changes: the orphan join must be by id too, since `ShopSession.shopActorId` is the name. Open.
+- **2026-10-19, Step 0: `limit` has a floor.** Cloudflare refused `limit` 2, 10 and 25 with `[10077] Malformed parameter: limit is too low`; 100 was accepted. Legacy's `DEFAULT_LIMIT` 25 would fail; its pages' `LIMIT` 1000 is fine. The pager is moot for Step 3: the pages show one page at a time, so `list` calls the operation once (distilled's call function is one request) and reads the cursor itself; distilled's `ResultInfo` carries both `cursor` and `cursors.after`, so `list` can read either.
 
 ### Command results
 
+- **2026-10-19, Step 0 (S1):**
+  - Token: **not allowed**. `CLOUDFLARE_WORKERS_API_TOKEN` (`.env.staging`, the same value as `.env`) answers `401 [1000] Invalid API Token` on `/user/tokens/verify` and `/accounts/<id>/tokens/verify`, `403 [9109] Invalid access token` on `/accounts`, and `401 [10000] Authentication error` on the namespaces and objects lists. Not a scope problem: Cloudflare does not recognise the token (revoked, expired, or from another account).
+  - Account id `87997fc2724b0127effb8e4524989975`; actor namespace id `76be23649c4a49ea8772f89465f5ce82` (`baton-backend-staging_ShopActor`, class `ShopActor`, script `baton-backend-staging`, SQLite).
+  - Objects (through `cf`, limit 100): **1**; `name` absent on it (see Issues); `hasStoredData` seen: `true`.
+  - Cursor field: not observed (one page, and `cf` prints only `result`); distilled's pager follows `resultInfo.cursors.after`; its `ResultInfo` decodes `cursor` too. Unsettled until the token works.
+
 ### Human steps requested
+
+**2026-10-19, Step 0 (blocks Step 3):** replace `CLOUDFLARE_WORKERS_API_TOKEN`. Cloudflare rejects the current value as invalid (not under-scoped).
+
+1. Cloudflare dashboard → Manage account → Account API tokens (or My Profile → API Tokens) → Create token → Custom token: permission **Account · Workers Scripts · Read** on account `Mw10013@gmail.com's Account`; no IP filter; no expiry, or one you will track.
+2. Put the new value in `.env.staging` and `.env` as `CLOUDFLARE_WORKERS_API_TOKEN=…` (main checkout).
+3. Tell the implementer. It unblocks Step 0's answers (does Cloudflare send `name`; which cursor field) and with them Step 3 (by name as planned, or by id with the Alchemy patch), and later the stage config record (item 1 below).
 
 Known before the run (the lead's, at close):
 
