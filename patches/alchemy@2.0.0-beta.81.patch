@@ -19,6 +19,28 @@ index 4c138fa337aed0bcc2bbb61705f5ca004fb253a8..81d23d2b1a94435890cb457c8b8dc52b
                      }
                  }
              }
+diff --git a/lib/Platform.js b/lib/Platform.js
+index cda722591286b1d672f0a3ab22e1240238989b84..0b30633a58e135496a42947dd6af612531559f4b 100644
+--- a/lib/Platform.js
++++ b/lib/Platform.js
+@@ -233,8 +233,15 @@ export const Platform = (type, hooks, methods) => {
+                             else if (phase === "runtime" && ctx) {
+                                 // retrieve from the RuntimeContext if running in runtime phase
+                                 const value = yield* ctx.get(key);
+-                                if (value) {
+-                                    return ConfigProvider.makeValue(Redacted.isRedacted(value) ? Redacted.value(value) : value);
++                                if (Redacted.isRedacted(value)) {
++                                    return ConfigProvider.makeValue(Redacted.value(value));
++                                }
++                                // A value bound verbatim (a Worker's `env` prop) is already
++                                // in `node` as the string it was bound as; `ctx.get`'s
++                                // `unpackEnvValue` would JSON-parse a digits-only one
++                                // (`"2798461"`) into a number that `Config.String` refuses.
++                                if (value && node === undefined) {
++                                    return ConfigProvider.makeValue(value);
+                                 }
+                             }
+                             // fallback to the config provider otherwise
 diff --git a/package.json b/package.json
 index c75d103f082483bcb8dc4e4f1f4c4aa27ac343df..996830b2afef41bf729be18ecaf529ce2cf602bf 100644
 --- a/package.json
@@ -57,3 +79,27 @@ index 7a7936208ec6d27641f324bb2e1720020c34c332..eefae5d050b3627f8bd5e215d90978a1
                }
              }
            }
+diff --git a/src/Platform.ts b/src/Platform.ts
+index e971f95209acd8333d5bb90278ecd94d21035781..acbb681a764d7a2eab18736d6f129db1e9aa708c 100644
+--- a/src/Platform.ts
++++ b/src/Platform.ts
+@@ -519,10 +519,15 @@ export const Platform = <
+                           } else if (phase === "runtime" && ctx) {
+                             // retrieve from the RuntimeContext if running in runtime phase
+                             const value = yield* ctx.get<Redacted.Redacted<string>>(key);
+-                            if (value) {
+-                              return ConfigProvider.makeValue(
+-                                Redacted.isRedacted(value) ? Redacted.value(value) : value,
+-                              );
++                            if (Redacted.isRedacted(value)) {
++                              return ConfigProvider.makeValue(Redacted.value(value));
++                            }
++                            // A value bound verbatim (a Worker's `env` prop) is already
++                            // in `node` as the string it was bound as; `ctx.get`'s
++                            // `unpackEnvValue` would JSON-parse a digits-only one
++                            // (`"2798461"`) into a number that `Config.String` refuses.
++                            if (value && node === undefined) {
++                              return ConfigProvider.makeValue(value);
+                             }
+                           }
+                           // fallback to the config provider otherwise

@@ -1,5 +1,4 @@
 import * as Config from "effect/Config";
-import * as ConfigProvider from "effect/ConfigProvider";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -9,7 +8,6 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
-import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -49,8 +47,7 @@ export type ShopifyPartnerConfig = typeof ShopifyPartnerConfig.Type;
  * {@link ShopifyPartnerConfig} read through `Config` one key at a time, then decoded by the
  * schema: a `Config.schema` of the whole struct finds nothing among a Worker's bindings, which
  * answer one name at a time (measured 2026-10-18 under `alchemy dev`, where the Backend's init
- * died on it). The stack reads `.env` and the stage config with it; the Backend reads its
- * binding with {@link shopifyPartnerBinding}.
+ * died on it). The stack reads `.env` and the stage config with it, and the Backend its binding.
  */
 export const shopifyPartnerConfig: Config.Config<ShopifyPartnerConfig> = Config.all({
   SHOPIFY_APP_HANDLE: Config.String("SHOPIFY_APP_HANDLE"),
@@ -82,52 +79,6 @@ export const shopifyPartnerConfigFake = (): ShopifyPartnerConfig =>
     ...SHOPIFY_PARTNER_CONFIG_FAKE,
     SHOPIFY_PARTNER_API_TOKEN: Redacted.make(SHOPIFY_PARTNER_CONFIG_FAKE.SHOPIFY_PARTNER_API_TOKEN),
   });
-
-/** A binding's raw value, a string or, for a digits-only one, a number; see {@link shopifyPartnerBinding}. */
-const decodeBindingId = Schema.decodeUnknownEffect(
-  Schema.Union([
-    PartnerId,
-    Schema.Int.pipe(
-      Schema.decodeTo(
-        PartnerId,
-        SchemaTransformation.transform({ decode: (n) => String(n), encode: (id) => Number(id) }),
-      ),
-    ),
-  ]),
-);
-
-/**
- * The `ShopifyPartner` binding as the running Backend reads it, or `None` when it is not bound
- * (planning). The ids are read off the provider's node rather than through `Config.String`:
- * Alchemy hands a digits-only bound value back to the Worker as a number (measured 2026-10-18
- * under `alchemy dev`: the node for `SHOPIFY_PARTNER_ORG_ID` was `{ _tag: "Value", value:
- * 2798461 }`), which every `Config` scalar refuses.
- */
-export const shopifyPartnerBinding = Effect.gen(function* () {
-  const provider = yield* ConfigProvider.ConfigProvider;
-  const id = Effect.fn("ShopifyPartner.bindingId")(function* (name: string) {
-    const node = yield* provider.load([name]).pipe(Effect.orDie);
-    if (node === undefined || node._tag !== "Value") return Option.none<string>();
-    return Option.some(yield* decodeBindingId(node.value).pipe(Effect.orDie));
-  });
-  const rest = yield* Config.option(
-    Config.all({
-      SHOPIFY_APP_HANDLE: Config.String("SHOPIFY_APP_HANDLE"),
-      SHOPIFY_PARTNER_API_TOKEN: Config.Redacted("SHOPIFY_PARTNER_API_TOKEN"),
-    }),
-  ).pipe(Effect.orDie);
-  const orgId = yield* id("SHOPIFY_PARTNER_ORG_ID");
-  const appId = yield* id("SHOPIFY_PARTNER_APP_ID");
-  if (Option.isNone(rest) || Option.isNone(orgId) || Option.isNone(appId))
-    return Option.none<ShopifyPartnerConfig>();
-  return Option.some(
-    yield* Schema.decodeUnknownEffect(ShopifyPartnerConfig)({
-      ...rest.value,
-      SHOPIFY_PARTNER_ORG_ID: orgId.value,
-      SHOPIFY_PARTNER_APP_ID: appId.value,
-    }).pipe(Effect.orDie),
-  );
-});
 
 export class ShopifyPartnerError extends Schema.TaggedError<ShopifyPartnerError>()(
   "ShopifyPartnerError",
@@ -338,7 +289,7 @@ export class ShopifyPartner extends Context.Service<
    */
   static readonly layer = Layer.unwrap(
     Effect.gen(function* () {
-      const config = yield* shopifyPartnerBinding;
+      const config = yield* Config.option(shopifyPartnerConfig).pipe(Effect.orDie);
       if (Option.isSome(config)) return ShopifyPartner.layerWith(config.value);
       if (globalThis.__ALCHEMY_RUNTIME__)
         return yield* Effect.die(new Error("the ShopifyPartner binding is not bound"));

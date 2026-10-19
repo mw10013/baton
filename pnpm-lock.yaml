@@ -183,7 +183,7 @@ overrides:
 
 patchedDependencies:
   '@alchemy.run/cloudflare-runtime@2.0.0-beta.81': 01adc8ef7099b6df01f44f5c1218fd6d2b1353c00764218d83417d2fd9d9afda
-  alchemy@2.0.0-beta.81: a624f3b67dda3280c2e84e65e63725952135133febae09da9e76acb8aa440d15
+  alchemy@2.0.0-beta.81: 16505779ef5b1a2664aba62c3e100a9a8a9c1d14851bde27d27ab5d5caaf0f9e
 
 importers:
 
@@ -191,7 +191,7 @@ importers:
     dependencies:
       '@alchemy.run/better-auth':
         specifier: 2.0.0-beta.81
-        version: 2.0.0-beta.81(205d48b0f71c63e2c2d7d00445c9a863)
+        version: 2.0.0-beta.81(a5219b5cc1995d50b52bfa7c815dc0fc)
       '@effect/atom-react':
         specifier: 4.0.1
         version: 4.0.1(effect@4.0.1)(react@19.3.0)(scheduler@0.27.0)
@@ -218,7 +218,7 @@ importers:
         version: 1.168.60(@voidzero-dev/vite-plus-core@1.1.0(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(typescript@7.0.2)(yaml@2.9.1))(esbuild@0.28.2)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(rolldown@1.2.5)
       alchemy:
         specifier: 2.0.0-beta.81
-        version: 2.0.0-beta.81(patch_hash=a624f3b67dda3280c2e84e65e63725952135133febae09da9e76acb8aa440d15)(@effect/platform-node@4.0.1(effect@4.0.1)(redis@6.3.0))(@effect/vitest@4.0.1(effect@4.0.1)(vitest@5.0.3))(@types/node@26.6.4)(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.1.0(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(typescript@7.0.2)(yaml@2.9.1))(effect@4.0.1)(hono@4.11.4)(typescript@7.0.2)(ws@8.22.0)
+        version: 2.0.0-beta.81(patch_hash=16505779ef5b1a2664aba62c3e100a9a8a9c1d14851bde27d27ab5d5caaf0f9e)(@effect/platform-node@4.0.1(effect@4.0.1)(redis@6.3.0))(@effect/vitest@4.0.1(effect@4.0.1)(vitest@5.0.3))(@types/node@26.6.4)(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.1.0(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(typescript@7.0.2)(yaml@2.9.1))(effect@4.0.1)(hono@4.11.4)(typescript@7.0.2)(ws@8.22.0)
       better-auth:
         specifier: 1.7.7
         version: 1.7.7(@tanstack/react-start@1.168.60(@voidzero-dev/vite-plus-core@1.1.0(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(typescript@7.0.2)(yaml@2.9.1))(esbuild@0.28.2)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(rolldown@1.2.5))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(vitest@5.0.3)
@@ -3658,9 +3658,9 @@ packages:
 
 snapshots:
 
-  '@alchemy.run/better-auth@2.0.0-beta.81(205d48b0f71c63e2c2d7d00445c9a863)':
+  '@alchemy.run/better-auth@2.0.0-beta.81(a5219b5cc1995d50b52bfa7c815dc0fc)':
     dependencies:
-      alchemy: 2.0.0-beta.81(patch_hash=a624f3b67dda3280c2e84e65e63725952135133febae09da9e76acb8aa440d15)(@effect/platform-node@4.0.1(effect@4.0.1)(redis@6.3.0))(@effect/vitest@4.0.1(effect@4.0.1)(vitest@5.0.3))(@types/node@26.6.4)(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.1.0(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(typescript@7.0.2)(yaml@2.9.1))(effect@4.0.1)(hono@4.11.4)(typescript@7.0.2)(ws@8.22.0)
+      alchemy: 2.0.0-beta.81(patch_hash=16505779ef5b1a2664aba62c3e100a9a8a9c1d14851bde27d27ab5d5caaf0f9e)(@effect/platform-node@4.0.1(effect@4.0.1)(redis@6.3.0))(@effect/vitest@4.0.1(effect@4.0.1)(vitest@5.0.3))(@types/node@26.6.4)(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.1.0(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(typescript@7.0.2)(yaml@2.9.1))(effect@4.0.1)(hono@4.11.4)(typescript@7.0.2)(ws@8.22.0)
       better-auth: 1.7.7(@tanstack/react-start@1.168.60(@voidzero-dev/vite-plus-core@1.1.0(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(typescript@7.0.2)(yaml@2.9.1))(esbuild@0.28.2)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(rolldown@1.2.5))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(vitest@5.0.3)
       effect: 4.0.1
     optionalDependencies:
@@ -5308,7 +5308,7 @@ snapshots:
 
   '@yuku-toolchain/types@0.9.5': {}
 
-  alchemy@2.0.0-beta.81(patch_hash=a624f3b67dda3280c2e84e65e63725952135133febae09da9e76acb8aa440d15)(@effect/platform-node@4.0.1(effect@4.0.1)(redis@6.3.0))(@effect/vitest@4.0.1(effect@4.0.1)(vitest@5.0.3))(@types/node@26.6.4)(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.1.0(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(typescript@7.0.2)(yaml@2.9.1))(effect@4.0.1)(hono@4.11.4)(typescript@7.0.2)(ws@8.22.0):
+  alchemy@2.0.0-beta.81(patch_hash=16505779ef5b1a2664aba62c3e100a9a8a9c1d14851bde27d27ab5d5caaf0f9e)(@effect/platform-node@4.0.1(effect@4.0.1)(redis@6.3.0))(@effect/vitest@4.0.1(effect@4.0.1)(vitest@5.0.3))(@types/node@26.6.4)(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.1.0(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(typescript@7.0.2)(yaml@2.9.1))(effect@4.0.1)(hono@4.11.4)(typescript@7.0.2)(ws@8.22.0):
     dependencies:
       '@alchemy.run/cloudflare-runtime': 2.0.0-beta.81(patch_hash=01adc8ef7099b6df01f44f5c1218fd6d2b1353c00764218d83417d2fd9d9afda)(@distilled.cloud/cloudflare@1.0.0-rc.13(effect@4.0.1))(@effect/platform-node@4.0.1(effect@4.0.1)(redis@6.3.0))(@types/node@26.6.4)(@voidzero-dev/vite-plus-core@1.1.0(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(typescript@7.0.2)(yaml@2.9.1))(effect@4.0.1)(rolldown@1.2.5)(typescript@7.0.2)
       '@alchemy.run/floci': 2.0.0-beta.81(effect@4.0.1)
