@@ -1,5 +1,7 @@
 # Plan: admin console
 
+**Closed 2026-10-19 without the actor inventory** (Step 3, the two inventory pages and their titles): the user deferred it indefinitely. See §7 Implementation review and §8.
+
 Implements `docs/admin-console-research.md` (slice H). Every question in its §5 was settled on 2026-10-19 (§0 there has the one-line forms; Q4 and Q13 were revised in review and accepted as revised). Read the research's §0.1, §1 and §5 first; this plan does not repeat their reasoning.
 
 Legacy paths are relative to `refs/baton-legacy/`. Legacy is the spec for every screen: read the legacy route file before building its page, and port its copy, structure and JSDoc reasons, translated to the glossary's words (an **admin**, never an "operator"; an **actor**, never a "Shop Agent").
@@ -16,7 +18,7 @@ Legacy paths are relative to `refs/baton-legacy/`. Legacy is the spec for every 
 - **Commits.** Work on `main`. Commit at the end of each green step. Stage paths explicitly; never `git add -A` or `git commit -a`. Do not push.
 - **Each step ends green.**
   - `vp check --fix`, and `vp test <files>` for the tests the step touches.
-  - e2e only where a step changes what a spec exercises, and then that spec alone (`vp run test:e2e -- <spec>`). Never the full e2e suite.
+  - e2e only where a step changes what a spec exercises, and then that spec alone (`vp run test:e2e <spec>`, no `--`: through `vp run` it reaches Playwright literally and the files are ignored). Never the full e2e suite.
   - The full `vp test` once, in Step 6.
   - A step that cannot end green is recorded in §7 before moving on. Do not re-run a test through a failure you understand; record it.
 - **What does not change.**
@@ -198,6 +200,8 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - **2026-10-19, Step 5:** `vp check --fix` clean (382 files). e2e: see Issues (77 passed, 5.9 min, the whole chromium project). The billing project not run (headed, by hand).
 - **2026-10-19, full `vp test` (at the stop, Steps 0–2, 4–5 partial):** 88 files, 1,110 tests: 1,109 passed, 1 failed (the `run.test.tsx` flake above), 88.7 s (1:31 wall). Alone, `run.test.tsx`: 9 passed.
 
+- **2026-10-19, lead:** full `vp run test:e2e` once after triage: **77 passed, 6.1 min**.
+
 ### Human steps requested
 
 **2026-10-19, Step 0 (blocks Step 3):** replace `CLOUDFLARE_WORKERS_API_TOKEN`. Cloudflare rejects the current value as invalid (not under-scoped).
@@ -208,11 +212,18 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 
 Known before the run (the lead's, at close):
 
-1. Add `CLOUDFLARE_WORKERS_API_TOKEN` to the staging record: it is already in `.env.staging`; run `vp run stage-config --stage staging` (the runbook's "Add a value") before the push.
+1. ~~Add `CLOUDFLARE_WORKERS_API_TOKEN` to the staging record~~: dropped with the inventory.
 2. The billing spec by hand: `vp run test:e2e:billing`.
-3. Staging, after the push (research Q14): sign in as the staging admin; Shops lists `mw10013-staging-shop-00`; its page reads every field and the page source holds no token; Refresh plan leaves the plan and moves Fresh until; Shop actors lists the staging shop's actor; Orphan shop actors lists none or staging's orphans; one embedded load still works.
+3. Staging, after the push (research Q14): sign in as the staging admin; Shops lists `mw10013-staging-shop-00`; its page reads every field and the page source holds no token; Refresh plan leaves the plan and moves Fresh until; one embedded load still works.
 
 ### Implementation review
+
+**2026-10-19, lead:**
+
+1. **The inventory is deferred indefinitely (the user).** Step 3, the inventory parts of Steps 4 and 5, and `CLOUDFLARE_WORKERS_API_TOKEN` in the stage config record do not land; `StageConfigValues` is unchanged, so no `vp run stage-config` before the push. Why, for whoever picks it up: (a) no token with Workers Scripts Read exists (the one in `.env` is invalid); (b) Cloudflare's `list_objects` returns object ids, not names: its public spec (and distilled's generated schema, and `cf`) carry only `id` and `hasStoredData`, the one staging object had no name, and legacy saw production objects without names though it created them with `getByName`. So the by-name join of Q13 cannot work. The design to resume with: patch Alchemy's namespace binding (`pnpm patch`) to expose `idFromName`, `idFromString` and `get`, which it declares but comments out; join the inventory's ids against `idFromName(shopActorId)` per `ShopSession` row (no table change); destroy by id, as legacy. Cloudflare's `limit` floor (above 25; 100 accepted) applies.
+2. **Triage of the implementer's items:** the deviations are routine and accepted (each follows legacy or the plan's intent). Checked by reading: the redacted SQL selects `hasAccessToken`/`hasRefreshToken` and never the token columns; `adminShop` reads the row before `getUsage`; every admin method starts with `requireAdmin`.
+3. **`vp run test:e2e -- <spec>`** corrected in §0 to `vp run test:e2e <spec>` (the skill names no `--` form).
+4. **Left open, not this slice's:** the three `CONNECTION_CLOSE_*` duplicates in `platform.ts` (imported by nothing; the contract owns them) for a later sweep; the `run.test.tsx` poll flake under the full `vp test`.
 
 ## 8. Out of scope
 
@@ -221,3 +232,4 @@ Known before the run (the lead's, at close):
 - Making the console live, or giving an admin a socket.
 - The inventory on dev, e2e or test stages.
 - Production's token and record (with production).
+- The actor inventory (**Shop actors**, **Orphan shop actors**), deferred indefinitely on 2026-10-19; the design to resume with is in §7 Implementation review.

@@ -1,6 +1,6 @@
 # Admin console slice: research
 
-Status: research, written 2026-10-19. Review round 1 (2026-10-19): Q1–Q3, Q5–Q12 and Q14 accepted as recommended (§0); Q4 and Q13 revised after it. Round 2 (2026-10-19): Q4 accepted as revised. **Settled** 2026-10-19: Q13 accepted, with its token from the stage config record (user: the token is already in the `.env` files). Plan: `docs/admin-console-plan.md`. No code has changed.
+Status: research, written 2026-10-19. Review round 1 (2026-10-19): Q1–Q3, Q5–Q12 and Q14 accepted as recommended (§0); Q4 and Q13 revised after it. Round 2 (2026-10-19): Q4 accepted as revised. **Settled** 2026-10-19: Q13 accepted, with its token from the stage config record (user: the token is already in the `.env` files). Plan: `docs/admin-console-plan.md`. Implemented 2026-10-19 without Q13: the user deferred the actor inventory indefinitely (no token; Cloudflare lists ids, not names), see the plan's §7 Implementation review.
 
 The work itself: the admin console's **Shops** list (every installed shop's `ShopSession` row, tokens redacted, with its cached plan), **shop page** (the cached plan entry, the actor's usage, the D1 member count, the stored session, and **Refresh plan**), and, after review, the **Shop actors** inventory and **Orphan shop actors** (Q13). It is roadmap §3 row H; Q13 widens roadmap Q10's scope. It starts by removing the duplicate `ShopSession` and shop-key schemas (Q4), and it pays the debt the billing slice left: the billing spec's outbox half (`docs/billing-plan.md` §7 item 4).
 
