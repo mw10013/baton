@@ -127,12 +127,16 @@ test("Sync open orders brings back an open order the screen no longer lists", as
 }) => {
   test.setTimeout(SYNC_TIMEOUT + 120_000);
   const orderId = order?.id ?? "";
-  // Removed again whenever a late webhook brought the row back, until it stays away.
+  // Removed again whenever a late write brought the row back, until it stays away. A late write
+  // can land right behind the removal (a Sync from Shopify queued in the actor stores the order
+  // again), so the row not leaving within the wait is a retry, not a failure.
   await expect
     .poll(
       async () => {
         await backend(dev((c) => c.RemoveOrder({ shop, orderId })));
-        await expect(row()).toHaveCount(0);
+        await expect(row())
+          .toHaveCount(0)
+          .catch(() => undefined);
         await page.waitForTimeout(QUIET);
         return row().count();
       },

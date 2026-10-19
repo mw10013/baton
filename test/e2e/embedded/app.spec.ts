@@ -19,7 +19,7 @@ test.afterAll(async () => {
 
 test("the app loads embedded and shows the e2e store's domain", async () => {
   await expect(frame.getByText(shop, { exact: true })).toBeVisible();
-  await expect(frame.getByRole("link", { name: "Orders" })).toBeVisible();
+  await expect(frame.getByRole("link", { name: "Orders", exact: true })).toBeVisible();
 });
 
 test("the exchange stored a real session", async ({ backend }) => {
@@ -30,6 +30,6 @@ test("the exchange stored a real session", async ({ backend }) => {
 });
 
 test("the Orders link opens the orders screen inside the admin", async () => {
-  await frame.getByRole("link", { name: "Orders" }).click();
+  await frame.getByRole("link", { name: "Orders", exact: true }).click();
   await expect(frame.locator('s-page[heading="Orders"]')).toBeVisible();
 });

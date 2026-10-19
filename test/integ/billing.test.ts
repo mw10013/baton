@@ -338,6 +338,72 @@ test(
   { timeout: 60_000 },
 );
 
+const listQuery = { state: "ready", team: null, limit: ShopWork.RUN_PAGE, q: null } as const;
+
+/** The member loaders' first reads, for the member `cookie` names, on `SEED_SHOP`. */
+const memberReads = (cookie: string) =>
+  Effect.gen(function* () {
+    const { backendUrl } = yield* stack;
+    return [
+      yield* integ(backendUrl, (c) =>
+        c.ApiWorkflowsList({ cookie, key: SEED_SHOP, ...listQuery }),
+      ).pipe(
+        Effect.as("ok"),
+        Effect.catch((error) => Effect.succeed(error._tag)),
+      ),
+      yield* integ(backendUrl, (c) =>
+        c.ApiMemberWorkflowPage({ cookie, key: SEED_SHOP, runId: "none" }),
+      ).pipe(
+        Effect.as("ok"),
+        Effect.catch((error) => Effect.succeed(error._tag)),
+      ),
+    ];
+  });
+
+test(
+  "requireMember admits every member of a subscribed shop",
+  Effect.gen(function* () {
+    const { backendUrl } = yield* stack;
+    yield* script(SEED_SHOP, subscribedThisMonth("baton-basic"));
+    const emails = Array.from(
+      { length: entitlementsOfPlan("basic").membersIncluded + 1 },
+      (_, index) => email(`admit-${String(index)}@billing.test`),
+    );
+    yield* addToFixture(backendUrl, SEED_SHOP, { members: emails });
+    for (const address of emails)
+      assert.deepStrictEqual(yield* memberReads(yield* signIn(backendUrl, address)), ["ok", "ok"]);
+    yield* script(SEED_SHOP, subscribedThisMonth());
+  }),
+  { timeout: 120_000 },
+);
+
+/**
+ * A member of a shop whose app subscription lapsed is refused `PaymentRequired`, which the member
+ * loaders turn into the lapsed page, and only a member: a stranger still gets `NotAShopMember`,
+ * because the gate checks membership before the plan, so a lapse is never disclosed to someone
+ * who does not belong to the shop.
+ */
+test(
+  "redirects a member of a lapsed shop to the lapsed page",
+  Effect.gen(function* () {
+    const { backendUrl } = yield* stack;
+    const member = email("lapsed@billing.test");
+    yield* addToFixture(backendUrl, SEED_SHOP, { members: [member] });
+    const stranger = email("stranger@billing.test");
+    yield* addToFixture(backendUrl, OTHER_SHOP, { members: [stranger] });
+    const cookie = yield* signIn(backendUrl, member);
+    const strangerCookie = yield* signIn(backendUrl, stranger);
+    yield* script(SEED_SHOP, { _tag: "None" });
+    assert.deepStrictEqual(yield* memberReads(cookie), ["PaymentRequired", "PaymentRequired"]);
+    assert.deepStrictEqual(yield* memberReads(strangerCookie), [
+      "NotAShopMember",
+      "NotAShopMember",
+    ]);
+    yield* script(SEED_SHOP, subscribedThisMonth());
+  }),
+  { timeout: 60_000 },
+);
+
 test(
   "uninstall sends the shop's queued usage events before it destroys the actor",
   Effect.gen(function* () {

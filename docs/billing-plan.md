@@ -347,6 +347,9 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 
 - **2026-10-18, Step 7:** `ManagePlanButton` takes `prepare` (the route passes `prepareManagePlan`) and an `open` hook (default `window.open(url, "_top")`), so the browser tests drive it without a server function or a navigation. `SubscriptionPlan.expectChange` gained a closing Info log (`…: plan deadline shortened`), the line the abandonment check reads; legacy logged nothing there.
 
+- **2026-10-18, Step 8:** the lapsed page's markup is `LapsedPage` (`src/web/components/LapsedPage.tsx`), rendered by `shop.$key_.lapsed.tsx`, so the browser test renders it under a small memory router. `memberRefusal(key, path)` maps `PaymentRequired` to `redirect({ to: "/shop/$key/lapsed" })` for the layout's gate and both member loaders. The integ titles assert the Backend's answers (`PaymentRequired` for the member, `NotAShopMember` for a stranger, every member past Basic's included seats admitted), since integ has no Website; the redirect itself is the Website's `memberRefusal`.
+- **2026-10-18, Step 8:** two existing e2e locators gained `exact: true`, and `orders.spec.ts`'s remove loop tolerates a late write (Command results).
+
 ### Issues
 
 - **2026-10-18, Step 0: `activeSubscription` answers null for both stores. `WAITING: Partner API`.** Spike (a scratch script outside the repo, deleted after; the token and the app secret read into the environment, never printed) for Baton Dev (org `2798461`, app `417214922753`, handle `baton-local`):
@@ -395,6 +398,8 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 
 - **2026-10-18, Step 7, check first:** on the dev server, the dev store opened through `/app?plan_handle=baton-basic` (the billing redirect's form) re-read the plan, which also cleared the dev stage's stale "no subscription" cache: `ShopSession` now `baton-basic`, boundary the trial's end. Manage plan answered in 629 ms and opened Shopify's pricing page in the top frame (Basic "Current", "1 trial day remaining"); the plan deadline moved to the press + 15 min (883 s ahead when read). Abandoned call: a headless Chrome closed 16 ms after the server function's POST went out, and the Backend still logged `SubscriptionPlan.expectChange: shop=mw10013-dev-shop-00.myshopify.com: plan deadline shortened` 35 ms later, after the flush. Locally the call survives the browser leaving, so no `waitUntil`. Staging unverified.
 - **2026-10-18, Step 7:** `vp check` green (362 files); `vp test` 1070 passed, 82 files, 52 s (+3 browser `ManagePlanButton`).
+
+- **2026-10-18, Step 8:** `vp check` green (365 files); `vp test` 1073 passed, 83 files, 51 s (+2 integ member-area titles, +1 browser `LapsedPage`). `vp build` regenerated `routeTree.gen.ts`. Full `vp run test:e2e`: 59 passed, 3 failed, 10 did not run, 5.1 min. Causes: (1) `app.spec.ts` and `socket.spec.ts` located `getByRole("link", { name: "Orders" })`, which now also matches the "Orders this billing cycle" meter tile (strict mode); fixed with `exact: true`. (2) `orders.spec.ts` "Sync open orders brings back an open order the screen no longer lists": a Sync from Shopify queued in the actor stored the order again 1 ms after `RemoveOrder` (the e2e log shows `removeOrder … removed=true` then `Orders.syncOrder … status=stored`), and the poll's inner `toHaveCount(0)` threw instead of letting the poll retry; fixed so the inner wait no longer fails the poll. Not billing's behaviour; a race the spec already meant to absorb. Re-run of the three files: 18 passed, 2.1 min.
 
 ### Human steps requested
 

@@ -23,7 +23,7 @@ test("Orders, the App Home and Orders again share one socket", async ({ browser 
     });
     const frame = await gotoApp(page);
     const orders = frame.locator('s-page[heading="Orders"]');
-    const home = frame.getByRole("link", { name: "Orders" });
+    const home = frame.getByRole("link", { name: "Orders", exact: true });
 
     await home.click();
     await expect(orders).toBeVisible();

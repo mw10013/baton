@@ -39,6 +39,7 @@ import { Route as AppTeamsTeamIdRouteImport } from './routes/app.teams.$teamId'
 import { Route as AppWorkflowsIndexRouteImport } from './routes/app.workflows.index'
 import { Route as AppWorkflowsWorkflowIdRouteImport } from './routes/app.workflows.$workflowId'
 import { Route as ShopKeyIndexRouteImport } from './routes/shop.$key.index'
+import { Route as ShopKeyLapsedRouteImport } from './routes/shop.$key_.lapsed'
 import { Route as AppWorkflowsWorkflowIdEditRouteImport } from './routes/app.workflows.$workflowId_.edit'
 import { Route as ShopKeyWorkflowsIndexRouteImport } from './routes/shop.$key.workflows.index'
 import { Route as ShopKeyWorkflowsRunIdRouteImport } from './routes/shop.$key.workflows.$runId'
@@ -193,6 +194,11 @@ const ShopKeyIndexRoute = ShopKeyIndexRouteImport.update({
   path: '/',
   getParentRoute: () => ShopKeyRoute,
 } as any)
+const ShopKeyLapsedRoute = ShopKeyLapsedRouteImport.update({
+  id: '/$key_/lapsed',
+  path: '/$key/lapsed',
+  getParentRoute: () => ShopRoute,
+} as any)
 const AppWorkflowsWorkflowIdEditRoute =
   AppWorkflowsWorkflowIdEditRouteImport.update({
     id: '/$workflowId_/edit',
@@ -236,6 +242,7 @@ export interface FileRoutesByFullPath {
   '/app/orders/from-shopify': typeof AppOrdersFromShopifyRoute
   '/app/teams/$teamId': typeof AppTeamsTeamIdRoute
   '/app/workflows/$workflowId': typeof AppWorkflowsWorkflowIdRoute
+  '/shop/$key/lapsed': typeof ShopKeyLapsedRoute
   '/app/members/': typeof AppMembersIndexRoute
   '/app/orders/': typeof AppOrdersIndexRoute
   '/app/teams/': typeof AppTeamsIndexRoute
@@ -265,6 +272,7 @@ export interface FileRoutesByTo {
   '/app/orders/from-shopify': typeof AppOrdersFromShopifyRoute
   '/app/teams/$teamId': typeof AppTeamsTeamIdRoute
   '/app/workflows/$workflowId': typeof AppWorkflowsWorkflowIdRoute
+  '/shop/$key/lapsed': typeof ShopKeyLapsedRoute
   '/app/members': typeof AppMembersIndexRoute
   '/app/orders': typeof AppOrdersIndexRoute
   '/app/teams': typeof AppTeamsIndexRoute
@@ -301,6 +309,7 @@ export interface FileRoutesById {
   '/app/orders/from-shopify': typeof AppOrdersFromShopifyRoute
   '/app/teams/$teamId': typeof AppTeamsTeamIdRoute
   '/app/workflows/$workflowId': typeof AppWorkflowsWorkflowIdRoute
+  '/shop/$key_/lapsed': typeof ShopKeyLapsedRoute
   '/app/members/': typeof AppMembersIndexRoute
   '/app/orders/': typeof AppOrdersIndexRoute
   '/app/teams/': typeof AppTeamsIndexRoute
@@ -338,6 +347,7 @@ export interface FileRouteTypes {
     | '/app/orders/from-shopify'
     | '/app/teams/$teamId'
     | '/app/workflows/$workflowId'
+    | '/shop/$key/lapsed'
     | '/app/members/'
     | '/app/orders/'
     | '/app/teams/'
@@ -367,6 +377,7 @@ export interface FileRouteTypes {
     | '/app/orders/from-shopify'
     | '/app/teams/$teamId'
     | '/app/workflows/$workflowId'
+    | '/shop/$key/lapsed'
     | '/app/members'
     | '/app/orders'
     | '/app/teams'
@@ -402,6 +413,7 @@ export interface FileRouteTypes {
     | '/app/orders/from-shopify'
     | '/app/teams/$teamId'
     | '/app/workflows/$workflowId'
+    | '/shop/$key_/lapsed'
     | '/app/members/'
     | '/app/orders/'
     | '/app/teams/'
@@ -640,6 +652,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShopKeyIndexRouteImport
       parentRoute: typeof ShopKeyRoute
     }
+    '/shop/$key_/lapsed': {
+      id: '/shop/$key_/lapsed'
+      path: '/$key/lapsed'
+      fullPath: '/shop/$key/lapsed'
+      preLoaderRoute: typeof ShopKeyLapsedRouteImport
+      parentRoute: typeof ShopRoute
+    }
     '/app/workflows/$workflowId_/edit': {
       id: '/app/workflows/$workflowId_/edit'
       path: '/$workflowId/edit'
@@ -748,11 +767,13 @@ const ShopKeyRouteWithChildren =
 interface ShopRouteChildren {
   ShopKeyRoute: typeof ShopKeyRouteWithChildren
   ShopIndexRoute: typeof ShopIndexRoute
+  ShopKeyLapsedRoute: typeof ShopKeyLapsedRoute
 }
 
 const ShopRouteChildren: ShopRouteChildren = {
   ShopKeyRoute: ShopKeyRouteWithChildren,
   ShopIndexRoute: ShopIndexRoute,
+  ShopKeyLapsedRoute: ShopKeyLapsedRoute,
 }
 
 const ShopRouteWithChildren = ShopRoute._addFileChildren(ShopRouteChildren)
