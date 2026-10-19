@@ -1,49 +1,36 @@
-import { createFileRoute, Outlet, redirect, useHydrated, useRouter } from "@tanstack/react-router";
-import { useEffect } from "react";
+import { RegistryContext } from "@effect/atom-react";
+import {
+  createFileRoute,
+  Outlet,
+  useHydrated,
+  useLocation,
+  useRouter,
+} from "@tanstack/react-router";
+import { useContext, useEffect, useState } from "react";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { ShopKey } from "../../contract/shop.ts";
+import { rememberHydratedAppGuard } from "../client/app-guard.ts";
 import { mintSessionToken } from "../client/app-bridge.ts";
 import { ShopSocket } from "../components/ShopSocket.tsx";
 import { APP_BRIDGE_URL } from "../components/polaris.ts";
 import { authenticateApp, getShopifyApp } from "../server/shopify.ts";
+import { appGuard } from "./-app-guard.ts";
 import { appHref, appSearch } from "./-app-search.ts";
-import { embeddedAppUrl, frameAncestors, sessionTokenBounce } from "../server/shopify-urls.ts";
+import { frameAncestors } from "../server/shopify-urls.ts";
 
 /**
  * The embedded App Home's layout, around every page the Shopify admin frames under `/app`.
- * `beforeLoad` runs, for every one of them, Baton's document guards,
- * first match wins, each a redirect: no `shop` or `host` goes to the App Bridge-only page, which
- * re-embeds; `embedded !== "1"` goes to the app inside the Shopify admin; no `id_token` goes to the
- * session-token bounce; otherwise the token is authenticated (`authenticateApp`), and a shop with
- * no app subscription goes, out of the frame, to plan selection. Shopify's billing redirect back
- * (its search carries `plan_handle`) re-reads the plan first. Route context carries the Manage
- * plan URL and never the plan: the browser never names its own tier. App Bridge is
+ * `beforeLoad` runs, for every one of them, Baton's document guards ({@link appGuard}). Route
+ * context carries the Manage plan URL and never the plan: the browser never names its own tier.
+ * The guard answer the server rendered with is the browser's first remembered one
+ * ({@link rememberHydratedAppGuard}), read at the match's `updatedAt`. App Bridge is
  * the document's first script, which the Shopify admin requires; the root document places
  * `HeadContent` ahead of Polaris for it. It holds the merchant's socket ({@link ShopSocket}) for
  * every page under it, its token minted from App Bridge per connect.
  */
 export const Route = createFileRoute("/app")({
-  beforeLoad: async ({ location }) => {
-    const search = appSearch(location.searchStr);
-    const { apiKey, appUrl } = await getShopifyApp();
-    const reEmbed = `/auth/session-token${location.searchStr}`;
-    if (search.shop === undefined || search.host === undefined) throw redirect({ href: reEmbed });
-    if (search.embedded !== "1")
-      throw redirect({
-        href: Option.getOrElse(embeddedAppUrl(search.host, apiKey), () => reEmbed),
-      });
-    if (search.id_token === undefined)
-      throw redirect({ href: sessionTokenBounce(appUrl, location.pathname, location.searchStr) });
-    const admin = await authenticateApp({
-      data: {
-        idToken: search.id_token,
-        billingRedirect: location.searchStr.includes("plan_handle"),
-      },
-    });
-    if (admin._tag === "Unsubscribed") throw redirect({ href: admin.href });
-    return { shop: admin.shop, apiKey: admin.apiKey, managePlanUrl: admin.managePlanUrl };
-  },
+  beforeLoad: appGuard({ getShopifyApp, authenticateApp }),
   head: ({ match }) => ({
     meta: [{ name: "shopify-api-key", content: match.context.apiKey }],
     scripts: [{ src: APP_BRIDGE_URL }],
@@ -54,7 +41,19 @@ export const Route = createFileRoute("/app")({
       onSome: (csp): Record<string, string> => ({ "Content-Security-Policy": csp }),
     }),
   component: function AppLayout() {
-    const { shop } = Route.useRouteContext();
+    const { shop, apiKey, appUrl, managePlanUrl } = Route.useRouteContext();
+    const updatedAt = Route.useMatch({ select: (match) => match.updatedAt });
+    const searchShop = useLocation({ select: (location) => appSearch(location.searchStr).shop });
+    const registry = useContext(RegistryContext);
+    useState(() => {
+      if (searchShop !== undefined)
+        rememberHydratedAppGuard(registry, {
+          app: { apiKey, appUrl },
+          shop: searchShop,
+          answer: { _tag: "Subscribed", shop, apiKey, managePlanUrl },
+          at: updatedAt,
+        });
+    });
     return (
       <ShopSocket
         shop={Schema.decodeUnknownSync(ShopKey)(shop)}

@@ -5,6 +5,7 @@ import * as Option from "effect/Option";
 import { type ReactNode, useContext, useEffect, useRef, useState } from "react";
 import type { ShopKey } from "../../contract/shop.ts";
 import { paymentRequiredAtom } from "../client/actor-connection.ts";
+import { forgetAppGuard } from "../client/app-guard.ts";
 import { nameSocket, noticesAtom } from "../client/shop-actor-client.ts";
 import { SocketBanner } from "./SocketBanner.tsx";
 
@@ -29,17 +30,20 @@ function LiveShopSocket(props: SocketProps) {
 /**
  * Reruns the router's guards and loaders when the gate refused the socket for a shop with no app
  * subscription ({@link paymentRequiredAtom}): the socket stays closed, and the route decides
- * where the browser goes.
+ * where the browser goes. The `/app` guard's remembered answer is dropped first
+ * ({@link forgetAppGuard}), so the rerun asks the Backend.
  */
 function usePaymentRequired() {
   const refused = useAtomValue(paymentRequiredAtom);
+  const registry = useContext(RegistryContext);
   const router = useRouter();
   const seen = useRef(refused);
   useEffect(() => {
     if (refused === seen.current) return;
     seen.current = refused;
+    forgetAppGuard(registry);
     void router.invalidate();
-  }, [refused, router]);
+  }, [refused, registry, router]);
 }
 
 /**

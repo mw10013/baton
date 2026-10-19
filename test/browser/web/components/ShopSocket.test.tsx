@@ -26,6 +26,7 @@ import {
 import type { OrdersIndexData } from "../../../../src/domain/shop-work.ts";
 import OrdersIndexPage from "../../../../src/web/components/OrdersIndexPage.tsx";
 import { ShopSocket } from "../../../../src/web/components/ShopSocket.tsx";
+import { appGuard } from "../../../../src/web/routes/-app-guard.ts";
 import { renderInApp } from "../../render.tsx";
 import { shopTestRegistry } from "../../shop-actor.ts";
 import { SEED_SHOP } from "../../../seed-shops.ts";
@@ -195,5 +196,43 @@ describe("ShopSocket close codes", () => {
       await expect.poll(() => invalidate.mock.calls.length).toBe(1);
       await screen.unmount();
     }
+  });
+
+  it("a refused socket drops the guard answer", async () => {
+    const registry = shopTestRegistry({});
+    let authenticated = 0;
+    const guard = appGuard({
+      getShopifyApp: () => Promise.resolve({ apiKey: "key", appUrl: "https://app.example" }),
+      authenticateApp: () => {
+        authenticated++;
+        return Promise.resolve({
+          _tag: "Subscribed",
+          shop: SEED_SHOP,
+          apiKey: "key",
+          managePlanUrl: "https://admin.shopify.com/plans",
+        });
+      },
+    });
+    const navigate = () =>
+      guard({
+        location: {
+          pathname: "/app",
+          searchStr: `?embedded=1&host=aG9zdA&shop=${SEED_SHOP}&id_token=token`,
+        },
+        context: { registry },
+      });
+    await navigate();
+    await navigate();
+    expect(authenticated).toBe(1);
+    const { router } = inRouter(
+      <ShopSocket shop={SEED_SHOP} merchantToken={Option.some(Effect.succeed("token"))}>
+        <p>The page</p>
+      </ShopSocket>,
+    );
+    const screen = await renderInApp(<RouterProvider router={router} />, registry);
+    await expect.element(screen.getByText("The page")).toBeVisible();
+    await closeWith(registry, CONNECTION_CLOSE_PAYMENT_REQUIRED, true);
+    await expect.poll(() => navigate().then(() => authenticated)).toBe(2);
+    await screen.unmount();
   });
 });
