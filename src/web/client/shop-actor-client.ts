@@ -8,7 +8,6 @@ import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Atom from "effect/reactivity/Atom";
 import type * as AtomRegistry from "effect/reactivity/AtomRegistry";
 import * as AtomRpc from "effect/reactivity/AtomRpc";
-import * as Reactivity from "effect/reactivity/Reactivity";
 import { RpcClient, RpcSerialization } from "effect/rpc";
 import * as Schema from "effect/Schema";
 import * as Socket from "effect/socket/Socket";
@@ -52,7 +51,7 @@ import type {
   StartTaskInput,
   WorkflowsListData,
 } from "../../domain/shop-work.ts";
-import { refreshOnFocus } from "./query.ts";
+import { LIVE_RETENTION } from "./query.ts";
 
 /**
  * Notices pulled off the socket by {@link layerSocketWithNotices}; one per registry, like the
@@ -214,6 +213,46 @@ export class ShopActorClient extends AtomRpc.Service<ShopActorClient>()("ShopAct
   makeEffect: RpcClient.make(ShopActorRpcs, { flatten: true }),
 }) {}
 
+/** The notice keys each live query answers to, by query atom ({@link liveQuery}). */
+const liveKeys = new WeakMap<Atom.Atom<any>, ReadonlyArray<string>>();
+
+/**
+ * A live read: `query` kept {@link LIVE_RETENTION} after its page stops showing it, and refetched
+ * on a notice naming one of `keys` only while a page shows it. The wrapper reads `query` as a
+ * tracked dependency, so `query` is observed exactly while the wrapper is mounted, and a notice
+ * refreshes `query` itself ({@link refreshLive}): Atom refetches an observed node at once and
+ * leaves an unobserved one stale, to refetch once when it is next read, its old value shown as
+ * `waiting` meanwhile. A seeded node is valid with no build, which is why the keys live beside the
+ * atom and not in a registration made by its build. `Atom.setIdleTTL` comes last, so the whole
+ * chain is kept.
+ *
+ * Nothing here copies a value with `get.subscribe` and `get.once` (as `Atom.withReactivity`
+ * does), so an interrupted refetch is always a stale node, never a `waiting` value with nothing
+ * in flight.
+ *
+ * @see https://github.com/effect-app/libs `packages/vue/src/atomQuery.ts` (`buildQueryFamily`) and `queryLifetime.ts` (`atomsToRefetch`)
+ */
+export const liveQuery = <A, E>(
+  query: Atom.Atom<AsyncResult.AsyncResult<A, E>>,
+  keys: ReadonlyArray<string>,
+): Atom.Atom<AsyncResult.AsyncResult<A, E>> => {
+  liveKeys.set(query, keys);
+  return Atom.transform(query, (get) => get(query), { initialValueTarget: query }).pipe(
+    Atom.setIdleTTL(LIVE_RETENTION),
+  );
+};
+
+/**
+ * Refreshes every kept live query ({@link liveQuery}) whose keys meet `keys`, each once however
+ * many of its keys a notice names: a second refresh would interrupt the first one's read.
+ */
+export const refreshLive = (registry: AtomRegistry.AtomRegistry, keys: ReadonlyArray<string>) => {
+  for (const node of registry.getNodes().values()) {
+    const own = liveKeys.get(node.atom);
+    if (own !== undefined && own.some((key) => keys.includes(key))) registry.refresh(node.atom);
+  }
+};
+
 /**
  * Fills a query atom's node with a value the page already has, as if the query had answered.
  * The registry consumes the value when it first creates the node; a node that is already
@@ -308,38 +347,42 @@ export const ORDERS_STRIP: readonly (keyof OrderCounts)[] = [
 export const merchantOrdersQuery = Atom.family((input: ListOrdersInput) =>
   ShopActorClient.query("MerchantListOrders", input, {
     serializationKey: `merchant-orders:${JSON.stringify([input.limit, input.cursor, input.q, input.show, input.team])}`,
+    timeToLive: LIVE_RETENTION,
   }),
 );
 
-/** One page of the orders index; refetched on every notice naming {@link ORDERS_KEY}. */
+/** One page of the orders index; live on {@link ORDERS_KEY}. */
 export const merchantOrdersAtom = Atom.family((input: ListOrdersInput) =>
-  merchantOrdersQuery(input).pipe(Atom.withReactivity([ORDERS_KEY]), refreshOnFocus),
+  liveQuery(merchantOrdersQuery(input), [ORDERS_KEY]),
 );
 
 /**
- * Whether an open-orders sync is running and the last one's error; refetched on every notice
- * naming {@link SYNC_KEY}. Not seeded: the loader does not read it, so the banner and the
- * button's state arrive with the socket's first answer.
+ * Whether an open-orders sync is running and the last one's error; live on {@link SYNC_KEY}. Not
+ * seeded: the loader does not read it, so the banner and the button's state arrive with the
+ * socket's first answer.
  */
-export const merchantSyncStatusAtom = ShopActorClient.query("MerchantSyncStatus", undefined, {
-  serializationKey: "merchant-sync-status",
-}).pipe(Atom.withReactivity([SYNC_KEY]), refreshOnFocus);
+export const merchantSyncStatusAtom = liveQuery(
+  ShopActorClient.query("MerchantSyncStatus", undefined, {
+    serializationKey: "merchant-sync-status",
+    timeToLive: LIVE_RETENTION,
+  }),
+  [SYNC_KEY],
+);
 
 /**
- * The shop's usage (`ShopUsage`): the home page's meters and both pages' `QuotaBanners`.
- * Refetched on every notice naming {@link ORDERS_KEY} (a counted order, a refused one, a billing
- * cycle push) or {@link SYNC_KEY} (Sync open orders clears the ceiling's flag); seeded from the
- * page's loader ({@link seedUsage}).
+ * The shop's usage (`ShopUsage`): the home page's meters and both pages' `QuotaBanners`; seeded
+ * from the page's loader ({@link seedUsage}).
  */
 export const merchantUsageQuery = ShopActorClient.query("MerchantGetUsage", undefined, {
   serializationKey: "merchant-usage",
+  timeToLive: LIVE_RETENTION,
 });
 
-/** {@link merchantUsageQuery}, live. */
-export const merchantUsageAtom = merchantUsageQuery.pipe(
-  Atom.withReactivity([ORDERS_KEY, SYNC_KEY]),
-  refreshOnFocus,
-);
+/**
+ * {@link merchantUsageQuery}, live on {@link ORDERS_KEY} (a counted order, a refused one, a
+ * billing cycle push) and {@link SYNC_KEY} (Sync open orders clears the ceiling's flag).
+ */
+export const merchantUsageAtom = liveQuery(merchantUsageQuery, [ORDERS_KEY, SYNC_KEY]);
 
 /** Sync open orders: the screen's one button, so one mutation atom. */
 export const syncOpenOrdersAtom = ShopActorClient.mutation("MerchantSyncOpenOrders");
@@ -446,21 +489,21 @@ export const setTeamMemberAtom = Atom.family((_pair: string) =>
   ),
 );
 
-/**
- * The order page, by its `legacyId`; the node {@link seedOrderDetail} fills. Refetched on every
- * notice naming {@link ORDERS_KEY}: an order or one of its runs changed.
- */
+/** The order page, by its `legacyId`; the node {@link seedOrderDetail} fills. */
 export const merchantOrderDetailQuery = Atom.family((legacyId: string) =>
   ShopActorClient.query(
     "MerchantGetOrderDetail",
     { legacyId },
-    { serializationKey: `merchant-order:${legacyId}` },
+    { serializationKey: `merchant-order:${legacyId}`, timeToLive: LIVE_RETENTION },
   ),
 );
 
-/** The order page; see {@link merchantOrderDetailQuery}. */
+/**
+ * The order page, live on {@link ORDERS_KEY}: an order or one of its runs changed; see
+ * {@link merchantOrderDetailQuery}.
+ */
 export const merchantOrderDetailAtom = Atom.family((legacyId: string) =>
-  merchantOrderDetailQuery(legacyId).pipe(Atom.withReactivity([ORDERS_KEY]), refreshOnFocus),
+  liveQuery(merchantOrderDetailQuery(legacyId), [ORDERS_KEY]),
 );
 
 /** Seeds the order page's node from the loader, as {@link seedOrders} does the orders index's. */
@@ -471,8 +514,7 @@ export const seedOrderDetail = (
 
 /**
  * The member's workflows list, by its whole query; the node {@link seedWorkflowsList} fills.
- * The member is the socket's caller, never the payload. Refetched on every notice naming
- * {@link ORDERS_KEY}.
+ * The member is the socket's caller, never the payload.
  */
 export const memberRunsQuery = Atom.family((query: RunQuery) =>
   ShopActorClient.query(
@@ -480,13 +522,14 @@ export const memberRunsQuery = Atom.family((query: RunQuery) =>
     { query },
     {
       serializationKey: `member-runs:${JSON.stringify([query.state, query.team, query.limit, query.q])}`,
+      timeToLive: LIVE_RETENTION,
     },
   ),
 );
 
-/** The member's workflows list; see {@link memberRunsQuery}. */
+/** The member's workflows list, live on {@link ORDERS_KEY}; see {@link memberRunsQuery}. */
 export const memberRunsAtom = Atom.family((query: RunQuery) =>
-  memberRunsQuery(query).pipe(Atom.withReactivity([ORDERS_KEY]), refreshOnFocus),
+  liveQuery(memberRunsQuery(query), [ORDERS_KEY]),
 );
 
 /** Seeds the workflows list's node from the loader, for the query the loader resolved. */
@@ -497,12 +540,16 @@ export const seedWorkflowsList = (
 
 /** The member's workflow page, by run; the node {@link seedMemberRun} fills. */
 export const memberRunQuery = Atom.family((runId: string) =>
-  ShopActorClient.query("MemberGetRun", { runId }, { serializationKey: `member-run:${runId}` }),
+  ShopActorClient.query(
+    "MemberGetRun",
+    { runId },
+    { serializationKey: `member-run:${runId}`, timeToLive: LIVE_RETENTION },
+  ),
 );
 
-/** The member's workflow page; see {@link memberRunQuery}. */
+/** The member's workflow page, live on {@link ORDERS_KEY}; see {@link memberRunQuery}. */
 export const memberRunAtom = Atom.family((runId: string) =>
-  memberRunQuery(runId).pipe(Atom.withReactivity([ORDERS_KEY]), refreshOnFocus),
+  liveQuery(memberRunQuery(runId), [ORDERS_KEY]),
 );
 
 /** Seeds the member's workflow page's node from the loader. */
@@ -695,6 +742,6 @@ export const seedOrders = (
  */
 export const noticesAtom = ShopActorClient.runtime.atom((get) =>
   Stream.fromPubSub(get(noticeBus)).pipe(
-    Stream.tap((notice) => Reactivity.invalidate(notice.invalidated)),
+    Stream.tap((notice) => Effect.sync(() => refreshLive(get.registry, notice.invalidated))),
   ),
 );

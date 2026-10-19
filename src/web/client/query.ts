@@ -1,12 +1,10 @@
-import { createIsomorphicFn } from "@tanstack/react-start";
-import * as Atom from "effect/reactivity/Atom";
+import * as Duration from "effect/Duration";
 
-/** `windowFocusSignal` reads `window` and `document`, so the server keeps the atom as is. */
-const refreshOnFocusImpl = createIsomorphicFn()
-  .client((atom: Atom.Atom<any>) => Atom.refreshOnWindowFocus(atom))
-  .server((atom: Atom.Atom<any>) => atom);
-
-/** Refetches `atom` when the tab becomes visible again. A no-op on the server. */
-export const refreshOnFocus = <A extends Atom.Atom<any>>(atom: A): A =>
-  // createIsomorphicFn infers non-generic args, so restore the atom's type here.
-  refreshOnFocusImpl(atom) as A;
+/**
+ * How long a live read is kept after its page stops showing it: the idle TTL of every live
+ * query (`liveQuery`) and the router's `defaultGcTime` (`getRouter`), one number so the router
+ * never renders a cached answer whose node is gone. A kept read costs memory, not requests: a
+ * notice only marks it stale, and it refetches once when it is shown again. So the number bounds
+ * how long a revisit can be answered from memory, not how stale it can paint.
+ */
+export const LIVE_RETENTION = Duration.minutes(5);
