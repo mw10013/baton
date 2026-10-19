@@ -17,6 +17,9 @@ import { type RunStepTask, RunSteps } from "./RunSteps.tsx";
 import { BlockModal, RunNoteModal } from "./RunTextModals.tsx";
 import { BackLink } from "./screen/BackLink.tsx";
 import { BatonMark } from "./screen/BatonMark.tsx";
+import { HelpList } from "./screen/HelpList.tsx";
+import { HelpTable } from "./screen/HelpTable.tsx";
+import { HELP_SECTIONS } from "./help/pages.ts";
 import { Clamp } from "./screen/Clamp.tsx";
 import { ClampedProse } from "./screen/ClampedProse.tsx";
 import { Connector } from "./screen/Connector.tsx";
@@ -472,6 +475,26 @@ export function KitPage({ width }: { readonly width: "small" | "large" }) {
               {...textLimitProps(longDraft, TASK_INSTRUCTIONS_MAX_LENGTH)}
             />
           </Fields>
+        </s-section>
+        <s-section heading="Help list">
+          <HelpList
+            entries={HELP_SECTIONS[0]?.pages ?? []}
+            hrefOf={(entry) => `/help/getting-started/${entry.slug}`}
+            current="first-team"
+          />
+        </s-section>
+        <s-section heading="Help table">
+          <HelpTable
+            columns={["Badge", "Where", "What it means"]}
+            rows={[
+              [
+                <s-badge key="badge">Active</s-badge>,
+                "Workflows page",
+                "It starts on every new item.",
+              ],
+              [<s-badge key="badge">Inactive</s-badge>, "Workflows page", "It starts nothing."],
+            ]}
+          />
         </s-section>
         <s-section heading="Baton mark">
           <Inline>

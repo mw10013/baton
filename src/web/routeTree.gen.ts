@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as AppRouteImport } from './routes/app'
+import { Route as HelpRouteImport } from './routes/help'
 import { Route as LoginCallbackRouteImport } from './routes/login-callback'
 import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as ShopRouteImport } from './routes/shop'
@@ -26,6 +27,7 @@ import { Route as AppWorkflowsRouteImport } from './routes/app.workflows'
 import { Route as AuthExitIframeRouteImport } from './routes/auth.exit-iframe'
 import { Route as AuthSessionTokenRouteImport } from './routes/auth.session-token'
 import { Route as DevKitRouteImport } from './routes/dev.kit'
+import { Route as HelpIndexRouteImport } from './routes/help.index'
 import { Route as ShopIndexRouteImport } from './routes/shop.index'
 import { Route as ShopKeyRouteImport } from './routes/shop.$key'
 import { Route as WebhooksSplatRouteImport } from './routes/webhooks.$'
@@ -41,6 +43,8 @@ import { Route as AppTeamsIndexRouteImport } from './routes/app.teams.index'
 import { Route as AppTeamsTeamIdRouteImport } from './routes/app.teams.$teamId'
 import { Route as AppWorkflowsIndexRouteImport } from './routes/app.workflows.index'
 import { Route as AppWorkflowsWorkflowIdRouteImport } from './routes/app.workflows.$workflowId'
+import { Route as HelpSectionIndexRouteImport } from './routes/help.$section.index'
+import { Route as HelpSectionPageRouteImport } from './routes/help.$section.$page'
 import { Route as ShopKeyIndexRouteImport } from './routes/shop.$key.index'
 import { Route as ShopKeyLapsedRouteImport } from './routes/shop.$key_.lapsed'
 import { Route as AppWorkflowsWorkflowIdEditRouteImport } from './routes/app.workflows.$workflowId_.edit'
@@ -60,6 +64,11 @@ const AdminRoute = AdminRouteImport.update({
 const AppRoute = AppRouteImport.update({
   id: '/app',
   path: '/app',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HelpRoute = HelpRouteImport.update({
+  id: '/help',
+  path: '/help',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginCallbackRoute = LoginCallbackRouteImport.update({
@@ -131,6 +140,11 @@ const DevKitRoute = DevKitRouteImport.update({
   id: '/dev/kit',
   path: '/dev/kit',
   getParentRoute: () => rootRouteImport,
+} as any)
+const HelpIndexRoute = HelpIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => HelpRoute,
 } as any)
 const ShopIndexRoute = ShopIndexRouteImport.update({
   id: '/',
@@ -207,6 +221,16 @@ const AppWorkflowsWorkflowIdRoute = AppWorkflowsWorkflowIdRouteImport.update({
   path: '/$workflowId',
   getParentRoute: () => AppWorkflowsRoute,
 } as any)
+const HelpSectionIndexRoute = HelpSectionIndexRouteImport.update({
+  id: '/$section/',
+  path: '/$section/',
+  getParentRoute: () => HelpRoute,
+} as any)
+const HelpSectionPageRoute = HelpSectionPageRouteImport.update({
+  id: '/$section/$page',
+  path: '/$section/$page',
+  getParentRoute: () => HelpRoute,
+} as any)
 const ShopKeyIndexRoute = ShopKeyIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -238,6 +262,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/admin': typeof AdminRouteWithChildren
   '/app': typeof AppRouteWithChildren
+  '/help': typeof HelpRouteWithChildren
   '/login-callback': typeof LoginCallbackRoute
   '/privacy': typeof PrivacyRoute
   '/shop': typeof ShopRouteWithChildren
@@ -254,6 +279,7 @@ export interface FileRoutesByFullPath {
   '/webhooks/$': typeof WebhooksSplatRoute
   '/admin/': typeof AdminIndexRoute
   '/app/': typeof AppIndexRoute
+  '/help/': typeof HelpIndexRoute
   '/shop/': typeof ShopIndexRoute
   '/admin/shop/$shop': typeof AdminShopShopRoute
   '/api/actor/$key': typeof ApiActorKeyRoute
@@ -263,11 +289,13 @@ export interface FileRoutesByFullPath {
   '/app/orders/from-shopify': typeof AppOrdersFromShopifyRoute
   '/app/teams/$teamId': typeof AppTeamsTeamIdRoute
   '/app/workflows/$workflowId': typeof AppWorkflowsWorkflowIdRoute
+  '/help/$section/$page': typeof HelpSectionPageRoute
   '/shop/$key/lapsed': typeof ShopKeyLapsedRoute
   '/app/members/': typeof AppMembersIndexRoute
   '/app/orders/': typeof AppOrdersIndexRoute
   '/app/teams/': typeof AppTeamsIndexRoute
   '/app/workflows/': typeof AppWorkflowsIndexRoute
+  '/help/$section/': typeof HelpSectionIndexRoute
   '/shop/$key/': typeof ShopKeyIndexRoute
   '/app/workflows/$workflowId/edit': typeof AppWorkflowsWorkflowIdEditRoute
   '/shop/$key/workflows/$runId': typeof ShopKeyWorkflowsRunIdRoute
@@ -287,6 +315,7 @@ export interface FileRoutesByTo {
   '/webhooks/$': typeof WebhooksSplatRoute
   '/admin': typeof AdminIndexRoute
   '/app': typeof AppIndexRoute
+  '/help': typeof HelpIndexRoute
   '/shop': typeof ShopIndexRoute
   '/admin/shop/$shop': typeof AdminShopShopRoute
   '/api/actor/$key': typeof ApiActorKeyRoute
@@ -296,11 +325,13 @@ export interface FileRoutesByTo {
   '/app/orders/from-shopify': typeof AppOrdersFromShopifyRoute
   '/app/teams/$teamId': typeof AppTeamsTeamIdRoute
   '/app/workflows/$workflowId': typeof AppWorkflowsWorkflowIdRoute
+  '/help/$section/$page': typeof HelpSectionPageRoute
   '/shop/$key/lapsed': typeof ShopKeyLapsedRoute
   '/app/members': typeof AppMembersIndexRoute
   '/app/orders': typeof AppOrdersIndexRoute
   '/app/teams': typeof AppTeamsIndexRoute
   '/app/workflows': typeof AppWorkflowsIndexRoute
+  '/help/$section': typeof HelpSectionIndexRoute
   '/shop/$key': typeof ShopKeyIndexRoute
   '/app/workflows/$workflowId/edit': typeof AppWorkflowsWorkflowIdEditRoute
   '/shop/$key/workflows/$runId': typeof ShopKeyWorkflowsRunIdRoute
@@ -311,6 +342,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/admin': typeof AdminRouteWithChildren
   '/app': typeof AppRouteWithChildren
+  '/help': typeof HelpRouteWithChildren
   '/login-callback': typeof LoginCallbackRoute
   '/privacy': typeof PrivacyRoute
   '/shop': typeof ShopRouteWithChildren
@@ -327,6 +359,7 @@ export interface FileRoutesById {
   '/webhooks/$': typeof WebhooksSplatRoute
   '/admin/': typeof AdminIndexRoute
   '/app/': typeof AppIndexRoute
+  '/help/': typeof HelpIndexRoute
   '/shop/': typeof ShopIndexRoute
   '/admin/shop/$shop': typeof AdminShopShopRoute
   '/api/actor/$key': typeof ApiActorKeyRoute
@@ -336,11 +369,13 @@ export interface FileRoutesById {
   '/app/orders/from-shopify': typeof AppOrdersFromShopifyRoute
   '/app/teams/$teamId': typeof AppTeamsTeamIdRoute
   '/app/workflows/$workflowId': typeof AppWorkflowsWorkflowIdRoute
+  '/help/$section/$page': typeof HelpSectionPageRoute
   '/shop/$key_/lapsed': typeof ShopKeyLapsedRoute
   '/app/members/': typeof AppMembersIndexRoute
   '/app/orders/': typeof AppOrdersIndexRoute
   '/app/teams/': typeof AppTeamsIndexRoute
   '/app/workflows/': typeof AppWorkflowsIndexRoute
+  '/help/$section/': typeof HelpSectionIndexRoute
   '/shop/$key/': typeof ShopKeyIndexRoute
   '/app/workflows/$workflowId_/edit': typeof AppWorkflowsWorkflowIdEditRoute
   '/shop/$key/workflows/$runId': typeof ShopKeyWorkflowsRunIdRoute
@@ -352,6 +387,7 @@ export interface FileRouteTypes {
     | '/'
     | '/admin'
     | '/app'
+    | '/help'
     | '/login-callback'
     | '/privacy'
     | '/shop'
@@ -368,6 +404,7 @@ export interface FileRouteTypes {
     | '/webhooks/$'
     | '/admin/'
     | '/app/'
+    | '/help/'
     | '/shop/'
     | '/admin/shop/$shop'
     | '/api/actor/$key'
@@ -377,11 +414,13 @@ export interface FileRouteTypes {
     | '/app/orders/from-shopify'
     | '/app/teams/$teamId'
     | '/app/workflows/$workflowId'
+    | '/help/$section/$page'
     | '/shop/$key/lapsed'
     | '/app/members/'
     | '/app/orders/'
     | '/app/teams/'
     | '/app/workflows/'
+    | '/help/$section/'
     | '/shop/$key/'
     | '/app/workflows/$workflowId/edit'
     | '/shop/$key/workflows/$runId'
@@ -401,6 +440,7 @@ export interface FileRouteTypes {
     | '/webhooks/$'
     | '/admin'
     | '/app'
+    | '/help'
     | '/shop'
     | '/admin/shop/$shop'
     | '/api/actor/$key'
@@ -410,11 +450,13 @@ export interface FileRouteTypes {
     | '/app/orders/from-shopify'
     | '/app/teams/$teamId'
     | '/app/workflows/$workflowId'
+    | '/help/$section/$page'
     | '/shop/$key/lapsed'
     | '/app/members'
     | '/app/orders'
     | '/app/teams'
     | '/app/workflows'
+    | '/help/$section'
     | '/shop/$key'
     | '/app/workflows/$workflowId/edit'
     | '/shop/$key/workflows/$runId'
@@ -424,6 +466,7 @@ export interface FileRouteTypes {
     | '/'
     | '/admin'
     | '/app'
+    | '/help'
     | '/login-callback'
     | '/privacy'
     | '/shop'
@@ -440,6 +483,7 @@ export interface FileRouteTypes {
     | '/webhooks/$'
     | '/admin/'
     | '/app/'
+    | '/help/'
     | '/shop/'
     | '/admin/shop/$shop'
     | '/api/actor/$key'
@@ -449,11 +493,13 @@ export interface FileRouteTypes {
     | '/app/orders/from-shopify'
     | '/app/teams/$teamId'
     | '/app/workflows/$workflowId'
+    | '/help/$section/$page'
     | '/shop/$key_/lapsed'
     | '/app/members/'
     | '/app/orders/'
     | '/app/teams/'
     | '/app/workflows/'
+    | '/help/$section/'
     | '/shop/$key/'
     | '/app/workflows/$workflowId_/edit'
     | '/shop/$key/workflows/$runId'
@@ -464,6 +510,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdminRoute: typeof AdminRouteWithChildren
   AppRoute: typeof AppRouteWithChildren
+  HelpRoute: typeof HelpRouteWithChildren
   LoginCallbackRoute: typeof LoginCallbackRoute
   PrivacyRoute: typeof PrivacyRoute
   ShopRoute: typeof ShopRouteWithChildren
@@ -498,6 +545,13 @@ declare module '@tanstack/react-router' {
       path: '/app'
       fullPath: '/app'
       preLoaderRoute: typeof AppRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/help': {
+      id: '/help'
+      path: '/help'
+      fullPath: '/help'
+      preLoaderRoute: typeof HelpRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login-callback': {
@@ -597,6 +651,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/dev/kit'
       preLoaderRoute: typeof DevKitRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/help/': {
+      id: '/help/'
+      path: '/'
+      fullPath: '/help/'
+      preLoaderRoute: typeof HelpIndexRouteImport
+      parentRoute: typeof HelpRoute
     }
     '/shop/': {
       id: '/shop/'
@@ -702,6 +763,20 @@ declare module '@tanstack/react-router' {
       fullPath: '/app/workflows/$workflowId'
       preLoaderRoute: typeof AppWorkflowsWorkflowIdRouteImport
       parentRoute: typeof AppWorkflowsRoute
+    }
+    '/help/$section/': {
+      id: '/help/$section/'
+      path: '/$section'
+      fullPath: '/help/$section/'
+      preLoaderRoute: typeof HelpSectionIndexRouteImport
+      parentRoute: typeof HelpRoute
+    }
+    '/help/$section/$page': {
+      id: '/help/$section/$page'
+      path: '/$section/$page'
+      fullPath: '/help/$section/$page'
+      preLoaderRoute: typeof HelpSectionPageRouteImport
+      parentRoute: typeof HelpRoute
     }
     '/shop/$key/': {
       id: '/shop/$key/'
@@ -811,6 +886,20 @@ const AppRouteChildren: AppRouteChildren = {
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 
+interface HelpRouteChildren {
+  HelpIndexRoute: typeof HelpIndexRoute
+  HelpSectionPageRoute: typeof HelpSectionPageRoute
+  HelpSectionIndexRoute: typeof HelpSectionIndexRoute
+}
+
+const HelpRouteChildren: HelpRouteChildren = {
+  HelpIndexRoute: HelpIndexRoute,
+  HelpSectionPageRoute: HelpSectionPageRoute,
+  HelpSectionIndexRoute: HelpSectionIndexRoute,
+}
+
+const HelpRouteWithChildren = HelpRoute._addFileChildren(HelpRouteChildren)
+
 interface ShopKeyRouteChildren {
   ShopKeyIndexRoute: typeof ShopKeyIndexRoute
   ShopKeyWorkflowsRunIdRoute: typeof ShopKeyWorkflowsRunIdRoute
@@ -844,6 +933,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdminRoute: AdminRouteWithChildren,
   AppRoute: AppRouteWithChildren,
+  HelpRoute: HelpRouteWithChildren,
   LoginCallbackRoute: LoginCallbackRoute,
   PrivacyRoute: PrivacyRoute,
   ShopRoute: ShopRouteWithChildren,
