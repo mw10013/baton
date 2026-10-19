@@ -350,6 +350,8 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - **2026-10-18, Step 8:** the lapsed page's markup is `LapsedPage` (`src/web/components/LapsedPage.tsx`), rendered by `shop.$key_.lapsed.tsx`, so the browser test renders it under a small memory router. `memberRefusal(key, path)` maps `PaymentRequired` to `redirect({ to: "/shop/$key/lapsed" })` for the layout's gate and both member loaders. The integ titles assert the Backend's answers (`PaymentRequired` for the member, `NotAShopMember` for a stranger, every member past Basic's included seats admitted), since integ has no Website; the redirect itself is the Website's `memberRefusal`.
 - **2026-10-18, Step 8:** two existing e2e locators gained `exact: true`, and `orders.spec.ts`'s remove loop tolerates a late write (Command results).
 
+- **2026-10-18, Step 9:** the spec is `test/e2e/embedded/plan.billing.spec.ts`; `chromium` and `embedded` ignore `**/*.billing.spec.ts`, and the `billing` project exists only when `E2E_BILLING=1` (set by `test:e2e:billing`). Legacy's second title keeps its words, but its proof is reduced: legacy read "Cached plan" and "Usage events pending" off the operator console's shop page after Refresh plan, which is H's; here the downgrade is read off the home page on the redirect back and on a fresh load. The outbox half is owed to H. The pricing page's plan name is found by text, not a heading role.
+
 ### Issues
 
 - **2026-10-18, Step 0: `activeSubscription` answers null for both stores. `WAITING: Partner API`.** Spike (a scratch script outside the repo, deleted after; the token and the app secret read into the environment, never printed) for Baton Dev (org `2798461`, app `417214922753`, handle `baton-local`):
@@ -400,6 +402,8 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - **2026-10-18, Step 7:** `vp check` green (362 files); `vp test` 1070 passed, 82 files, 52 s (+3 browser `ManagePlanButton`).
 
 - **2026-10-18, Step 8:** `vp check` green (365 files); `vp test` 1073 passed, 83 files, 51 s (+2 integ member-area titles, +1 browser `LapsedPage`). `vp build` regenerated `routeTree.gen.ts`. Full `vp run test:e2e`: 59 passed, 3 failed, 10 did not run, 5.1 min. Causes: (1) `app.spec.ts` and `socket.spec.ts` located `getByRole("link", { name: "Orders" })`, which now also matches the "Orders this billing cycle" meter tile (strict mode); fixed with `exact: true`. (2) `orders.spec.ts` "Sync open orders brings back an open order the screen no longer lists": a Sync from Shopify queued in the actor stored the order again 1 ms after `RemoveOrder` (the e2e log shows `removeOrder … removed=true` then `Orders.syncOrder … status=stored`), and the poll's inner `toHaveCount(0)` threw instead of letting the poll retry; fixed so the inner wait no longer fails the poll. Not billing's behaviour; a race the spec already meant to absorb. Re-run of the three files: 18 passed, 2.1 min.
+
+- **2026-10-18, Step 9:** `vp check` green (366 files). `vp exec playwright test --list` names no billing test; with `E2E_BILLING=1 --project=billing` it lists the two. Run once by hand, headed: `vp run test:e2e:billing` 4 passed (the two setup projects and both titles), 1.8 min, no bot challenge; the e2e store went Basic → Pro → Basic and ends where it started (Basic).
 
 ### Human steps requested
 

@@ -75,7 +75,7 @@ export default defineConfig({
     { name: "setup", testMatch: /auth\.setup\.ts/, dependencies: ["install"] },
     {
       name: "chromium",
-      testIgnore: "**/embedded/**",
+      testIgnore: ["**/embedded/**", "**/*.billing.spec.ts"],
       use: { ...devices["Desktop Chrome"] },
       dependencies: ["setup"],
     },
@@ -89,6 +89,7 @@ export default defineConfig({
     {
       name: "embedded",
       testMatch: "**/embedded/**/*.spec.ts",
+      testIgnore: "**/*.billing.spec.ts",
       // Not `shopify-admin`: the install's load and this project's first load would exchange
       // tokens on the one session row at once.
       dependencies: ["install"],
@@ -101,6 +102,23 @@ export default defineConfig({
       expect: { timeout: 10_000 },
       use: embeddedUse(),
     },
+    // Shopify's pricing page challenges a headless browser, so the plan switch runs headed, by
+    // hand and not in a loop: only `vp run test:e2e:billing` (which sets `E2E_BILLING`) defines
+    // the project, so a plain run cannot pick it up.
+    ...(process.env.E2E_BILLING === "1"
+      ? [
+          {
+            name: "billing",
+            testMatch: "**/*.billing.spec.ts",
+            dependencies: ["install"],
+            fullyParallel: false,
+            workers: 1,
+            timeout: 360_000,
+            expect: { timeout: 10_000 },
+            use: embeddedUse(),
+          },
+        ]
+      : []),
   ],
   webServer: {
     command: "vp run test:e2e:server",
