@@ -188,6 +188,7 @@ export default defineConfig(({ command, mode, isPreview }) => {
               "effect/DateTime",
               "effect/Cause",
               "effect/Exit",
+              "effect/Duration",
             ],
           },
           test: {
