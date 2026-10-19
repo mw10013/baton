@@ -110,7 +110,8 @@ export default defineConfig({
           {
             name: "billing",
             testMatch: "**/*.billing.spec.ts",
-            dependencies: ["install"],
+            // `setup` (which follows `install`) signs the admin in for the shop page's half.
+            dependencies: ["setup"],
             fullyParallel: false,
             workers: 1,
             timeout: 360_000,

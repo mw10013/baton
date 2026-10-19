@@ -201,6 +201,7 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - **2026-10-19, full `vp test` (at the stop, Steps 0–2, 4–5 partial):** 88 files, 1,110 tests: 1,109 passed, 1 failed (the `run.test.tsx` flake above), 88.7 s (1:31 wall). Alone, `run.test.tsx`: 9 passed.
 
 - **2026-10-19, lead:** full `vp run test:e2e` once after triage: **77 passed, 6.1 min**.
+- **2026-10-19, lead:** `vp run test:e2e:billing` (headed): **6 passed, 1.8 min**, after two failures: the `install` setup's first load timed out once through a cold tunnel (passed on the next run); the outbox half found no Refresh plan button, because the `billing` project did not depend on `setup` and read a stale `admin.json` from an earlier server. Fixed in `playwright.config.ts` (`billing` depends on `setup`).
 
 ### Human steps requested
 
@@ -213,7 +214,7 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 Known before the run (the lead's, at close):
 
 1. ~~Add `CLOUDFLARE_WORKERS_API_TOKEN` to the staging record~~: dropped with the inventory.
-2. The billing spec by hand: `vp run test:e2e:billing`.
+2. ~~The billing spec by hand~~: run by the lead, 6 passed (Command results).
 3. Staging, after the push (research Q14): sign in as the staging admin; Shops lists `mw10013-staging-shop-00`; its page reads every field and the page source holds no token; Refresh plan leaves the plan and moves Fresh until; one embedded load still works.
 
 ### Implementation review
