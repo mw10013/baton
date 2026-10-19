@@ -189,6 +189,8 @@ export default defineConfig(({ command, mode, isPreview }) => {
               "effect/Cause",
               "effect/Exit",
               "effect/Duration",
+              "effect/Equal",
+              "effect/Predicate",
             ],
           },
           test: {

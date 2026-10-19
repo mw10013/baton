@@ -3,7 +3,9 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
+import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import { fixtureRows } from "../../../../src/backend/fixture.ts";
@@ -665,6 +667,41 @@ describe("the list memo", () => {
           assert.deepStrictEqual(count, before);
         }),
       wrap,
+    );
+  });
+
+  it.effect("each memo read logs whether it ran the list read", () => {
+    const logged: Array<string> = [];
+    const capturing = Logger.layer([
+      Logger.make(({ message, logLevel }) => {
+        const line = String(Array.isArray(message) ? message[0] : message);
+        if (logLevel === "Debug" && line.includes("memo=")) logged.push(line);
+      }),
+    ]);
+    return harness(({ runs, load }) =>
+      Effect.gen(function* () {
+        const loaded = yield* load(oneBoard);
+        const ana = loaded.member(ANA);
+        const read = Effect.all([
+          runs.listOrders(EVERY_ORDER),
+          runs.listRuns({ teamIds: ana.teamIds, memberEmail: email(BEN), query: READY }),
+        ]);
+        yield* read;
+        yield* read;
+        yield* runs.notify([ORDERS_KEY]);
+        yield* read;
+        assert.deepStrictEqual(logged, [
+          `Runs.listOrders: shop=${shop} memo=miss`,
+          `Runs.listRuns: shop=${shop} memo=miss`,
+          `Runs.listOrders: shop=${shop} memo=hit`,
+          `Runs.listRuns: shop=${shop} memo=hit`,
+          `Runs.listOrders: shop=${shop} memo=miss`,
+          `Runs.listRuns: shop=${shop} memo=miss`,
+        ]);
+      }).pipe(
+        Effect.provide(capturing),
+        Effect.provideService(References.MinimumLogLevel, "Debug"),
+      ),
     );
   });
 

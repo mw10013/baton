@@ -16,6 +16,7 @@ import {
   ShopActorClient,
 } from "../../../../src/web/client/shop-actor-client.ts";
 import { shopTestRegistry } from "../../shop-actor.ts";
+import { NO_USAGE } from "../../usage.ts";
 
 const A_KEY = "a";
 const B_KEY = "b";
@@ -170,6 +171,36 @@ describe("liveQuery", () => {
     await pause(100);
     expect(t.calls.count).toBe(0);
     expect(AsyncResult.isSuccess(t.registry.get(t.live))).toBe(true);
+    hide();
+  });
+});
+
+describe("structural sharing", () => {
+  it("a refetch that changed nothing keeps the value's identity", async () => {
+    let orders = 0;
+    const registry = shopTestRegistry({
+      MerchantGetUsage: () => Effect.sync(() => ({ ...NO_USAGE, ordersThisCycle: orders })),
+    });
+    const id = `live-query-${++serial}`;
+    const query = ShopActorClient.query("MerchantGetUsage", undefined, {
+      serializationKey: id,
+      timeToLive: LIVE_RETENTION,
+    });
+    const live = liveQuery(query, [A_KEY]);
+    const hide = registry.mount(live);
+    const valueNow = () => {
+      const result = registry.get(live);
+      return AsyncResult.isSuccess(result) && !result.waiting ? result.value : undefined;
+    };
+    await expect.poll(valueNow).toBeDefined();
+    const first = valueNow();
+    refreshLive(registry, [A_KEY]);
+    await expect.poll(() => registry.get(live).waiting).toBe(false);
+    expect(valueNow()).toBe(first);
+    orders = 1;
+    refreshLive(registry, [A_KEY]);
+    await expect.poll(() => valueNow()?.ordersThisCycle).toBe(1);
+    expect(valueNow()).not.toBe(first);
     hide();
   });
 });

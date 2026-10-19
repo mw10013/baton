@@ -2,9 +2,11 @@ import { createIsomorphicFn } from "@tanstack/react-start";
 import * as Arr from "effect/Array";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import * as Layer from "effect/Layer";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as PubSub from "effect/PubSub";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Atom from "effect/reactivity/Atom";
@@ -232,7 +234,7 @@ const liveKeys = new WeakMap<Atom.Atom<any>, ReadonlyArray<string>>();
  *
  * Nothing here copies a value with `get.subscribe` and `get.once` (as `Atom.withReactivity`
  * does), so an interrupted refetch is always a stale node, never a `waiting` value with nothing
- * in flight.
+ * in flight. A new `Success` shares structure with the last value ({@link shareStructure}).
  *
  * @see https://github.com/effect-app/libs `packages/vue/src/atomQuery.ts` (`buildQueryFamily`) and `queryLifetime.ts` (`atomsToRefetch`)
  */
@@ -241,9 +243,54 @@ export const liveQuery = <A, E>(
   keys: ReadonlyArray<string>,
 ): Atom.Atom<AsyncResult.AsyncResult<A, E>> => {
   liveKeys.set(query, keys);
-  return Atom.transform(query, (get) => get(query), { initialValueTarget: query }).pipe(
-    Atom.setIdleTTL(LIVE_RETENTION),
+  return Atom.transform(query, (get) => sharedWithPrevious(get.self(), get(query)), {
+    initialValueTarget: query,
+  }).pipe(Atom.setIdleTTL(LIVE_RETENTION));
+};
+
+/** Whether `value` is a plain object or array, the only shapes {@link shareStructure} walks into. */
+const isPlain = (value: unknown): value is Record<PropertyKey, unknown> => {
+  if (Array.isArray(value)) return true;
+  if (!Predicate.isObject(value)) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+};
+
+/**
+ * `next`, with every sub-tree equal to `previous`'s replaced by `previous`'s own reference, so a
+ * refetch that changed nothing hands React the same objects and re-renders nothing below an
+ * unchanged one. Plain objects and arrays are walked; anything else (a decoded `Schema.Class`
+ * instance, a `DateTime`) is a leaf compared with `Equal.equals`, which keeps equal instances
+ * that `===` would not.
+ *
+ * @see https://github.com/effect-app/libs `packages/vue/src/atomQuery.ts` (`replaceEqualDeep`)
+ */
+export const shareStructure = (previous: unknown, next: unknown): unknown => {
+  if (previous === next) return previous;
+  if (!isPlain(previous) || !isPlain(next) || Array.isArray(previous) !== Array.isArray(next))
+    return Equal.equals(previous, next) ? previous : next;
+  const entries = Object.keys(next).map(
+    (key) => [key, shareStructure(previous[key], next[key])] as const,
   );
+  const same =
+    entries.length === Object.keys(previous).length &&
+    entries.every(([key, value]) => key in previous && value === previous[key]);
+  if (same) return previous;
+  return Array.isArray(next) ? entries.map(([, value]) => value) : Object.fromEntries(entries);
+};
+
+/** {@link liveQuery}'s value: a new `Success` shares structure with the last one shown. */
+const sharedWithPrevious = <A, E>(
+  self: Option.Option<AsyncResult.AsyncResult<A, E>>,
+  next: AsyncResult.AsyncResult<A, E>,
+): AsyncResult.AsyncResult<A, E> => {
+  if (!AsyncResult.isSuccess(next)) return next;
+  const previous = Option.flatMap(self, AsyncResult.value);
+  if (Option.isNone(previous)) return next;
+  const value = shareStructure(previous.value, next.value) as A;
+  return value === next.value
+    ? next
+    : AsyncResult.success(value, { waiting: next.waiting, timestamp: next.timestamp });
 };
 
 /**

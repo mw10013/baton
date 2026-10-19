@@ -182,17 +182,37 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
   readonly flushUsage: Effect.Effect<void>;
   readonly shop: ShopKey;
 }) {
+  /**
+   * The memo keys whose lookup ran, by identity: a cache hands its lookup the very key the
+   * missing `Cache.get` was given, so a caller asks this about its own key after the get and
+   * learns whether it paid the read, with no second lookup that a concurrent notice could race.
+   * A caller that joined another's lookup in flight reads as a hit, which it is.
+   */
+  const missed = new WeakSet<OrdersMemoKey | RunsMemoKey>();
   /** The orders index's memo; the rule is on {@link makeRuns}. */
   const ordersMemo = yield* Cache.makeWith(
-    ({ limit, cursor, q, show, team, teams }: OrdersMemoKey) =>
-      orderRepository.listOrders({ limit, cursor, q, show, team, teams }),
+    (key: OrdersMemoKey) => {
+      missed.add(key);
+      const { limit, cursor, q, show, team, teams } = key;
+      return orderRepository.listOrders({ limit, cursor, q, show, team, teams });
+    },
     { capacity: MEMO_CAPACITY, timeToLive: keepSuccesses },
   );
   /** The workflows list's memo; the rule is on {@link makeRuns}. */
   const runsMemo = yield* Cache.makeWith(
-    ({ teamIds }: RunsMemoKey) => runRepository.runListItems(teamIds),
+    (key: RunsMemoKey) => {
+      missed.add(key);
+      return runRepository.runListItems(key.teamIds);
+    },
     { capacity: MEMO_CAPACITY, timeToLive: keepSuccesses },
   );
+  /** One debug line per memo read: whether `key`'s `Cache.get` ran the lookup ({@link missed}). */
+  const logMemo = (operation: string, key: OrdersMemoKey | RunsMemoKey) => {
+    const memo = missed.has(key) ? "miss" : "hit";
+    return Effect.logDebug(`${operation}: shop=${shop} memo=${memo}`).pipe(
+      Effect.annotateLogs({ shop, memo }),
+    );
+  };
 
   /**
    * The actor's `notify`, which empties both memos first when `invalidated` names
@@ -312,7 +332,9 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
     // One read of the teams for both consumers: the repository derives `unassigned` from it,
     // and `OrdersIndexData` carries it so the route can name the ids it gets back.
     const shopTeams = yield* teams();
-    const page = yield* Cache.get(ordersMemo, new OrdersMemoKey({ ...input, teams: shopTeams }));
+    const key = new OrdersMemoKey({ ...input, teams: shopTeams });
+    const page = yield* Cache.get(ordersMemo, key);
+    yield* logMemo("Runs.listOrders", key);
     return {
       page,
       syncState: yield* orderRepository.getSyncStatus(yield* Clock.currentTimeMillis),
@@ -627,7 +649,9 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
     readonly query: RunQuery;
   }) {
     const started = yield* Clock.currentTimeMillis;
-    const teamRows = yield* Cache.get(runsMemo, new RunsMemoKey({ teamIds: teamIds.toSorted() }));
+    const key = new RunsMemoKey({ teamIds: teamIds.toSorted() });
+    const teamRows = yield* Cache.get(runsMemo, key);
+    yield* logMemo("Runs.listRuns", key);
     const { counts, items, matches: openMatches } = workflowsListFrom(teamRows, memberEmail, query);
     const recentTeamIds =
       query.team === null ? teamIds : teamIds.filter((teamId) => teamId === query.team);
