@@ -4,6 +4,11 @@ import { FirstTeam } from "./getting-started/first-team.tsx";
 import { FirstWorkflow } from "./getting-started/first-workflow.tsx";
 import { HowBatonWorks } from "./getting-started/how-baton-works.tsx";
 import { Installing } from "./getting-started/installing.tsx";
+import { AttachingAWorkflow } from "./orders/attaching-a-workflow.tsx";
+import { FixingIssues } from "./orders/fixing-issues.tsx";
+import { OrderPage } from "./orders/order-page.tsx";
+import { OrdersList } from "./orders/orders-list.tsx";
+import { Syncing } from "./orders/syncing.tsx";
 
 /**
  * The help pages' bodies, keyed `"<section>/<page>"` by the slugs in `HELP_SECTIONS`. A page
@@ -19,4 +24,9 @@ export const HELP_BODIES: Readonly<Record<string, () => JSX.Element>> = {
   "getting-started/first-team": FirstTeam,
   "getting-started/first-workflow": FirstWorkflow,
   "getting-started/first-order": FirstOrder,
+  "orders/orders-list": OrdersList,
+  "orders/order-page": OrderPage,
+  "orders/attaching-a-workflow": AttachingAWorkflow,
+  "orders/fixing-issues": FixingIssues,
+  "orders/syncing": Syncing,
 };
