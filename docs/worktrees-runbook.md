@@ -91,22 +91,17 @@ vp run dev:stop
 E2E uses the checkout's `.env`; there is no separate `.env.e2e`. It derives its port as `WEBSITE_PORT + 100` (`4001` in `wt-01`) and uses `SHOPIFY_E2E_STORE`, separate from the dev server's store. The stage is `e2e-<user>-wt-NN` in a worktree.
 
 ```sh
-vp run test:e2e             # start the E2E server, run every project, stop the server
+vp run e2e:start            # start this checkout's E2E server once; it stays up
+vp run test:e2e             # run every project against it
 vp run test:e2e:headed      # same suite with visible browsers
 vp run test:e2e:ui          # Playwright UI
+vp run e2e:status           # running, answering, tunnel ready; hints when a restart is due
+vp run e2e:stop             # stop it
 ```
 
-The server starts Shopify CLI and its tunnel, destroys the checkout's E2E stage before rebuilding it, and writes logs to `.logs/e2e/current`. Every run opens the app in the E2E store first and loads the E2E fixture, so every project needs the Shopify admin login. That project and the embedded one use installed Google Chrome; see [the E2E admin login](./shopify-stores-runbook.md#the-e2e-admin-login) for cookie export and Keychain access. The other browser project uses Playwright Chromium (`vp exec playwright install chromium` if missing).
+The E2E server is long-lived, like the dev server, and placed the same way (herdr tab `e2e`). It runs Shopify CLI and its tunnel on the E2E store and writes logs to `.logs/e2e/current` (`vp run e2e:logs`). Playwright does not start it: a run's preflight fails at once with `vp run e2e:start` when it is down, or when its tunnel does not serve. Every run opens the app in the E2E store first and loads the E2E fixture, which replaces the shop's data from the last run, so every project needs the Shopify admin login. That project and the embedded one use installed Google Chrome; see [the E2E admin login](./shopify-stores-runbook.md#the-e2e-admin-login) for cookie export and Keychain access. The other browser project uses Playwright Chromium (`vp exec playwright install chromium` if missing).
 
-For iteration, start a server in its own terminal, then opt into reusing it:
-
-```sh
-vp run test:e2e:server
-# In another terminal in the same checkout:
-E2E_REUSE_SERVER=1 vp run test:e2e
-```
-
-Stop a manually started server with Ctrl-C. Reuse keeps its sign-in sessions and actor state (each run reloads the E2E fixture); omit `E2E_REUSE_SERVER` for a fresh server and stage. Auth exports, results and reports live under ignored `playwright/`.
+`src/` edits hot-reload into the running server; do not edit during a run. `vp run e2e:restart` (stop, destroy the E2E stage, start) is the clean slate, and is needed after a change to dependencies, `alchemy.run.ts` or the stack, `patches/`, or the schema's `0001_init`. `vp run db:reset` stops the E2E server too, because it removes every stage's local data; start it again afterwards. Auth exports, results and reports live under ignored `playwright/`.
 
 ## Working across checkouts
 

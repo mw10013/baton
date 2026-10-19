@@ -30,7 +30,7 @@ Read every Deviation, Issue and decision item yourself, and check the code the r
 
 ## 4. Full e2e, once
 
-Run `vp test` and the full `vp run test:e2e` once, after triage. A failure: run that spec alone; fix it or record it; never re-run the full suite to see a known failure again. A flaky spec is simplified until it is stable, or deleted if what remains is not worth its time; record which.
+Run `vp test` and the full `vp run test:e2e` once, after triage. The e2e server is long-lived and Playwright does not start it: `vp run e2e:status` first, and `vp run e2e:start` when it is down (`vp run e2e:restart` after a dependency, stack, patch or schema change). A failure: run that spec alone; fix it or record it; never re-run the full suite to see a known failure again. A flaky spec is simplified until it is stable, or deleted if what remains is not worth its time; record which.
 
 ## 5. Report, commit, staging
 

@@ -60,14 +60,13 @@ const embeddedProject = {
 };
 
 /**
- * Runs the e2e specs against the e2e server (`scripts/e2e-server.ts`): Shopify CLI on this
- * checkout's e2e store, serving the e2e stage on its own port. The server script destroys the
- * stage before starting it, so every run begins from the seed alone. The setup chain then opens
- * the app in the store (`install`, which also loads the e2e fixture), signs each role in
- * (`setup`), and only then starts the specs. A reused server keeps the last run's sessions and
- * actor state, though `install` replaces the fixture's rows, so reuse is opt-in for iterating
- * (`E2E_REUSE_SERVER=1`). The top-level `use.baseURL` is set explicitly because Playwright
- * derives it only from the deprecated `webServer.port`.
+ * Runs the e2e specs against this checkout's long-lived e2e server (`vp run e2e:start`,
+ * `scripts/e2e.ts`): Shopify CLI on the checkout's e2e store, serving the e2e stage on its own
+ * port. Playwright does not start it, and a run reuses it as it is; the preflight (`globalSetup`)
+ * fails the run in one line when it is not running or its tunnel does not serve. The setup chain
+ * then opens the app in the store (`install`, which also loads the e2e fixture, replacing the
+ * shop's members, teams, workflows and orders from the last run), signs each role in (`setup`),
+ * and only then starts the specs. `vp run e2e:restart` is the clean slate.
  */
 export default defineConfig({
   testDir: "test/e2e",
@@ -139,11 +138,4 @@ export default defineConfig({
         ]
       : []),
   ],
-  webServer: {
-    command: "vp run test:e2e:server",
-    url: `${e2eServerURL}/`,
-    reuseExistingServer: process.env.E2E_REUSE_SERVER === "1",
-    timeout: 180_000,
-    gracefulShutdown: { signal: "SIGTERM", timeout: 20_000 },
-  },
 });

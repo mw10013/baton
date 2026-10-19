@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 /**
- * `vp run test:e2e:server`: the e2e server, which Playwright's `webServer` starts and stops. It is
- * Shopify CLI on this checkout's e2e store (`SHOPIFY_E2E_STORE` in `.env`): `shopify app dev` opens
- * a tunnel and runs the web command with the real app's key, secret and tunnel URL in its
+ * `vp run e2e:serve`: the e2e server in the foreground, which `scripts/e2e.ts` starts in a herdr
+ * pane, the caller's terminal or the background, and which nothing else should run. It is Shopify
+ * CLI on this checkout's e2e store (`SHOPIFY_E2E_STORE` in `.env`): `shopify app dev` opens a
+ * tunnel and runs the web command with the real app's key, secret and tunnel URL in its
  * environment, and the web command serves the e2e stage ({@link WEB_ENVIRONMENT}) on
  * {@link e2ePortOf} of `WEBSITE_PORT`, beside the dev server.
  *
- * The stage is destroyed first, so every start begins from the seed alone. The CLI's whole output,
- * its own lines and Alchemy's, goes to `.logs/e2e/current` through `s6-log` in order, after one
- * marker line per start, and is echoed to stderr, which is what Playwright shows. The script stays
- * in the foreground; on SIGTERM or SIGINT it stops the CLI, which stops `alchemy dev`, `workerd`
- * and the tunnel.
+ * The CLI's whole output, its own lines and Alchemy's, goes to `.logs/e2e/current` through `s6-log`
+ * in order, after one marker line per start, and is echoed to stderr. The script stays in the
+ * foreground; on SIGTERM or SIGINT it stops the CLI, which stops `alchemy dev`, `workerd` and the
+ * tunnel.
  */
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
 import * as Config from "effect/Config";
@@ -22,7 +22,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { fileURLToPath } from "node:url";
 
 import { runCommand } from "./lib/command.ts";
-import { checkStores, StoresError } from "./lib/stores.ts";
+import { StoresError } from "./lib/stores.ts";
 import { e2ePortOf, stage } from "./lib/worktree.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/u, "");
@@ -45,22 +45,8 @@ const fromEnv = (key: string) =>
 const serve = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const store = yield* fromEnv("SHOPIFY_E2E_STORE");
-  yield* checkStores({ dev: yield* fromEnv("SHOPIFY_DEV_STORE"), e2e: store });
   const port = String(e2ePortOf(yield* Config.Port("WEBSITE_PORT")));
   const e2eStage = yield* stage("e2e");
-
-  const destroyed = yield* spawner.exitCode(
-    ChildProcess.make("alchemy", ["destroy", "--stage", e2eStage, "--yes"], {
-      cwd: ROOT,
-      env: { WEBSITE_PORT: port },
-      extendEnv: true,
-      stdin: "ignore",
-      stdout: "inherit",
-      stderr: "inherit",
-    }),
-  );
-  if (destroyed !== ChildProcessSpawner.ExitCode(0))
-    return yield* new StoresError({ message: `alchemy destroy exited ${String(destroyed)}` });
 
   yield* runCommand(
     "s6-log",
@@ -81,6 +67,9 @@ const serve = Effect.gen(function* () {
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
+      // In this script's process group, so the herdr pane running it shows the CLI in its
+      // foreground (how the e2e server's pane is found) and a Ctrl-C there reaches the CLI too.
+      detached: false,
     }),
   );
   const logger = yield* spawner.spawn(
@@ -93,6 +82,7 @@ const serve = Effect.gen(function* () {
       },
       stdout: "inherit",
       stderr: "inherit",
+      detached: false,
     }),
   );
   const exitCode = yield* cli.exitCode;
@@ -107,7 +97,9 @@ Command.make("e2e-server", {}, () =>
     ),
   ),
 ).pipe(
-  Command.withDescription("Run the e2e server: Shopify CLI on this checkout's e2e store."),
+  Command.withDescription(
+    "Run the e2e server in the foreground: Shopify CLI on this checkout's e2e store. Start it with vp run e2e:start.",
+  ),
   Command.run({ version: "1.0.0" }),
   Effect.provide(NodeServices.layer),
   NodeRuntime.runMain,

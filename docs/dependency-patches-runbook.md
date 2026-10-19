@@ -69,7 +69,7 @@ One patch file per package; `patches/alchemy@2.0.0-beta.81.patch` carries three 
   ```
 
 - **Why:** `alchemy dev` serves each Worker's public port (the e2e server's `WEBSITE_PORT + 100`) through this byte pipe. A request sent with `Connection: close` has workerd close the upstream right after the last byte, while the pipe may still hold part of the body unwritten to the client. `destroy` drops it, so a large response (Vite's 780 KB `Effect` chunk) arrives short of its `Content-Length`. The Shopify CLI's proxy in front sends every request with `Connection: close` and, on that short upstream, never ends its own response, so the app frame waits forever on one module and never hydrates. That was the embedded e2e hydration flake.
-- **Retire it when:** Alchemy's `WorkerProxy` no longer destroys the client on a clean upstream close (still there in `2.0.0-beta.83`; an upstream issue is owed, link it here once filed). Check: drop the patch, start `vp run test:e2e:server`, then fetch a large prebundled dep from `127.0.0.1:<e2e port>` with `Connection: close` a few thousand times. Unpatched, a few in a thousand come back short.
+- **Retire it when:** Alchemy's `WorkerProxy` no longer destroys the client on a clean upstream close (still there in `2.0.0-beta.83`; an upstream issue is owed, link it here once filed). Check: drop the patch, start `vp run e2e:start`, then fetch a large prebundled dep from `127.0.0.1:<e2e port>` with `Connection: close` a few thousand times. Unpatched, a few in a thousand come back short.
 
 ## Upgrading a patched package
 

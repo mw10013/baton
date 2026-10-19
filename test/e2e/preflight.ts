@@ -29,18 +29,25 @@ export default async function preflight(): Promise<void> {
   const program = Effect.gen(function* () {
     if (!(yield* answering(port)))
       return yield* new PreflightError({
-        message: `the e2e server does not answer on http://localhost:${String(port)}`,
+        message: "the e2e server is not running: vp run e2e:start",
       });
     const url = yield* findTunnelUrl(port).pipe(
       Effect.flatMap(Effect.fromOption),
       Effect.mapError(
         () =>
           new PreflightError({
-            message: `the e2e server on port ${String(port)} has no tunnel (no APP_URL): it is not running under shopify app dev`,
+            message: `the e2e server on port ${String(port)} has no tunnel (no APP_URL): vp run e2e:stop && vp run e2e:start`,
           }),
       ),
     );
-    const took = yield* tunnelReady(url);
+    const took = yield* tunnelReady(url).pipe(
+      Effect.mapError(
+        (error) =>
+          new PreflightError({
+            message: `${error.message}; read vp run e2e:logs, then a new tunnel: vp run e2e:stop && vp run e2e:start`,
+          }),
+      ),
+    );
     return `${url} ready in ${(Duration.toMillis(took) / 1000).toFixed(1)}s`;
   });
   const result = await Effect.runPromise(
