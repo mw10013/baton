@@ -108,7 +108,7 @@ const DISPLACED_REASON = "signed in elsewhere";
 const EXPIRED_REASON = "session expired";
 const UNIDENTIFIED_REASON = "unidentified connection";
 const UNINSTALLED_REASON = "uninstalled";
-const LAPSED_REASON = "app subscription lapsed";
+const PLAN_CHANGED_REASON = "plan changed";
 
 /**
  * How long `destroy` waits for the sockets it closed to finish their close handshake before it
@@ -740,15 +740,16 @@ const makeShopActor = Effect.gen(function* () {
      * alike (`by: "all"`, legacy's `revokeAllConnections`), with {@link CONNECTION_CLOSE_REVOKED}.
      *
      * `"all"` is `SubscriptionPlan`'s, at the moment a revalidation learns the shop's app
-     * subscription changed. The keepalive means a healthy socket never reconnects on its own,
-     * so the connect-time plan check would otherwise hold for as long as the tab lives. Closing
-     * is what makes the gate's `402` reach an open tab: each reconnect asks the gate again, and
-     * the gate now refuses.
+     * subscription changed, a tier switch as much as a lapse, so its close reason names neither
+     * ("plan changed"; legacy's said "app subscription lapsed"). The keepalive means a healthy
+     * socket never reconnects on its own, so the connect-time plan check would otherwise hold for
+     * as long as the tab lives. Closing is what makes the gate's `402` reach an open tab: each
+     * reconnect asks the gate again, and the gate now refuses.
      */
     const revoke = Effect.fn("ShopActor.revoke")(function* (input: RevokeInput) {
       const closed =
         input.by === "all"
-          ? yield* closeTagged(undefined, LAPSED_REASON)
+          ? yield* closeTagged(undefined, PLAN_CHANGED_REASON)
           : yield* closeTagged(`${input.by}:${input.id}`);
       yield* Effect.logInfo(`ShopActor.revoke: shop=${shop} by=${input.by} closed=${closed}`).pipe(
         Effect.annotateLogs({ shop, by: input.by, closed }),
