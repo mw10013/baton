@@ -343,6 +343,8 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - **2026-10-18, Step 5:** the `4402` rerun is an atom, not a callback threaded into the client layer: `applyCloseOutcome` maps `payment-required` to `forbidden` and bumps `paymentRequiredAtom`, and `ShopSocket`'s holder (both layouts) calls `router.invalidate()` on each bump, as the member layout already does for `membershipChangedAtom`. "the tab reconnects on 3401 and not on 4403" is a browser test in `ShopSocket.test.tsx`, beside the `4402` case.
 - **2026-10-18, Step 5:** the e2e plan check is in `install.setup.ts`: a load that does not hydrate while the page sits on `/pricing_plans` fails with "pick a plan on <store> (docs/shopify-stores-runbook.md)" (measured: it does, on the store with no subscription for the configured app id).
 
+- **2026-10-18, Step 6:** `MeterTile` takes `onClick` beside `href` (the router navigation outside the admin, as `Strip`'s link cells). `QuotaBanners` takes `Pick<ShopUsage, "ordersLimitedAt">`. Both pages read usage live through `useLiveRead` on `merchantUsageAtom` (seeded by `seedUsage`); the orders index's loader answers `{ data, usage }` and `OrdersIndexPage` grew a `usage` prop (browser tests pass `NO_USAGE`, `test/browser/usage.ts`). The home loader throws `redirect({ href })` when `homePlan` answers `Unsubscribed`. **Your plan** sits after the Orders strip and before the existing shop links section. Browser test titles are new (legacy had none for these parts); the two e2e titles are legacy's.
+
 ### Issues
 
 - **2026-10-18, Step 0: `activeSubscription` answers null for both stores. `WAITING: Partner API`.** Spike (a scratch script outside the repo, deleted after; the token and the app secret read into the environment, never printed) for Baton Dev (org `2798461`, app `417214922753`, handle `baton-local`):
@@ -386,6 +388,8 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - **2026-10-18, Step 5:** `vp check` green (355 files); `vp test` 1064 passed, 80 files, 56 s (+4 close-code unit rows and a `payment-required` case, +2 browser in `ShopSocket.test.tsx`). `vp run test:e2e -- --project install`: 1 failed, 1 passed (`shopify-admin`), 68 did not run, 50 s: `Error: pick a plan on mw10013-e2e-shop-00 (docs/shopify-stores-runbook.md)`. The gate is right: `.env`'s `SHOPIFY_PARTNER_APP_ID` is Baton Staging's, for which the e2e store has no app subscription, so `/app` went to the pricing page (behind Cloudflare's challenge). Step 5 cannot end green on e2e until `.env` is fixed. `WAITING: .env app id` (see Human steps).
 
 - **2026-10-18, Step 5, after `.env` was fixed:** `vp run test:e2e -- --project install` ran the whole suite (the flag did not narrow it): 70 passed, 5.3 min. Every embedded spec passes on the subscribed e2e store (Baton Basic, in a trial).
+
+- **2026-10-18, Step 6:** `vp check` green (360 files); `vp test` 1067 passed, 81 files, 55 s (+3 browser: `MeterTile` ×2, `QuotaBanners`; the kit test counts the two meter tiles). First run: the kit test's `s-clickable[href]` count (7) failed on the new tiles; updated. `vp run test:e2e test/e2e/embedded/home.spec.ts test/e2e/embedded/members.spec.ts`: 9 passed (setup projects included), 1.3 min.
 
 ### Human steps requested
 

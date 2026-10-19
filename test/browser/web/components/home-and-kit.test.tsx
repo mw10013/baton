@@ -69,8 +69,9 @@ describe("KitPage", () => {
           '[accessibilityRole="ordered-list"] > [accessibilityRole="list-item"]',
         ),
       ).toHaveLength(3);
-      // The home strip's five link cells and the two resource rows.
-      expect(screen.container.querySelectorAll("s-clickable[href]")).toHaveLength(7);
+      // The home strip's five link cells, the two resource rows and the two meter tiles.
+      expect(screen.container.querySelectorAll("s-clickable[href]")).toHaveLength(9);
+      expect(screen.container.querySelectorAll("progress.capacity-meter")).toHaveLength(2);
       expect(screen.container.querySelector('s-banner[heading="Blocked"]')).not.toBeNull();
       expect(screen.container.querySelectorAll("s-modal")).toHaveLength(2);
       await screen.unmount();

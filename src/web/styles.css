@@ -128,3 +128,31 @@
     padding-inline: 1rem;
   }
 }
+
+/* `MeterTile`'s bar: Polaris has no meter, so a native `progress`, legacy's styling. */
+.capacity-meter {
+  display: block;
+  inline-size: 100%;
+  block-size: 8px;
+  appearance: none;
+  overflow: hidden;
+  border: 0;
+  border-radius: 4px;
+  background: #e3e3e3;
+}
+
+.capacity-meter::-webkit-progress-bar {
+  background: #e3e3e3;
+}
+
+.capacity-meter::-webkit-progress-value {
+  min-inline-size: 6px;
+  border-radius: 4px;
+  background: #303030;
+}
+
+.capacity-meter::-moz-progress-bar {
+  min-inline-size: 6px;
+  border-radius: 4px;
+  background: #303030;
+}

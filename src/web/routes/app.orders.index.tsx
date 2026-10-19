@@ -2,7 +2,7 @@ import { createFileRoute, useLocation, useRouter } from "@tanstack/react-router"
 import { ordersIndexInput } from "../client/shop-actor-client.ts";
 import { useNavigateOnClick } from "../components/navigate.ts";
 import OrdersIndexPage from "../components/OrdersIndexPage.tsx";
-import { listOrders } from "../server/orders.ts";
+import { listOrders, orderUsage } from "../server/orders.ts";
 import { appHref, appSearch } from "./-app-search.ts";
 import { useNextPageEntry } from "./-table-pages.ts";
 import { decodeOrdersSearch } from "./-orders-search.ts";
@@ -11,7 +11,7 @@ const PATH = "/app/orders";
 
 /**
  * The orders index under the App Home: the loader reads the page the URL names in the actor
- * through the Backend (`listOrders`); during SSR its session token is the document's `id_token`,
+ * through the Backend (`listOrders`), and the shop's usage for its quota banner (`orderUsage`); during SSR its session token is the document's `id_token`,
  * in the browser App Bridge's bearer. Every link and navigation keeps the raw search Shopify sent
  * ({@link appHref}). The links to an order carry the index's search, filters and page, so the
  * order page's breadcrumb lands back here as it was. A filter or a page is a patch over the
@@ -26,19 +26,25 @@ export const Route = createFileRoute("/app/orders/")({
     team: search.team ?? null,
     after: search.after ?? null,
   }),
-  loader: ({ location, deps }) =>
-    listOrders({
-      data: { idToken: appSearch(location.searchStr).id_token, ...ordersIndexInput(deps) },
-    }),
+  loader: async ({ location, deps }) => {
+    const idToken = appSearch(location.searchStr).id_token;
+    const [data, usage] = await Promise.all([
+      listOrders({ data: { idToken, ...ordersIndexInput(deps) } }),
+      orderUsage({ data: { idToken } }),
+    ]);
+    return { data, usage };
+  },
   component: function OrdersRoute() {
     const { q, show, team, after } = Route.useLoaderDeps();
     const searchStr = useLocation({ select: (location) => location.searchStr });
     const router = useRouter();
     const navigate = useNavigateOnClick();
     const nextPageEntry = useNextPageEntry();
+    const { data, usage } = Route.useLoaderData();
     return (
       <OrdersIndexPage
-        data={Route.useLoaderData()}
+        data={data}
+        usage={usage}
         q={q}
         show={show}
         team={team}

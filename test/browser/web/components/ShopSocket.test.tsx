@@ -29,6 +29,7 @@ import { ShopSocket } from "../../../../src/web/components/ShopSocket.tsx";
 import { renderInApp } from "../../render.tsx";
 import { shopTestRegistry } from "../../shop-actor.ts";
 import { SEED_SHOP } from "../../../seed-shops.ts";
+import { NO_USAGE } from "../../usage.ts";
 
 /** The socket closing with `code`, as the browser protocol's retry policy reports it. */
 const closeWith = (registry: ReturnType<typeof shopTestRegistry>, code: number, merchant = false) =>
@@ -130,6 +131,7 @@ describe("ShopSocket", () => {
     });
     const screen = await renderInApp(
       <OrdersIndexPage
+        usage={NO_USAGE}
         data={data}
         q={null}
         show={null}

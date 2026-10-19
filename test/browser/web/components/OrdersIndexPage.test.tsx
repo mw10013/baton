@@ -23,6 +23,7 @@ import { ShopSocket } from "../../../../src/web/components/ShopSocket.tsx";
 import { renderInApp } from "../../render.tsx";
 import { shopTestRegistry } from "../../shop-actor.ts";
 import { SEED_SHOP } from "../../../seed-shops.ts";
+import { NO_USAGE } from "../../usage.ts";
 
 const order = (n: number, overrides: Partial<ShopOrder> = {}): OrderRow => ({
   order: {
@@ -120,6 +121,7 @@ const render = (
   renderInApp(
     <ShopSocket shop={SEED_SHOP} merchantToken={Option.some(Effect.succeed("token"))}>
       <OrdersIndexPage
+        usage={NO_USAGE}
         data={page}
         q={options.keys?.q ?? null}
         show={options.keys?.show ?? null}

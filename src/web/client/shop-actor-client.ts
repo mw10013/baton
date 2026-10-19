@@ -26,6 +26,7 @@ import {
 } from "./actor-connection.ts";
 import type { SetTeamMemberInput } from "../../contract/members.ts";
 import type { ShopKey } from "../../contract/shop.ts";
+import type { ShopUsage } from "../../domain/billing.ts";
 import {
   type Notice,
   NoticeFrame,
@@ -323,6 +324,22 @@ export const merchantOrdersAtom = Atom.family((input: ListOrdersInput) =>
 export const merchantSyncStatusAtom = ShopActorClient.query("MerchantSyncStatus", undefined, {
   serializationKey: "merchant-sync-status",
 }).pipe(Atom.withReactivity([SYNC_KEY]), refreshOnFocus);
+
+/**
+ * The shop's usage (`ShopUsage`): the home page's meters and both pages' `QuotaBanners`.
+ * Refetched on every notice naming {@link ORDERS_KEY} (a counted order, a refused one, a billing
+ * cycle push) or {@link SYNC_KEY} (Sync open orders clears the ceiling's flag); seeded from the
+ * page's loader ({@link seedUsage}).
+ */
+export const merchantUsageQuery = ShopActorClient.query("MerchantGetUsage", undefined, {
+  serializationKey: "merchant-usage",
+});
+
+/** {@link merchantUsageQuery}, live. */
+export const merchantUsageAtom = merchantUsageQuery.pipe(
+  Atom.withReactivity([ORDERS_KEY, SYNC_KEY]),
+  refreshOnFocus,
+);
 
 /** Sync open orders: the screen's one button, so one mutation atom. */
 export const syncOpenOrdersAtom = ShopActorClient.mutation("MerchantSyncOpenOrders");
@@ -661,6 +678,10 @@ export const memberUnblockRunAtom = Atom.family((_key: string) =>
  * initializer in development, and a page shown again within the idle TTL) finds the node and
  * refetches instead, which costs one round trip and nothing else.
  */
+/** Seeds {@link merchantUsageQuery} with the usage a loader read. */
+export const seedUsage = (registry: AtomRegistry.AtomRegistry, usage: ShopUsage) =>
+  seed(registry, merchantUsageQuery, usage);
+
 export const seedOrders = (
   registry: AtomRegistry.AtomRegistry,
   input: { readonly input: ListOrdersInput; readonly data: OrdersIndexData },

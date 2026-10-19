@@ -99,3 +99,9 @@ test("a strip cell opens the orders index with that value chosen", async () => {
   await expect.poll(() => new URL(page.url()).searchParams.get("show")).toBe("issues");
   await expect(frame.getByRole("button", { name: /^Issues, \d+, selected$/u })).toBeVisible();
 });
+
+test("home renders a capacity meter per dimension", async () => {
+  const frame = await gotoApp(page);
+  for (const label of ["Orders this billing cycle", "Members"])
+    await expect(frame.locator(`progress[aria-label="${label}"]`)).toBeVisible();
+});

@@ -4,6 +4,7 @@ import * as Exit from "effect/Exit";
 import * as Match from "effect/Match";
 import { isFixtureOrder } from "../../contract/fixture.ts";
 import { ORDER_SYNC_WINDOW_DAYS } from "../../contract/orders.ts";
+import type { ShopUsage } from "../../domain/billing.ts";
 import { formatNumber } from "../../domain/platform.ts";
 import {
   type ListSearch,
@@ -24,6 +25,8 @@ import { toast } from "../client/app-bridge.ts";
 import {
   merchantOrdersAtom,
   merchantSyncStatusAtom,
+  merchantUsageAtom,
+  seedUsage,
   ORDERS_STRIP,
   ordersIndexInput,
   seedOrders,
@@ -32,6 +35,7 @@ import {
 import { ANY_OPTION_VALUE } from "./form.ts";
 import { useLiveRead } from "./live-read.ts";
 import { LocalDateTime } from "./LocalDateTime.tsx";
+import { QuotaBanners } from "./QuotaBanners.tsx";
 import type { PageLink } from "./MembersIndexPage.tsx";
 import { adminOrderUrl, useResourceLinkTarget } from "./order-links.ts";
 import { CEILING, toastSyncFailure } from "./orders-sync.ts";
@@ -117,6 +121,8 @@ export interface OrdersFilterPatch {
 /** {@link OrdersIndexPage}'s props: the loader's page and the route's navigation. */
 export interface OrdersIndexProps {
   readonly data: OrdersIndexData;
+  /** The shop's usage the loader read, for {@link QuotaBanners}; live from then on. */
+  readonly usage: ShopUsage;
   /** The search, the filters and the page cursor in the URL, `null` when absent. */
   readonly q: ListSearch | null;
   readonly show: OrdersShow | null;
@@ -185,6 +191,12 @@ export default function OrdersIndexPage(props: OrdersIndexProps) {
     key: "sync-status",
     loaded: props.data.syncState,
     seed: () => {},
+  });
+  const usage = useLiveRead({
+    atom: merchantUsageAtom,
+    key: "usage",
+    loaded: props.usage,
+    seed: seedUsage,
   });
   const sync = useSyncOpenOrders();
   const resourceLinkTarget = useResourceLinkTarget();
@@ -413,13 +425,14 @@ export default function OrdersIndexPage(props: OrdersIndexProps) {
       {/* Unconditional, empty list included: the resource-index template keeps the title-bar
           action and lets the empty state carry a second copy. */}
       {syncButton(true)}
-      {/* The head, in order: the sync's error, a failed read, then the strip or under a search
+      {/* The head, in order: the quota banner, the sync's error, a failed read, then the strip or under a search
           the line that replaces it, then the filter row; the strip and the filters only when
           there is something to filter. */}
       <IndexSection
         label="Orders"
         head={
           <>
+            <QuotaBanners usage={usage.value} />
             {syncError !== null && <s-banner tone="critical">{syncError}</s-banner>}
             {read.failed && <s-banner tone="critical">Couldn't load orders.</s-banner>}
             {!neverStored && (q === null ? strip : searchLine)}

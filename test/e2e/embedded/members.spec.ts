@@ -1,7 +1,8 @@
 import type { BrowserContext, FrameLocator, Page } from "playwright/test";
 import * as Schema from "effect/Schema";
 
-import { EMAIL_MAX_LENGTH } from "../../../src/domain/platform.ts";
+import { MAX_ENTITLEMENTS } from "../../../src/domain/billing.ts";
+import { EMAIL_MAX_LENGTH, ShopLimits } from "../../../src/domain/platform.ts";
 import { dev, expect, test, testEmail } from "../fixtures.ts";
 import { E2E_SHOP as shop, E2eEmail, teamName } from "../shop-fixture.ts";
 import { gotoApp, openApp } from "./app.ts";
@@ -148,4 +149,39 @@ test("a 254-character email is added and printed whole, and 255 is refused on Ad
     .getByRole("button", { name: "Delete", exact: true })
     .click();
   await expect(frame.locator('s-page[heading="Members"]')).toBeVisible();
+});
+
+/**
+ * Seats past every plan's included count (`MAX_ENTITLEMENTS.membersIncluded` + 1, the test's own
+ * addresses) are billed, not refused: the home page's Members tile says so, and Add member still
+ * adds one more.
+ */
+test("adding a member past the included seats succeeds and the home tile says it is billed", async ({
+  backend,
+}) => {
+  const seeded = Array.from({ length: MAX_ENTITLEMENTS.membersIncluded + 1 }, (_, index) =>
+    testEmail(`seat${String(index).padStart(2, "0")}`),
+  );
+  expect(seeded.length).toBeLessThan(ShopLimits.maxMembers);
+  await backend(
+    dev((c) =>
+      c.AddToFixture({
+        shop,
+        fixture: { members: seeded, teams: [], workflows: [], orders: [] },
+      }),
+    ),
+  );
+
+  frame = await gotoApp(page);
+  await expect(frame.getByText(/Extra members are billed at your plan's rate/u)).toBeVisible();
+  await openScreen("Members");
+  await expect(frame.locator('s-page[heading="Members"]')).toBeVisible();
+  await searchMembers(seeded[0] ?? "");
+  await expect(frame.getByRole("link", { name: seeded[0] ?? "" })).toBeVisible();
+
+  const email = testEmail("past-included");
+  await page.getByRole("button", { name: "Add member" }).click();
+  await frame.getByRole("textbox", { name: "Email", exact: true }).fill(email);
+  await frame.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(frame.locator(`s-page[heading="${email}"]`)).toBeVisible();
 });

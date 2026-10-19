@@ -35,3 +35,11 @@ export const orderDetail = createServerFn({ method: "GET" })
   .handler(({ data: { legacyId }, context: { sessionToken, rescueToken } }) =>
     backend().orderDetail(requestInfo(), { sessionToken, legacyId }).catch(rescueToken),
   );
+
+/** The orders index's usage (its `QuotaBanners`), for its loader, as {@link listOrders} (`BackendApi.usage`). */
+export const orderUsage = createServerFn({ method: "GET" })
+  .middleware([embeddedSessionToken])
+  .validator(Schema.toStandardSchemaV1(Schema.Struct(idToken)))
+  .handler(({ context: { sessionToken, rescueToken } }) =>
+    backend().usage(requestInfo(), { sessionToken }).catch(rescueToken),
+  );

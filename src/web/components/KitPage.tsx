@@ -36,7 +36,9 @@ import { SearchLine } from "./screen/SearchLine.tsx";
 import { SelectableCard } from "./screen/SelectableCard.tsx";
 import { SelectRow } from "./screen/SelectRow.tsx";
 import { SetupGuide, type SetupGuideStep } from "./screen/SetupGuide.tsx";
+import { MeterTile } from "./screen/MeterTile.tsx";
 import { Strip } from "./screen/Strip.tsx";
+import { Tiles } from "./screen/Tiles.tsx";
 import { textLimitError, textLimitProps } from "./screen/TextLimit.tsx";
 import { Token } from "./screen/Token.tsx";
 import { StepFlow } from "./WorkflowSteps.tsx";
@@ -278,6 +280,29 @@ export function KitPage({ width }: { readonly width: "small" | "large" }) {
               onClick: noop,
             }))}
           />
+        </s-section>
+        {/* The home page's plan: two meter tiles in tiles, one under its allowance with no
+            line, one far past it (a full bar, the over line and a reset), the longest numbers. */}
+        <s-section heading="Your plan">
+          <Tiles>
+            <MeterTile
+              heading="Orders this billing cycle"
+              href="/dev/kit"
+              onClick={noop}
+              headline="12 of 200 included"
+              count={12}
+              limit={200}
+            />
+            <MeterTile
+              heading="Members"
+              href="/dev/kit"
+              onClick={noop}
+              headline="1,234,567 members, 1,500 included"
+              count={1234567}
+              limit={1500}
+              detail="1,233,067 over. Extra members are billed at your plan's rate. Resets Nov 1, 12:00 AM."
+            />
+          </Tiles>
         </s-section>
         {/* The order page's Workflow select and Attach, with the longest workflow name, and its
             Assign team select and Assign. */}
