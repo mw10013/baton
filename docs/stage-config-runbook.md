@@ -32,4 +32,4 @@ How a deployed stage gets the values another service issues for it, today the st
 
 ## Check the record
 
-`vp exec alchemy plan --stage staging` succeeds only if the record exists and has every field; a missing record fails with `InvalidReferenceError` naming `baton-config`.
+`vp exec alchemy plan --stage staging` succeeds only if the record exists and has every field; a missing record fails with `InvalidReferenceError` naming `baton-stage-config`.
