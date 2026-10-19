@@ -440,6 +440,50 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 
 ### Implementation review
 
+**2026-10-18, lead, at a075913.** Re-run by the lead:
+
+- `vp check`: green (366 files; 430 formatted).
+- `vp test`: 83 files, 1073 passed.
+- `vp run test:e2e`, full suite: 68 passed, 1 failed, 3 did not run (5.6 min).
+  - The failure was `embedded/orders.spec.ts` "the orders index keeps its filters and page across the order page": `toHaveCount(25)`, received 5.
+  - The 3 that did not run are the serial embedded project's tail, skipped after that failure.
+  - One re-run of the embedded project passed in full, that test included (`.last-run.json` `passed`). So it is a flake, not a regression. The implementer's own final run was 72 passed.
+
+**§5, walked:**
+
+- `MerchantRpcs` gained only `MerchantGetUsage`; `DevRpcs` (`src/contract/dev.ts`, `src/backend/dev.ts`) unchanged.
+- One `transaction(…)` in `usage-repository.ts`, `setBillingCycle`'s. It holds storage only; `makeBilling.setBillingCycle` notifies and flushes after it returns.
+- The gate maps `SubscriptionPlanError` to `503`, and `authenticateAdmin` turns it into a defect, never `Unsubscribed`. `/app`'s context is `{ shop, apiKey, managePlanUrl }`.
+- No uppercase SQL in the slice's new SQL. The uppercase that remains in `shop-session-repository.ts` (the auth upsert and the token methods) and `shop-actor.ts`'s `Workflow` insert predates the slice and is untouched.
+- No `IntegRpcs`, `PartnerFake` or `AppEventsFake` in `.alchemy/bundles/Backend/`.
+- The token appears only as a `Redacted` schema field or `Config` name, never as a value. The test stage's stand-in `"fake-partner-api-token"` (`SHOPIFY_PARTNER_CONFIG_FAKE`, `src/backend/shopify-partner.ts`) does ship in the Backend bundle's source map; see "Needs a decision".
+- The legacy-title count is the implementer's (70 present once); I did not re-grep each one.
+
+**Fixed by the lead**
+
+- `.env`'s `SHOPIFY_PARTNER_APP_ID` held Baton Staging's id (the same value as `.env.staging`). Set to Baton Dev's `417214922753`, the id the spike verified. A backup of the old file is in `/tmp`. `.env.staging` is untouched.
+- Committed the user's own edits (README, `.env.example`, `public/*` app icon and assets) as 7feaf16, after `vp check --fix`.
+- Recorded Orchestrator revision 1 (Q7) in this section and relayed it to the implementer.
+- Deleted the 15 `baton-test-…-ShopActor` directories the lead's `vp test` run left. The 50 older ones predate this review and are left in place.
+
+**Needs a decision**
+
+1. **Staging's Shopify-side setup** (§7 "Human steps requested", Step 10):
+   - Making Baton Staging public (unlisted) is **permanent**.
+   - Then its two plans and meters, `.env.staging`'s handle confirmed as Baton Staging's, `vp run stage-config --stage staging`, the push, and a plan picked on `mw10013-staging-shop-00`.
+   - Until the stage config record has the four new fields, the staging deploy fails at plan time; that failure is safe.
+2. **The Alchemy digits-only binding bug.** Under `alchemy dev`, a bound value made only of digits (`SHOPIFY_PARTNER_ORG_ID`, the app id) reaches the Worker as a number, which every `Config` reader refuses. The code works around it with `shopifyPartnerBinding`, which reads the provider's raw node.
+   - Options: keep the workaround and file an upstream issue, or make a small `pnpm patch` per "Alchemy idioms first" so that `Config.String` works.
+   - Staging is unchecked either way. After the push, the Backend must answer, and log `SubscriptionPlan.revalidate: shop=mw10013-staging-shop-00 …`.
+   - Recommendation: try the patch if the cause is one line in Alchemy's binding serialization.
+3. **The dev and e2e stores are in a trial**, which ends 2026-10-20. A trial has no billing cycle, so `revalidate` pushes no cycle. Counted orders open a provisional cycle, but `shopGid` stays null until a pushed cycle, so the outbox waits and nothing reaches App Events before the trial ends.
+   - This is legacy's behaviour. It means "the usage outbox drains" can only be observed on a store past its trial (or on staging).
+   - Accept, or retest after 2026-10-20.
+4. **The billing spec's second title is weaker than legacy's.** It keeps "a paid-to-paid downgrade applies at once, and the usage outbox drains", but asserts only the downgrade; legacy read the outbox off the admin console (slice H). Accept and owe the outbox check to H, or retitle. §0 asks for titles byte for byte, so retitling breaks that.
+5. **The test-stage fake Partner config lives in `src/`.** `SHOPIFY_PARTNER_CONFIG_FAKE` is stack-time input for the `test` stage. It ships inert in the production bundle's source map; it is not a secret and is not a `PartnerFake`. Moving it under `test/` means `stack.ts` would import from `test/`. Recommendation: leave it as is.
+6. **Manage plan's Backend call when the browser leaves.** Measured locally, the call completed after the browser left 16 ms in, so no `waitUntil` was added. It is unchecked on staging; check it there (the `…: plan deadline shortened` log line) before relying on it.
+7. **A flaky e2e spec**: `embedded/orders.spec.ts` "the orders index keeps its filters and page across the order page" (slice F's) failed once and passed on re-run. The implementer saw a similar Sync from Shopify race in the same file in Step 8. Owner and fix: open.
+
 ## 8. Out of scope
 
 - Admin console (H): the shops list's plan columns, the shop page's Plan section, Refresh plan, `PlanCache` (the domain's `AdminShopPlanCache` ports here).
