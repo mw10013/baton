@@ -50,4 +50,17 @@ describe("SignInPage", () => {
 
     await expect.element(screen.getByText("Something went wrong. Try again.")).toBeVisible();
   });
+
+  it("links to Signing in until the link is sent", async () => {
+    const screen = await render(async () => ({ _tag: "Sent", link: undefined }));
+
+    await expect
+      .element(screen.getByRole("link", { name: "Signing in" }))
+      .toHaveAttribute("href", "/help/members/signing-in");
+
+    await requestLink(screen, "m1@m.com");
+
+    await expect.element(screen.getByRole("heading", { name: "Check your email" })).toBeVisible();
+    await expect.element(screen.getByRole("link", { name: "Signing in" })).not.toBeInTheDocument();
+  });
 });

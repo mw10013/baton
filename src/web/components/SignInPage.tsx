@@ -5,6 +5,8 @@ import * as Schema from "effect/Schema";
 import { type Email, EmailFromInput, type ReturnPath } from "../../contract/auth.ts";
 import { fieldError, schemaForm } from "./form.ts";
 import type { MagicLinkResult } from "../server/sign-in.ts";
+import { useNavigateOnClick } from "./navigate.ts";
+import { FootLine } from "./screen/FootLine.tsx";
 import { Inline } from "./screen/Inline.tsx";
 import { Things } from "./screen/Things.tsx";
 
@@ -39,6 +41,7 @@ export default function SignInPage({
   }) => Promise<MagicLinkResult>;
 }) {
   const [outcome, setOutcome] = useState<Outcome>({ _tag: "Idle" });
+  const navigate = useNavigateOnClick();
 
   const form = useForm({
     defaultValues: { email: "" },
@@ -96,6 +99,10 @@ export default function SignInPage({
             </Inline>
           </Things>
         </form>
+        {/* Not on "Check your email": that state's one job is the link in the email. */}
+        <FootLine>
+          Learn more in <s-link {...navigate("/help/members/signing-in")}>Signing in</s-link>.
+        </FootLine>
       </Things>
     </s-section>
   );

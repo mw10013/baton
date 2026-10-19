@@ -22,12 +22,8 @@ export interface SetupGuideStep {
   readonly body?: string;
   /** The screen where the step is done, named by its heading; a step done elsewhere has none. */
   readonly link?: SetupGuideLink;
-  /**
-   * The help page that teaches the step, named by its title; it opens in a new tab. Optional
-   * here, unlike legacy's: the help pages are not ported yet, and a step shows no help link
-   * until they are.
-   */
-  readonly help?: SetupGuideLink;
+  /** The help page that teaches the step, named by its title; it opens in a new tab. */
+  readonly help: SetupGuideLink;
 }
 
 /**
@@ -82,7 +78,7 @@ export function SetupGuide({
               <s-stack gap={BETWEEN_LINES}>
                 <s-text>{step.sentence}</s-text>
                 {step.body !== undefined && <s-text color="subdued">{step.body}</s-text>}
-                {!step.done && (step.link !== undefined || step.help !== undefined) && (
+                {!step.done && (
                   <s-stack direction="inline" gap={BETWEEN_THINGS}>
                     {step.link !== undefined && (
                       <s-link
@@ -92,11 +88,9 @@ export function SetupGuide({
                         {step.link.label}
                       </s-link>
                     )}
-                    {step.help !== undefined && (
-                      <s-link href={step.help.href} target="_blank">
-                        {step.help.label}
-                      </s-link>
-                    )}
+                    <s-link href={step.help.href} target="_blank">
+                      {step.help.label}
+                    </s-link>
                   </s-stack>
                 )}
               </s-stack>

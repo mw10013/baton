@@ -154,16 +154,25 @@ const setupSteps = (done: number): readonly SetupGuideStep[] => {
       key: "teamWithMember",
       sentence: "Create a team and add a member",
       link: { label: "Teams", href: "/dev/kit" },
+      help: {
+        label: "Creating a team and adding members",
+        href: "/help/getting-started/first-team",
+      },
     },
     {
       key: "activeWorkflow",
       sentence: "Create a workflow and turn it on",
       link: { label: "Workflows", href: "/dev/kit" },
+      help: { label: "Creating your first workflow", href: "/help/getting-started/first-workflow" },
     },
     {
       key: "run",
       sentence: "An item gets a workflow",
       body: "New orders arrive as they are placed.",
+      help: {
+        label: "Following an order through its workflow",
+        href: "/help/getting-started/first-order",
+      },
     },
   ];
   return steps.map((step, index) => ({
@@ -183,8 +192,8 @@ const resolveNull = () => Promise.resolve(null);
  * is reviewed against, so nobody has to walk every screen to see whether the app is consistent.
  * `width` renders it in the member's page width (`small`) or the merchant's (`large`).
  *
- * Legacy's sections whose parts are not ported yet (the help parts) come with their slices; the step flow, selectable card, fields, panel, empty aside, connector,
- * text-limit and run sections are new here.
+ * The step flow, selectable card, fields, panel, empty aside, connector, text-limit and run
+ * sections are new here.
  */
 export function KitPage({ width }: { readonly width: "small" | "large" }) {
   const search = <ListSearchField value={null} placeholder="Search by name" onSubmit={noop} />;

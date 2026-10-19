@@ -9,16 +9,23 @@ import {
 
 const steps = (done: ReadonlyArray<boolean>): readonly SetupGuideStep[] =>
   [
-    { key: "a", sentence: "Create a team and add a member", link: { label: "Teams", href: "/a" } },
+    {
+      key: "a",
+      sentence: "Create a team and add a member",
+      link: { label: "Teams", href: "/a" },
+      help: { label: "Team help", href: "/help/a" },
+    },
     {
       key: "b",
       sentence: "Create a workflow and turn it on",
       link: { label: "Workflows", href: "/b" },
+      help: { label: "Workflow help", href: "/help/b" },
     },
     {
       key: "c",
       sentence: "An item gets a workflow",
       body: "New orders arrive as they are placed.",
+      help: { label: "Order help", href: "/help/c" },
     },
   ].map((step, index) => ({
     ...step,
@@ -38,15 +45,18 @@ describe("SetupGuide", () => {
     await expect.element(screen.getByText("1 of 3 done")).toBeVisible();
     await expect.element(screen.getByText("Create a team and add a member")).toBeVisible();
     await expect.element(screen.getByText("New orders arrive as they are placed.")).toBeVisible();
-    expect(screen.container.querySelectorAll("s-link")).toHaveLength(1);
-    expect(screen.container.querySelector("s-link")?.textContent).toBe("Workflows");
+    expect([...screen.container.querySelectorAll("s-link")].map((el) => el.textContent)).toEqual([
+      "Workflows",
+      "Workflow help",
+      "Order help",
+    ]);
     const states = [
       ...screen.container.querySelectorAll('s-text[accessibilityVisibility="exclusive"]'),
     ].map((el) => el.textContent);
     expect(states).toStrictEqual(["Done", "Not done", "Not done"]);
   });
 
-  it("a step with no link and no help draws no link line", async () => {
+  it("a step with no screen link still shows its help link, in a new tab", async () => {
     const screen = await render(
       <SetupGuide
         heading="Getting started"
@@ -54,7 +64,11 @@ describe("SetupGuide", () => {
         steps={steps([true, true, false])}
       />,
     );
-    expect(screen.container.querySelectorAll("s-link")).toHaveLength(0);
+    const links = screen.container.querySelectorAll("s-link");
+    expect(links).toHaveLength(1);
+    expect(links[0]?.textContent).toBe("Order help");
+    expect(links[0]?.getAttribute("target")).toBe("_blank");
+    expect(links[0]?.getAttribute("href")).toBe("/help/c");
   });
 });
 

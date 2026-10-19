@@ -67,6 +67,7 @@ import { useKeyedPresses } from "./press-waiting.ts";
 import { RunSteps } from "./RunSteps.tsx";
 import { BlockModal, RunNoteModal } from "./RunTextModals.tsx";
 import { Clamp } from "./screen/Clamp.tsx";
+import { FootLine } from "./screen/FootLine.tsx";
 import { Inline } from "./screen/Inline.tsx";
 import { Lines } from "./screen/Lines.tsx";
 import { type Pair, Pairs } from "./screen/Pairs.tsx";
@@ -1137,6 +1138,13 @@ export default function OrderPage(props: OrderPageProps) {
           ]}
         />
       </s-section>
+      <FootLine>
+        Learn more in{" "}
+        <s-link href="/help/orders/order-page" target="_blank">
+          Reading an order
+        </s-link>
+        .
+      </FootLine>
     </s-page>
   );
 }

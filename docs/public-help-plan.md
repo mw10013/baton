@@ -155,6 +155,7 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - **2026-10-19, Step 4, teams-and-members:** no correction: the teams and members indexes (No members, No teams), the team and member pages (Add members, Add to teams, Remove, Delete member, the Details aside, the empty lines), the deleted toasts and a deleted team's "No team" on a step match.
 - **2026-10-19, Step 4, members:** Signing in: the sign-in page's button is **Send link** here (legacy: Send sign-in link). JSDoc: the link's lifetime is `MAGIC_LINK_TTL_SECONDS` here. The rest matches (Check your email, 5 minutes, the email's Sign in link, Your stores, Subscription inactive, the Team select, Show n more of N, 25 a page, Block as a page action, From the order:).
 - **2026-10-19, Step 4, reference:** no prose correction (labels come from the constants; limits 50 members, 2,500 open orders, 200 workflows, 50 teams, 365 days). `HelpTable` wraps each cell's content in `.help-table-cell` (`white-space: normal`): Polaris 2.0 RC's `s-table-cell` draws `nowrap`, and the sentence columns ran off the card. Step 3.5's three tests are `test/unit/web/components/help/reference.test.ts`.
+- **2026-10-19, Step 5:** `SetupGuideStep.help` is required again, as legacy's; the App Home's `helpLink` reads titles from the tree. The member bar's Help sits before the email, through the router (same tab). The sign-in page's foot line is in the form's section only, not on "Check your email", as legacy's. The `home-and-kit` browser test's "a step with no link and no help draws no link line" became "a step with no screen link still shows its help link, in a new tab" (no step lacks help now); `SignInPage.test.tsx` gained "links to Signing in until the link is sent".
 
 ### Issues
 
@@ -166,6 +167,7 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - **2026-10-19, Step 2:** `vp check --fix` clean (381 files); `/` and `/privacy` 200 on the dev server, landing looked at (Playwright CLI). No HomePage browser test exists; none added (Step 7's e2e covers it).
 - **2026-10-19, Step 3:** `vp check --fix` clean (391 files); `vp test test/unit/web/components/help` 2 passed, 244ms. `/help`, `/help/orders`, `/help/orders/order-page` 200; `/help/nope`, `/help/orders/nope` 404 with the help not-found page; a page looked at.
 - **2026-10-19, Step 4:** `vp check --fix` clean (423 files) after each section; every one of the 26 pages answers 200 on the dev server; `vp test test/unit/web/components/help` 5 passed, 630ms.
+- **2026-10-19, Step 5:** `vp check --fix` clean (423 files); `vp test` SignInPage + home-and-kit browser files 7 passed, 2.16s; `vp run test:e2e test/e2e/sign-in.spec.ts` 6 passed (setup included), 60.0s. On the dev store the App Home's foot line and the order page's ("Reading an order", `/help/orders/order-page`) are there.
 
 ### Human steps requested
 

@@ -32,23 +32,41 @@ import { useNavigateOnClick } from "../components/navigate.ts";
 import { Lines } from "../components/screen/Lines.tsx";
 import { SetupGuide, type SetupGuideStep } from "../components/screen/SetupGuide.tsx";
 import { Strip } from "../components/screen/Strip.tsx";
+import { FootLine } from "../components/screen/FootLine.tsx";
+import { findHelpPage, findHelpSection } from "../components/help/pages.ts";
 import { homePlan, prepareManagePlan, setupFacts } from "../server/home.ts";
 import { listOrders } from "../server/orders.ts";
 import { appHref, appSearch } from "./-app-search.ts";
 
-/** Each step's words and the screen where it is done, by its fact; the paths are bare. */
+/** The Getting started help pages, by slug: the guide's help links are their titles. */
+const GETTING_STARTED = findHelpSection("getting-started");
+
+/**
+ * A help page as a {@link SetupGuideStep}'s help link: its title, and its path. The help tree is
+ * static, so a slug it lacks is a typo here, and the help unit test holds the tree. The `href`
+ * is relative to the Website, the embed's own origin, and the guide opens it in a new tab.
+ */
+const helpLink = (slug: string) => {
+  const page = GETTING_STARTED === undefined ? undefined : findHelpPage(GETTING_STARTED, slug);
+  return { label: page?.title ?? slug, href: `/help/getting-started/${slug}` };
+};
+
+/** Each step's words, the screen where it is done and its help page, by its fact; the paths are bare. */
 const STEP_COPY = {
   teamWithMember: {
     sentence: "Create a team and add a member",
     link: { label: "Teams", path: "/app/teams" },
+    help: helpLink("first-team"),
   },
   activeWorkflow: {
     sentence: "Create a workflow and turn it on",
     link: { label: "Workflows", path: "/app/workflows" },
+    help: helpLink("first-workflow"),
   },
   run: {
     sentence: "An item gets a workflow",
     body: "New orders arrive as they are placed.",
+    help: helpLink("first-order"),
   },
 } as const satisfies Record<
   SetupFact,
@@ -56,6 +74,7 @@ const STEP_COPY = {
     readonly sentence: string;
     readonly body?: string;
     readonly link?: { readonly label: string; readonly path: string };
+    readonly help: { readonly label: string; readonly href: string };
   }
 >;
 
@@ -64,8 +83,8 @@ const STEP_COPY = {
  * `line` slot and the third's "New orders arrive as they are placed." its `body`. A step's way
  * out is a link named for the screen where it is done (the `link` slot: the target screen's
  * heading), not a button, because the create modals open in-page and have no URL to send a
- * merchant to; the third has none, for the reason on `SetupFacts`. The help links wait for the
- * help pages.
+ * merchant to; the third has none, for the reason on `SetupFacts`. Every step has its Getting
+ * started help page.
  */
 const setupSteps = (
   facts: SetupFacts,
@@ -81,6 +100,7 @@ const setupSteps = (
       sentence: copy.sentence,
       ...("body" in copy ? { body: copy.body } : {}),
       ...("link" in copy ? { link: { label: copy.link.label, ...link(copy.link.path) } } : {}),
+      help: copy.help,
     };
   });
 
@@ -258,6 +278,13 @@ export const Route = createFileRoute("/app/")({
             <s-link {...navigate(appHref("/app/members", searchStr))}>Members</s-link>
           </Lines>
         </s-section>
+        <FootLine>
+          Learn more in{" "}
+          <s-link href="/help" target="_blank">
+            Help
+          </s-link>
+          .
+        </FootLine>
       </s-page>
     );
   },

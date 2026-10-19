@@ -24,6 +24,7 @@ import {
 import { thrownCopy } from "./form.ts";
 import type { PageLink } from "./MembersIndexPage.tsx";
 import { EmptyAside } from "./screen/EmptyAside.tsx";
+import { FootLine } from "./screen/FootLine.tsx";
 import { Inline } from "./screen/Inline.tsx";
 import { Lines } from "./screen/Lines.tsx";
 import { Panel } from "./screen/Panel.tsx";
@@ -672,6 +673,14 @@ function EditorScreen(
           </Things>
         </s-section>
       )}
+
+      <FootLine>
+        Learn more in{" "}
+        <s-link href="/help/workflows/editing" target="_blank">
+          Editing steps and tasks
+        </s-link>
+        .
+      </FootLine>
 
       <s-modal id={APPLY_MODAL} heading={APPLY_HEADING}>
         <s-paragraph>{APPLY_BODY}</s-paragraph>
