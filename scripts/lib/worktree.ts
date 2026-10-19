@@ -19,6 +19,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import path from "node:path";
+import { parseEnv } from "node:util";
 
 import { Checkout, PerDeveloperStage, type PerDeveloper } from "../../src/backend/stage.ts";
 import { runCommand } from "./command.ts";
@@ -147,6 +148,36 @@ export const setEnvKey = (text: string, key: string, value: string): string => {
       .map((existing) => (KEY_LINE.exec(existing)?.groups?.key === key ? line : existing))
       .join("\n");
   return `${text.replace(/\n*$/u, "")}\n${line}\n`;
+};
+
+/**
+ * A linked worktree's `.env`: the main checkout's, with the three keys that differ per checkout set
+ * to the worktree's own. Every other key is the main checkout's, value for value, so the file is
+ * derived, never edited: `worktree:init` rebuilds it on each run, which carries a key the main
+ * checkout gained, changed or dropped into every worktree.
+ */
+export const worktreeEnv = (
+  mainEnv: string,
+  own: { readonly port: number; readonly store: string; readonly e2eStore: string },
+) =>
+  setEnvKey(
+    setEnvKey(setEnvKey(mainEnv, "WEBSITE_PORT", String(own.port)), "SHOPIFY_DEV_STORE", own.store),
+    "SHOPIFY_E2E_STORE",
+    own.e2eStore,
+  );
+
+/**
+ * The keys of a `.env` that `after` adds, changes or removes against `before`, read with Node's
+ * dotenv parser; names only, so a secret's value never reaches the terminal.
+ */
+export const envChanges = (before: string, after: string) => {
+  const was = parseEnv(before);
+  const now = parseEnv(after);
+  return {
+    added: Object.keys(now).filter((key) => !Object.hasOwn(was, key)),
+    changed: Object.keys(now).filter((key) => Object.hasOwn(was, key) && was[key] !== now[key]),
+    removed: Object.keys(was).filter((key) => !Object.hasOwn(now, key)),
+  };
 };
 
 const Lines = Schema.String.pipe(

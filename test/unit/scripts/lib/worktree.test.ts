@@ -8,8 +8,10 @@ import {
   devStoreOf,
   e2eStoreName,
   e2eStoreOf,
+  envChanges,
   StoreName,
   storeNameOf,
+  worktreeEnv,
 } from "../../../../scripts/lib/worktree.ts";
 
 const decode = Schema.decodeUnknownOption(StoreName);
@@ -60,4 +62,34 @@ describe("store keys in .env text", () => {
         assert.isTrue((yield* Effect.exit(devStoreOf(text)))._tag === "Failure");
     }),
   );
+});
+
+describe("worktreeEnv", () => {
+  const own = { port: 3901, store: "mw10013-dev-shop-01", e2eStore: "mw10013-e2e-shop-01" };
+  const main =
+    "WEBSITE_PORT=3900\nSHOPIFY_DEV_STORE=mw10013-dev-shop-00\nSHOPIFY_E2E_STORE=mw10013-e2e-shop-00\n# a note\nTOKEN=abc\n";
+
+  it("is the main checkout's .env with this worktree's three keys", () => {
+    assert.strictEqual(
+      worktreeEnv(main, own),
+      "WEBSITE_PORT=3901\nSHOPIFY_DEV_STORE=mw10013-dev-shop-01\nSHOPIFY_E2E_STORE=mw10013-e2e-shop-01\n# a note\nTOKEN=abc\n",
+    );
+  });
+
+  it("adds a store key the main checkout lacks", () => {
+    assert.include(
+      worktreeEnv("WEBSITE_PORT=3900\n", own),
+      "SHOPIFY_E2E_STORE=mw10013-e2e-shop-01",
+    );
+  });
+});
+
+describe("envChanges", () => {
+  it("names the keys added, changed and removed, never their values", () => {
+    assert.deepStrictEqual(envChanges("A=1\nB=2\nC=3\n", "A=1\nB=9\nD=4\n"), {
+      added: ["D"],
+      changed: ["B"],
+      removed: ["C"],
+    });
+  });
 });

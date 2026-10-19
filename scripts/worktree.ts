@@ -9,17 +9,16 @@
  * main checkout's `WEBSITE_PORT` + 1, runs `shopify app dev` on dev store
  * `mw10013-dev-shop-01` and keeps its e2e store `mw10013-e2e-shop-01`.
  *
- * Idempotent: a file that exists is verified, never rewritten, so a second
- * run only checks; the one exception is a `.env` without `SHOPIFY_DEV_STORE` or
- * `SHOPIFY_E2E_STORE`, which gets the key appended, so a worktree set up before
- * the key existed catches up. Steps, in order:
+ * Idempotent: a second run on an unchanged main checkout writes nothing. `.env` is the one file it
+ * rewrites ({@link worktreeEnv}); links that exist are verified, never replaced. Steps, in order:
  *
  * 1. Refuse the main checkout, a branch other than `wt-NN`, and a port or
  *    dev or e2e store another checkout's `.env` already holds.
- * 2. `.env`: copied from the main checkout's (not `.env.example`, which has
+ * 2. `.env`: rebuilt from the main checkout's (not `.env.example`, which has
  *    no secrets) with `WEBSITE_PORT`, `SHOPIFY_DEV_STORE` and
- *    `SHOPIFY_E2E_STORE` set for this worktree. A value of the old
- *    `sandbox-shop-NN` scheme fails, naming the expected value: fix it by hand.
+ *    `SHOPIFY_E2E_STORE` set for this worktree; it prints the keys it added,
+ *    changed or removed. A hand edit to a worktree's `.env` is lost here: make
+ *    it in the main checkout's.
  * 3. The worktree's two stores, checked to exist ({@link checkStores}); a missing one fails
  *    with the command to create it by hand.
  * 4. `refs`: a symlink to the main checkout's `refs/`.
@@ -48,9 +47,10 @@ import {
   devStoreOf,
   e2eStoreName,
   e2eStoreOf,
-  setEnvKey,
+  envChanges,
   websitePortOf,
   worktreeIndex,
+  worktreeEnv,
   WorktreeError,
 } from "./lib/worktree.ts";
 
@@ -126,34 +126,6 @@ const linkToMain = Effect.fn("linkToMain")(function* (
   });
 });
 
-/**
- * Verifies the store `key` in an existing `.env`: the expected store passes, another value fails
- * (a store of the old `sandbox-shop-NN` scheme included), and a missing key is appended (the one
- * write to an existing `.env`, see the module doc). Returns the text as it stands afterwards.
- */
-const verifyStore = Effect.fn("verifyStore")(function* (
-  envFile: string,
-  text: string,
-  key: string,
-  read: typeof devStoreOf,
-  store: string,
-) {
-  const fs = yield* FileSystem.FileSystem;
-  const have = yield* read(text).pipe(
-    Effect.mapError((error) => fail(`.env: ${error.message}; expected ${store}, fix it by hand`)),
-  );
-  if (Option.isNone(have)) {
-    const appended = setEnvKey(text, key, store);
-    yield* fs.writeFileString(envFile, appended);
-    yield* Console.log(`ok    .env gained ${key}=${store}`);
-    return appended;
-  }
-  if (have.value !== store)
-    return yield* fail(`.env has ${key}=${have.value}, expected ${store}; fix it by hand`);
-  yield* Console.log(`ok    .env verified, ${key}=${store}`);
-  return text;
-});
-
 const init = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const { root, linked, mainCheckout } = yield* checkoutKind;
@@ -198,41 +170,32 @@ const init = Effect.gen(function* () {
   );
 
   const envFile = path.join(root, ".env");
-  yield* Option.match(yield* readIfExists(envFile), {
-    onNone: () =>
-      fs
-        .writeFileString(
-          envFile,
-          setEnvKey(
-            setEnvKey(setEnvKey(mainEnv, "WEBSITE_PORT", String(port)), "SHOPIFY_DEV_STORE", store),
-            "SHOPIFY_E2E_STORE",
-            e2eStore,
-          ),
-        )
-        .pipe(
-          Effect.andThen(
-            Console.log(
-              `ok    .env copied from the main checkout, WEBSITE_PORT=${String(port)}, SHOPIFY_DEV_STORE=${store}, SHOPIFY_E2E_STORE=${e2eStore}`,
-            ),
-          ),
+  const want = worktreeEnv(mainEnv, { port, store, e2eStore });
+  const have = yield* readIfExists(envFile);
+  if (Option.contains(have, want))
+    yield* Console.log("ok    .env up to date with the main checkout");
+  else {
+    yield* fs.writeFileString(envFile, want);
+    yield* Option.match(have, {
+      onNone: () =>
+        Console.log(
+          `ok    .env copied from the main checkout, WEBSITE_PORT=${String(port)}, SHOPIFY_DEV_STORE=${store}, SHOPIFY_E2E_STORE=${e2eStore}`,
         ),
-    onSome: (text) =>
-      websitePortOf(text).pipe(
-        Effect.option,
-        Effect.filterOrFail(
-          (have) => Option.contains(have, port),
-          (have) =>
-            fail(
-              `.env has WEBSITE_PORT=${Option.match(have, { onNone: () => "(missing)", onSome: String })}, expected ${String(port)}; fix it by hand`,
-            ),
-        ),
-        Effect.andThen(Console.log(`ok    .env verified, WEBSITE_PORT=${String(port)}`)),
-        Effect.andThen(verifyStore(envFile, text, "SHOPIFY_DEV_STORE", devStoreOf, store)),
-        Effect.flatMap((verified) =>
-          verifyStore(envFile, verified, "SHOPIFY_E2E_STORE", e2eStoreOf, e2eStore),
-        ),
-      ),
-  });
+      onSome: (before) => {
+        const { added, changed, removed } = envChanges(before, want);
+        const list = (label: string, keys: readonly string[]) =>
+          keys.length === 0 ? [] : [`${label} ${keys.join(", ")}`];
+        const summary = [
+          ...list("added", added),
+          ...list("changed", changed),
+          ...list("removed", removed),
+        ];
+        return Console.log(
+          `ok    .env rebuilt from the main checkout: ${summary.length === 0 ? "layout only" : summary.join("; ")}`,
+        );
+      },
+    });
+  }
 
   yield* checkStores({ dev: store, e2e: e2eStore });
 
@@ -255,7 +218,7 @@ const toUserError = <E extends { readonly message: string }>(error: E) =>
 
 const initCommand = Command.make("init", {}, () => init.pipe(Effect.mapError(toUserError))).pipe(
   Command.withDescription(
-    "Prepare this wt-NN worktree: .env with its WEBSITE_PORT, SHOPIFY_DEV_STORE and SHOPIFY_E2E_STORE, its two stores made sure to exist, and links to the main checkout's refs and .env.<deployed environment> files. Verifies instead of rewriting on a second run.",
+    "Prepare this wt-NN worktree: .env rebuilt from the main checkout's with its own WEBSITE_PORT, SHOPIFY_DEV_STORE and SHOPIFY_E2E_STORE, its two stores made sure to exist, and links to the main checkout's refs and .env.<deployed environment> files. Run it again whenever the main checkout's .env changes.",
   ),
 );
 
