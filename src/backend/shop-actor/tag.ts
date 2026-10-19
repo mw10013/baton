@@ -1,5 +1,6 @@
 import * as Cloudflare from "alchemy/Cloudflare";
 import type * as Effect from "effect/Effect";
+import type { BillingCycleInput, ShopUsage } from "../../domain/billing.ts";
 import type { OrderDetail } from "../../domain/orders.ts";
 import type {
   GetOrderDetailInput,
@@ -30,11 +31,17 @@ export const ABORT_UNINSTALLED = "uninstalled";
  * nothing else: the written contract of who may call the actor outside its socket. Declared, not
  * inferred from the implementation, so the tag's type does not depend on it.
  */
+/** Whose sockets `revoke` closes: one member's, one Better Auth session's, or the whole shop's. */
+export type RevokeInput =
+  | { readonly by: "member" | "session"; readonly id: string }
+  | { readonly by: "all" };
+
 export interface ShopActorShape {
-  readonly revoke: (input: {
-    readonly by: "member" | "session";
-    readonly id: string;
-  }) => Effect.Effect<{ closed: number }>;
+  readonly revoke: (input: RevokeInput) => Effect.Effect<{ closed: number }>;
+  readonly getUsage: () => Effect.Effect<ShopUsage>;
+  readonly setBillingCycle: (input: BillingCycleInput) => Effect.Effect<void>;
+  /** Answers the usage events still queued after the pass. */
+  readonly flushUsageEvents: () => Effect.Effect<number>;
   readonly loadFixture: (rows: ActorFixtureRows) => Effect.Effect<ActorFixtureCounts>;
   readonly addFixture: (rows: ActorFixtureRows) => Effect.Effect<ActorFixtureAdded>;
   readonly applyFixture: (input: {

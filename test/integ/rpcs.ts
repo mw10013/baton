@@ -35,9 +35,11 @@ import {
   WorkflowsIndexData,
 } from "../../src/domain/shop-work.ts";
 import { BackendApi } from "../../src/backend/api.ts";
+import { UsageEvent } from "../../src/domain/billing.ts";
 import { OrderDetail } from "../../src/domain/orders.ts";
 import { ShopNotInstalled } from "../../src/contract/fixture.ts";
 import { ShopActors } from "../../src/backend/shop-actors.ts";
+import { AppEventsFake } from "./app-events-fake.ts";
 import { ShopifyFake } from "./shopify-fake.ts";
 
 /**
@@ -85,6 +87,8 @@ export type ShopifyFakeCall = typeof ShopifyFakeCall.Type;
  * - `ApiWorkflowsList` and `ApiMemberWorkflowPage` are the `BackendApi` methods the member
  *   screens' loaders call. Their payload carries the member's session `cookie`, which the
  *   request would carry, because the test Backend has no request to read it from.
+ * - `AppEventsSent` answers the usage events {@link AppEventsFake} accepted since the last call,
+ *   oldest first, and clears them: what the actor's flush sent to App Events.
  * - `ShopIdentityNames` answers the emails of `shop`'s `Member` rows and the names of its `Team`
  *   rows, read from D1 alone ({@link MembershipRepository}' `identityNames`), so it never reaches the actor.
  */
@@ -148,6 +152,10 @@ export const IntegRpcs = RpcGroup.make(
     success: MemberWorkflowPageData,
     error: Schema.Union([Unauthorized, Forbidden, NotAShopMember]),
   }),
+  Rpc.make("AppEventsSent", {
+    payload: {},
+    success: Schema.Array(UsageEvent),
+  }),
   Rpc.make("ShopIdentityNames", {
     payload: { shop: ShopKey },
     success: Schema.Struct({ emails: Schema.Array(Email), teams: Schema.Array(Schema.String) }),
@@ -159,6 +167,7 @@ export const IntegHandlers = IntegRpcs.toLayer(
     const { auth, maySignIn } = yield* Auth;
     const delivery = yield* MagicLinkDelivery;
     const shopifyFake = yield* ShopifyFake;
+    const appEventsFake = yield* AppEventsFake;
     const actors = yield* ShopActors;
     const members = yield* MembershipRepository;
     const api = yield* BackendApi;
@@ -198,6 +207,7 @@ export const IntegHandlers = IntegRpcs.toLayer(
         api.workflowsList({ cookie, ip: undefined }, payload),
       ApiMemberWorkflowPage: ({ cookie, ...payload }) =>
         api.memberWorkflowPage({ cookie, ip: undefined }, payload),
+      AppEventsSent: () => appEventsFake.takeSent,
       ShopIdentityNames: ({ shop }) => members.identityNames(shop),
     });
   }),

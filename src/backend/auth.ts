@@ -66,7 +66,7 @@ export const makeAuth = (options: AuthOptions = {}) =>
       const email = decodeEmail(address);
       if (Option.isNone(email)) return;
       for (const shop of yield* members.listShopsOf(email.value))
-        yield* actors.revoke(shop, "session", sessionId);
+        yield* actors.revoke(shop, { by: "session", id: sessionId });
     });
 
     /** Closes the member's sockets on every shop the address is a member of. */
@@ -75,7 +75,8 @@ export const makeAuth = (options: AuthOptions = {}) =>
       if (Option.isNone(email)) return;
       for (const shop of yield* members.listShopsOf(email.value)) {
         const member = yield* members.findMember({ shop, email: email.value });
-        if (Option.isSome(member)) yield* actors.revoke(shop, "member", member.value.id);
+        if (Option.isSome(member))
+          yield* actors.revoke(shop, { by: "member", id: member.value.id });
       }
     });
 

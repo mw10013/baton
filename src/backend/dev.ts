@@ -20,7 +20,7 @@ const devProcedures = Effect.gen(function* () {
     if (Option.isNone(removed)) return { removed: false, closed: 0 };
     // Baton's rule on `MembershipRepository`: the edit is followed by a revoke on the shop's actor. A failed
     // revoke is logged and answers `closed: 0`, which a test sees.
-    const { closed } = yield* actors.revoke(shop, "member", removed.value);
+    const { closed } = yield* actors.revoke(shop, { by: "member", id: removed.value });
     return { removed: true, closed };
   });
 

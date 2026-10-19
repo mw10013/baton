@@ -323,6 +323,15 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - **2026-10-18, Step 2:** `ShopifyAppEvents.layerWith({ apiKey, apiSecret, appHandle })` takes the handle (the plan's "pass the handle through the layer"); `ShopifyAppEvents.layer` reads `SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, `SHOPIFY_APP_HANDLE` with `Shopify.layer`'s "absent while planning" rule. Nothing binds `SHOPIFY_APP_HANDLE` before Step 4.
 - **2026-10-18, Step 2:** this repo's `upsertOrder` does not resolve the cycle (legacy's did); `countOrder` resolves it itself, so the meter's rules hold. "rolls the cycle forward on the first order past its end" keeps its title; its comment says the count resolves the cycle. `order-repository.test.ts`'s `CYCLE_START` is now legacy's `Date.UTC(2026, 5, 15)` (was day 400 since the epoch); every case in the file passes on it.
 
+- **2026-10-18, Step 3:** configuration landed here, not in Step 4: `ShopifyAppEvents.layer` needs `SHOPIFY_APP_HANDLE` in the Backend, or dev would die at the first activation. Built to Orchestrator revision 1: `ShopifyPartnerConfig` (`src/backend/shopify-partner.ts`) is the one typed schema of the four values (`AppHandle`, `PartnerId`, the token `Redacted`); `wireBackend` binds them as the `ShopifyPartner` binding from `shopifyPartnerBinding` (dev and e2e: `Config.schema(ShopifyPartnerConfig)` from `.env`, the fakes when absent; test: `SHOPIFY_PARTNER_CONFIG_FAKE`; staging: the stage config record). `StageConfigValues` gained the four fields now and `stacks/stage-config.ts` reads them (`satisfies` would not compile otherwise); the rule is JSDoc on `StageConfigValues`. Step 10 keeps the runbook line and the human steps. Nothing was run against staging.
+- **2026-10-18, Step 3:** `provideBackend(effect, billing)` takes the billing clients as a layer, typed `Layer<ShopifyBilling | B>` so the test Backend's `AppEventsFake.layer` (which also provides `AppEventsFake`) reaches its `IntegHandlers`; Step 4 widens `ShopifyBilling` with `ShopifyPartner`.
+- **2026-10-18, Step 3:** `AppEventsFake` accepts every event; it has no scriptable refusal (no `IntegRpcs` row asks for one; refusals are pinned in unit over `makeUsageRepository`).
+- **2026-10-18, Step 3:** `loadFixture` keeps the meter (`ShopUsage`'s cycle, counts, `shopGid`, seats; the `UsageEvent` outbox) as legacy did, but clears the orders' two `ShopUsage` columns, `ordersLimitedAt` and `lastSweepAt`: they describe the orders the load deletes, and "a webhook whose sweep deletes an order publishes…" relies on a load leaving `lastSweepAt` null. Its SQL is lowercased.
+- **2026-10-18, Step 3:** `databaseSize` is `state.raw.storage.sql.databaseSize` (`Effect.sync`), read at each `getUsage`.
+- **2026-10-18, Step 3:** `makeBilling` is an `Effect.fnUntraced` yielding `ShopifyAppEvents` (the plan's input list plus the service from context), so `flushUsageEvents` needs nothing; its `notify` is the runs service's through a deferred closure, because `makeRuns` needs `flushUsage` first.
+- **2026-10-18, Step 3:** legacy `shop-agent-usage-flush.test.ts` ported as `test/unit/backend/shop-actor/billing.test.ts`, describe "Billing usage flush" (renamed by role, nothing is called an agent; the six titles unchanged). "syncing one order…" fails the fetch with `ReauthorizationRequired` (legacy: no offline session).
+- **2026-10-18, Step 3:** the integ end-to-end titles (an attach and a cycle push reaching the App Events fake, uninstall flushes first, "revokes every connection on the shop for a lapse") move to Step 4: each needs a pushed cycle or a plan change, and only Step 4's `ScriptPartner` and `RevalidateStalePlans` can make one. "reseeding leaves the usage counter unchanged" and "MerchantGetUsage is refused to a member" are in integ now.
+
 ### Issues
 
 - **2026-10-18, Step 0: `activeSubscription` answers null for both stores. `WAITING: Partner API`.** Spike (a scratch script outside the repo, deleted after; the token and the app secret read into the environment, never printed) for Baton Dev (org `2798461`, app `417214922753`, handle `baton-local`):
@@ -351,6 +360,8 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - **2026-10-18, Step 1:** `vp check` green (342 files); `vp test` 981 passed, 75 files, 67 s (971 + 10: seat value, order ceiling, provisional cycle, expiry, `planOfHandle`, five `adminShopPlanCache` states).
 
 - **2026-10-18, Step 2:** `vp check` green (345 files); `vp test` 1007 passed, 76 files, 50 s (+16 "OrderRepository usage", +5 "RunRepository metering", +5 "ShopifyAppEvents").
+
+- **2026-10-18, Step 3:** `vp check` green (350 files); `vp test` 1015 passed, 78 files, 50 s (+6 "Billing usage flush" unit, +2 integ in the new `test/integ/billing.test.ts`). First run: 1 failure, "a webhook whose sweep deletes an order publishes…" (see Deviations, `loadFixture`); fixed, then green.
 
 ### Human steps requested
 

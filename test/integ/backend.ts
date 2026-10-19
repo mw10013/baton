@@ -22,6 +22,7 @@ import { MagicLinkDelivery } from "../../src/backend/magic-link-delivery.ts";
 import { MembershipRepository } from "../../src/backend/membership-repository.ts";
 import ShopActor from "../../src/backend/shop-actor/tag.ts";
 import { ShopActors } from "../../src/backend/shop-actors.ts";
+import { AppEventsFake } from "./app-events-fake.ts";
 import { IntegHandlers, IntegRpcs } from "./rpcs.ts";
 import { ShopifyFake } from "./shopify-fake.ts";
 
@@ -45,6 +46,8 @@ const decodeCaller = Schema.decodeUnknownOption(Schema.fromJsonString(Connection
  * - `/api/integ/actor/<key>`, an upgrade forwarded to the actor as whatever {@link ConnectionCaller}
  *   the JSON in `x-test-caller` names, skipping the gate, so a test opens a socket as an identity
  *   no sign-in produces, such as an expired session; 404 when the header does not decode;
+ * - {@link AppEventsFake} in place of the App Events API, passed to {@link provideBackend} as the
+ *   Backend's billing clients;
  * - {@link ShopifyFake} in place of the Shopify library's fetch, installed after the shared
  *   wiring so it is the one the library calls;
  * - `/api/integ/bulk/<n>`, the next bulk result file scripted into {@link ShopifyFake}: the URL a
@@ -61,7 +64,13 @@ export default class TestBackend extends Cloudflare.Worker<TestBackend>()(
       const base = yield* backendBody;
       const actors = yield* ShopActor;
       const services = yield* Effect.context<
-        Auth | BackendApi | MagicLinkDelivery | MembershipRepository | ShopifyFake | ShopActors
+        | AppEventsFake
+        | Auth
+        | BackendApi
+        | MagicLinkDelivery
+        | MembershipRepository
+        | ShopifyFake
+        | ShopActors
       >();
       const shopifyFake = yield* ShopifyFake;
       // Built per request, inside the request's scope, as the Backend's own RPC servers are.
@@ -94,5 +103,6 @@ export default class TestBackend extends Cloudflare.Worker<TestBackend>()(
       // Spread first, so the `BackendApi` methods stay beside the new `fetch`.
       return { ...base, fetch };
     }).pipe(Effect.provide(ShopifyFake.layer)),
+    AppEventsFake.layer,
   ),
 ) {}

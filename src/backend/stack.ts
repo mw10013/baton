@@ -15,13 +15,25 @@ import * as Redacted from "effect/Redacted";
 import type { DeliveryMode } from "./magic-link-delivery.ts";
 import { seed } from "./seed.ts";
 import { SHOPIFY_API_KEY, SHOPIFY_API_SECRET_FAKE } from "./shopify.ts";
+import { SHOPIFY_PARTNER_CONFIG_FAKE, ShopifyPartnerConfig } from "./shopify-partner.ts";
 import { environmentOf } from "./stage.ts";
 import type Backend from "./worker.ts";
 
-/** The fields of {@link StageConfig}'s record, named after the bindings they become. */
+/**
+ * The fields of {@link StageConfig}'s record, named after the bindings they become.
+ *
+ * The rule for where a value lives: a value another service issues for a stage (a Shopify app's
+ * key, secret, handle and Partner ids, a Partner API token) comes through configuration, `.env`
+ * in dev and e2e and this record on a deployed stage; a value Baton defines (plan and meter
+ * handles, entitlements, API versions) lives in code.
+ */
 export interface StageConfigValues {
   readonly SHOPIFY_API_KEY: string;
   readonly SHOPIFY_API_SECRET: Redacted.Redacted<string>;
+  readonly SHOPIFY_APP_HANDLE: string;
+  readonly SHOPIFY_PARTNER_ORG_ID: string;
+  readonly SHOPIFY_PARTNER_APP_ID: string;
+  readonly SHOPIFY_PARTNER_API_TOKEN: Redacted.Redacted<string>;
 }
 
 /**
@@ -108,6 +120,55 @@ export const ShopifyApp: Effect.Effect<
   );
 });
 
+/** {@link ShopifyPartnerConfig} as the stack binds it: plain, or the stage config record's outputs. */
+type ShopifyPartnerBinding = {
+  readonly [K in keyof ShopifyPartnerConfig]:
+    | (K extends "SHOPIFY_PARTNER_API_TOKEN" ? Redacted.Redacted<string> : string)
+    | Alchemy.Output<K extends "SHOPIFY_PARTNER_API_TOKEN" ? Redacted.Redacted<string> : string>;
+};
+
+/**
+ * The Partner values ({@link ShopifyPartnerConfig}) this stage binds, chosen by its environment as
+ * {@link ShopifyApp} chooses the app: `staging` from {@link StageConfig}'s record; `dev` and `e2e`
+ * from the checkout's `.env` (Alchemy loads it), and the fakes when they are absent (a bare
+ * `alchemy destroy`), where a Partner call then fails and the gate answers an error, never a
+ * subscription; `test` always the fakes ({@link SHOPIFY_PARTNER_CONFIG_FAKE}), which the test
+ * Backend's Partner and App Events fakes never send anywhere.
+ */
+const shopifyPartnerBinding: Effect.Effect<
+  ShopifyPartnerBinding,
+  Config.ConfigError,
+  Alchemy.Stage
+> = Effect.gen(function* () {
+  const environment = yield* environmentOf(yield* Alchemy.Stage).pipe(Effect.orDie);
+  const fake: ShopifyPartnerBinding = {
+    ...SHOPIFY_PARTNER_CONFIG_FAKE,
+    SHOPIFY_PARTNER_API_TOKEN: Redacted.make(SHOPIFY_PARTNER_CONFIG_FAKE.SHOPIFY_PARTNER_API_TOKEN),
+  };
+  return yield* Match.value(environment).pipe(
+    Match.when("staging", () =>
+      Effect.map(StageConfig, (record): ShopifyPartnerBinding => ({
+        SHOPIFY_APP_HANDLE: record.SHOPIFY_APP_HANDLE,
+        SHOPIFY_PARTNER_ORG_ID: record.SHOPIFY_PARTNER_ORG_ID,
+        SHOPIFY_PARTNER_APP_ID: record.SHOPIFY_PARTNER_APP_ID,
+        SHOPIFY_PARTNER_API_TOKEN: record.SHOPIFY_PARTNER_API_TOKEN,
+      })),
+    ),
+    Match.whenOr("dev", "e2e", () =>
+      Config.option(Config.schema(ShopifyPartnerConfig)).pipe(
+        Effect.map(
+          Option.match({
+            onNone: () => fake,
+            onSome: (values): ShopifyPartnerBinding => values,
+          }),
+        ),
+      ),
+    ),
+    Match.when("test", () => Effect.succeed(fake)),
+    Match.exhaustive,
+  );
+});
+
 /**
  * Seeds the stage and binds the Backend's configuration. The two stacks differ only in the
  * options; every other binding is here, so a new one is added once. The binding names are
@@ -144,6 +205,7 @@ export const wireBackend = Effect.fn("wireBackend")(function* (
       }),
     }),
   });
+  yield* backend.bind("ShopifyPartner", { env: yield* shopifyPartnerBinding });
   const environment = yield* environmentOf(yield* Alchemy.Stage).pipe(Effect.orDie);
   // The dev procedures replace and age a shop's data, so only the per-developer environments,
   // whose data is disposable, mount them; staging never does.

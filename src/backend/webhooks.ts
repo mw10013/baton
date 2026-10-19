@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import type { ShopKey } from "../contract/shop.ts";
 import { EpochMillis } from "../domain/platform.ts";
 import type { OrderWebhookStatus } from "./shop-actor/orders.ts";
 import { ShopActors } from "./shop-actors.ts";
@@ -210,6 +211,34 @@ const make = Effect.gen(function* () {
   });
 
   /**
+   * Drains the shop's usage-event outbox before its storage goes.
+   *
+   * Shopify closes the billing cycle 24 hours after an uninstall and refuses
+   * events after that, and the actor's `destroy` deletes the outbox outright — so
+   * this is the last moment an order the merchant was already billed for can be
+   * reported. Best-effort on purpose: a failed flush must not stop the destroy,
+   * because the storage is billed for as long as it exists and Shopify retries
+   * this webhook on a non-2xx, which would re-run the teardown rather than the
+   * flush alone. The remaining count is logged so an operator can see what was
+   * lost.
+   */
+  const flushUsageEventsAtUninstall = (shop: ShopKey) =>
+    Effect.gen(function* () {
+      const remaining = yield* actors.flushUsageEvents(shop);
+      if (remaining === 0) return;
+      yield* Effect.logWarning(
+        `webhooks.app.uninstalled: shop=${shop} pending=${String(remaining)}: usage events unsent at uninstall`,
+      ).pipe(Effect.annotateLogs({ shop, pending: remaining }));
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning(
+          `webhooks.app.uninstalled: shop=${shop}: usage event flush failed`,
+          cause,
+        ).pipe(Effect.annotateLogs({ shop })),
+      ),
+    );
+
+  /**
    * `app/uninstalled`. When a merchant uninstalls the app, their OAuth tokens are immediately
    * invalidated. Retaining stale sessions risks conflicting OAuth flows on re-install, so
    * uninstall is the one teardown point for the shop's session and its actor's storage.
@@ -229,11 +258,12 @@ const make = Effect.gen(function* () {
    * actor: after a partial teardown (the session deleted, the destroy failed) the retry finds no
    * session and must still destroy.
    *
-   * Billing's usage-event flush goes first, best effort, when billing lands.
+   * The shop's usage-event outbox is drained first ({@link flushUsageEventsAtUninstall}).
    */
   const appUninstalled = Effect.fn("Webhooks.appUninstalled")(function* (
     webhook: ValidatedWebhook,
   ) {
+    yield* flushUsageEventsAtUninstall(webhook.shop);
     yield* shopSessions.remove(webhook.shop);
     yield* actors.destroy(webhook.shop);
     return ok;

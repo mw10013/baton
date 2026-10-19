@@ -36,6 +36,7 @@ import { AuthDb } from "./resources.ts";
 import { ShopAccess, type ShopAccessDenied } from "./shop-access.ts";
 import { Shopify } from "./shopify.ts";
 import { ShopifyAdmin } from "./shopify-admin.ts";
+import { ShopifyAppEvents } from "./shopify-app-events.ts";
 import { ShopSessionRepository } from "./shop-session-repository.ts";
 import { workerNameOf } from "./stage.ts";
 import { Webhooks } from "./webhooks.ts";
@@ -251,12 +252,23 @@ export const backendBody = Effect.gen(function* () {
 });
 
 /**
- * Provides everything {@link backendBody} needs. An entry that serves more than the body runs its
- * own handlers inside the same call, so they get the very service instances the body has (the
- * magic links Better Auth handed to `MagicLinkDelivery`, for one); a second build would make a
- * second set.
+ * The Backend's clients of Shopify's billing APIs, which only Shopify answers: the production
+ * entry passes the real ones, and the test Backend its fakes, so a fake never reaches the
+ * production bundle.
  */
-export const provideBackend = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+export type ShopifyBilling = ShopifyAppEvents;
+
+/**
+ * Provides everything {@link backendBody} needs, `billing` included (whose extra services, a
+ * test's fakes, reach `effect` too). An entry that serves more
+ * than the body runs its own handlers inside the same call, so they get the very service
+ * instances the body has (the magic links Better Auth handed to `MagicLinkDelivery`, for one); a
+ * second build would make a second set.
+ */
+export const provideBackend = <A, E, R, B = never>(
+  effect: Effect.Effect<A, E, R>,
+  billing: Layer.Layer<ShopifyBilling | B>,
+) =>
   effect.pipe(
     Effect.provide(BackendApi.layer),
     Effect.provide(Webhooks.layer),
@@ -268,6 +280,7 @@ export const provideBackend = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     Effect.provide(OrdersBulkOperation.layer),
     Effect.provide(
       Layer.mergeAll(
+        billing,
         MembershipRepository.layer,
         Mailer.layer,
         signInLimiter,
@@ -283,4 +296,4 @@ export const provideBackend = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   );
 
 /** The Backend's init as the production entry runs it: {@link backendBody}, provided. */
-export const makeBackend = () => provideBackend(backendBody);
+export const makeBackend = () => provideBackend(backendBody, ShopifyAppEvents.layer);

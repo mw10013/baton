@@ -260,7 +260,7 @@ describe("Orders.syncOrder", () => {
 /**
  * The billing seam's call sites, legacy's: the webhook sends the usage queue after its fetch
  * path only, and Sync from Shopify sends it whatever became of the fetch (rule 13 on
- * `syncOrder`). `flushUsage` is a no-op in the actor until billing lands.
+ * `syncOrder`). The actor's `flushUsage` is `makeBilling`'s flush; here it is counted.
  */
 describe("Orders usage flush", () => {
   it.effect("the webhook flushes after its fetch path, never on a stale or refused delivery", () =>

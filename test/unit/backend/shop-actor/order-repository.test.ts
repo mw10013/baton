@@ -336,7 +336,8 @@ describe("OrderRepository usage", () => {
   /**
    * Legacy lowered `ShopLimits.maxOpenOrders` to 2 for this case; here the ceiling keeps its value
    * and all but two of it are stored as open orders first, so the case's own two orders reach it.
-   * Billing's `ordersThisCycle` asserts are not ported.
+   * Legacy's `ordersThisCycle` assert is left out: this case never counts, and the meter's own
+   * cases below pin that storing an order is not counting it.
    */
   it.effect(
     "the ceiling counts open orders, not counted ones: a new order is refused at it, a stored one still updates, and a closed order makes no claim on it",

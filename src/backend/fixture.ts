@@ -283,10 +283,14 @@ const make = Effect.gen(function* () {
     const work = yield* actors.loadFixture(shop, rows.actor);
     yield* actors.applyFixture(shop, rows.actor, "loadFixture");
     // Best effort, as `ShopActors.revoke` is: the write has landed either way.
-    yield* Effect.forEach(identity.priorMemberIds, (id) => actors.revoke(shop, "member", id), {
-      concurrency: "unbounded",
-      discard: true,
-    });
+    yield* Effect.forEach(
+      identity.priorMemberIds,
+      (id) => actors.revoke(shop, { by: "member", id }),
+      {
+        concurrency: "unbounded",
+        discard: true,
+      },
+    );
     const counts: FixtureCounts = { members: identity.members, teams: identity.teams, ...work };
     yield* Effect.logInfo(
       `Fixtures.load: shop=${shop} members=${counts.members} teams=${counts.teams} workflows=${counts.workflows} orders=${counts.orders} lineItems=${counts.lineItems}`,

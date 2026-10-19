@@ -24,6 +24,7 @@ import {
   OfflineSessionMissing,
   ShopifyUnavailable as ShopifyUnreachable,
 } from "../contract/shopify.ts";
+import type { BillingCycleInput } from "../domain/billing.ts";
 import { ShopLimits } from "../domain/platform.ts";
 import { Email } from "../domain/platform.ts";
 import {
@@ -57,13 +58,20 @@ import { makeOrderRepository, type OrderRepositoryError } from "./shop-actor/ord
 import { makeOrders } from "./shop-actor/orders.ts";
 import { makeRunRepository, type RunRepositoryError } from "./shop-actor/run-repository.ts";
 import { makeRuns } from "./shop-actor/runs.ts";
+import { makeBilling } from "./shop-actor/billing.ts";
+import { makeUsageRepository } from "./shop-actor/usage-repository.ts";
+import { ShopifyAppEvents } from "./shopify-app-events.ts";
 import { makeMembership } from "./shop-actor/membership.ts";
 import { syncTransaction } from "./shop-actor/transaction.ts";
 import { makeWorkflowRepository } from "./shop-actor/workflow-repository.ts";
 import { makeWorkflows } from "./shop-actor/workflows.ts";
 import { MembershipRepository } from "./membership-repository.ts";
 import { OrdersSyncWorkflow } from "./orders-sync-workflow.ts";
-import ShopActor, { ABORT_UNINSTALLED, type ShopActorShape } from "./shop-actor/tag.ts";
+import ShopActor, {
+  ABORT_UNINSTALLED,
+  type RevokeInput,
+  type ShopActorShape,
+} from "./shop-actor/tag.ts";
 import { ShopSessionRepository } from "./shop-session-repository.ts";
 import type { EnsureShopSessionError } from "./shopify.ts";
 import { runOrdersStream } from "./shop-actor/orders-stream.ts";
@@ -100,6 +108,7 @@ const DISPLACED_REASON = "signed in elsewhere";
 const EXPIRED_REASON = "session expired";
 const UNIDENTIFIED_REASON = "unidentified connection";
 const UNINSTALLED_REASON = "uninstalled";
+const LAPSED_REASON = "app subscription lapsed";
 
 /**
  * How long `destroy` waits for the sockets it closed to finish their close handshake before it
@@ -410,6 +419,7 @@ const makeShopActor = Effect.gen(function* () {
   const shopSessions = yield* ShopSessionRepository;
   const membershipRepository = yield* MembershipRepository;
   const ordersSync = yield* OrdersSyncWorkflow;
+  const appEvents = yield* ShopifyAppEvents;
   return Effect.gen(function* () {
     // Every actor is reached by name (`getByName`), so a nameless id is a broken invariant.
     const shop = yield* Effect.fromOption(decodeShopKey(state.id.name)).pipe(Effect.orDie);
@@ -432,18 +442,24 @@ const makeShopActor = Effect.gen(function* () {
     const transaction = syncTransaction(sql);
     const orderRepository = makeOrderRepository(sql, transaction);
     const workflowRepository = makeWorkflowRepository(sql, transaction);
+    const usageRepository = makeUsageRepository(sql, transaction);
     /**
-     * The billing meter, called by the run repository once per created run, inside the
-     * caller's transaction. A no-op until billing lands; its call site is legacy's.
+     * The actor's billing. Its notice goes through the runs service's, built below and only
+     * called later, which clears the memos first.
      */
-    const countOrder = (): Effect.Effect<void> => Effect.void;
+    const billing = yield* makeBilling({
+      usageRepository,
+      notify: (invalidated) => Effect.suspend(() => notify(invalidated)),
+      shop,
+      databaseSize: Effect.sync(() => state.raw.storage.sql.databaseSize),
+    }).pipe(Effect.provideService(ShopifyAppEvents, appEvents));
     /**
      * The usage outbox's send, called where legacy flushes (after a webhook, Sync from
-     * Shopify, the stream, reconcile all and Attach), never inside a transaction. A no-op until
-     * billing lands.
+     * Shopify, the stream, reconcile all and Attach), never inside a transaction.
      */
-    const flushUsage: Effect.Effect<void> = Effect.void;
-    const runRepository = makeRunRepository(sql, transaction, countOrder);
+    const flushUsage: Effect.Effect<void> = Effect.asVoid(billing.flushUsageEvents);
+    /** The billing meter, called by the run repository once per created run, inside its caller's transaction. */
+    const runRepository = makeRunRepository(sql, transaction, usageRepository.countOrder);
 
     const sendNotice = Effect.fn("ShopActor.notify")(function* (
       invalidated: ReadonlyArray<string>,
@@ -612,6 +628,7 @@ const makeShopActor = Effect.gen(function* () {
         currentMember.pipe(Effect.flatMap((member) => runs.memberBlockRun(input, member))),
       MemberUnblockRun: (input) =>
         currentMember.pipe(Effect.flatMap((member) => runs.memberUnblockRun(input, member))),
+      MerchantGetUsage: () => billing.getUsage().pipe(Effect.orDie),
       MerchantSyncStatus: () =>
         Clock.currentTimeMillis.pipe(Effect.flatMap(orderRepository.getSyncStatus), Effect.orDie),
       MerchantSyncOpenOrders: () => syncOpenOrdersFor("ShopActor.MerchantSyncOpenOrders"),
@@ -699,31 +716,78 @@ const makeShopActor = Effect.gen(function* () {
     });
 
     /**
-     * Closes every open socket tagged `tag` (`member:<id>` or `session:<id>`) with
-     * {@link CONNECTION_CLOSE_REVOKED} and answers how many it closed: the one close routine of
-     * the stub's {@link revoke} and the member and team writes ({@link membership}).
+     * Closes every open socket tagged `tag` (`member:<id>` or `session:<id>`), or every open
+     * socket of the shop when `tag` is undefined, with {@link CONNECTION_CLOSE_REVOKED} and
+     * `reason`, and answers how many it closed: the one close routine of the stub's
+     * {@link revoke} and the member and team writes ({@link membership}).
      */
-    const closeTagged = Effect.fn("ShopActor.closeTagged")(function* (tag: string) {
+    const closeTagged = Effect.fn("ShopActor.closeTagged")(function* (
+      tag: string | undefined,
+      reason: string = REVOKED_REASON,
+    ) {
       let closed = 0;
       for (const ws of yield* state.getWebSockets(tag)) {
         if (ws.ws.readyState !== WebSocket.OPEN) continue;
-        yield* closeSocket(ws, CONNECTION_CLOSE_REVOKED, REVOKED_REASON);
+        yield* closeSocket(ws, CONNECTION_CLOSE_REVOKED, reason);
         closed += 1;
       }
       return closed;
     });
 
     /**
-     * Closes every socket of one member (`by: "member"`, Baton's `revokeMemberConnections`) or
-     * of one Better Auth session (`by: "session"`) with {@link CONNECTION_CLOSE_REVOKED}.
+     * Closes every socket of one member (`by: "member"`, Baton's `revokeMemberConnections`), of
+     * one Better Auth session (`by: "session"`), or of the whole shop, merchant and members
+     * alike (`by: "all"`, legacy's `revokeAllConnections`), with {@link CONNECTION_CLOSE_REVOKED}.
+     *
+     * `"all"` is `SubscriptionPlan`'s, at the moment a revalidation learns the shop's app
+     * subscription changed. The keepalive means a healthy socket never reconnects on its own,
+     * so the connect-time plan check would otherwise hold for as long as the tab lives. Closing
+     * is what makes the gate's `402` reach an open tab: each reconnect asks the gate again, and
+     * the gate now refuses.
      */
-    const revoke = Effect.fn("ShopActor.revoke")(function* (input: {
-      readonly by: "member" | "session";
-      readonly id: string;
-    }) {
-      const closed = yield* closeTagged(`${input.by}:${input.id}`);
-      yield* Effect.logInfo(`ShopActor.revoke: shop=${shop} by=${input.by} closed=${closed}`);
+    const revoke = Effect.fn("ShopActor.revoke")(function* (input: RevokeInput) {
+      const closed =
+        input.by === "all"
+          ? yield* closeTagged(undefined, LAPSED_REASON)
+          : yield* closeTagged(`${input.by}:${input.id}`);
+      yield* Effect.logInfo(`ShopActor.revoke: shop=${shop} by=${input.by} closed=${closed}`).pipe(
+        Effect.annotateLogs({ shop, by: input.by, closed }),
+      );
       return { closed };
+    }, Effect.provide(runtime));
+
+    /** The shop's usage; the rule is on `makeBilling`'s `getUsage`. */
+    const getUsage = Effect.fn("ShopActor.getUsage")(
+      function* () {
+        return yield* billing.getUsage();
+      },
+      Effect.orDie,
+      Effect.provide(runtime),
+    );
+
+    /**
+     * Records the billing cycle; the rule is on `makeBilling`'s `setBillingCycle`. A stub
+     * method, never a procedure: the caller is `SubscriptionPlan`, which is the only thing that
+     * reads an app subscription, and a browser naming its own billing cycle would be naming its
+     * own bill.
+     */
+    const setBillingCycle = Effect.fn("ShopActor.setBillingCycle")(
+      function* (input: BillingCycleInput) {
+        yield* billing.setBillingCycle(input);
+      },
+      Effect.orDie,
+      Effect.provide(runtime),
+    );
+
+    /**
+     * Drains the usage-event outbox and answers how many rows are left (`makeBilling`'s
+     * `flushUsageEvents`). A stub method: the callers are the Backend's uninstall webhook,
+     * which has 24 hours before Shopify closes the billing cycle and is about to destroy this
+     * actor's storage, and Manage plan (`SubscriptionPlan.expectChange`), before a plan change
+     * ends the app subscription.
+     */
+    const flushUsageEvents = Effect.fn("ShopActor.flushUsageEvents")(function* () {
+      return (yield* billing.flushUsageEvents).remaining;
     }, Effect.provide(runtime));
 
     /** The shop's work rows, read back. */
@@ -737,25 +801,28 @@ const makeShopActor = Effect.gen(function* () {
 
     /**
      * Replaces the shop's work with a fixture's rows, in one {@link transaction}: every order,
-     * line item, workflow, run, run task and usage event goes, `SyncState` and `ShopUsage` go
-     * back to the single rows the migration inserts, and `rows` are written. Not
-     * `storage.deleteAll`, which would also drop the migrator's record of the schema. Answers
-     * the counts read back inside the transaction.
+     * line item, workflow, run and run task goes, `SyncState` goes back to the single row the
+     * migration inserts, the orders' two `ShopUsage` columns (`ordersLimitedAt`, `lastSweepAt`,
+     * facts about the orders just deleted) are cleared, and `rows` are written. Not `storage.deleteAll`, which would also drop
+     * the migrator's record of the schema. Answers the counts read back inside the transaction.
+     *
+     * The meter is untouched: the rest of `ShopUsage` (its cycle, its counts, the `shopGid` a push wrote) and
+     * the `UsageEvent` outbox stay as they are, so a reload neither forgets the billing cycle
+     * nor drops an event Shopify has not been told about. Fixture orders are counted at `0`
+     * (`fixtureRows`), so they never move the meter either.
      */
     const loadFixture = Effect.fn("ShopActor.loadFixture")(
       function* (rows: ActorFixtureRows) {
         const counts = yield* transaction(
           Effect.gen(function* () {
-            yield* sql`DELETE FROM RunTask`;
-            yield* sql`DELETE FROM Run`;
-            yield* sql`DELETE FROM OrderLineItem`;
-            yield* sql`DELETE FROM ShopOrder`;
-            yield* sql`DELETE FROM Workflow`;
-            yield* sql`DELETE FROM UsageEvent`;
-            yield* sql`DELETE FROM SyncState`;
-            yield* sql`INSERT INTO SyncState (id) VALUES (1)`;
-            yield* sql`DELETE FROM ShopUsage`;
-            yield* sql`INSERT INTO ShopUsage (id) VALUES (1)`;
+            yield* sql`delete from RunTask`;
+            yield* sql`delete from Run`;
+            yield* sql`delete from OrderLineItem`;
+            yield* sql`delete from ShopOrder`;
+            yield* sql`delete from Workflow`;
+            yield* sql`delete from SyncState`;
+            yield* sql`insert into SyncState (id) values (1)`;
+            yield* sql`update ShopUsage set ordersLimitedAt = null, lastSweepAt = null where id = 1`;
             yield* insertFixtureRows(sql, rows);
             return yield* countWork;
           }),
@@ -1101,6 +1168,9 @@ const makeShopActor = Effect.gen(function* () {
 
     const stub: ShopActorShape = {
       revoke,
+      getUsage,
+      setBillingCycle,
+      flushUsageEvents,
       loadFixture,
       addFixture,
       applyFixture,

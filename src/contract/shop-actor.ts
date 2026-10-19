@@ -53,6 +53,7 @@ import {
   WorkflowResult,
   WorkflowsListData,
 } from "../domain/shop-work.ts";
+import { ShopUsage } from "../domain/billing.ts";
 import { Email, Forbidden } from "./auth.ts";
 import {
   AddMemberInput,
@@ -251,6 +252,7 @@ export const MerchantRpcs = RpcGroup.make(
     payload: AssignRunTaskTeamInput,
     success: AssignRunTaskTeamResult,
   }),
+  Rpc.make("MerchantGetUsage", { success: ShopUsage }),
   Rpc.make("MerchantSyncStatus", { success: OrdersSyncStatus }),
   Rpc.make("MerchantSyncOpenOrders", { success: OrdersSyncResult, error: OrdersSyncFailure }),
   Rpc.make("MerchantSyncOrder", {

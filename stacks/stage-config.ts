@@ -15,6 +15,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { StageConfig, type StageConfigValues, stageState } from "../src/backend/stack.ts";
 import { Deployed } from "../src/backend/stage.ts";
+import { ShopifyPartnerConfig } from "../src/backend/shopify-partner.ts";
 
 export class NotDeployedStage extends Schema.TaggedError<NotDeployedStage>()("NotDeployedStage", {
   stage: Schema.String,
@@ -42,6 +43,7 @@ export default StageConfig.make(
         Schema.Redacted(Schema.NonEmptyString),
         "SHOPIFY_API_SECRET",
       ),
+      ...(yield* Config.schema(ShopifyPartnerConfig)),
       // `make` infers the record's type on its own and never checks it against the handle's shape,
       // so only this `satisfies` turns a field added to the handle but not read here into a type error.
     } satisfies StageConfigValues;

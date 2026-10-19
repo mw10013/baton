@@ -13,6 +13,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import type { UsageEvent } from "../domain/billing.ts";
+import { AppHandle } from "./shopify-partner.ts";
 
 export class ShopifyAppEventsError extends Schema.TaggedError<ShopifyAppEventsError>()(
   "ShopifyAppEventsError",
@@ -280,15 +281,17 @@ export class ShopifyAppEvents extends Context.Service<
 
   /**
    * Over `SHOPIFY_API_KEY` and `SHOPIFY_API_SECRET` (the `Shopify` binding) and
-   * `SHOPIFY_APP_HANDLE`, with `fetch`. As `Shopify.layer`: absent while the
+   * `SHOPIFY_APP_HANDLE` ({@link AppHandle}, the `ShopifyPartner` binding), with `fetch`. As `Shopify.layer`: absent while the
    * stack is planned, when nothing sends; a running Worker without them is
    * broken.
    */
   static readonly layer = Layer.unwrap(
     Effect.gen(function* () {
-      const apiKey = yield* Config.option(Config.String("SHOPIFY_API_KEY"));
-      const apiSecret = yield* Config.option(Config.Redacted("SHOPIFY_API_SECRET"));
-      const appHandle = yield* Config.option(Config.String("SHOPIFY_APP_HANDLE"));
+      const { apiKey, apiSecret, appHandle } = yield* Config.all({
+        apiKey: Config.option(Config.String("SHOPIFY_API_KEY")),
+        apiSecret: Config.option(Config.Redacted("SHOPIFY_API_SECRET")),
+        appHandle: Config.option(Config.schema(AppHandle, "SHOPIFY_APP_HANDLE")),
+      }).pipe(Effect.orDie);
       if (
         globalThis.__ALCHEMY_RUNTIME__ &&
         (Option.isNone(apiKey) || Option.isNone(apiSecret) || Option.isNone(appHandle))

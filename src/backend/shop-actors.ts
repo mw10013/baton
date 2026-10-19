@@ -15,7 +15,8 @@ import { FixtureConflict } from "../contract/fixture.ts";
 import type { ListWorkflowsInput } from "../domain/shop-work.ts";
 import type { ActorFixtureRows } from "./fixture.ts";
 import type { Dependencies } from "alchemy";
-import ShopActor, { ABORT_UNINSTALLED } from "./shop-actor/tag.ts";
+import ShopActor, { ABORT_UNINSTALLED, type RevokeInput } from "./shop-actor/tag.ts";
+import type { BillingCycleInput } from "../domain/billing.ts";
 
 /**
  * `ShopActors.destroy`'s reading of the stub call (legacy's `destroyShopAgent`). The actor's abort
@@ -61,23 +62,44 @@ const make = <R>(namespace: Effect.Effect<Effect.Success<typeof ShopActor>, neve
     /**
      * `revoke` on a shop's actor. Best effort: a failure is logged and counts as nothing closed,
      * because the edit that called for it is already written and a stale socket is bounded by
-     * its session's expiry.
+     * its session's expiry (a member's) or by the next connect's gate (`"all"`).
      */
-    const revoke = Effect.fn("ShopActors.revoke")(function* (
-      key: ShopKey,
-      by: "member" | "session",
-      id: string,
-    ) {
+    const revoke = Effect.fn("ShopActors.revoke")(function* (key: ShopKey, input: RevokeInput) {
       return yield* actors
         .getByName(key)
-        .revoke({ by, id })
+        .revoke(input)
         .pipe(
           Effect.catchCause((cause) =>
-            Effect.logError(`ShopActors.revoke: shop=${key} by=${by}`, cause).pipe(
+            Effect.logError(`ShopActors.revoke: shop=${key} by=${input.by}`, cause).pipe(
+              Effect.annotateLogs({ shop: key, by: input.by }),
               Effect.as({ closed: 0 }),
             ),
           ),
         );
+    });
+
+    /**
+     * The shop's usage; see `getUsage` on {@link ShopActor}. Call it only for an installed shop:
+     * any stub call recreates an uninstalled shop's actor.
+     */
+    const getUsage = Effect.fn("ShopActors.getUsage")(function* (key: ShopKey) {
+      return yield* actors.getByName(key).getUsage();
+    });
+
+    /** Records the shop's billing cycle; see `setBillingCycle` on {@link ShopActor}. */
+    const setBillingCycle = Effect.fn("ShopActors.setBillingCycle")(function* (
+      key: ShopKey,
+      input: BillingCycleInput,
+    ) {
+      yield* actors.getByName(key).setBillingCycle(input);
+    });
+
+    /**
+     * Drains the shop's usage outbox and answers what is left; see `flushUsageEvents` on
+     * {@link ShopActor}.
+     */
+    const flushUsageEvents = Effect.fn("ShopActors.flushUsageEvents")(function* (key: ShopKey) {
+      return yield* actors.getByName(key).flushUsageEvents();
     });
 
     /** Replaces the shop's work with `rows`; see `loadFixture` on {@link ShopActor}. */
@@ -228,6 +250,9 @@ const make = <R>(namespace: Effect.Effect<Effect.Success<typeof ShopActor>, neve
     return {
       destroy,
       revoke,
+      getUsage,
+      setBillingCycle,
+      flushUsageEvents,
       loadFixture,
       addFixture,
       applyFixture,
@@ -274,24 +299,43 @@ export class ShopActors extends Context.Service<
   );
 
   /**
-   * Records each revoke and closes nothing, records
+   * Records each revoke and closes nothing (`"all"` with an empty `id`), records each billing
+   * cycle push in `cycles`, answers an empty shop's usage and a flush that leaves nothing, records
    * each fixture load in `loaded` and each fixture add in `added`, answering the counts of its
    * rows (it never finds a clash), applies no fixture work, and records each order removal in `removedOrders`, answering
    * that there was one. Its order, workflow and sync methods and `destroy` die: a test that reaches them
    * overrides them.
    */
   static readonly layerTest = (
-    revoked: Array<{ key: ShopKey; by: "member" | "session"; id: string }>,
+    revoked: Array<{ key: ShopKey; by: RevokeInput["by"]; id: string }>,
     loaded: Array<{ key: ShopKey; rows: ActorFixtureRows }> = [],
     added: Array<{ key: ShopKey; rows: ActorFixtureRows }> = [],
     removedOrders: Array<{ key: ShopKey; orderId: string }> = [],
+    cycles: Array<{ key: ShopKey; input: BillingCycleInput }> = [],
   ) =>
     Layer.succeed(ShopActors, {
-      revoke: (key, by, id) =>
+      revoke: (key, input) =>
         Effect.sync(() => {
-          revoked.push({ key, by, id });
+          revoked.push({ key, by: input.by, id: input.by === "all" ? "" : input.id });
           return { closed: 0 };
         }),
+      getUsage: () =>
+        Effect.succeed({
+          cycleStartAt: null,
+          cycleEndAt: null,
+          ordersThisCycle: 0,
+          ordersLimitedAt: null,
+          databaseSize: 0,
+          openOrders: 0,
+          lastSweepAt: null,
+          pendingUsageEvents: 0,
+          seatsThisCycle: 0,
+        }),
+      setBillingCycle: (key, input) =>
+        Effect.sync(() => {
+          cycles.push({ key, input });
+        }),
+      flushUsageEvents: () => Effect.succeed(0),
       loadFixture: (key, rows) =>
         Effect.sync(() => {
           loaded.push({ key, rows });
