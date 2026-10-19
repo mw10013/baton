@@ -301,6 +301,9 @@ const make = Effect.gen(function* () {
           ).pipe(Effect.annotateLogs({ shop })),
         ),
       );
+    yield* Effect.logInfo(
+      `SubscriptionPlan.expectChange: shop=${shop}: plan deadline shortened`,
+    ).pipe(Effect.annotateLogs({ shop }));
   });
 
   return { resolve, refresh, expectChange };

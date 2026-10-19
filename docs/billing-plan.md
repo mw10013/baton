@@ -345,6 +345,8 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 
 - **2026-10-18, Step 6:** `MeterTile` takes `onClick` beside `href` (the router navigation outside the admin, as `Strip`'s link cells). `QuotaBanners` takes `Pick<ShopUsage, "ordersLimitedAt">`. Both pages read usage live through `useLiveRead` on `merchantUsageAtom` (seeded by `seedUsage`); the orders index's loader answers `{ data, usage }` and `OrdersIndexPage` grew a `usage` prop (browser tests pass `NO_USAGE`, `test/browser/usage.ts`). The home loader throws `redirect({ href })` when `homePlan` answers `Unsubscribed`. **Your plan** sits after the Orders strip and before the existing shop links section. Browser test titles are new (legacy had none for these parts); the two e2e titles are legacy's.
 
+- **2026-10-18, Step 7:** `ManagePlanButton` takes `prepare` (the route passes `prepareManagePlan`) and an `open` hook (default `window.open(url, "_top")`), so the browser tests drive it without a server function or a navigation. `SubscriptionPlan.expectChange` gained a closing Info log (`…: plan deadline shortened`), the line the abandonment check reads; legacy logged nothing there.
+
 ### Issues
 
 - **2026-10-18, Step 0: `activeSubscription` answers null for both stores. `WAITING: Partner API`.** Spike (a scratch script outside the repo, deleted after; the token and the app secret read into the environment, never printed) for Baton Dev (org `2798461`, app `417214922753`, handle `baton-local`):
@@ -390,6 +392,9 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - **2026-10-18, Step 5, after `.env` was fixed:** `vp run test:e2e -- --project install` ran the whole suite (the flag did not narrow it): 70 passed, 5.3 min. Every embedded spec passes on the subscribed e2e store (Baton Basic, in a trial).
 
 - **2026-10-18, Step 6:** `vp check` green (360 files); `vp test` 1067 passed, 81 files, 55 s (+3 browser: `MeterTile` ×2, `QuotaBanners`; the kit test counts the two meter tiles). First run: the kit test's `s-clickable[href]` count (7) failed on the new tiles; updated. `vp run test:e2e test/e2e/embedded/home.spec.ts test/e2e/embedded/members.spec.ts`: 9 passed (setup projects included), 1.3 min.
+
+- **2026-10-18, Step 7, check first:** on the dev server, the dev store opened through `/app?plan_handle=baton-basic` (the billing redirect's form) re-read the plan, which also cleared the dev stage's stale "no subscription" cache: `ShopSession` now `baton-basic`, boundary the trial's end. Manage plan answered in 629 ms and opened Shopify's pricing page in the top frame (Basic "Current", "1 trial day remaining"); the plan deadline moved to the press + 15 min (883 s ahead when read). Abandoned call: a headless Chrome closed 16 ms after the server function's POST went out, and the Backend still logged `SubscriptionPlan.expectChange: shop=mw10013-dev-shop-00.myshopify.com: plan deadline shortened` 35 ms later, after the flush. Locally the call survives the browser leaving, so no `waitUntil`. Staging unverified.
+- **2026-10-18, Step 7:** `vp check` green (362 files); `vp test` 1070 passed, 82 files, 52 s (+3 browser `ManagePlanButton`).
 
 ### Human steps requested
 

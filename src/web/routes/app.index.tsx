@@ -21,6 +21,7 @@ import {
 } from "../client/shop-actor-client.ts";
 import { useLiveRead } from "../components/live-read.ts";
 import { LocalDateTime } from "../components/LocalDateTime.tsx";
+import { ManagePlanButton } from "../components/ManagePlanButton.tsx";
 import { QuotaBanners } from "../components/QuotaBanners.tsx";
 import { Inline } from "../components/screen/Inline.tsx";
 import { MeterTile } from "../components/screen/MeterTile.tsx";
@@ -30,7 +31,7 @@ import { useNavigateOnClick } from "../components/navigate.ts";
 import { Lines } from "../components/screen/Lines.tsx";
 import { SetupGuide, type SetupGuideStep } from "../components/screen/SetupGuide.tsx";
 import { Strip } from "../components/screen/Strip.tsx";
-import { homePlan, setupFacts } from "../server/home.ts";
+import { homePlan, prepareManagePlan, setupFacts } from "../server/home.ts";
 import { listOrders } from "../server/orders.ts";
 import { appHref, appSearch } from "./-app-search.ts";
 
@@ -213,7 +214,7 @@ export const Route = createFileRoute("/app/")({
     return { facts, orders, plan };
   },
   component: function AppHome() {
-    const { shop } = Route.useRouteContext();
+    const { shop, managePlanUrl } = Route.useRouteContext();
     const { facts, orders, plan } = Route.useLoaderData();
     const searchStr = useLocation({ select: (location) => location.searchStr });
     const navigate = useNavigateOnClick();
@@ -240,7 +241,12 @@ export const Route = createFileRoute("/app/")({
         <s-section heading="Orders">
           <OrdersStrip orders={orders} />
         </s-section>
-        <YourPlan plan={plan} usage={usage} link={link} />
+        <YourPlan
+          plan={plan}
+          usage={usage}
+          link={link}
+          managePlan={<ManagePlanButton url={managePlanUrl} prepare={() => prepareManagePlan()} />}
+        />
         <s-section heading={shop}>
           <Lines>
             <s-link {...navigate(appHref("/app/orders", searchStr))}>Orders</s-link>

@@ -29,3 +29,16 @@ export const homePlan = createServerFn({ method: "GET" })
   .handler(({ context: { sessionToken, rescueToken } }) =>
     backend().homePlan(requestInfo(), { sessionToken }).catch(rescueToken),
   );
+
+/**
+ * Tells the Backend the merchant is about to change their plan (`BackendApi.expectPlanChange`):
+ * the plan's cache deadline pulled to minutes, then the usage queue sent. The plan selection page
+ * lives on `admin.shopify.com`, outside the app's iframe, so the click is a one-way trip: the
+ * return leg carries `plan_handle` and forces a revalidation, but it is a redirect that can be
+ * lost, and the only other signal is the 24-hour cache. POST: it writes.
+ */
+export const prepareManagePlan = createServerFn({ method: "POST" })
+  .middleware([embeddedSessionToken])
+  .handler(({ context: { sessionToken, rescueToken } }) =>
+    backend().expectPlanChange(requestInfo(), { sessionToken }).catch(rescueToken),
+  );
