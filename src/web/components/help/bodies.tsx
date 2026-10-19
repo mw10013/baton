@@ -9,6 +9,9 @@ import { FixingIssues } from "./orders/fixing-issues.tsx";
 import { OrderPage } from "./orders/order-page.tsx";
 import { OrdersList } from "./orders/orders-list.tsx";
 import { Syncing } from "./orders/syncing.tsx";
+import { AddingAMember } from "./teams-and-members/adding-a-member.tsx";
+import { CreatingATeam } from "./teams-and-members/creating-a-team.tsx";
+import { RemovingAndDeleting } from "./teams-and-members/removing-and-deleting.tsx";
 import { Creating } from "./workflows/creating.tsx";
 import { Editing } from "./workflows/editing.tsx";
 import { Managing } from "./workflows/managing.tsx";
@@ -39,4 +42,7 @@ export const HELP_BODIES: Readonly<Record<string, () => JSX.Element>> = {
   "workflows/matching": Matching,
   "workflows/turning-on-and-off": TurningOnAndOff,
   "workflows/managing": Managing,
+  "teams-and-members/creating-a-team": CreatingATeam,
+  "teams-and-members/adding-a-member": AddingAMember,
+  "teams-and-members/removing-and-deleting": RemovingAndDeleting,
 };
