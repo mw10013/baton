@@ -1,5 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
-import { type ShopSession } from "../../../src/domain/platform.ts";
+import { ShopKey, type ShopSession, type ShopSessionUpsert } from "../../../src/domain/platform.ts";
+import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { SEED_SHOP, SEED_SHOP_GID } from "../../seed-shops.ts";
@@ -166,6 +167,169 @@ describe("ShopSessionRepository plan cache", () => {
         assert.strictEqual(session.accessToken, "shpat_a");
         assert.strictEqual(session.refreshToken, "shprt_a");
         assert.strictEqual(session.scope, "read_orders");
+      }),
+    ),
+  );
+});
+
+/**
+ * The admin console's redacted reads over the real SQL on an in-memory D1: legacy
+ * `repository.test.ts`'s six `getShopSessionRedactedPage` titles, unchanged, and one for
+ * `findRedacted`.
+ */
+describe("getRedactedPage", () => {
+  const shopKey = Schema.decodeUnknownSync(ShopKey);
+  const inD1 = <A, E>(body: Effect.Effect<A, E, ShopSessionRepository>) =>
+    Effect.gen(function* () {
+      const { raw } = yield* makeD1Test;
+      return yield* body.pipe(Effect.provide(ShopSessionRepository.layerWith(raw)));
+    });
+  const session = (shop: string, tokens: Partial<ShopSessionUpsert> = {}): ShopSessionUpsert => ({
+    shop: shopKey(shop),
+    shopGid: SEED_SHOP_GID,
+    shopActorId: shop,
+    scope: "read_orders",
+    accessTokenExpiresAt: 1_000,
+    accessToken: "shpat_x",
+    refreshToken: "shprt_x",
+    refreshTokenExpiresAt: 2_000,
+    ...tokens,
+  });
+  const seed = (shops: ReadonlyArray<string>) =>
+    Effect.gen(function* () {
+      const sessions = yield* ShopSessionRepository;
+      for (const shop of shops) yield* sessions.upsert(session(shop));
+      return sessions;
+    });
+
+  it.effect("forward first page reports the next cursor", () =>
+    inD1(
+      Effect.gen(function* () {
+        const sessions = yield* seed(["a.myshopify.com", "b.myshopify.com", "c.myshopify.com"]);
+        const page = yield* sessions.getRedactedPage({ limit: 2 });
+        assert.deepStrictEqual(
+          page.shopSessions.map((s) => s.shop),
+          ["a.myshopify.com", "b.myshopify.com"],
+        );
+        assert.isTrue(page.hasNextPage);
+        assert.isFalse(page.hasPreviousPage);
+        assert.strictEqual(page.startCursor, "a.myshopify.com");
+        assert.strictEqual(page.endCursor, "b.myshopify.com");
+      }),
+    ),
+  );
+
+  it.effect("forward page with an after cursor reaches the end", () =>
+    inD1(
+      Effect.gen(function* () {
+        const sessions = yield* seed(["a.myshopify.com", "b.myshopify.com", "c.myshopify.com"]);
+        const page = yield* sessions.getRedactedPage({
+          limit: 2,
+          after: shopKey("b.myshopify.com"),
+        });
+        assert.deepStrictEqual(
+          page.shopSessions.map((s) => s.shop),
+          ["c.myshopify.com"],
+        );
+        assert.isFalse(page.hasNextPage);
+        assert.isTrue(page.hasPreviousPage);
+      }),
+    ),
+  );
+
+  it.effect("forward page applies the filter (like)", () =>
+    inD1(
+      Effect.gen(function* () {
+        const sessions = yield* seed([
+          "alpha.myshopify.com",
+          "alphabeta.myshopify.com",
+          "beta.myshopify.com",
+        ]);
+        const page = yield* sessions.getRedactedPage({ limit: 10, filter: "alpha" });
+        assert.strictEqual(page.shopSessions.length, 2);
+        assert.isTrue(page.shopSessions.every((s) => s.shop.includes("alpha")));
+        assert.isFalse(page.hasNextPage);
+      }),
+    ),
+  );
+
+  it.effect("backward page reverses ordering and reports previous cursor", () =>
+    inD1(
+      Effect.gen(function* () {
+        const sessions = yield* seed([
+          "a.myshopify.com",
+          "b.myshopify.com",
+          "c.myshopify.com",
+          "d.myshopify.com",
+        ]);
+        const page = yield* sessions.getRedactedPage({
+          limit: 2,
+          before: shopKey("d.myshopify.com"),
+        });
+        assert.deepStrictEqual(
+          page.shopSessions.map((s) => s.shop),
+          ["b.myshopify.com", "c.myshopify.com"],
+        );
+        assert.isTrue(page.hasPreviousPage);
+        assert.isTrue(page.hasNextPage);
+      }),
+    ),
+  );
+
+  it.effect("backward page applies the filter (like)", () =>
+    inD1(
+      Effect.gen(function* () {
+        const sessions = yield* seed([
+          "alpha1.myshopify.com",
+          "alpha2.myshopify.com",
+          "beta.myshopify.com",
+        ]);
+        const page = yield* sessions.getRedactedPage({
+          limit: 10,
+          before: shopKey("zzz.myshopify.com"),
+          filter: "alpha",
+        });
+        assert.deepStrictEqual(
+          page.shopSessions.map((s) => s.shop),
+          ["alpha1.myshopify.com", "alpha2.myshopify.com"],
+        );
+      }),
+    ),
+  );
+
+  it.effect("projects hasAccessToken / hasRefreshToken from null checks", () =>
+    inD1(
+      Effect.gen(function* () {
+        const sessions = yield* ShopSessionRepository;
+        yield* sessions.upsert(session("has.myshopify.com", { refreshToken: null }));
+        yield* sessions.upsert(session("none.myshopify.com", { accessToken: null }));
+        const page = yield* sessions.getRedactedPage({ limit: 10 });
+        assert.deepStrictEqual(
+          page.shopSessions.map(({ shop, hasAccessToken, hasRefreshToken }) => ({
+            shop,
+            hasAccessToken,
+            hasRefreshToken,
+          })),
+          [
+            { shop: "has.myshopify.com", hasAccessToken: true, hasRefreshToken: false },
+            { shop: "none.myshopify.com", hasAccessToken: false, hasRefreshToken: true },
+          ],
+        );
+      }),
+    ),
+  );
+
+  it.effect("findRedacted answers a row with neither token", () =>
+    inD1(
+      Effect.gen(function* () {
+        const sessions = yield* seed(["a.myshopify.com"]);
+        const found = Option.getOrThrow(yield* sessions.findRedacted(shopKey("a.myshopify.com")));
+        assert.isTrue(found.hasAccessToken);
+        assert.isTrue(found.hasRefreshToken);
+        assert.notProperty(found, "accessToken");
+        assert.notProperty(found, "refreshToken");
+        assert.notProperty(found, "refreshLeaseUntil");
+        assert.isTrue(Option.isNone(yield* sessions.findRedacted(shopKey("b.myshopify.com"))));
       }),
     ),
   );

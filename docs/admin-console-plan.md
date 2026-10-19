@@ -172,6 +172,7 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - **2026-10-19, Step 1:** also deleted `User` and `SessionContext` (imported by nothing, and built on `UserId`, `UserRole` and `AuthSession`, which the step deletes). `UserRole`'s rule (only `user` and `admin`, Better Auth's admin-plugin defaults, mirrored by the `UserRole` lookup table; per-shop access is a `Member` row) moved onto `userIsAdmin`, the symbol that enforces it. The header names' and the other deleted exports' rules are legacy's (the gate header, `Notice`, Effect RPC's pings replaced them); nothing carried over.
 - **2026-10-19, Step 1:** `CONNECTION_CLOSE_FORBIDDEN`, `CONNECTION_CLOSE_REVOKED`, `CONNECTION_CLOSE_DISPLACED` and `ConnectionRole` stay in `platform.ts` (the lead's note 2). `ConnectionRole` is imported (`shop-work.ts`, two components); the three close codes are imported by nothing (every caller takes the contract's copies), so they are duplicates left for a later sweep.
 - **2026-10-19, Step 1:** `shopGid` as `ShopGid` made `SubscriptionPlan`'s own `decodeShopGid` redundant; it is gone. The unit tests' rows take `SEED_SHOP_GID` (new, `test/seed-shops.ts`) or decode a `ShopGid`. Importers of `ShopKey` from inside `src/contract/` (`./shop.ts`) moved to the domain too.
+- **2026-10-19, Step 2:** `AdminShopPlanCache` (domain billing) became a schema, its type derived, so `AdminShopData` in the contract names the domain's one definition instead of copying the union. `shopSessionsPage` answers `{ page, now }` (`ShopSessionsPageData`); the page size is `SHOP_SESSIONS_PAGE_SIZE` (25) in the contract. `ShopSessionsPageRequest`'s cursors decode as `ShopKey` (the cursor is a shop) and `filter` as a non-empty string (the route trims). `refreshPlan` logs `refreshPlan: shop=<shop>: <message>` at warning before answering `PlanRefreshFailed`. `TestBackend` (api.test.ts) grew a `sessions` option, so a test can seed a row with a known plan handle (the seed row's `planHandle` is `"basic"`, which reads as Unrecognized).
 
 ### Issues
 
@@ -187,6 +188,7 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
   - Objects (through `cf`, limit 100): **1**; `name` absent on it (see Issues); `hasStoredData` seen: `true`.
   - Cursor field: not observed (one page, and `cf` prints only `result`); distilled's pager follows `resultInfo.cursors.after`; its `ResultInfo` decodes `cursor` too. Unsettled until the token works.
 - **2026-10-19, Step 1:** `vp check --fix` clean (373 files). `vp test test/unit`: 52 files, 828 tests passed, 12.3 s.
+- **2026-10-19, Step 2:** `vp check --fix` clean (374 files). `vp test test/unit/backend/shop-session-repository.test.ts`: 15 passed, 2.2 s. `vp test test/unit/backend/api.test.ts`: 37 passed, 2.2 s.
 
 ### Human steps requested
 

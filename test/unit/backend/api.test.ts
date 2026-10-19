@@ -15,6 +15,8 @@ import {
   type RequestInfo,
 } from "../../../src/contract/auth.ts";
 import { type ShopKey, type ShopSession } from "../../../src/domain/platform.ts";
+import type { PlanStatus } from "../../../src/domain/billing.ts";
+import { PlanRefreshFailed } from "../../../src/contract/admin.ts";
 import { OTHER_SHOP, SEED_SHOP, SEED_SHOP_GID } from "../../seed-shops.ts";
 import type { ConnectionCaller, MemberCaller } from "../../../src/contract/shop-actor.ts";
 import { ShopActors } from "../../../src/backend/shop-actors.ts";
@@ -94,6 +96,7 @@ const TestBackend = ({
   actors = ShopActors.layerTest([]),
   memberGate = Effect.die("no member gate in this test"),
   plan = testPlan(),
+  sessions = [seedSession],
 }: {
   delivery?: "inline" | "mailed";
   allow?: boolean;
@@ -106,6 +109,7 @@ const TestBackend = ({
     ShopAccessDenied
   >;
   plan?: Layer.Layer<SubscriptionPlan | ShopifyPartner>;
+  sessions?: ReadonlyArray<ShopSession>;
 } = {}) =>
   BackendApi.layer.pipe(
     Layer.provideMerge(
@@ -118,7 +122,7 @@ const TestBackend = ({
           SignInLimiter.layerTest(allow),
           plan,
           Layer.succeed(ShopAccess, { resolve: () => gate, resolveMember: () => memberGate }),
-          testShopify([seedSession]),
+          testShopify(sessions),
         ),
       }),
     ),
@@ -192,6 +196,127 @@ describe("BackendApi sessions", () => {
         [member],
       );
     }).pipe(Effect.provide(TestBackend())),
+  );
+});
+
+describe("BackendApi admin console", () => {
+  /** {@link ShopActors.layerTest} whose `getUsage` records each shop it reads. */
+  const usageActors = (read: Array<ShopKey>) =>
+    Layer.effect(
+      ShopActors,
+      Effect.gen(function* () {
+        const base = yield* ShopActors;
+        return {
+          ...base,
+          getUsage: (key: ShopKey) =>
+            Effect.sync(() => read.push(key)).pipe(Effect.andThen(base.getUsage(key))),
+        };
+      }),
+    ).pipe(Layer.provide(ShopActors.layerTest([])));
+
+  /** {@link testPlan} whose `refresh` records each shop and answers `refreshed`. */
+  const refreshingPlan = (
+    refreshed: Array<ShopKey>,
+    answer: Effect.Effect<PlanStatus, SubscriptionPlanError>,
+  ) =>
+    Layer.merge(
+      testPlan(),
+      Layer.succeed(SubscriptionPlan, {
+        resolve: () => Effect.die(new Error("not on this path")),
+        refresh: (shop) => Effect.sync(() => refreshed.push(shop)).pipe(Effect.andThen(answer)),
+        expectChange: () => Effect.void,
+      }),
+    );
+
+  it.live(
+    "shopSessionsPage, adminShop and refreshPlan are Forbidden to a user and Unauthorized signed out",
+    () =>
+      Effect.gen(function* () {
+        const api = yield* BackendApi;
+        const calls = (request: RequestInfo) =>
+          Effect.all([
+            api.shopSessionsPage(request, {}).pipe(Effect.flip),
+            api.adminShop(request, { shop: SEED_SHOP }).pipe(Effect.flip),
+            api.refreshPlan(request, { shop: SEED_SHOP }).pipe(Effect.flip),
+          ]);
+        const signedOut = yield* calls(withCookie(undefined));
+        assert.deepStrictEqual(
+          signedOut.map((error) => error._tag),
+          ["Unauthorized", "Unauthorized", "Unauthorized"],
+        );
+        const asMember = yield* calls(withCookie(yield* signIn(member)));
+        assert.deepStrictEqual(
+          asMember.map((error) => error._tag),
+          ["Forbidden", "Forbidden", "Forbidden"],
+        );
+      }).pipe(Effect.provide(TestBackend())),
+  );
+
+  it.live("adminShop answers NotFound for a shop with no row and never calls its actor", () => {
+    const read: Array<ShopKey> = [];
+    return Effect.gen(function* () {
+      const api = yield* BackendApi;
+      yield* seedAdmin;
+      const answer = yield* api.adminShop(withCookie(yield* signIn(admin)), { shop: OTHER_SHOP });
+      assert.deepStrictEqual(answer, { _tag: "NotFound" });
+      assert.deepStrictEqual(read, []);
+    }).pipe(Effect.provide(TestBackend({ actors: usageActors(read) })));
+  });
+
+  it.live("adminShop answers the cached plan, usage and member count", () => {
+    const read: Array<ShopKey> = [];
+    return Effect.gen(function* () {
+      const api = yield* BackendApi;
+      yield* seedAdmin;
+      const answer = yield* api.adminShop(withCookie(yield* signIn(admin)), { shop: SEED_SHOP });
+      assert.strictEqual(answer._tag, "Found");
+      if (answer._tag !== "Found") return;
+      assert.deepStrictEqual(answer.plan, {
+        _tag: "Subscribed",
+        handle: "baton-basic",
+        plan: "basic",
+      });
+      assert.deepStrictEqual(answer.entitlements, { ordersPerCycle: 200, membersIncluded: 3 });
+      assert.strictEqual(answer.memberCount, 1);
+      assert.strictEqual(answer.usage.pendingUsageEvents, 0);
+      assert.strictEqual(answer.shopSession.shopActorId, SEED_SHOP);
+      assert.isTrue(answer.shopSession.hasAccessToken);
+      assert.notProperty(answer.shopSession, "accessToken");
+      assert.deepStrictEqual(read, [SEED_SHOP]);
+    }).pipe(
+      Effect.provide(
+        TestBackend({
+          actors: usageActors(read),
+          sessions: [{ ...seedSession, planHandle: "baton-basic" }],
+        }),
+      ),
+    );
+  });
+
+  it.live(
+    "refreshPlan refreshes the shop's plan and answers PlanRefreshFailed when Shopify cannot be read",
+    () =>
+      Effect.gen(function* () {
+        const refreshed: Array<ShopKey> = [];
+        const asAdmin = (answer: Effect.Effect<PlanStatus, SubscriptionPlanError>) =>
+          Effect.gen(function* () {
+            const api = yield* BackendApi;
+            yield* seedAdmin;
+            return yield* api
+              .refreshPlan(withCookie(yield* signIn(admin)), { shop: SEED_SHOP })
+              .pipe(Effect.exit);
+          }).pipe(Effect.provide(TestBackend({ plan: refreshingPlan(refreshed, answer) })));
+        const ok = yield* asAdmin(Effect.succeed({ _tag: "Unsubscribed" }));
+        assert.isTrue(Exit.isSuccess(ok));
+        const failed = yield* asAdmin(
+          Effect.fail(new SubscriptionPlanError({ message: "Partner API down", cause: null })),
+        );
+        assert.deepStrictEqual(
+          Exit.isFailure(failed) ? Cause.squash(failed.cause) : undefined,
+          new PlanRefreshFailed({ message: "Partner API down" }),
+        );
+        assert.deepStrictEqual(refreshed, [SEED_SHOP, SEED_SHOP]);
+      }),
   );
 });
 

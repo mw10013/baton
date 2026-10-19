@@ -5,7 +5,13 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { ShopKey, ShopSession, type ShopSessionUpsert } from "../domain/platform.ts";
+import {
+  ShopKey,
+  ShopSession,
+  ShopSessionRedacted,
+  type ShopSessionRedactedPage,
+  type ShopSessionUpsert,
+} from "../domain/platform.ts";
 import { AuthDb } from "./resources.ts";
 
 /** The plan cache columns, which only {@link ShopSessionRepository}' plan methods write. */
@@ -22,6 +28,40 @@ const decodeWon = Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ shop: 
 
 /** Rows of the `ShopSession` table. A row that does not decode is a broken invariant, so it dies. */
 const decodeRows = Schema.decodeUnknownEffect(Schema.Array(ShopSession));
+
+/** Rows of the redacted reads, as {@link decodeRows}. */
+const decodeRedactedRows = Schema.decodeUnknownEffect(Schema.Array(ShopSessionRedacted));
+
+/** What {@link ShopSessionRepository}' `getRedactedPage` reads: a keyset page on `shop`, either way. */
+export interface RedactedPageInput {
+  readonly after?: ShopKey | undefined;
+  readonly before?: ShopKey | undefined;
+  readonly filter?: string | undefined;
+  readonly limit: number;
+}
+
+/**
+ * Cuts a read of `limit + 1` rows, in the read's own order, into {@link ShopSessionRedactedPage}:
+ * the extra row only says another page exists that way. A backward read (`before`) came newest
+ * first, so its page is reversed back into `shop` order.
+ */
+const redactedPage = (
+  fetched: ReadonlyArray<ShopSessionRedacted>,
+  { after, before, limit }: RedactedPageInput,
+): ShopSessionRedactedPage => {
+  const overflow = fetched.length > limit;
+  const shopSessions =
+    before === undefined ? fetched.slice(0, limit) : fetched.slice(0, limit).toReversed();
+  return {
+    shopSessions,
+    limit,
+    startCursor: shopSessions[0]?.shop ?? null,
+    endCursor: shopSessions.at(-1)?.shop ?? null,
+    hasPreviousPage:
+      before === undefined ? after !== undefined && shopSessions.length > 0 : overflow,
+    hasNextPage: before === undefined ? overflow : shopSessions.length > 0,
+  };
+};
 
 const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
   Effect.gen(function* () {
@@ -198,6 +238,62 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
       Effect.orDie,
     );
 
+    /**
+     * One shop session row with both tokens projected away in SQL.
+     *
+     * Deliberately not {@link find} with the fields dropped afterwards: the caller is the admin
+     * console, whose answer is serialized to the browser, and the only way a live access token
+     * cannot reach that payload is for it never to leave D1. Same projection as
+     * {@link getRedactedPage}.
+     */
+    const findRedacted = Effect.fn("ShopSessionRepository.findRedacted")(function* (shop: ShopKey) {
+      const [row] = yield* decodeRedactedRows(
+        yield* sql`
+          select shop, shopGid, shopActorId, scope, accessTokenExpiresAt, refreshTokenExpiresAt,
+            planHandle, planHandleExpiresAt, planBoundaryAt,
+            (accessToken is not null) as hasAccessToken,
+            (refreshToken is not null) as hasRefreshToken
+          from ShopSession
+          where shop = ${shop}
+        `,
+      );
+      return Option.fromUndefinedOr(row);
+    }, Effect.orDie);
+
+    /**
+     * The admin console's list of shops, a page at a time, both ways.
+     *
+     * The cursor and filter clauses are composed conditionally rather than null-guarded in SQL:
+     * a `(? is null or shop > ?)` disjunction defeats the primary-key seek and scans the index
+     * from the first row, so the cursor clause must be present only when a cursor is; that is
+     * what keeps a page at `limit + 1` rows read instead of every row before the cursor. The
+     * filter is a bound-parameter contains-`like`, so `%` and `_` typed into it act as
+     * wildcards, accepted for this internal admin search rather than paying for escaping.
+     */
+    const getRedactedPage = Effect.fn("ShopSessionRepository.getRedactedPage")(function* (
+      input: RedactedPageInput,
+    ) {
+      const cursor = input.before ?? input.after;
+      const compare = sql.literal(input.before === undefined ? ">" : "<");
+      const clauses = [
+        ...(cursor === undefined ? [] : [sql`shop ${compare} ${cursor}`]),
+        ...(input.filter ? [sql`shop like ${`%${input.filter}%`}`] : []),
+      ];
+      const fetched = yield* decodeRedactedRows(
+        yield* sql`
+          select shop, shopGid, shopActorId, scope, accessTokenExpiresAt, refreshTokenExpiresAt,
+            planHandle, planHandleExpiresAt, planBoundaryAt,
+            (accessToken is not null) as hasAccessToken,
+            (refreshToken is not null) as hasRefreshToken
+          from ShopSession
+          ${clauses.length > 0 ? sql`where ${sql.and(clauses)}` : sql``}
+          order by shop ${sql.literal(input.before === undefined ? "asc" : "desc")}
+          limit ${input.limit + 1}
+        `,
+      );
+      return redactedPage(fetched, input);
+    }, Effect.orDie);
+
     const remove = Effect.fn("ShopSessionRepository.remove")(function* (shop: ShopKey) {
       yield* sql`DELETE FROM ShopSession WHERE shop = ${shop}`;
     }, Effect.orDie);
@@ -214,9 +310,23 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
       updatePlan,
       shortenPlanExpiry,
       listShopsWithStalePlan,
+      findRedacted,
+      getRedactedPage,
       remove,
     };
   });
+
+/** A row as the redacted reads answer it, for {@link ShopSessionRepository.layerTest}. */
+const redact = ({
+  accessToken,
+  refreshToken,
+  refreshLeaseUntil: _lease,
+  ...row
+}: ShopSession): ShopSessionRedacted => ({
+  ...row,
+  hasAccessToken: accessToken !== null,
+  hasRefreshToken: refreshToken !== null,
+});
 
 /**
  * Baton's `ShopSession` repository: one offline Admin API session per installed shop, written by
@@ -326,6 +436,19 @@ export class ShopSessionRepository extends Context.Service<
               .map((row) => row.shop)
               .toSorted(),
           ),
+        findRedacted: (shop: ShopKey) =>
+          Effect.sync(() => Option.map(Option.fromUndefinedOr(rows.get(shop)), redact)),
+        getRedactedPage: (input: RedactedPageInput) =>
+          Effect.sync(() => {
+            const sorted = [...rows.values()]
+              .filter((row) => input.filter === undefined || row.shop.includes(input.filter))
+              .toSorted((a, b) => a.shop.localeCompare(b.shop));
+            const fetched =
+              input.before === undefined
+                ? sorted.filter((row) => input.after === undefined || row.shop > input.after)
+                : sorted.filter((row) => row.shop < input.before!).toReversed();
+            return redactedPage(fetched.slice(0, input.limit + 1).map(redact), input);
+          }),
         remove: (shop: ShopKey) =>
           Effect.sync(() => {
             rows.delete(shop);

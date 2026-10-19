@@ -392,16 +392,14 @@ export const seatEventValue = (memberCount: number, highWater: number) =>
  * `Schema.String` form to survive, so the admin page shows the stored string
  * rather than hiding it behind a decode failure.
  */
-export type AdminShopPlanCache =
-  | { readonly _tag: "NeverFetched" }
-  | { readonly _tag: "Unsubscribed" }
-  | {
-      readonly _tag: "Subscribed";
-      readonly handle: PlanHandle;
-      readonly plan: Plan;
-    }
-  | { readonly _tag: "Stale"; readonly handle: string | null }
-  | { readonly _tag: "Unrecognized"; readonly handle: string };
+export const AdminShopPlanCache = Schema.Union([
+  Schema.TaggedStruct("NeverFetched", {}),
+  Schema.TaggedStruct("Unsubscribed", {}),
+  Schema.TaggedStruct("Subscribed", { handle: PlanHandle, plan: Plan }),
+  Schema.TaggedStruct("Stale", { handle: Schema.NullOr(Schema.String) }),
+  Schema.TaggedStruct("Unrecognized", { handle: Schema.String }),
+]);
+export type AdminShopPlanCache = typeof AdminShopPlanCache.Type;
 
 export const adminShopPlanCache = (
   {

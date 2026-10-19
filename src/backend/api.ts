@@ -1,4 +1,5 @@
 import * as Cloudflare from "alchemy/Cloudflare";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -14,6 +15,14 @@ import {
   TooManyRequests,
   Unauthorized,
 } from "../contract/auth.ts";
+import {
+  AdminShopRequest,
+  PlanRefreshFailed,
+  SHOP_SESSIONS_PAGE_SIZE,
+  ShopSessionsPageRequest,
+  type AdminShopData,
+  type ShopSessionsPageData,
+} from "../contract/admin.ts";
 import { AdminAuthenticated, HomePlan, PaymentRequired, PlanRequest } from "../contract/billing.ts";
 import { AuthenticateAdminInput, NotAShopMember, ShopAccessInput } from "../contract/shop.ts";
 import { ShoutInput } from "../contract/playground.ts";
@@ -39,7 +48,8 @@ import {
   WorkflowDetailRequest,
   WorkflowsPageRequest,
 } from "../contract/workflows.ts";
-import { Email } from "../domain/platform.ts";
+import { adminShopEntitlements, adminShopPlanCache } from "../domain/billing.ts";
+import { Email, userIsAdmin } from "../domain/platform.ts";
 import { MemberId, type RunQuery, type SetupFacts, TeamId } from "../domain/shop-work.ts";
 import { ShopActors } from "./shop-actors.ts";
 import { Auth } from "./auth.ts";
@@ -110,6 +120,8 @@ const encodeAdminAuthenticated = Schema.encodeSync(AdminAuthenticated);
 const encodeHomePlan = Schema.encodeSync(HomePlan);
 const decodePlanRequest = Schema.decodeUnknownEffect(PlanRequest);
 const encodeMagicLinkRequested = Schema.encodeSync(MagicLinkRequested);
+const decodeShopSessionsPageRequest = Schema.decodeUnknownEffect(ShopSessionsPageRequest);
+const decodeAdminShopRequest = Schema.decodeUnknownEffect(AdminShopRequest);
 
 const make = Effect.gen(function* () {
   const authService = yield* Auth;
@@ -178,12 +190,105 @@ const make = Effect.gen(function* () {
     return (yield* session(request)).me;
   });
 
-  const listMembers = Effect.fn("BackendApi.listMembers")(function* (request: RequestInfo) {
+  /**
+   * The signed-in admin, or why not: `Unauthorized` signed out, `Forbidden` for anyone else. Every
+   * admin method starts here, so none trusts the Website's own guard.
+   */
+  const requireAdmin = Effect.fn("BackendApi.requireAdmin")(function* (request: RequestInfo) {
     const { me } = yield* session(request);
-    return yield* Match.value(me.role).pipe(
-      Match.when("admin", () => members.list()),
-      Match.orElse(() => Effect.fail(new Forbidden())),
+    if (!userIsAdmin(me)) return yield* new Forbidden();
+    return me;
+  });
+
+  const listMembers = Effect.fn("BackendApi.listMembers")(function* (request: RequestInfo) {
+    yield* requireAdmin(request);
+    return yield* members.list();
+  });
+
+  /** The admin console's Shops list: one page of redacted `ShopSession` rows and the read's time. */
+  const shopSessionsPage = Effect.fn("BackendApi.shopSessionsPage")(function* (
+    request: RequestInfo,
+    payload: ShopSessionsPageRequest,
+  ) {
+    yield* requireAdmin(request);
+    const input = yield* decodeShopSessionsPageRequest(payload).pipe(Effect.orDie);
+    const page = yield* shopSessions.getRedactedPage({ ...input, limit: SHOP_SESSIONS_PAGE_SIZE });
+    const data: ShopSessionsPageData = { page, now: yield* Clock.currentTimeMillis };
+    return data;
+  });
+
+  /**
+   * The admin console's shop page in one call: the shop's redacted `ShopSession` row, the plan
+   * cached on it, the actor's usage and the D1 member count.
+   *
+   * The D1 read is not incidental: every ceiling shown derives from the plan, which only D1
+   * knows, and the actor deliberately stores no limits. It is the same join the App Home makes,
+   * one shop over.
+   *
+   * A missing row is the honest answer for an uninstalled shop, since uninstall deletes it, and
+   * it is answered *before* the usage read, so viewing an arbitrary path cannot create an empty
+   * actor (`getByName` creates the object it names).
+   *
+   * The plan is decoded from the row, never resolved: `SubscriptionPlan.resolve` calls the
+   * Partner API and rewrites D1 on a miss, which would make viewing the page mutate the shop it
+   * reports on. {@link refreshPlan} is how an admin asks for that, deliberately.
+   */
+  const adminShop = Effect.fn("BackendApi.adminShop")(function* (
+    request: RequestInfo,
+    payload: AdminShopRequest,
+  ) {
+    yield* requireAdmin(request);
+    const { shop } = yield* decodeAdminShopRequest(payload).pipe(Effect.orDie);
+    const shopSession = yield* shopSessions.findRedacted(shop);
+    if (Option.isNone(shopSession)) {
+      const notFound: AdminShopData = { _tag: "NotFound" };
+      return notFound;
+    }
+    const plan = adminShopPlanCache(shopSession.value, yield* Clock.currentTimeMillis);
+    const { usage, memberCount } = yield* Effect.all(
+      { usage: actors.getUsage(shop), memberCount: members.countMembers(shop) },
+      { concurrency: "unbounded" },
     );
+    const found: AdminShopData = {
+      _tag: "Found",
+      shopSession: shopSession.value,
+      plan,
+      entitlements: adminShopEntitlements(plan),
+      usage,
+      memberCount,
+    };
+    return found;
+  });
+
+  /**
+   * Refresh plan: one Partner API read that rewrites the shop's cached plan entry
+   * (`SubscriptionPlan.refresh`).
+   *
+   * A method of its own, reached only by the shop page's POST, never by a loader: it is the only
+   * write on the page, and it changes what the enforcement path decides for a live shop (a
+   * changed handle revokes every socket of the shop). It exists because a cache that disagrees
+   * with Shopify is otherwise uncorrectable before its deadline, the exact situation an admin is
+   * in when a merchant reports an upgrade or a payment that did not take effect.
+   *
+   * Both outcomes are success: no app subscription writes a null handle under a fresh deadline,
+   * the verified-absence state, not a failure. Only a read that failed is {@link PlanRefreshFailed}.
+   */
+  const refreshPlan = Effect.fn("BackendApi.refreshPlan")(function* (
+    request: RequestInfo,
+    payload: AdminShopRequest,
+  ) {
+    yield* requireAdmin(request);
+    const { shop } = yield* decodeAdminShopRequest(payload).pipe(Effect.orDie);
+    yield* plans
+      .refresh(shop)
+      .pipe(
+        Effect.catchTag("SubscriptionPlanError", ({ message }) =>
+          Effect.logWarning(`refreshPlan: shop=${shop}: ${message}`).pipe(
+            Effect.annotateLogs({ shop }),
+            Effect.andThen(Effect.fail(new PlanRefreshFailed({ message }))),
+          ),
+        ),
+      );
   });
 
   /**
@@ -551,6 +656,9 @@ const make = Effect.gen(function* () {
     requestMagicLink,
     me,
     listMembers,
+    shopSessionsPage,
+    adminShop,
+    refreshPlan,
     myShops,
     shopAccess,
     authenticateAdmin,
