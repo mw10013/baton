@@ -125,7 +125,7 @@ Legacy paths are relative to `refs/baton-legacy/`. Legacy is the spec for every 
 ### Step 5: e2e (research Q12)
 
 1. `test/e2e/http.spec.ts`, signed-out block: "an anonymous visitor is bounced from /admin to /sign-in", "an anonymous visitor is bounced from /admin/shops to /sign-in" (assert `location`).
-2. `test/e2e/admin.spec.ts`, admin storage state, read-only (no Refresh plan, no Destroy, no Sign out): "the dashboard names the consoles and links to each"; "shops lists installed shops, filters by domain, and drills into one" (filter by URL as legacy; the e2e shop is always installed, so no skip); "a shop with no stored session shows the No session banner"; "the Shop Agent Objects console renders its table and breadcrumb" and "the Orphan Shop Agent Objects console renders its table and breadcrumb", asserting the heading, the unavailable banner and the breadcrumb (the e2e stage has no inventory). Run this spec and `http.spec.ts` alone.
+2. `test/e2e/admin.spec.ts`, admin storage state, read-only (no Refresh plan, no Destroy, no Sign out): "the dashboard names the consoles and links to each"; "shops lists installed shops, filters by domain, and drills into one" (filter by URL as legacy; the e2e shop is always installed, so no skip); "a shop with no stored session shows the No session banner"; "the Shop actors console renders its table and breadcrumb" and "the Orphan shop actors console renders its table and breadcrumb" (legacy's titles, agent read as actor, as the research's Q13 says), asserting the heading, the unavailable banner and the breadcrumb (the e2e stage has no inventory). Run this spec and `http.spec.ts` alone.
 3. `test/e2e/embedded/plan.billing.spec.ts`'s second title: after the downgrade, a new context with `playwright/.auth/admin.json` opens `/admin/shop/<e2e shop>`, presses Refresh plan, and reads Cached plan containing `baton-basic` and Usage events pending `0` (legacy's `readAdminFields`, adjusted to this repo's parts). Rewrite its JSDoc. The billing project is headed and by hand: do not run it; record a Human step.
 
 ### Step 6: Close
@@ -158,6 +158,12 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - **Human steps requested** lists what only the lead or the user can do.
 
 ### Plan review
+
+**2026-10-19, lead:** Checked against the code: `platform.ts`'s dead exports, `ShopSessionRow`/`ShopSessionUpsert` in the repository, `StageConfigValues` and `shopifyPartnerBinding` in `stack.ts`, Alchemy's `namespaceId` output on the namespace, `ShopActors.destroy(key: ShopKey)` and `getUsage`. The steps hold. Changes and notes:
+
+1. Step 5.2's inventory titles said "Shop Agent Objects"; the research's Q13 reads agent as actor and the glossary forbids the legacy word. Renamed to "the Shop actors console …" and "the Orphan shop actors console …".
+2. Step 1.4 deletes only the `CONNECTION_*` **header** names; `CONNECTION_CLOSE_*` and `ConnectionRole` stay if referenced (check each with `rg -w`).
+3. `destroyOrphan`'s `name` decodes as `ShopKey` (what `ShopActors.destroy` takes). An inventory name that is not a shop domain cannot be destroyed by name; the orphan page lists it without Destroy, and §7 records it if Step 0 sees one.
 
 ### Deviations
 
