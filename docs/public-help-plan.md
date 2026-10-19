@@ -73,7 +73,7 @@ If `src/web/help/` does not fit the source layout (glossary "Source layout"), pu
 2. `index.tsx` and `HomePage`: legacy `routes/index.tsx`'s content and `head` title, keeping the `shop=` redirect and the session-aware actions (Dashboard and Sign out signed in, Sign in signed out; Sign in also as legacy's link). Links to `/help` and `/privacy` through the router.
 3. Delete the playground (§3 Deleted). `git grep -i "hello\|shout\|playground" -- src test scripts` finds nothing of it afterwards.
 4. `privacy.tsx`: legacy's text verbatim; "Last updated" the date this step lands; breadcrumb to `/`.
-5. Update `HomePage`'s browser test if one exists; add none otherwise (the e2e covers it in Step 6).
+5. Update `HomePage`'s browser test if one exists; add none otherwise (the e2e covers it in Step 7).
 
 ### Step 3: Help skeleton
 
@@ -81,6 +81,7 @@ If `src/web/help/` does not fit the source layout (glossary "Source layout"), pu
 2. `HelpList`, `HelpTable` (and `HelpPicture` in Step 6) into `screen/` with kit entries.
 3. The four help routes as legacy's, the not-found page included, links through the router.
 4. `test/unit/help.test.ts`: "every help page has a unique route and a title that is its heading", "a page body is registered only for a page the tree has" (lands with Step 4's registry).
+5. With Step 4's `reference.ts` and bodies: legacy `test/integration/help-reference.test.ts`'s "every label constant is on its reference page" and `help-limits.test.ts`'s "every limit a merchant plans around is on the Limits page" and "Plans and billing prints no plan number", as unit tests beside the others (the retired-words titles stay behind, Q10).
 
 ### Step 4: Bodies (research Q5)
 
@@ -135,6 +136,11 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - **Human steps requested** lists what only the lead or the user can do.
 
 ### Plan review
+
+- **2026-10-19, lead:** All §2 paths exist; the playground is referenced only from `src/` (`api.ts`, `HomePage`, `Playground`, `index.tsx`, `server/playground.ts`), nothing in `test/` or `scripts/`. The admin session export (`playwright/.auth/shopify-admin.json`) was written 2026-10-18 21:22, fresh until 2026-10-19 21:22; if Step 6 starts after that, the Keychain human step applies. Dev server up on 3900, store `mw10013-dev-shop-00`.
+- **2026-10-19, lead, fixed:** Step 2.5 named Step 6 for the e2e; it is Step 7.
+- **2026-10-19, lead, fixed:** legacy has two more help test files the plan missed: `help-reference.test.ts` (every label constant on its reference page) and `help-limits.test.ts` (limits on the Limits page, no plan number in Plans and billing). They are the drift guards for `reference.ts` and the Limits/Plans bodies; added as Step 3.5.
+- **2026-10-19, lead:** test paths mirror `src/` (glossary "Source layout"; `test/unit/web/` exists). Put the unit tests under `test/unit/web/…` mirroring wherever the help modules land; `test/unit/help.test.ts` in §3 is the name, not a mandate on the folder.
 
 ### Deviations
 
