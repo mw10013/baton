@@ -89,6 +89,8 @@ Legacy ran `workers: 1` because every spec reseeded the one dev store, and its s
 
 The member and admin specs then run in parallel; only the embedded ones are serial.
 
+**2026-10-19:** the embedded project now runs 4 workers (each file still serial in itself), and `refresh.spec` is its own `refresh` project, alone after every other project. It is the only spec that ages the session row.
+
 ### 2.4 Environments
 
 | Environment    | Shopify                              | Shops                                        | Sign-in                            | Arrange through                                                                                  |

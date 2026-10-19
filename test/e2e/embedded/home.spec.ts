@@ -11,8 +11,9 @@ import { gotoApp, openApp } from "./app.ts";
 /**
  * The App Home on the e2e store: the setup guide and the Orders strip. The store always has a team
  * with a member (`ops`), so the guide's first step is always done; the guide test adds an active
- * workflow of its own and asserts the first two steps' states, never the third's or the guide's
- * absence, since the specs share the store and any of them may give an item a workflow. The strip
+ * workflow of its own and asserts the first two steps' states, never the third's, since the specs
+ * share the store and any of them may give an item a workflow. That also completes the guide, which
+ * then leaves the page, so the test reads the guide's content only when the page shows it. The strip
  * tests read the strip's labels and where a cell leads, never its counts, which every spec moves.
  */
 test.describe.configure({ mode: "serial" });
@@ -57,7 +58,17 @@ test("the App Home guide marks a team with a member and an active workflow done"
   );
 
   const frame = await gotoApp(page);
+  // The loader renders the guide with the strip, and the guide is not live, so once the strip
+  // shows, a missing guide is a complete one.
+  await expect(frame.locator('s-section[heading="Orders"]')).toBeVisible();
   const guide = frame.locator('s-section[accessibilityLabel="Getting started"]');
+  if ((await guide.count()) === 0) {
+    test.info().annotations.push({
+      type: "guide",
+      description: "complete: another spec gave an item a workflow, so the page shows no guide",
+    });
+    return;
+  }
   await expect(guide.getByText("Getting started", { exact: true }).first()).toBeVisible();
   await expect(guide.getByText(/^[23] of 3 done$/u)).toBeVisible();
   await expect(guide.getByText("Create a team and add a member", { exact: true })).toBeVisible();

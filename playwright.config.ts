@@ -52,6 +52,13 @@ const embeddedUse = () => ({
   navigationTimeout: 30_000,
 });
 
+/** The timeouts and browser `embedded` and `refresh` share. */
+const embeddedProject = {
+  timeout: 60_000,
+  expect: { timeout: 10_000 },
+  use: embeddedUse(),
+};
+
 /**
  * Runs the e2e specs against the e2e server (`scripts/e2e-server.ts`): Shopify CLI on this
  * checkout's e2e store, serving the e2e stage on its own port. The server script destroys the
@@ -90,18 +97,28 @@ export default defineConfig({
     {
       name: "embedded",
       testMatch: "**/embedded/**/*.spec.ts",
-      testIgnore: "**/*.billing.spec.ts",
-      // Not `shopify-admin`: the install's load and this project's first load would exchange
-      // tokens on the one session row at once.
-      dependencies: ["install"],
+      testIgnore: ["**/*.billing.spec.ts", "**/refresh.spec.ts"],
+      // Behind `install`, not just `shopify-admin`: the install's load and a first load here would
+      // both exchange a token on the one session row. Also behind `setup`, which `chromium`
+      // depends on, so the two projects sit at one depth and Playwright runs them at once.
+      dependencies: ["install", "setup"],
       // Per-file serial mode and one admin boot per file; files must not share a worker's page.
       fullyParallel: false,
-      // One store row serves every embedded spec: a load in one file exchanges a token, which
-      // would break the refresh spec's steps mid-run if two files ran at once.
+      // Loads reuse the stored token, so files can run side by side; only `refresh` ages the
+      // session row, and it runs alone after this project. Each spec asserts on its own rows only,
+      // since the others (and `chromium`) write the same shop meanwhile.
+      workers: 4,
+      ...embeddedProject,
+    },
+    {
+      name: "refresh",
+      testMatch: "**/embedded/refresh.spec.ts",
+      // After `embedded` and so after `chromium` too (one depth deeper than both): it expires
+      // and invalidates the session row, and any load beside it would exchange a fresh token.
+      dependencies: ["embedded"],
+      fullyParallel: false,
       workers: 1,
-      timeout: 60_000,
-      expect: { timeout: 10_000 },
-      use: embeddedUse(),
+      ...embeddedProject,
     },
     // Shopify's pricing page challenges a headless browser, so the plan switch runs headed, by
     // hand and not in a loop: only `vp run test:e2e:billing` (which sets `E2E_BILLING`) defines

@@ -13,8 +13,8 @@ import { cancelTestOrder, createTestOrder, type TestOrder } from "./test-orders.
  * offers no such press. Each order's page is open in a tab of its own, so five presses can run at
  * once. A press that succeeds stores the order and toasts nothing, so a test waits for the button
  * to stop loading and for no error toast; since the session is ensured before the fetch, the
- * refresh has happened by then. The tests run in order and share one store row, so `workers: 1`
- * keeps the other embedded specs off it.
+ * refresh has happened by then. The tests run in order and age the one store row on purpose, so
+ * the spec is the `refresh` project, which runs alone after every other project.
  */
 test.describe.configure({ mode: "serial" });
 

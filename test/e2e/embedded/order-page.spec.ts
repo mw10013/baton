@@ -11,7 +11,7 @@ import {
   openOrders,
   own,
   ownBase,
-  showOpen,
+  searchOrders,
   stripCell,
 } from "./orders-screens.ts";
 
@@ -371,16 +371,17 @@ test("an item matching two workflows waits for the merchant to choose, then chan
     ],
   });
 
+  // The Issues filter holds it, and the row's Issues cell says what it is waiting on. Read under
+  // Issues, not Open: specs beside this one add open orders placed later, which push this one off
+  // Open's first page, and only a few of the run's orders have an issue.
   frame = await openOrders(page);
-  await showOpen(frame);
-  // The row's Issues cell says what it is waiting on, and the Issues filter holds it.
+  await stripCell(frame, "Issues").click();
+  await expect.poll(() => listContext(page).show).toBe("issues");
   await expect(
     frame
       .locator("s-table-row", { hasText: name })
       .getByText("Multiple workflows match", { exact: true }),
   ).toBeVisible();
-  await stripCell(frame, "Issues").click();
-  await expect.poll(() => listContext(page).show).toBe("issues");
   await expect(frame.getByRole("link", { name, exact: true })).toBeVisible();
 
   await frame.getByRole("link", { name, exact: true }).click();
@@ -446,15 +447,19 @@ test("an item matching two workflows waits for the merchant to choose, then chan
   await expect(item.getByText("Closed", { exact: true })).toHaveCount(0);
   await expect(manage).toBeVisible();
 
-  // And the order has left the issue: one live run, nothing left to choose.
+  // And the order has left the issue: one live run, nothing left to choose. Issues no longer
+  // lists it, and its own row, found by its number, says nothing of a match.
   frame = await openOrders(page);
-  await showOpen(frame);
+  await stripCell(frame, "Issues").click();
+  await expect.poll(() => listContext(page).show).toBe("issues");
+  await expect(frame.locator("s-table-row", { hasText: name })).toHaveCount(0);
+  await searchOrders(frame, String(n));
+  await expect(frame.locator("s-table-row", { hasText: name })).toBeVisible();
   await expect(
     frame
       .locator("s-table-row", { hasText: name })
       .getByText("Multiple workflows match", { exact: true }),
   ).toHaveCount(0);
-  await expect(frame.locator("s-table-row", { hasText: name })).toBeVisible();
 });
 
 /**

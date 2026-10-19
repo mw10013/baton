@@ -29,8 +29,9 @@ import { cancelTestOrder, createTestOrder, type TestOrder } from "./test-orders.
  * `RemoveOrder`, only Sync open orders can bring it back, and does; cancelled in Shopify, its row
  * follows. A real order has a custom line item and no product, so no workflow ever matches it: it
  * is No workflow, which the default Show (Making) leaves out, so those cases open the index with
- * `?show=all`. The order is open and recent until the cancel, so the open-orders sync's 30-day
- * query includes it.
+ * `?show=all`, and searched for the order's number, because specs running beside this one add
+ * fixture orders placed later, which would push it off the first page. The order is open and
+ * recent until the cancel, so the open-orders sync's 30-day query includes it.
  *
  * The rest are legacy `e2e/orders.spec.ts`'s index cases, titles unchanged, each over orders,
  * teams and workflows it adds with `AddToFixture` under names, tags and order numbers of its own;
@@ -56,7 +57,6 @@ let cancelled = false;
 
 test.beforeAll(async ({ browser }) => {
   ({ context, page } = await openApp(browser));
-  frame = await gotoApp(page, "app/orders?show=all");
 });
 
 test.afterAll(async () => {
@@ -72,6 +72,10 @@ const row = () => frame.locator("s-table-row", { hasText: order?.name ?? "(no or
 
 test("the orders screen shows an order Shopify sends by webhook", async () => {
   order = await createTestOrder();
+  frame = await gotoApp(
+    page,
+    `app/orders?show=all&q=${encodeURIComponent(order.name.replace(/^#/u, ""))}`,
+  );
   await expect(row()).toBeVisible({ timeout: 60_000 });
   await expect(row().getByText("Paid")).toBeVisible();
 });
