@@ -153,6 +153,7 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - **2026-10-19, Step 4, orders:** no prose correction: the orders index (counts, Show, Any team, columns Order to Shopify, Clear search), the order page (Choose workflow, Attach, Keep workflow, the change warning, the multi-match sentence, the Gone toast) and the webhook topics match. JSDoc: `actorLabel` gives the merchant "You" (legacy's JSDoc said Merchant; its prose already said You).
 - **2026-10-19, Step 4, workflows:** no correction: the workflows index (All, Active, Inactive, No steps, the fault badges), the editor (Add step, Add task, the Step or Task panel, Move earlier, Move later, Move to its own step, Join the previous step, Apply changes? and its sentence, More actions with Rename and Delete), Edit tag, Duplicate and the switch match.
 - **2026-10-19, Step 4, teams-and-members:** no correction: the teams and members indexes (No members, No teams), the team and member pages (Add members, Add to teams, Remove, Delete member, the Details aside, the empty lines), the deleted toasts and a deleted team's "No team" on a step match.
+- **2026-10-19, Step 4, members:** Signing in: the sign-in page's button is **Send link** here (legacy: Send sign-in link). JSDoc: the link's lifetime is `MAGIC_LINK_TTL_SECONDS` here. The rest matches (Check your email, 5 minutes, the email's Sign in link, Your stores, Subscription inactive, the Team select, Show n more of N, 25 a page, Block as a page action, From the order:).
 
 ### Issues
 

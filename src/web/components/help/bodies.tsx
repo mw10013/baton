@@ -4,6 +4,10 @@ import { FirstTeam } from "./getting-started/first-team.tsx";
 import { FirstWorkflow } from "./getting-started/first-workflow.tsx";
 import { HowBatonWorks } from "./getting-started/how-baton-works.tsx";
 import { Installing } from "./getting-started/installing.tsx";
+import { Blocking } from "./members/blocking.tsx";
+import { FindingYourWork } from "./members/finding-your-work.tsx";
+import { RecordingYourWork } from "./members/recording-your-work.tsx";
+import { SigningIn } from "./members/signing-in.tsx";
 import { AttachingAWorkflow } from "./orders/attaching-a-workflow.tsx";
 import { FixingIssues } from "./orders/fixing-issues.tsx";
 import { OrderPage } from "./orders/order-page.tsx";
@@ -45,4 +49,8 @@ export const HELP_BODIES: Readonly<Record<string, () => JSX.Element>> = {
   "teams-and-members/creating-a-team": CreatingATeam,
   "teams-and-members/adding-a-member": AddingAMember,
   "teams-and-members/removing-and-deleting": RemovingAndDeleting,
+  "members/signing-in": SigningIn,
+  "members/finding-your-work": FindingYourWork,
+  "members/recording-your-work": RecordingYourWork,
+  "members/blocking": Blocking,
 };

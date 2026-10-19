@@ -19,7 +19,7 @@ import { HelpLink } from "../HelpLink.tsx";
  * candidates, "This member is on every team." when none are left, and a
  * pointer to the Teams page when the shop has no team; the Teams table with
  * Remove per row; the Details aside), the member rows of `D1_TABLES`, `SignInPage` and
- * the sign-in callback (Send sign-in link; one shop opens its
+ * the sign-in callback (Send link; one shop opens its
  * Workflows list, more open Your stores), and the empty list in
  * `WorkflowsListPage` for a member with no team.
  * No number is named here: Limits has them.
