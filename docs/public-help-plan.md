@@ -154,6 +154,7 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - **2026-10-19, Step 4, workflows:** no correction: the workflows index (All, Active, Inactive, No steps, the fault badges), the editor (Add step, Add task, the Step or Task panel, Move earlier, Move later, Move to its own step, Join the previous step, Apply changes? and its sentence, More actions with Rename and Delete), Edit tag, Duplicate and the switch match.
 - **2026-10-19, Step 4, teams-and-members:** no correction: the teams and members indexes (No members, No teams), the team and member pages (Add members, Add to teams, Remove, Delete member, the Details aside, the empty lines), the deleted toasts and a deleted team's "No team" on a step match.
 - **2026-10-19, Step 4, members:** Signing in: the sign-in page's button is **Send link** here (legacy: Send sign-in link). JSDoc: the link's lifetime is `MAGIC_LINK_TTL_SECONDS` here. The rest matches (Check your email, 5 minutes, the email's Sign in link, Your stores, Subscription inactive, the Team select, Show n more of N, 25 a page, Block as a page action, From the order:).
+- **2026-10-19, Step 4, reference:** no prose correction (labels come from the constants; limits 50 members, 2,500 open orders, 200 workflows, 50 teams, 365 days). `HelpTable` wraps each cell's content in `.help-table-cell` (`white-space: normal`): Polaris 2.0 RC's `s-table-cell` draws `nowrap`, and the sentence columns ran off the card. Step 3.5's three tests are `test/unit/web/components/help/reference.test.ts`.
 
 ### Issues
 
@@ -164,6 +165,7 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - **2026-10-19, Step 1:** `vp run dev:stop` ok 1.5s; `vp run dev` ok, server answering 34.1s; `vp run browser open` ready.
 - **2026-10-19, Step 2:** `vp check --fix` clean (381 files); `/` and `/privacy` 200 on the dev server, landing looked at (Playwright CLI). No HomePage browser test exists; none added (Step 7's e2e covers it).
 - **2026-10-19, Step 3:** `vp check --fix` clean (391 files); `vp test test/unit/web/components/help` 2 passed, 244ms. `/help`, `/help/orders`, `/help/orders/order-page` 200; `/help/nope`, `/help/orders/nope` 404 with the help not-found page; a page looked at.
+- **2026-10-19, Step 4:** `vp check --fix` clean (423 files) after each section; every one of the 26 pages answers 200 on the dev server; `vp test test/unit/web/components/help` 5 passed, 630ms.
 
 ### Human steps requested
 

@@ -7,7 +7,8 @@ import type { ReactNode } from "react";
  * their column heading (`listSlot="labeled"`), which is how a four-column table stays readable at
  * 390px. No pagination, no loading state and no control in a cell: a reference table is read,
  * not worked. Rows carry no key of their own, so a row's first cell is its identity and must be
- * unique.
+ * unique. `s-table-cell` sets `nowrap` inside its shadow root, which a slotted text inherits, so a
+ * sentence in a cell ran off the card; `.help-table-cell` in `styles.css` lets it wrap.
  *
  * | part       | job                                  | component   | fixes                          | used on | never              |
  * | ---------- | ------------------------------------ | ----------- | ------------------------------ | ------- | ------------------ |
@@ -33,7 +34,9 @@ export function HelpTable({
         {rows.map((row, index) => (
           <s-table-row key={index}>
             {row.map((cell, at) => (
-              <s-table-cell key={at}>{cell}</s-table-cell>
+              <s-table-cell key={at}>
+                <span className="help-table-cell">{cell}</span>
+              </s-table-cell>
             ))}
           </s-table-row>
         ))}

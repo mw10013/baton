@@ -1,0 +1,204 @@
+import * as Struct from "effect/Struct";
+
+import { HelpTable } from "../../screen/HelpTable.tsx";
+import { Things } from "../../screen/Things.tsx";
+import * as Platform from "../../../../domain/platform.ts";
+import * as ShopWork from "../../../../domain/shop-work.ts";
+import {
+  ITEM_BADGE_ROWS,
+  ITEM_WORKFLOW_ROWS,
+  LIST_FILTER_ROWS,
+  ORDER_ISSUE_ROWS,
+  ORDER_POSITION_ROWS,
+  TASK_STATE_ROWS,
+  TEAM_MEMBER_BADGE_ROWS,
+  WORKFLOW_BADGE_ROWS,
+  WORKFLOW_FAULT_ROWS,
+  WORKFLOW_STATE_ROWS,
+} from "../reference.ts";
+import { STATE_LABEL, STATES } from "../../workflows-list-states.ts";
+import { HelpLink } from "../HelpLink.tsx";
+
+/** The item workflow badge's label: {@link ShopWork.RUN_UNSTARTED_LABEL} for `unstarted`, else {@link ShopWork.RUN_STATE_LABEL}. */
+const itemWorkflowLabel = (key: keyof typeof ITEM_WORKFLOW_ROWS) =>
+  key === "unstarted" ? ShopWork.RUN_UNSTARTED_LABEL : ShopWork.RUN_STATE_LABEL[key];
+
+/** The merchant's card lines for a closed workflow, in `ClosedReason` order: "A, B, C or D". */
+const closedReasons = (viewer: Platform.ConnectionRole) => {
+  const reasons = ShopWork.ClosedReason.literals.map((reason) =>
+    ShopWork.closedReasonText(reason, viewer),
+  );
+  return `${reasons.slice(0, -1).join(", ")} or ${reasons.at(-1) ?? ""}.`;
+};
+
+/**
+ * Badges (`reference/states-and-badges`), a reference page: one
+ * table per thing that has a state, in the order a merchant meets them, and
+ * the member's list filters last. Every first-column word is read from its
+ * label constant and every other cell, whose
+ * JSDoc names what each row set was checked against: the positions table
+ * and `orderPosition`, the table on `OrderIssue`, `RUN_STATE_LABEL`,
+ * `RUN_UNSTARTED_LABEL`, `ClosedReason`, `TASK_STATE_LABEL`,
+ * `WORKFLOW_STATE_LABEL`, `WORKFLOW_FAULT_LABEL`; `STRIP` and the Status, Payment and Issues
+ * columns in `OrdersIndexPage`; `runBadges`,
+ * `RUN_STATE_BADGE`, `NOT_STARTED_BADGE` and the Removed badge in
+ * `OrderPage`; `ClosedLine` and `closedReasonText`
+ * (the merchant reads Cancelled by you, a
+ * member Cancelled by the merchant, with Closed · in front); the member's
+ * workflow page in `MemberWorkflowPage` (a Done
+ * badge on a done workflow, the closed line, no Not started or Making);
+ * `RunSteps` (a waiting task has no badge); `stateBadges` in
+ * `WorkflowsIndexPage`; the Draft badge in
+ * `WorkflowPage` and the editor;
+ * `TeamFaultBanners` and `TeamLine`;
+ * the No members and No teams badges on the teams and members indexes; and
+ * `STATE_LABEL`.
+ *
+ * No colour column (the plan's decision 7): a cell names a colour only where
+ * another body already does ("a red banner"). The Paid and Unpaid payment
+ * badges are named in the positions section's paragraph, not a table: they
+ * are Shopify's payment fact, and Unpaid is already a row.
+ */
+export function StatesAndBadges() {
+  return (
+    <>
+      <s-section heading="An order's position">
+        <Things>
+          <s-paragraph>
+            Each order is in one position, shown as the badge in its Status column on the Orders
+            page. The <strong>Show</strong> menu lists each one, and the counts at the top of the
+            page cover No workflow, Not started, Making and Made.
+          </s-paragraph>
+          <HelpTable
+            columns={["Badge", "Where", "Meaning"]}
+            rows={ShopWork.OrderPosition.literals.map((position) => [
+              <strong key="label">{ShopWork.ORDER_POSITION_LABEL[position]}</strong>,
+              ORDER_POSITION_ROWS[position].where,
+              ORDER_POSITION_ROWS[position].meaning,
+            ])}
+          />
+          <s-paragraph>
+            The Payment column&apos;s <strong>Paid</strong> and <strong>Unpaid</strong> badges say
+            whether Shopify has the full payment, whatever the position.
+          </s-paragraph>
+        </Things>
+      </s-section>
+      <s-section heading="An order's issues">
+        <Things>
+          <s-paragraph>
+            An issue is an item on an open order that will not move until you act. Each one is a red
+            badge in the Issues column on the Orders page, and <strong>Issues</strong> at the top of
+            the page lists every order that has one. An order can have several. How to fix each is
+            in <HelpLink href="/help/orders/fixing-issues">Fixing an issue</HelpLink>.
+          </s-paragraph>
+          <HelpTable
+            columns={["Badge", "Meaning", "How to fix it"]}
+            rows={ShopWork.OrderIssue.literals.map((issue) => [
+              <strong key="label">{ShopWork.ORDER_ISSUE_LABEL[issue]}</strong>,
+              ORDER_ISSUE_ROWS[issue].meaning,
+              ORDER_ISSUE_ROWS[issue].clears,
+            ])}
+          />
+        </Things>
+      </s-section>
+      <s-section heading="An item's workflow">
+        <Things>
+          <s-paragraph>
+            On the order&apos;s page, the badges after an item&apos;s units say where its workflow
+            stands.
+          </s-paragraph>
+          <HelpTable
+            columns={["Badge", "Meaning"]}
+            rows={[
+              ...Struct.keys(ITEM_WORKFLOW_ROWS).map((key) => [
+                <strong key="label">{itemWorkflowLabel(key)}</strong>,
+                key === "closed"
+                  ? `${ITEM_WORKFLOW_ROWS[key].meaning} ${closedReasons("merchant")}`
+                  : ITEM_WORKFLOW_ROWS[key].meaning,
+              ]),
+              [
+                <strong key="label">{ITEM_BADGE_ROWS.removed.label}</strong>,
+                ITEM_BADGE_ROWS.removed.meaning,
+              ],
+            ]}
+          />
+          <s-paragraph>
+            A member&apos;s item page has no Not started or Making badge. It shows{" "}
+            <strong>{ShopWork.RUN_STATE_LABEL.done}</strong> on a done workflow, and a closed one
+            reads Closed and the reason in one line, such as &ldquo;Closed ·{" "}
+            {ShopWork.closedReasonText("merchant_cancelled", "member")}&rdquo;.
+          </s-paragraph>
+        </Things>
+      </s-section>
+      <s-section heading="A task">
+        <Things>
+          <s-paragraph>
+            Each task shows its badge under Manage on the order&apos;s page and on a member&apos;s
+            item page. A task in a later step has no badge until every earlier step is done.
+          </s-paragraph>
+          <HelpTable
+            columns={["Badge", "Meaning"]}
+            rows={Struct.keys(TASK_STATE_ROWS).map((state) => [
+              <strong key="label">{ShopWork.TASK_STATE_LABEL[state]}</strong>,
+              TASK_STATE_ROWS[state].meaning,
+            ])}
+          />
+        </Things>
+      </s-section>
+      <s-section heading="A workflow">
+        <Things>
+          <s-paragraph>
+            The Workflows page shows whether each workflow is Active or Inactive, and a second badge
+            when something stops it or is missing.
+          </s-paragraph>
+          <HelpTable
+            columns={["Badge", "Where", "Meaning"]}
+            rows={[
+              ...ShopWork.WorkflowState.literals.map((state) => [
+                <strong key="label">{ShopWork.WORKFLOW_STATE_LABEL[state]}</strong>,
+                WORKFLOW_STATE_ROWS[state].where,
+                WORKFLOW_STATE_ROWS[state].meaning,
+              ]),
+              ...ShopWork.WorkflowFault.literals.map((fault) => [
+                <strong key="label">{ShopWork.WORKFLOW_FAULT_LABEL[fault]}</strong>,
+                WORKFLOW_FAULT_ROWS[fault].where,
+                WORKFLOW_FAULT_ROWS[fault].meaning,
+              ]),
+              ...Object.values(WORKFLOW_BADGE_ROWS).map((row) => [
+                <strong key="label">{row.label}</strong>,
+                row.where,
+                row.meaning,
+              ]),
+            ]}
+          />
+        </Things>
+      </s-section>
+      <s-section heading="A team or a member">
+        <HelpTable
+          columns={["Badge", "Where", "Meaning"]}
+          rows={Object.values(TEAM_MEMBER_BADGE_ROWS).map((row) => [
+            <strong key="label">{row.label}</strong>,
+            row.where,
+            row.meaning,
+          ])}
+        />
+      </s-section>
+      <s-section heading="The Workflows list's filters">
+        <Things>
+          <s-paragraph>
+            A member&apos;s Workflows list holds the items whose current task is on one of their
+            teams. These are the filters at the top of the list, not badges: press one to list its
+            items.
+          </s-paragraph>
+          <HelpTable
+            columns={["Filter", "Holds"]}
+            rows={STATES.map((state) => [
+              <strong key="label">{STATE_LABEL[state]}</strong>,
+              LIST_FILTER_ROWS[state].holds,
+            ])}
+          />
+        </Things>
+      </s-section>
+    </>
+  );
+}

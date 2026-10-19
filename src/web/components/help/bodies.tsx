@@ -13,6 +13,10 @@ import { FixingIssues } from "./orders/fixing-issues.tsx";
 import { OrderPage } from "./orders/order-page.tsx";
 import { OrdersList } from "./orders/orders-list.tsx";
 import { Syncing } from "./orders/syncing.tsx";
+import { Limits } from "./reference/limits.tsx";
+import { PlansAndBilling } from "./reference/plans-and-billing.tsx";
+import { StatesAndBadges } from "./reference/states-and-badges.tsx";
+import { WhoCanDoWhat } from "./reference/who-can-do-what.tsx";
 import { AddingAMember } from "./teams-and-members/adding-a-member.tsx";
 import { CreatingATeam } from "./teams-and-members/creating-a-team.tsx";
 import { RemovingAndDeleting } from "./teams-and-members/removing-and-deleting.tsx";
@@ -53,4 +57,8 @@ export const HELP_BODIES: Readonly<Record<string, () => JSX.Element>> = {
   "members/finding-your-work": FindingYourWork,
   "members/recording-your-work": RecordingYourWork,
   "members/blocking": Blocking,
+  "reference/states-and-badges": StatesAndBadges,
+  "reference/who-can-do-what": WhoCanDoWhat,
+  "reference/limits": Limits,
+  "reference/plans-and-billing": PlansAndBilling,
 };

@@ -162,3 +162,9 @@
   display: block;
   flex-shrink: 0;
 }
+
+/* A help table's cell (`HelpTable`): `s-table-cell` draws its content `nowrap`, and a reference
+   table's cells are sentences. */
+.help-table-cell {
+  white-space: normal;
+}
