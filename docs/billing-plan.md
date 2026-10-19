@@ -491,3 +491,10 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 - Production's app and plans (roadmap Q18).
 - A backfill of orders that got runs before this slice (research Q16).
 - Legacy `rules-lint.test.ts`'s retired-word titles.
+
+### Follow-up round 1
+
+2026-10-18, the orchestrator, on the lead's "Needs a decision". Decided: 1 is the user's (staging steps, relayed); 3 accepted (legacy's trial rule; the outbox drain is checked on staging or after 2026-10-20); 4 keep legacy's title byte for byte, the outbox assertion owed to H; 5 leave as is; 6 checked on staging. Work for this round, on `main`, under §0's rules; each item ends green and committed; record results here:
+
+1. **The digits-only binding (item 2).** Find the root cause in Alchemy (read `refs/alchemy` and `node_modules/alchemy`: where a bound plain-text value is packed, how `alchemy dev`'s local runtime hands it to the Worker's env). If the fault is a small bug, patch it with `pnpm patch` per `docs/dependency-patches-runbook.md` (add it to the runbook's table with an upstream issue to file), and replace `shopifyPartnerBinding`'s raw-node workaround with plain `Config` reads. If it is not small, keep the workaround, and write the cause, the file and line, and the upstream issue text in the runbook's upstream list. Either way, say what real Cloudflare does with a digits-only `plain_text` binding (docs or source), since staging has not run it.
+2. **The flaky orders spec (item 7).** `embedded/orders.spec.ts` "the orders index keeps its filters and page across the order page" (received 5 rows, expected 25). Find the cause before touching any timeout: what produced 5 rows (another parallel spec's data on the shared e2e store, a fixture race, a stale atom). Fix the cause in the spec or the code. Run the embedded project at most three times; do not loop through a known failure.
