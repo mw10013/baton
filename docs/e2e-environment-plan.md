@@ -109,7 +109,7 @@ Read the research's §0, §1.3, §1.4, §3 and §5 first; this plan does not rep
 
 ### Step 2: Parallel embedded (research §4.4)
 
-1. **Audit, before raising workers.** Read every embedded spec for assertions on whole-shop state that another spec can move: the setup guide; seat, quota and capacity meters; the orders strip's counts; the orders index counts and pages; anything that counts or lists every row. Also check timing that assumed being alone: `orders.spec`'s webhook settle, `orders.spec`'s RemoveOrder/Sync window. Fix each so it asserts only on what it added, or on a shape rather than a count. Record each fix as a Deviation, one line each. A spec whose meaning cannot survive this is a `DECISION:` under Issues; keep it serial in the meantime (its own serial project after `embedded`, like `refresh`).
+1. **Audit, before raising workers.** Read every embedded spec for assertions on whole-shop state that another spec can move: the setup guide; seat, quota and capacity meters; the orders strip's counts; the orders index counts and pages; anything that counts or lists every row. The movers are the other embedded specs and, now that it overlaps `embedded`, every `chromium` spec on `E2E_SHOP` (members, teams, sign-ins); check both directions. Also check timing that assumed being alone: `orders.spec`'s webhook settle, `orders.spec`'s RemoveOrder/Sync window. Fix each so it asserts only on what it added, or on a shape rather than a count. Record each fix as a Deviation, one line each. A spec whose meaning cannot survive this is a `DECISION:` under Issues; keep it serial in the meantime (its own serial project after `embedded`, like `refresh`).
 2. Known fix: `home.spec`'s guide test must tolerate a guide that is already complete and so absent. It still checks the guide's content when the guide is shown. Its file JSDoc already states the intended rule ("never … the guide's absence"); make the test match it.
 3. `playwright.config.ts`:
    - `embedded`: `workers: 4`, `testIgnore` adds `**/refresh.spec.ts`.
@@ -163,11 +163,21 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 
 ### Plan review
 
+- **2026-10-19, reviewer:** §2's Playwright claims hold in 1.64.1: `createGlobalSetupTasks` runs `createPluginSetupTasks` (the `webServer`) before the `globalSetups`, and `createPhasesTask` phases by depth. With `embedded` also depending on `setup`, the depths are `shopify-admin` 0, `install` 1, `setup` 2, `chromium` and `embedded` 3, `refresh` 4; so `refresh` also waits for `chromium`, which is what "alone" needs. Step 1.1's check is a confirmation, not an open question.
+- **2026-10-19, reviewer (fixed in Step 2.1):** the audit read only embedded specs as movers, but Step 2.3 newly overlaps `chromium` with `embedded` on the same shop (`E2E_SHOP`; `chromium`'s members and shop specs add members and teams). A count or meter an embedded spec reads can move under a `chromium` spec, and the reverse. Step 2.1 now names `chromium`'s specs as movers too.
+- **2026-10-19, reviewer (note for Step 3.1):** `findServerPane` in `scripts/dev.ts` matches any herdr pane running this checkout's `shopify app dev` or `alchemy dev`, without the store; with an `e2e` tab beside `dev` it can find the e2e server's pane. The generalised pane lookup must be keyed by store as the process match is, so `dev:stop`/`dev:status` stay blind to the e2e server.
+
 ### Deviations
+
+- **2026-10-19, Step 1:** the shared lib is `scripts/lib/server.ts`. Step 1 moved `findTunnelUrl`, `answering`, `portListeners`, `pidsFrom` and `decodePid` (the last three because the first needs them and `dev.ts` keeps using them). `tunnelReady`'s single-shot form is `tunnelState` (`ready` / `not resolving` / `not answering`); it asks public DNS first too, so a status check never fills the system resolver's negative cache. `dev:status` prints `tunnel:  <url> (<state>)` and `--json` adds `tunnelState`; every other line is unchanged.
+- **2026-10-19, Step 1:** `TunnelError` carries `phase` and a `message` built by the pure `tunnelErrorMessage`, which is what the unit test checks; the 530 rule is `tunnelServes`.
 
 ### Issues
 
 ### Command results
+
+- **2026-10-19, before Step 1:** the dev server on main (CLI pid 40057) started Mon Oct 19 10:21:04 (`ps -o lstart=`); this is the uptime to compare at the end.
+- **2026-10-19, Step 1:** `vp check --fix` clean. `vp test test/unit/scripts/lib/server.test.ts`: 4 passed, 0.3 s. `vp run test:e2e test/e2e/embedded/app.spec.ts`: 5 passed, 52.9 s, on a per-run server. Step 1.1 confirmed: the `[WebServer]` start line comes before `e2e preflight: https://flush-llc-basename-heel.trycloudflare.com ready in 0.5s`, so `globalSetup` runs after the `webServer` is up. The preflight took 0.5 s (the `webServer` had already waited for localhost, and public DNS had the name).
 
 ### Human steps requested
 

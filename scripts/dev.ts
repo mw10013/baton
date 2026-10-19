@@ -71,6 +71,14 @@ import { fileURLToPath } from "node:url";
 import { runCommand } from "./lib/command.ts";
 import { applyFixture } from "./lib/fixture.ts";
 import * as Herdr from "./lib/herdr.ts";
+import {
+  answering,
+  decodePid,
+  findTunnelUrl,
+  pidsFrom,
+  portListeners,
+  tunnelState,
+} from "./lib/server.ts";
 import { checkoutKind, currentBranch, stage } from "./lib/worktree.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/u, "");
@@ -184,13 +192,6 @@ const waitUntil = <E, R>(
     Effect.map(Option.isSome),
   );
 
-const Pid = Schema.NumberFromString.check(Schema.isInt(), Schema.isGreaterThan(0));
-const decodePid = Schema.decodeUnknownResult(Pid);
-
-/** The pids in line-oriented command output; anything that is not a pid is skipped. */
-const pidsFrom = (output: string) =>
-  Array.filterMap(output.split("\n"), (line) => decodePid(line.trim()));
-
 const cwdOf = (pid: number) =>
   runCommand("lsof", ["-a", "-p", String(pid), "-d", "cwd", "-Fn"]).pipe(
     Effect.map((output) =>
@@ -227,12 +228,6 @@ const serverPids = Effect.all([
   serverProcess.pipe(Effect.flatMap(checkoutPids)),
 ]).pipe(Effect.map(([cli, alchemy]) => [...cli, ...alchemy]));
 
-const portListeners = (port: number) =>
-  runCommand("lsof", ["-t", `-iTCP:${String(port)}`, "-sTCP:LISTEN", "-nP"]).pipe(
-    Effect.map(pidsFrom),
-    Effect.orElseSucceed((): number[] => []),
-  );
-
 /**
  * `pids` and every process below them: Alchemy runs the Website's Vite and
  * the Backend's `workerd` as children, and the Backend listens on an
@@ -257,46 +252,6 @@ const withDescendants = (pids: readonly number[]) =>
       return [...found];
     }),
   );
-
-const AppUrlVariable = Schema.TemplateLiteralParser(["APP_URL=", Schema.String]).pipe(
-  Schema.decodeTo(
-    Schema.Tuple([
-      Schema.Literal("APP_URL="),
-      Schema.String.check(Schema.isPattern(/^https:\/\/\S+$/u)),
-    ]),
-  ),
-);
-const decodeAppUrlVariable = Schema.decodeUnknownOption(AppUrlVariable);
-
-/**
- * The tunnel the CLI opened, read from the environment it gave the server: whatever listens on the
- * port (Alchemy's proxy, a child of the CLI's web command) has `APP_URL` in its environment, and
- * `ps -E` shows another process's environment on macOS for the same user. The CLI's own output is
- * no source: in a terminal its status panel redraws over the line that printed it. None when the
- * server does not run under the CLI.
- */
-const findTunnelUrl = (port: number) =>
-  Effect.gen(function* () {
-    for (const pid of yield* portListeners(port)) {
-      const command = yield* runCommand("ps", ["-wwwE", "-p", String(pid), "-o", "command="]).pipe(
-        Effect.orElseSucceed(() => ""),
-      );
-      const url = Array.findFirst(command.split(/\s+/u), (word) =>
-        Option.map(decodeAppUrlVariable(word), ([, value]) => value),
-      );
-      if (Option.isSome(url)) return url;
-    }
-    return Option.none<string>();
-  });
-
-/** Any HTTP answer counts: the first request after a start waits on Vite's compile. */
-const answering = (port: number) =>
-  Effect.tryPromise(() =>
-    fetch(`http://localhost:${String(port)}/`, {
-      redirect: "manual",
-      signal: AbortSignal.timeout(10_000),
-    }),
-  ).pipe(Effect.option, Effect.map(Option.isSome));
 
 /** The herdr pane whose foreground process is this checkout's `shopify app dev` or `alchemy dev`. */
 const findServerPane = Effect.gen(function* () {
@@ -681,6 +636,7 @@ const statusCommand = Command.make(
         Effect.orElseSucceed(() => Option.none<string>()),
       );
       const { app, tunnel } = yield* appReport(port, store);
+      const tunnelSeen = tunnel === null ? null : yield* tunnelState(tunnel);
       const report = {
         healthy,
         server: describeServer(server),
@@ -693,6 +649,7 @@ const statusCommand = Command.make(
         store: Option.getOrNull(store),
         app,
         tunnel,
+        tunnelState: tunnelSeen,
       };
       yield* Console.log(
         json
@@ -704,7 +661,7 @@ const statusCommand = Command.make(
               `url:     ${report.url}`,
               `store:   ${report.store ?? "(SHOPIFY_DEV_STORE is not set in .env)"}`,
               `app:     ${app ?? "(unknown)"}`,
-              `tunnel:  ${tunnel ?? "(none)"}`,
+              `tunnel:  ${tunnel === null ? "(none)" : `${tunnel} (${tunnelSeen ?? "unknown"})`}`,
             ].join("\n"),
       );
       if (!healthy) yield* Effect.sync(() => (process.exitCode = 1));

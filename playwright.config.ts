@@ -64,6 +64,7 @@ const embeddedUse = () => ({
  */
 export default defineConfig({
   testDir: "test/e2e",
+  globalSetup: "./test/e2e/preflight.ts",
   outputDir: "playwright/test-results",
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
