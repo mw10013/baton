@@ -82,7 +82,7 @@ export const HELP_PICTURES = {
   recordingYourWork3: {
     file: "members/recording-your-work-3.png",
     kind: "member",
-    alt: "The same page after Done on the Engrave task. Engrave reads Done, with ana@example.com and the time, and an Undo button under its instructions. The next step's task, Oil and inspect on the Finishing team, now reads Ready.",
+    alt: "The same page after Done on the Engrave task. Engrave reads Done, with the Engraving team, ana@example.com and the time, and an Undo button under its instructions. Above it, Cut and sand also reads Done, by ben@example.com. The next step waits below.",
   },
   /** "Home sweet home", the walnut board ana@example.com started at Oil and inspect: the Block modal, a reason typed. */
   blocking1: {
@@ -100,91 +100,91 @@ export const HELP_PICTURES = {
   installing1: {
     file: "getting-started/installing-1.png",
     kind: "merchant",
-    aspectRatio: "1056/508",
-    alt: "Baton's home page. The Orders card counts No workflow, Not started, Making, Made and Issues, each a link to the Orders page. Below it, Your plan shows Orders this billing cycle and Members, each a number against what the plan includes with a bar under it, and the Manage plan button.",
+    aspectRatio: "1040/659",
+    alt: "Baton's home page, with Baton in the title bar. The Orders card counts No workflow, Not started, Making, Made and Issues. Below it, Your plan shows Orders this billing cycle and Members, each a number against what the plan includes with a bar under it, and Manage plan. The shop's card links to Orders, Teams and Members.",
   },
   /** #1206, the maple board "Grandma Rose" at Engrave, the second of three steps. Shape: page. */
   howBatonWorks1: {
     file: "getting-started/how-baton-works-1.png",
     kind: "merchant",
-    aspectRatio: "1056/374",
-    alt: "The order page for order 1206, with Sync from Shopify and View in Shopify in the title bar. Its one item, an engraved cutting board in maple with the engraving text Grandma Rose, carries a Making badge and reads Step 2 of 3, Engrave. Edit note and Manage sit under it. Order details shows it paid and unfulfilled.",
+    aspectRatio: "1040/377",
+    alt: "The order page for order 1206. Its one item, an engraved cutting board in maple with the engraving text Grandma Rose, carries a Making badge and reads Step 2 of 3, Engrave, since the time it was started. Edit note and Manage sit under it. Order details shows it paid and unfulfilled.",
   },
   /** The Create workflow modal with Name typed and the Tag typed over its filled value. Shape: modal. */
   firstWorkflow1: {
     file: "getting-started/first-workflow-1.png",
     kind: "merchant",
-    aspectRatio: "620/286",
+    aspectRatio: "620/287",
     alt: "The Create workflow window. The Name field holds Engraved pen and the Tag field holds engraved-pen, with the line under it saying to put this tag, in Shopify, on the products this workflow is for. At the foot are Cancel and the Create button, ready to press.",
   },
   /** The editor on the new workflow with the New step form filled. Shape: window. */
   firstWorkflow2: {
     file: "getting-started/first-workflow-2.png",
     kind: "merchant",
-    aspectRatio: "1212/466",
+    aspectRatio: "1264/471",
     alt: "The workflow editor for Engraved pen, a window of its own with a Draft badge and a greyed Turn on workflow button in its title bar. The New step form is filled: Name reads Engrave, Team is set to Engraving, and Instructions say to check the spelling before running the laser. Add step and Cancel sit under it.",
   },
   /** After Add step, the Turn on modal in the editor. Shape: editor modal. */
   firstWorkflow3: {
     file: "getting-started/first-workflow-3.png",
     kind: "merchant",
-    aspectRatio: "620/158",
+    aspectRatio: "620/159",
     alt: "The window that opens from Turn on workflow in the editor. Its heading asks whether to turn on Engraved pen, and its sentence says every open order with an item tagged engraved-pen starts this workflow on that item. At the foot are Cancel and the Turn on button.",
   },
   /** The team page right after Create team. Shape: page. */
   firstTeam1: {
     file: "getting-started/first-team-1.png",
     kind: "merchant",
-    aspectRatio: "1056/302",
+    aspectRatio: "1040/305",
     alt: "The page for the new team Assembly, with More actions and Add members in its title bar. The Members section says nobody is on this team yet, so its tasks wait until a member joins, with a second Add members button. The Details section shows zero members and when the team was created.",
   },
   /** The Add members modal: the search field and the seven fixture members. Shape: modal. */
   firstTeam2: {
     file: "getting-started/first-team-2.png",
     kind: "merchant",
-    aspectRatio: "620/386",
+    aspectRatio: "620/387",
     alt: "The Add members to Assembly window. A search field by email sits above a checkbox for every member, from ana@example.com to gus@example.com, none ticked yet. At the foot are Cancel and the Add button, greyed until an email is ticked.",
   },
   /** #1210, the maple board "Fresh bread", done: the banner with Fulfill in Shopify. Shape: page. */
   firstOrder1: {
     file: "getting-started/first-order-1.png",
     kind: "merchant",
-    aspectRatio: "1056/442",
-    alt: "The order page for order 1210. A banner with a green check says every item is done, with a Fulfill in Shopify link. The one item, an engraved cutting board in maple with the engraving text Fresh bread, carries a Done badge and reads Done, 3 steps. Order details shows it paid and unfulfilled.",
+    aspectRatio: "1040/445",
+    alt: "The order page for order 1210. A banner with a green check says every item is done. The one item, an engraved cutting board in maple with the engraving text Fresh bread, carries a Done badge and reads Done, 3 steps. Order details shows it paid and unfulfilled.",
   },
   /** The Workflows page with the fixture's eight workflows: Frame and glaze reads Inactive, Weekend engraving reads Active and Team has no members. Shape: page. */
   creating1: {
     file: "workflows/creating-1.png",
     kind: "merchant",
-    aspectRatio: "1056/518",
+    aspectRatio: "1040/521",
     alt: "The Workflows page with Create workflow in its title bar. All, Active and Inactive sit beside a search field by name. The table lists eight workflows with their Status, Tag, Steps and Updated. Every one reads Active but Frame and glaze, which reads Inactive, and Weekend engraving also reads Team has no members.",
   },
   /** The editor on Embroider and fold, which has a draft: Draft, More actions, Discard changes and Apply changes in the title bar, three steps on the canvas, nothing selected. Shape: window. */
   editing1: {
     file: "workflows/editing-1.png",
     kind: "merchant",
-    aspectRatio: "1212/680",
+    aspectRatio: "1264/685",
     alt: "The workflow editor for Embroider and fold, a window of its own with a Draft badge and More actions, Discard changes and Apply changes in its title bar. Three steps, in order: Embroider name and Sew in care label on Textiles, then Fold and wrap on Finishing, each with its instructions. Add step sits under them.",
   },
   /** The editor with Sew in care label selected: the Step panel beside the canvas, with Join the previous step since the task is alone in its step. Shape: window. */
   editing2: {
     file: "workflows/editing-2.png",
     kind: "merchant",
-    aspectRatio: "1212/714",
+    aspectRatio: "1264/719",
     alt: "The same editor with Sew in care label selected, its card shaded and Add task under it. The Step panel beside the canvas shows Name, Team set to Textiles and Instructions, then Move earlier, Move later and Join the previous step, and Delete and Save at its foot.",
   },
   /** The Apply changes modal in the editor of an active workflow. Shape: editor modal. */
   editing3: {
     file: "workflows/editing-3.png",
     kind: "merchant",
-    aspectRatio: "620/178",
+    aspectRatio: "620/179",
     alt: "The window that opens from Apply changes in the editor. Its heading is Apply changes?, and its sentence says the workflow is active, so the changes take effect now, and items already on it keep the tasks they started with. At the foot are Cancel and the Apply button.",
   },
   /** #1211, the Black gift set order that two workflows match: the sentence and the Workflow select, closed. Shape: page. */
   matching1: {
     file: "workflows/matching-1.png",
     kind: "merchant",
-    aspectRatio: "1056/292",
+    aspectRatio: "1040/295",
     alt: "The order page for order 1211. Its one item, a journal and pen gift set in black, has a sentence saying more than one workflow matches this item, so none was started. Under it the Workflow menu reads Choose workflow, with a greyed Attach button beside it. Order details shows it paid and unfulfilled.",
   },
   /** The Edit tag modal on Embroider and fold's page, the tag as it is. Shape: modal. */
@@ -205,7 +205,7 @@ export const HELP_PICTURES = {
   turningOnAndOff2: {
     file: "workflows/turning-on-and-off-2.png",
     kind: "merchant",
-    aspectRatio: "1056/632",
+    aspectRatio: "1040/636",
     alt: "The workflow page for Frame and glaze, with an Inactive badge beside its name and Edit, More actions and Turn on workflow in the title bar. The Tag card says it starts when an order contains a product tagged photo-frame, with Edit tag. Two steps follow: Cut mat on Woodshop, then Glaze and fit on Finishing.",
   },
   /** The Duplicate workflow modal on Cut, engrave and oil's page, the Name and the Tag as they fill. Shape: modal. */
@@ -226,119 +226,119 @@ export const HELP_PICTURES = {
   creatingATeam1: {
     file: "teams-and-members/creating-a-team-1.png",
     kind: "merchant",
-    aspectRatio: "1056/490",
+    aspectRatio: "1040/493",
     alt: "The Teams page with Create team in its title bar and a Search by name field. The table has the columns Team and Members and lists eight teams, from Engraving with 3 members to Woodshop with 2. Weekend crew has 0 members and a No members badge beside its name.",
   },
   /** Engraving's team page: ana, ben and carmen with Remove on each row, More actions and Add members in the title bar, the Details aside. Shape: page. */
   creatingATeam2: {
     file: "teams-and-members/creating-a-team-2.png",
     kind: "merchant",
-    aspectRatio: "1056/355",
+    aspectRatio: "1040/358",
     alt: "The page for the team Engraving, with More actions and Add members in its title bar. The Members table lists ana@example.com, ben@example.com and carmen@example.com, each with a Remove button at the end of its row. Beside it, Details shows Members 3 and the date the team was created.",
   },
   /** The Members page with the fixture's seven members by email and how many teams each is on. Shape: page. */
   addingAMember1: {
     file: "teams-and-members/adding-a-member-1.png",
     kind: "merchant",
-    aspectRatio: "1056/453",
+    aspectRatio: "1040/456",
     alt: "The Members page with Add member in its title bar and a Search by email field. The table has the columns Email and Teams and lists seven members, from ana@example.com to gus@example.com. Five are on 2 teams and two are on 1, so no row reads No teams.",
   },
   /** The Add member modal: the Email field empty, its line about signing in, Cancel and Add. Shape: modal. */
   addingAMember2: {
     file: "teams-and-members/adding-a-member-2.png",
     kind: "merchant",
-    aspectRatio: "620/214",
+    aspectRatio: "620/215",
     alt: "The Add member window. Its one field is Email, marked required and empty, and under it the line reads They sign in with this email. No Shopify account needed. At the foot are Cancel and the Add button.",
   },
   /** The Add to teams modal on ana@example.com's page: the Search by name field and the six teams she is not on, none ticked, Add greyed. Shape: modal. */
   addingAMember3: {
     file: "teams-and-members/adding-a-member-3.png",
     kind: "merchant",
-    aspectRatio: "620/358",
+    aspectRatio: "620/359",
     alt: "The Add to teams window on the page for ana@example.com. A Search by name field sits above a checkbox for each of the six teams she is not on: Jewelry, Leather, Packing, Textiles, Weekend crew and Woodshop, none ticked. At the foot are Cancel and the Add button, greyed.",
   },
   /** ana@example.com's member page: Engraving and Finishing with Remove on each row, Delete member and Add to teams in the title bar, the Details aside. Shape: page. */
   addingAMember4: {
     file: "teams-and-members/adding-a-member-4.png",
     kind: "merchant",
-    aspectRatio: "1056/310",
+    aspectRatio: "1040/313",
     alt: "The page for the member ana@example.com, with Delete member and Add to teams in its title bar. The Teams table lists Engraving and Finishing, each with a Remove button at the end of its row. Beside it, Details shows her email and the date she was added.",
   },
   /** The Delete member modal on ana@example.com's page: the sentence names the email. Shape: modal. */
   removingAndDeleting1: {
     file: "teams-and-members/removing-and-deleting-1.png",
     kind: "merchant",
-    aspectRatio: "620/158",
+    aspectRatio: "620/159",
     alt: "The window that opens from Delete member on the page for ana@example.com. Its heading asks Delete member?, and its sentence asks Delete ana@example.com? and says this can't be undone. At the foot are Cancel and a red Delete button.",
   },
   /** The Delete modal from More actions on Packing's page, its Delete enabled once the socket identified. Shape: modal. */
   removingAndDeleting2: {
     file: "teams-and-members/removing-and-deleting-2.png",
     kind: "merchant",
-    aspectRatio: "620/158",
+    aspectRatio: "620/159",
     alt: "The window that opens from Delete under More actions on the page for the team Packing. Its heading asks Delete Packing?, and its one sentence says this can't be undone. At the foot are Cancel and a red Delete button.",
   },
   /** The Orders page as it opens on the fixture: Making chosen, its 24 orders on one page, no pager. Shape: page. */
   ordersList1: {
     file: "orders/orders-list-1.png",
     kind: "merchant",
-    aspectRatio: "1056/1356",
-    alt: "The Orders page with Sync open orders in the title bar. Counts at the top cover No workflow, Not started, Making, Made and Issues, with Making chosen. Below sit the Show menu, the search field and the Team menu. Each row shows the order number, date placed, Paid and Making badges, any issue, the item count and a Shopify icon.",
+    aspectRatio: "1040/1171",
+    alt: "The Orders page with Sync open orders in the title bar. Counts at the top cover No workflow, Not started, Making, Made and Issues, with Making chosen. Below sit the Show menu, the search field and the Team menu. Each row shows the order number, date placed, Paid and Making badges, any issue such as Blocked, and the item count.",
   },
   /** Order #1235: a started walnut board with a note, a done journal, a wall clock not started, and the Order note and Order details asides. Shape: page. */
   orderPage1: {
     file: "orders/order-page-1.png",
     kind: "merchant",
-    aspectRatio: "1056/876",
-    alt: "The page for order 1235, with Sync from Shopify and View in Shopify in the title bar. Three item cards, each with properties, Edit note and Manage: a walnut cutting board reading Making, with its step and a note, a leather journal reading Done, and a wall clock reading Not started. Order note and Order details sit beside them.",
+    aspectRatio: "1040/883",
+    alt: "The page for order 1235. Three item cards, each with properties, Edit note and Manage: a walnut cutting board reading Making, with its step and a note, a leather journal reading Done, and a wall clock reading Not started. Order note and Order details sit beside them, and a line at the foot links to Reading an order.",
   },
   /** #1235 with Manage open on the walnut board: the workflow's three steps and the drawer's buttons. Shape: page. */
   orderPage2: {
     file: "orders/order-page-2.png",
     kind: "merchant",
-    aspectRatio: "1056/1365",
+    aspectRatio: "1040/1372",
     alt: "The same order page with Manage open under the walnut cutting board. The drawer is headed Cut, engrave and oil workflow and lists each step: Cut and sand Done by ben@example.com, Engrave Started by ana@example.com with Done, Put back and Assign team, and Oil and inspect waiting. At its foot are Block, Cancel workflow and Change workflow.",
   },
   /** Order #1218, a gift card no workflow matches: the Workflow select at rest. Shape: page. */
   attachingAWorkflow1: {
     file: "orders/attaching-a-workflow-1.png",
     kind: "merchant",
-    aspectRatio: "1056/266",
+    aspectRatio: "1040/269",
     alt: "The page for order 1218. Its one item, a $50 gift card, has no workflow and no badge. Under it the Workflow menu reads Choose workflow, with a greyed Attach button beside it until a workflow is chosen. Order details shows the date placed, a Paid badge and Unfulfilled.",
   },
   /** The Change workflow modal on #1206 (Grandma Rose) with Clock assembly chosen, the warning shown. Shape: modal. */
   attachingAWorkflow2: {
     file: "orders/attaching-a-workflow-2.png",
     kind: "merchant",
-    aspectRatio: "620/250",
+    aspectRatio: "620/251",
     alt: "The window that opens from Change workflow under Manage. Its heading asks Change workflow?, the Workflow menu reads Clock assembly, and the sentence under it says Cut, engrave and oil has 1 of 3 steps done and that work will not carry over. At the foot are Cancel and a red Change workflow button.",
   },
   /** The Cancel workflow modal on #1206. Shape: modal. */
   attachingAWorkflow3: {
     file: "orders/attaching-a-workflow-3.png",
     kind: "merchant",
-    aspectRatio: "620/204",
+    aspectRatio: "620/205",
     alt: "The window that opens from Cancel workflow under Manage. Its heading asks Cancel Cut, engrave and oil?, the line under it names the item, and the sentence says work on it stops, steps already done still show on the order, and another workflow can be attached afterwards. At the foot are Keep workflow and a red Cancel workflow button.",
   },
   /** The Orders page with Show set to Issues after Packing is deleted: eight Needs a team, two Blocked; Multiple workflows match is gone (the delete leaves Stamp and bind ineligible). Shape: page. */
   fixingIssues1: {
     file: "orders/fixing-issues-1.png",
     kind: "merchant",
-    aspectRatio: "1056/775",
-    alt: "The Orders page with Issues chosen at the top and in the Show menu. Each row's Issues column carries a red badge: Needs a team on the nine leather journal orders whose Pack task lost its team, and Blocked on two orders. The Status column still reads Making or Not started.",
+    aspectRatio: "1040/653",
+    alt: "The Orders page with Issues chosen at the top and in the Show menu. Each row's Issues column carries a red badge: Needs a team on the eight orders whose Pack task lost its team, and Blocked on two orders. The Status column still reads Making or Not started.",
   },
   /** Order #1209: the Blocked badge, and the banner with ana@example.com's reason and Unblock. Shape: page. */
   fixingIssues2: {
     file: "orders/fixing-issues-2.png",
     kind: "merchant",
-    aspectRatio: "1056/506",
+    aspectRatio: "1040/509",
     alt: "The page for order 1209. Its walnut cutting board carries a Making badge and a red Blocked badge. A red banner headed Blocked holds the reason, that the board has a crack along the grain and a new blank was asked for, then ana@example.com and when, and an Unblock button. The step line reads Step 2 of 3, Engrave.",
   },
   /** Order #1234 after Packing is deleted: the Pack task needs a team. Shape: page. */
   fixingIssues3: {
     file: "orders/fixing-issues-3.png",
     kind: "merchant",
-    aspectRatio: "1056/438",
+    aspectRatio: "1040/441",
     alt: "The page for order 1234. Its black leather journal carries a Making badge and reads Step 4 of 4, Pack. Under Edit note a line says Pack: assign a team, with an Assign team menu and a greyed Assign button until a team is chosen. There is no Needs a team badge on this page.",
   },
 } as const satisfies Readonly<Record<string, HelpPicture>>;

@@ -6,12 +6,6 @@ import {
 } from "../help/pictures.ts";
 
 /**
- * The pictures shot so far. Until the screenshot script has written a file, its placement renders
- * nothing rather than a broken image.
- */
-const SHOT: ReadonlySet<HelpPictureName> = new Set();
-
-/**
  * One picture in a help page, placed by its inventory name ({@link HELP_PICTURES}) and sized by
  * its kind, so no body picks a file or a width, and no body can place a picture the inventory
  * lacks.
@@ -35,7 +29,6 @@ const SHOT: ReadonlySet<HelpPictureName> = new Set();
  * | screenshot | one help picture, by name   | `HelpPicture` | width by kind; height reserved      | help    | a caption; a highlight |
  */
 export function HelpPicture({ name }: { readonly name: HelpPictureName }) {
-  if (!SHOT.has(name)) return null;
   const picture = HELP_PICTURES[name];
   const { inlineSize, aspectRatio } =
     picture.kind === "merchant"
