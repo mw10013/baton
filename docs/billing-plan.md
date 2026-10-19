@@ -304,6 +304,8 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 
 ### Deviations
 
+- **2026-10-18, Step 1:** the domain's JSDoc says "the Backend" for legacy's Worker and "the actor" for its Durable Object; the two tooling sentences (`scripts/rules-lint.ts`, `pnpm spec check`) and the `scripts/lib/cost.ts` and `README.md` paths are dropped (the cost sentence and "the operator's plans table" kept without a path). `PlanStatus`'s proration URL moved to `@see`. "the shop is at its order ceiling…" sits in `order-repository.test.ts` (`describe("openOrdersAtCeiling")`), beside the function.
+
 ### Issues
 
 - **2026-10-18, Step 0: `activeSubscription` answers null for both stores. `WAITING: Partner API`.** Spike (a scratch script outside the repo, deleted after; the token and the app secret read into the environment, never printed) for Baton Dev (org `2798461`, app `417214922753`, handle `baton-local`):
@@ -311,6 +313,11 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
   - The ids are right: `app(id: "gid://partners/App/417214922753")` answers `{ name: "Baton Dev", apiKey: "7c6cceb7…" }`, the `client_id` in `shopify.app.toml`. (The Partner API's own app GID is `gid://partners/App/…`; `activeSubscription(appId:)` takes `gid://shopify/App/…`, legacy's form, and did not complain.)
   - The stores are in that organization: Baton Dev's Partner `app.events` lists `RELATIONSHIP_INSTALLED` for `mw10013-dev-shop-00` (2026-10-15T21:45Z) and `mw10013-e2e-shop-00` (2026-10-15T22:26Z), and dev/e2e shops 01–03. It lists **no `SUBSCRIPTION_CHARGE_ACTIVATED` for any `mw10013-*` store**; the last activations are `sandbox-shop-01`'s (2026-10-08). So the cause is human step 3 not done (no plan picked on either store), not a second organization.
   - Stopped before Step 1, as the step says.
+
+- **2026-10-18, Step 0, re-check after the plans were picked.**
+  - `.env`'s `SHOPIFY_PARTNER_APP_ID` is **Baton Staging's** app id (the same value as `.env.staging`; `app(id:)` answers "Baton Staging", apiKey `54b4c701…`). For that id `activeSubscription` answers null for both stores and its `app.events` is empty. `SHOPIFY_PARTNER_ORG_ID` is `2798461`; `SHOPIFY_APP_HANDLE` is `baton-local`. See "Human steps requested".
+  - With Baton Dev's id (`417214922753`) both stores answer `{"items":[{"handle":"baton-basic"},{"handle":"production-orders"},{"handle":"members"}],"currentBillingCycle":null,"trialEndsAt":"2026-10-20T00:21:02Z"}` (dev-shop-00; e2e-shop-00 `…00:21:52Z`). Activated 2026-10-19T00:21Z (UTC). The shops sit in a trial, so there is no cycle: `revalidate` pushes no `setBillingCycle`, and the flush waits (legacy's rule, no change). The meters are separate `items`, so `matchPlanHandle`'s matching (not position) is needed.
+  - GID forms settled: `activeSubscription(appId:)` takes `gid://shopify/App/<id>` (legacy's form); `gid://partners/App/<id>` there answers `INVALID_GID … Use 'shopify' instead`. The Partner API's own `app(id:)` takes only `gid://partners/App/<id>`. Code keeps legacy's form.
 
 ### Command results
 
@@ -322,6 +329,10 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
   - Versions chosen: Partner API `2026-10`, App Events `2026-10`.
 - **2026-10-18, Step 0:** `WAITING: Partner API` (no commit for the spike; this §7 record committed alone). `CHECKPOINT: spike answered` is owed after a plan is picked on both stores and `activeSubscription` re-checked.
 
+- **2026-10-18, Step 0:** `CHECKPOINT: spike answered (no commit; recorded in §7)`. Partner API `2026-10` and App Events `2026-10`.
+
+- **2026-10-18, Step 1:** `vp check` green (342 files); `vp test` 981 passed, 75 files, 67 s (971 + 10: seat value, order ceiling, provisional cycle, expiry, `planOfHandle`, five `adminShopPlanCache` states).
+
 ### Human steps requested
 
 **2026-10-18, Step 0, still pending: step 3 below (a plan on each store).** `SHOPIFY_PARTNER_API_TOKEN` is in `.env` and works; steps 1 and 2 are answered by the spike (org `2798461`, app `417214922753` "Baton Dev", handle `baton-local`, the stores in that organization; the plans' existence is checked by the next spike, since `activeSubscription` cannot see a plan no store holds). Unblocks Step 0's re-check and Step 1 onward. For each of `mw10013-dev-shop-00` and `mw10013-e2e-shop-00`: signed in as the store owner, open `https://admin.shopify.com/store/<store>/charges/baton-local/pricing_plans`, choose `baton-pro` (or `baton-basic`), approve the $0 charge. If the page shows no plans, Baton Dev's plans are missing (step 2c): create `baton-basic` and `baton-pro` with the meters `production-orders` and `members` first. Reply with the plan picked on each store.
@@ -331,6 +342,10 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 1. **Partner API token.** Partner Dashboard → Settings → Partner API clients → Create API client, permission **Manage apps** (nothing else). Copy the token and add one line to the main checkout's `.env` (`/Users/mw/Documents/src/baton/.env`): `SHOPIFY_PARTNER_API_TOKEN=<token>`. Worktrees: `vp run worktree:init` _copies_ the main checkout's `.env` (rewriting `WEBSITE_PORT` and the store keys), so a worktree created afterwards gets it; an existing worktree (`wt-01`) needs the line added to its own `.env` by hand.
 2. **Partner ids.** In the Partner Dashboard confirm (a) the organization id (the number in `partners.shopify.com/<org id>/…`; legacy `2798461`), (b) Baton Dev's app id (the number in `…/apps/<app id>`; legacy `417214922753`) and its handle (Apps → Baton Dev → App setup → URL handle, or the `handle` in `shopify.app.toml`; legacy `baton-local`), and (c) under Baton Dev → Pricing (App Pricing / managed pricing) that plans with handles `baton-basic` and `baton-pro` exist, each with the two usage meters `production-orders` and `members`. Reply with the three values and "plans ok" or what differs. Also confirm the `mw10013-*` stores are development stores of **that** organization: `docs/shopify-stores-runbook.md` records them under the Dev Dashboard organization `mw10013` (id `130059740`), which is not legacy's Partner id `2798461`; if they are two organizations, say so (Step 0 then stops at `WAITING: Partner API`).
 3. **A plan on each store.** Signed in as the store owner, open `https://admin.shopify.com/store/mw10013-dev-shop-00/charges/<handle>/pricing_plans` and `https://admin.shopify.com/store/mw10013-e2e-shop-00/charges/<handle>/pricing_plans` (`<handle>` from 2), choose a plan on each (e.g. `baton-pro`), approve the $0 charge. Reply with the plan picked on each store.
+
+**2026-10-18, Step 0, answered.** Step 3: the user picked Baton Basic (`baton-basic`) on both `mw10013-dev-shop-00` and `mw10013-e2e-shop-00` (lead). Confirmed by the re-check (trial until 2026-10-20).
+
+**2026-10-18, Step 0, new (unblocks dev and e2e from Step 5 on; Steps 1–4 use fakes and go ahead).** In the main checkout's `.env` (`/Users/mw/Documents/src/baton/.env`), `SHOPIFY_PARTNER_APP_ID` holds Baton Staging's app id. Set it to Baton Dev's, `417214922753` (`partners.shopify.com/2798461/apps/417214922753`). `.env.staging` keeps Baton Staging's id. Also `.env.staging`'s `SHOPIFY_APP_HANDLE` is not `baton-local`: confirm it is Baton Staging's handle once Baton Staging has one (Step 10).
 
 ### Implementation review
 

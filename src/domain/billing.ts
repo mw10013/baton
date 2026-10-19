@@ -1,11 +1,444 @@
-import { ShopLimits } from "./platform.ts";
+/**
+ * Vocabulary, billing. What the shop pays for.
+ *
+ * Billing. Shopify's words, used as Shopify uses them: a plan is what the
+ * app defines in the Partner Dashboard, and an app subscription is one
+ * shop's purchase of it. "(none)" means no screen says the word:
+ *
+ * | word             | meaning                                                                         | symbol                                          | screen                         |
+ * | ---------------- | ------------------------------------------------------------------------------- | ----------------------------------------------- | ------------------------------ |
+ * | plan             | the App Pricing tier a shop buys                                                | `Plan`, `PlanHandle`                            | (none): the Manage plan button |
+ * | app subscription | one shop's purchase of a plan, as the Partner API reports it; one or none       | `AppSubscription`                               | (none)                         |
+ * | billing cycle    | one month of an app subscription; both meters start at zero                     | `ShopUsage` fields `cycleStartAt`, `cycleEndAt` | billing cycle                  |
+ * | trial            | the days before an app subscription's first billing cycle; nothing is billed    | `AppSubscription` field `cycleStartAt` null     | (none)                         |
+ * | meter            | a counter Shopify keeps per app subscription                                    | `USAGE_METER_ORDER`, `USAGE_METER_MEMBER`       | (none)                         |
+ * | counted order    | an order Baton created a run for; one unit, once                                | `ShopOrder` field `countedAt`                   | "Orders this billing cycle"    |
+ * | seat             | one unit of the members meter; a cycle's seats are its highest member count     | `ShopUsage` field `seatsThisCycle`              | (none): members                |
+ * | included         | a plan's $0.00 first tier on a meter: a paid allowance, not a "free tier"       | `Entitlements`                                  | included                       |
+ * | usage event      | one report of units to Shopify, queued until Shopify accepts it                 | `UsageEvent`                                    | (none)                         |
+ * | expired event    | a usage event dated before the current billing cycle; deleted at the next flush | `usageEventIsExpired`                           | (none)                         |
+ *
+ * "Billing cycle" is the word on screens and in code.
+ * "Provisional cycle", "high-water mark" and "boundary" are JSDoc terms on
+ * their own symbols ({@link provisionalCycleStart}, {@link seatEventValue},
+ * {@link AppSubscription}), not vocabulary words. The billing word is always
+ * "app subscription".
+ *
+ * @module
+ */
+import * as Match from "effect/Match";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+
+import { ShopGid, ShopLimits, type ShopSessionRedacted } from "./platform.ts";
+
+/**
+ * The plan handles Shopify may report for a shop's app subscription.
+ *
+ * Two handles, two tiers, and no private `-test` variants: a development store
+ * in the same Partner organization is granted every public plan at $0, which
+ * is the whole thing a store-restricted private plan would have bought.
+ *
+ * The allowlist is total and identical in every environment: a handle outside
+ * it means the catalog changed under us, which must resolve to no access rather
+ * than a guess.
+ *
+ * The literals are the plan handles configured in the Partner Dashboard for
+ * every environment's app, so renaming a plan there is a rename here.
+ */
+export const PlanHandle = Schema.Literals(["baton-basic", "baton-pro"]);
+export type PlanHandle = typeof PlanHandle.Type;
+
+export const Plan = Schema.Literals(["basic", "pro"]);
+export type Plan = typeof Plan.Type;
+
+/**
+ * Normalization, not entitlement. The mapping exists so nothing downstream has
+ * to learn Shopify's plan handles ({@link PlanHandle}); what each tier
+ * *grants* is {@link entitlementsOfPlan}.
+ */
+export const planOfHandle = (handle: PlanHandle): Plan =>
+  handle === "baton-pro" ? "pro" : "basic";
+
+/** What a plan includes: the $0.00 first tier of each meter. */
+export interface Entitlements {
+  /** Counted orders ({@link ShopUsage.ordersThisCycle}) included per billing cycle. Past this the usage meter bills; nothing refuses an order but {@link ShopLimits.maxOpenOrders}, which reads open orders, not this count. */
+  readonly ordersPerCycle: number;
+  /**
+   * Seats included; seats past this many are billed by the
+   * {@link USAGE_METER_MEMBER} meter, never refused. Nothing in the app
+   * compares the member count to this number except the home page's Members tile:
+   * the meter's $0.00 band absorbs the included seats, so the object sends the
+   * member count and Shopify prices it. The only refusal is
+   * {@link ShopLimits.maxMembers}, which is plan-independent.
+   */
+  readonly membersIncluded: number;
+}
+
+/**
+ * What each tier grants. The Backend owns this table and the actor never
+ * sees it, but the split is *compare here, count there*, not "pass the
+ * number in": `ordersPerCycle` is compared in the Backend against the
+ * {@link ShopUsage} row the actor keeps and reports, and `membersIncluded` is
+ * compared nowhere but the home page's Members tile; the member count reaches
+ * the actor as a number to send (`memberCount` on {@link BillingCycleInput}),
+ * not to compare.
+ * Neither entitlement reaches the actor, so it stores no plan state
+ * to fall out of sync, and an upgrade or downgrade lands on the very next page
+ * load with nothing to invalidate. The one plan-adjacent fact the
+ * actor does hold is the billing cycle (see {@link ShopUsage}), which is a
+ * date range, not an entitlement.
+ *
+ * `satisfies Record<Plan, Entitlements>` makes the lookup total by
+ * construction — a new `Plan` literal fails to compile here.
+ *
+ * Set 2026-10-08 against the field, not against cost. Route to Ship, the
+ * nearest competitor, publishes a ladder of $39 for 3 users and 250 orders,
+ * $99 for 10 and 1,000, and $249 for 30 and 5,000; Basic's 200 and Pro's 1,500
+ * included orders put Baton under it from 3 members and 200 orders to 25 and
+ * 2,500, at the same monthly charges. Infrastructure is cents an order and cents a seat at
+ * every size the app serves (the Cloudflare cost model puts a 25-member,
+ * 2,500-order shop at about $19 a month), so positioning sets these numbers
+ * and the meters' rates, not cost.
+ * A change moves the Partner Dashboard plan copy and the operator's plans
+ * table with it, in the same change.
+ *
+ * `ordersPerCycle` must equal tier 1 of the {@link USAGE_METER_ORDER} meter on
+ * that plan — the **included allowance**, the band priced at $0.00 —
+ * or the merchant is billed for an order the app calls included; the same
+ * holds for `membersIncluded` and tier 1 of {@link USAGE_METER_MEMBER}. It is not a
+ * "free tier": the allowance is what the app subscription already paid for.
+ * Nothing verifies the two agree; it is operator discipline, because the meter
+ * lives in the Partner Dashboard and the app cannot read its tiers.
+ *
+ * Raising a limit is always safe; lowering one is not, with no grandfathering:
+ * a cut applies to existing shops immediately. A cut to `membersIncluded`
+ * only moves the $0.00 band; nobody loses access.
+ */
+const ENTITLEMENTS = {
+  basic: { ordersPerCycle: 200, membersIncluded: 3 },
+  pro: { ordersPerCycle: 1500, membersIncluded: 10 },
+} as const satisfies Record<Plan, Entitlements>;
+
+export const entitlementsOfPlan = (plan: Plan): Entitlements => ENTITLEMENTS[plan];
+
+/**
+ * The widest tier, for callers that need a ceiling rather than a particular
+ * shop's grant — e.g. a local-only e2e fixture with no merchant and no plan to
+ * resolve.
+ */
+export const MAX_ENTITLEMENTS: Entitlements = ENTITLEMENTS.pro;
+
+/**
+ * The App Pricing usage meter handle for a counted order, identical on every
+ * plan. Case-sensitive; must match the Partner Dashboard exactly, because the
+ * App Events API answers `202` to a handle that matches no meter and the event
+ * is then silently non-billable (measured 2026-10-18 at `2026-10`: a
+ * `baton_spike` event for an installed shop answered `202 {"success":true}`).
+ * Each meter is one handle across tiers so the meter's own graduated tiers —
+ * not the event — decide what a unit costs.
+ */
+export const USAGE_METER_ORDER = "production-orders";
+
+/** The App Pricing usage meter handle for seats; same rules as {@link USAGE_METER_ORDER}. The value sent is {@link seatEventValue}. */
+export const USAGE_METER_MEMBER = "members";
+
+/**
+ * What the shop's app subscription grants right now. Nothing is scheduled: a
+ * plan change on Shopify's pricing page applies at once, up or down, and lands
+ * on the revalidation the billing redirect forces. App Pricing defers only a
+ * downgrade to a free plan, and Baton has none.
+ *
+ * @see https://shopify.dev/docs/apps/launch/billing/shopify-app-pricing/subscription-billing/setup-subscription-charges#proration-logic
+ */
+export const PlanStatus = Schema.Union([
+  Schema.Struct({
+    _tag: Schema.Literal("Subscribed"),
+    handle: PlanHandle,
+    plan: Plan,
+    /** The next app subscription boundary as epoch milliseconds: cycle end, or trial end during a trial. */
+    boundaryAt: Schema.NullOr(Schema.Number),
+  }),
+  Schema.Struct({ _tag: Schema.Literal("Unsubscribed") }),
+]);
+export type PlanStatus = typeof PlanStatus.Type;
+
+/**
+ * A resolved app subscription (Shopify's `AppSubscription`): the one
+ * allowlisted plan handle it carries and the billing cycle it is in.
+ *
+ * `boundaryAt` collapses two Shopify fields that never coexist —
+ * `currentBillingCycle.endTime` is null during a trial, where `trialEndsAt`
+ * takes over (measured 2026-10-18: `currentBillingCycle` itself is null in a
+ * trial, beside `trialEndsAt`). Both denote the same thing to a cache: the
+ * next instant at which the app subscription may legitimately change without
+ * any notification, since App Pricing sends no webhooks.
+ *
+ * A plan change is a new app subscription: a new billing cycle starting at
+ * the switch moment, with every meter at zero. Usage sent during a trial is
+ * not reported and does not carry into the paid cycle. Measured on the dev
+ * store on 2026-09-22.
+ * This is why the seat meter is sent the whole member count at each new cycle
+ * (the "cycle pushed, new start" row on {@link ShopUsage}) rather than an
+ * overage: the plan's tiers price it, so a switch needs no app-side
+ * arithmetic.
+ */
+export const AppSubscription = Schema.Struct({
+  handle: PlanHandle,
+  boundaryAt: Schema.NullOr(Schema.Number),
+  /** `currentBillingCycle.startTime`; null during a trial, which has no cycle. */
+  cycleStartAt: Schema.NullOr(Schema.Number),
+});
+export type AppSubscription = typeof AppSubscription.Type;
+
+/**
+ * What one shop has consumed, as the actor counts it. The Backend
+ * compares this against {@link Entitlements}; the actor itself enforces
+ * nothing from it beyond {@link ShopLimits}.
+ *
+ * The count is keyed by billing cycle, not by calendar month, because the
+ * same count is what the merchant is billed for: the home page and the
+ * Shopify invoice have to agree about which orders fall in a billing cycle,
+ * and only Shopify knows where one starts.
+ *
+ * What each trigger does to the order count ({@link
+ * ShopUsage.ordersThisCycle}), the seat mark ({@link
+ * ShopUsage.seatsThisCycle}) and the usage-event queue ({@link UsageEvent}).
+ * `—` is unchanged; `recounted` is the orders whose `countedAt` is at or after
+ * the new cycle's start; "then sent" is a flush after the write commits:
+ * every path that creates a run sends the queue, and a cycle push sends it
+ * after its own write (the rule and its tests are on `makeBilling`'s
+ * `flushUsageEvents`). A row's mechanics are on the method that carries it
+ * (`makeUsageRepository`'s `countOrder`, `setBillingCycle`, `flushUsageEvents`);
+ * a behaviour change starts at the row.
+ *
+ * | trigger                              | order count | seat mark               | queue                                           | pinned by                                                                                     |
+ * | ------------------------------------ | ----------- | ----------------------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------- |
+ * | first run on an order                | +1          | —                       | +1 order event, then sent                       | an order is counted once, when its first run is created                                       |
+ * | another run on a counted order       | —           | —                       | —                                               | a second sync never queues a second count                                                     |
+ * | first count, no cycle stored yet     | +1          | → 0                     | +1 order event                                  | opens a provisional cycle before a billing cycle is known                                     |
+ * | first count past the cycle end       | recounted   | → 0                     | —                                               | rolls the cycle forward on the first order past its end                                       |
+ * | revalidation, same cycle start       | —           | → member count if above | +1 seat event (the rise), then sent             | a revalidation raises the mark to a member count past it and sends the rise                   |
+ * | cycle pushed, new start              | recounted   | → member count          | +1 seat event (whole member count), then sent   | a new cycle resets the mark to the member count and queues it as the cycle's first seat event |
+ * | cycle pushed, shop never addressed   | recounted   | → member count          | every event before the start dropped, then sent | the first billing cycle discards events queued before the shop could be addressed             |
+ * | revalidation during a trial          | —           | —                       | —                                               | pushes no billing cycle during a trial, which has none                                        |
+ * | Manage plan pressed                  | —           | —                       | sent                                            | Manage plan sends the usage queue before the plan can change                                  |
+ * | Shopify accepts an event             | —           | —                       | row deleted                                     | flush deletes accepted events and keeps refused ones with the error                           |
+ * | Shopify refuses an event             | —           | —                       | `attempts` +1, `lastError` set                  | flush deletes accepted events and keeps refused ones with the error                           |
+ * | an event's billing cycle ends unsent | —           | —                       | row deleted at the next flush, logged           | the flush deletes an event dated before the current cycle and logs it                         |
+ *
+ * The rows rely on two assumptions:
+ *
+ * 1. A billing cycle starts where the previous one ended. The seat mark's
+ *    same-start check depends on it. A plan change starts a new app
+ *    subscription with its meters at zero, where sending the member count again is
+ *    correct billing.
+ * 2. Billing cycles are a month or less. The recount is wrong for a longer
+ *    cycle (`makeUsageRepository`'s `countedSince`), and the Partner Dashboard offers
+ *    usage meters on monthly plans only.
+ */
+export const ShopUsage = Schema.Struct({
+  /**
+   * The billing cycle the count belongs to. Both null until the actor's
+   * first count opens a provisional cycle ({@link provisionalCycleStart}) or
+   * the Backend pushes a real one ({@link BillingCycleInput}); `cycleEndAt`
+   * is null again after the actor rolls a cycle forward on its own, until
+   * the next push names the end.
+   */
+  cycleStartAt: Schema.NullOr(Schema.Number),
+  cycleEndAt: Schema.NullOr(Schema.Number),
+  /**
+   * Counted orders this cycle: orders Baton created a run for, not orders
+   * stored (`makeUsageRepository`'s `countOrder` is the rule). Never decremented,
+   * never a ceiling: the meter bills, the open-order ceiling
+   * (`openOrdersAtCeiling`) refuses.
+   */
+  ordersThisCycle: Schema.Number,
+  /** Set when a new order was refused at {@link ShopLimits.maxOpenOrders}; cleared when Sync open orders starts, and by nothing else (`OrderRepository.clearOrdersLimited` holds the rule). */
+  ordersLimitedAt: Schema.NullOr(Schema.Number),
+  /** `ctx.storage.sql.databaseSize` at read time. */
+  databaseSize: Schema.Number,
+  /** Open orders stored, at read time: the quantity `openOrdersAtCeiling` reads, shown on the admin shop page. Derived from the rows, never stored. */
+  openOrders: Schema.Number,
+  lastSweepAt: Schema.NullOr(Schema.Number),
+  /** Usage events queued for the current cycle and not yet accepted by Shopify. Non-zero for long is an operator signal, not a merchant-facing number. */
+  pendingUsageEvents: Schema.Number,
+  /**
+   * The cycle's seats: its high-water mark, as {@link seatEventValue}
+   * defines it. The revalidation is its one writer (the "revalidation" and
+   * "cycle pushed" rows above); a cycle the actor opens or rolls forward on
+   * its own starts it at 0. Everything sent to {@link USAGE_METER_MEMBER}
+   * this cycle sums to this number once the queue drains.
+   */
+  seatsThisCycle: Schema.Number,
+});
+export type ShopUsage = typeof ShopUsage.Type;
+
+/**
+ * The billing cycle `SubscriptionPlan` pushes into the actor after a plan
+ * revalidation outside a trial (`ShopActors.setBillingCycle`). A stub method's
+ * input, never a procedure's: a browser has no business naming a shop's
+ * billing cycle, and the actor has no way to learn it on its own. What the
+ * push does is the "revalidation, same cycle start" and "cycle pushed" rows on
+ * {@link ShopUsage}.
+ *
+ * `shopGid` rides along because the actor needs it to address a usage event
+ * at Shopify and has no other source for it — it lives on the D1 `ShopSession`
+ * row, which is the Backend's.
+ */
+export const BillingCycleInput = Schema.Struct({
+  shopGid: ShopGid,
+  cycleStartAt: Schema.Number,
+  cycleEndAt: Schema.NullOr(Schema.Number),
+  /** The D1 member count, read by the Backend just before the push: the seat mark a new cycle starts from, and what an unchanged cycle raises its mark to. */
+  memberCount: Schema.Number,
+});
+export type BillingCycleInput = typeof BillingCycleInput.Type;
+
+/**
+ * The provisional cycle: the stand-in a shop counts against until the first
+ * `setBillingCycle` names a real billing cycle, starting at the first instant
+ * of `now`'s UTC month.
+ *
+ * A shop opens its cycle at its first count, which can land before its first
+ * plan revalidation — a webhook arrives on the install's heels, and the
+ * revalidation is a separate request that may be minutes behind — or during
+ * a trial, which has no billing cycle. Opening a provisional cycle is what
+ * lets a run created then count; the first billing cycle replaces it (the
+ * "cycle pushed, shop never addressed" row on {@link ShopUsage}).
+ *
+ * UTC, not the shop's timezone: the actor has no locale, and a boundary that
+ * moved with the merchant's would make a stored cycle ambiguous.
+ */
+export const provisionalCycleStart = (now: number) => {
+  const date = new Date(now);
+  return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1);
+};
+
+/**
+ * One App Events billing event: one counted order, or seats past the cycle's
+ * high-water mark.
+ *
+ * `idempotencyKey` is capped at 64 characters, and it is derived from the
+ * order id or the cycle and mark rather than from a clock: replaying a flush
+ * must not bill twice. Legacy called the key permanent at Shopify; at
+ * `2026-10` Shopify documents a 24-hour idempotency window (not measured
+ * 2026-10-18). The window changes nothing: a row is deleted as soon as
+ * Shopify accepts it, so a replay is the same flush.
+ */
+export const UsageEvent = Schema.Struct({
+  shopGid: ShopGid,
+  eventHandle: Schema.NonEmptyString,
+  /** When the order was counted, not when the event is sent: Shopify rejects a timestamp outside the merchant's current cycle. */
+  occurredAt: Schema.Number,
+  idempotencyKey: Schema.NonEmptyString.check(Schema.isMaxLength(64)),
+  /**
+   * A positive integer: `1` for an order, and for seats the member count at a
+   * new cycle or the rise over the high-water mark ({@link seatEventValue}).
+   * Positive because both meters only count up — an order is billed the first
+   * time Baton creates a run for it (`makeUsageRepository`'s `countOrder`), a seat
+   * mark is never lowered by a removal — and nothing is ever reversed, so zero
+   * or a negative could only be a bug.
+   */
+  value: Schema.Number.check(Schema.isInt(), Schema.isGreaterThan(0)),
+});
+export type UsageEvent = typeof UsageEvent.Type;
+
+/**
+ * A queued usage event expires once the billing cycle that dated it has
+ * ended: Shopify refuses an event whose timestamp falls in a closed cycle, so
+ * an expired event can never be sent. The flush deletes it and logs it; the
+ * log line is the record of a unit carried and never billed.
+ */
+export const usageEventIsExpired = (occurredAt: number, cycleStartAt: number) =>
+  occurredAt < cycleStartAt;
 
 /**
  * A shop's members are at their ceiling when there are
  * {@link ShopLimits.maxMembers} members, on any plan. `MembershipRepository.addMember`
  * refuses a new email there, and the merchant is told how many a shop can
  * have. No shop is raised past it, so nothing offers support. It
- * is the one refusal on the members: `Entitlements.membersIncluded` bills,
+ * is the one refusal on the members: {@link Entitlements.membersIncluded} bills,
  * it does not block.
  */
 export const membersAtCeiling = (count: number) => count >= ShopLimits.maxMembers;
+
+/**
+ * The seat units to queue when the member count reaches `memberCount`: the rise over
+ * the cycle's high-water mark, or `0` when not past it.
+ *
+ * The billable seat quantity for a cycle is its high-water mark: the member
+ * count at cycle start, raised to the member count at any revalidation that
+ * finds it higher. A removal never lowers it, so remove-then-add inside a
+ * cycle bills once, and nothing sent is ever reversed. The arithmetic, not
+ * the constant `1`, is the rule: a count that grew by more than one between
+ * revalidations sends exactly the rise.
+ */
+export const seatEventValue = (memberCount: number, highWater: number) =>
+  Math.max(memberCount - highWater, 0);
+
+/**
+ * Why the shop's cached plan entry reads the way it does.
+ *
+ * Deliberately finer-grained than `SubscriptionPlan`'s internal `cachedStatus`,
+ * which collapses every reason for distrusting the entry into a single
+ * `Option.none()` and revalidates. That is the right shape for the enforcement
+ * path, which only needs to know *whether* to call Shopify; it is the wrong
+ * shape for an admin diagnosing why a shop is being treated the way it is,
+ * where "never fetched", "expired an hour ago", and "handle this build no
+ * longer recognizes" have three different remedies.
+ *
+ * `Unrecognized` is the case the `ShopSession.planHandle` column exists in its
+ * `Schema.String` form to survive, so the admin page shows the stored string
+ * rather than hiding it behind a decode failure.
+ */
+export type AdminShopPlanCache =
+  | { readonly _tag: "NeverFetched" }
+  | { readonly _tag: "Unsubscribed" }
+  | {
+      readonly _tag: "Subscribed";
+      readonly handle: PlanHandle;
+      readonly plan: Plan;
+    }
+  | { readonly _tag: "Stale"; readonly handle: string | null }
+  | { readonly _tag: "Unrecognized"; readonly handle: string };
+
+export const adminShopPlanCache = (
+  {
+    planHandle,
+    planHandleExpiresAt,
+  }: Pick<ShopSessionRedacted, "planHandle" | "planHandleExpiresAt">,
+  now: number,
+): AdminShopPlanCache => {
+  if (planHandleExpiresAt === null)
+    return planHandle === null ? { _tag: "NeverFetched" } : { _tag: "Stale", handle: planHandle };
+  if (now >= planHandleExpiresAt) return { _tag: "Stale", handle: planHandle };
+  if (planHandle === null) return { _tag: "Unsubscribed" };
+  return Option.match(Schema.decodeUnknownOption(PlanHandle)(planHandle), {
+    onNone: (): AdminShopPlanCache => ({
+      _tag: "Unrecognized",
+      handle: planHandle,
+    }),
+    onSome: (handle) => ({
+      _tag: "Subscribed",
+      handle,
+      plan: planOfHandle(handle),
+    }),
+  });
+};
+
+/**
+ * What the cached entry grants, or `null` when it grants nothing. Every
+ * non-`Subscribed` state — including `Stale`, which may well hold a handle —
+ * yields `null` rather than the handle's tier: a deadline that has passed is
+ * exactly the case where the stored handle is not evidence of anything, and an
+ * admin page must not render a ceiling the enforcement path would refuse to
+ * honor.
+ */
+export const adminShopEntitlements = Match.typeTags<AdminShopPlanCache, Entitlements | null>()({
+  Subscribed: ({ plan }) => entitlementsOfPlan(plan),
+  Unsubscribed: () => null,
+  Stale: () => null,
+  NeverFetched: () => null,
+  Unrecognized: () => null,
+});

@@ -17,7 +17,7 @@
  * | --------- | ---------- | ------------------------------------------------------------------------------------------ | ---------------------------------------- | ----------------------------- | ---------------- |
  * | shop work | core       | the work of making what the shop sold: who does it, in what steps, and how far along it is | Baton's, the merchant's and the members' | `shop-work.ts`                | orders, platform |
  * | orders    | supporting | what Shopify says about an order                                                           | Shopify's admin                          | `orders.ts`                   | platform         |
- * | billing   | generic    | what the shop pays for                                                                     | Shopify's Partner API                    | `billing.ts` (arrives later)  | orders, platform |
+ * | billing   | generic    | what the shop pays for                                                                     | Shopify's Partner API                    | `billing.ts`                  | orders, platform |
  * | shop work | core       | the step arithmetic of a workflow's tasks (`WorkflowLayout`), pure functions only          | Baton's                                  | `workflow-layout.ts`          | shop work        |
  * | platform  | dialect    | dialect, not a context: the technical words; no model of the business                      | Cloudflare's and Baton's                 | `platform.ts`                 | (nothing)        |
  *

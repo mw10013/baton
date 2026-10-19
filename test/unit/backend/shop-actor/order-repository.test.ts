@@ -9,6 +9,7 @@ import { fixtureRows } from "../../../../src/backend/fixture.ts";
 import { insertFixtureRows } from "../../../../src/backend/shop-actor.ts";
 import {
   ITEM_MATCHES,
+  openOrdersAtCeiling,
   type OrderRepository,
 } from "../../../../src/backend/shop-actor/order-repository.ts";
 import { type OrderLineItem, orderIsOpen, type ShopOrder } from "../../../../src/domain/orders.ts";
@@ -308,6 +309,15 @@ const paid = (n: number, overrides: Partial<ShopOrder> = {}) =>
     syncedAt: CYCLE_START,
     ...overrides,
   });
+
+describe("openOrdersAtCeiling", () => {
+  it("the shop is at its order ceiling when the open orders have reached maxOpenOrders", () => {
+    const { maxOpenOrders } = ShopLimits;
+    assert.strictEqual(openOrdersAtCeiling(maxOpenOrders - 1), false);
+    assert.strictEqual(openOrdersAtCeiling(maxOpenOrders), true);
+    assert.strictEqual(openOrdersAtCeiling(maxOpenOrders + 1), true);
+  });
+});
 
 describe("OrderRepository usage", () => {
   /**
