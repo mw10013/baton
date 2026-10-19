@@ -9,7 +9,7 @@ import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
-import { ShopKey } from "../../src/contract/shop.ts";
+import { ShopKey } from "../../src/domain/platform.ts";
 import { SEED_SHOP } from "../seed-shops.ts";
 import {
   CONNECTION_CLOSE_DISPLACED,

@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import { Email } from "../../src/contract/auth.ts";
-import { ShopKey } from "../../src/contract/shop.ts";
+import { ShopKey } from "../../src/domain/platform.ts";
 import type { BulkOperation, OrdersSyncStatus } from "../../src/domain/orders.ts";
 import { OTHER_SHOP, SEED_SHOP } from "../seed-shops.ts";
 import { dev, integ, openAs } from "./actor-clients.ts";

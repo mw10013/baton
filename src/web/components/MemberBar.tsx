@@ -1,7 +1,7 @@
 import { useMatch, useParams } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { ShopKey } from "../../contract/shop.ts";
+import { ShopKey } from "../../domain/platform.ts";
 import { TopBar } from "./screen/TopBar.tsx";
 import SignOutButton from "./SignOutButton.tsx";
 

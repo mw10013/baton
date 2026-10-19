@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
+import { ShopSessionUpsert, type ShopSession } from "../../../src/domain/platform.ts";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -6,12 +7,8 @@ import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { TestClock } from "effect/testing";
-import { SEED_SHOP } from "../../seed-shops.ts";
-import {
-  ShopSessionRepository,
-  ShopSessionUpsert,
-  type ShopSessionRow,
-} from "../../../src/backend/shop-session-repository.ts";
+import { SEED_SHOP, SEED_SHOP_GID } from "../../seed-shops.ts";
+import { ShopSessionRepository } from "../../../src/backend/shop-session-repository.ts";
 import { Shopify } from "../../../src/backend/shopify.ts";
 import { mintSessionToken } from "../../shopify-session-token.ts";
 import { QuietLogs, testShopify } from "./layers.ts";
@@ -21,9 +18,9 @@ const MINUTE = 60 * 1000;
 const DAY = 24 * 60 * MINUTE;
 
 /** A stored session whose access token expired a second before `now`; its refresh token has 30 days. */
-const rowAt = (now: number, over: Partial<ShopSessionRow> = {}): ShopSessionRow => ({
+const rowAt = (now: number, over: Partial<ShopSession> = {}): ShopSession => ({
   shop: SEED_SHOP,
-  shopGid: "gid://shopify/Shop/1",
+  shopGid: SEED_SHOP_GID,
   shopActorId: SEED_SHOP,
   scope: "read_orders",
   accessTokenExpiresAt: now - 1000,
@@ -48,7 +45,7 @@ const winnerAt = (now: number) =>
 const toUpsert = Schema.decodeUnknownSync(ShopSessionUpsert);
 
 /** Stores `row` as an exchange would, from inside a stub's reply. */
-const storeAsExchange = (sessions: typeof ShopSessionRepository.Service, row: ShopSessionRow) =>
+const storeAsExchange = (sessions: typeof ShopSessionRepository.Service, row: ShopSession) =>
   Effect.runPromise(sessions.upsert(toUpsert(row)));
 
 const ensure = Effect.flatMap(Shopify, (shopify) => shopify.ensureShopSession(SEED_SHOP));
@@ -80,7 +77,7 @@ const assertDefect = (effect: Effect.Effect<unknown, unknown, Shopify | ShopSess
  */
 const live = (
   name: string,
-  rowsFor: (now: number) => ReadonlyArray<ShopSessionRow>,
+  rowsFor: (now: number) => ReadonlyArray<ShopSession>,
   body: Effect.Effect<void, unknown, Shopify | ShopSessionRepository>,
   timeout = 5000,
 ) =>

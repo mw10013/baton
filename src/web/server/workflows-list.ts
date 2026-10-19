@@ -5,7 +5,8 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { Forbidden, ReturnPath, Unauthorized } from "../../contract/auth.ts";
 import { PaymentRequired } from "../../contract/billing.ts";
-import { NotAShopMember, type ShopKey, ShopAccessInput } from "../../contract/shop.ts";
+import { NotAShopMember, ShopAccessInput } from "../../contract/shop.ts";
+import type { ShopKey } from "../../domain/platform.ts";
 import { MemberWorkflowPageRequest, WorkflowsListRequest } from "../../contract/workflows-list.ts";
 import { backend, requestInfo, rescue } from "./backend.ts";
 

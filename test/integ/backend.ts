@@ -6,7 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { RpcSerialization, RpcServer } from "effect/rpc";
 import * as Schema from "effect/Schema";
-import { ShopKey } from "../../src/contract/shop.ts";
+import { ShopKey } from "../../src/domain/platform.ts";
 import { ConnectionCaller } from "../../src/contract/shop-actor.ts";
 import { BackendApi } from "../../src/backend/api.ts";
 import { Auth } from "../../src/backend/auth.ts";

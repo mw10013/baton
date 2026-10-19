@@ -9,7 +9,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import { ShopKey } from "../../contract/shop.ts";
+import { ShopKey } from "../../domain/platform.ts";
 
 /**
  * Base64 with its padding optional: Shopify's `host` param usually arrives without it, and

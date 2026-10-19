@@ -15,7 +15,7 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Socket from "effect/socket/Socket";
 import { type Email, EmailFromInput } from "../../src/contract/auth.ts";
-import type { ShopKey } from "../../src/contract/shop.ts";
+import type { ShopKey } from "../../src/domain/platform.ts";
 import {
   CONNECTION_CLOSE_DISPLACED,
   CONNECTION_CLOSE_FORBIDDEN,

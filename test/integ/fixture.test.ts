@@ -4,7 +4,7 @@ import * as Test from "alchemy/Test/Vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { ShopFixtureData } from "../../src/contract/fixture.ts";
-import { ShopKey } from "../../src/contract/shop.ts";
+import { ShopKey } from "../../src/domain/platform.ts";
 import {
   CONNECTION_CLOSE_NOT_A_MEMBER,
   CONNECTION_CLOSE_REVOKED,

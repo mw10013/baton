@@ -12,7 +12,7 @@ import * as Schema from "effect/Schema";
 import { LineItemProperty } from "../domain/orders.ts";
 import { TaskInstructions, TaskName, TeamName, WorkflowState } from "../domain/shop-work.ts";
 import { Email } from "./auth.ts";
-import { ShopKey } from "./shop.ts";
+import { ShopKey } from "../domain/platform.ts";
 
 /**
  * The `legacyId` prefix of a fixture order: `fixture-<n>`, whose id is

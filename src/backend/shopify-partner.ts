@@ -12,7 +12,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
-import type { ShopKey } from "../contract/shop.ts";
+import type { ShopKey } from "../domain/platform.ts";
 import { type AppSubscription, PlanHandle } from "../domain/billing.ts";
 
 /**

@@ -3,7 +3,7 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import * as Test from "alchemy/Test/Vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { ShopKey } from "../../src/contract/shop.ts";
+import { ShopKey } from "../../src/domain/platform.ts";
 import { dev, integ, syncOrderAs } from "./actor-clients.ts";
 import { fileStage } from "./file-stage.ts";
 import type { ShopifyFakeReply } from "./rpcs.ts";

@@ -11,7 +11,7 @@ import {
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { useContext, useEffect, useRef } from "react";
-import { ShopKey } from "../../contract/shop.ts";
+import { ShopKey } from "../../domain/platform.ts";
 import { DEFAULT_WORKFLOWS_LIST_STATE, RUN_PAGE } from "../../domain/shop-work.ts";
 import { membershipChangedAtom } from "../client/actor-connection.ts";
 import { reloadFromServer } from "../client/live-load.ts";

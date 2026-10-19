@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import { ORDERS_KEY } from "../../../../src/contract/shop-actor.ts";
-import { ShopKey } from "../../../../src/contract/shop.ts";
+import { ShopKey } from "../../../../src/domain/platform.ts";
 import { MembershipRepository } from "../../../../src/backend/membership-repository.ts";
 import { syncTransaction } from "../../../../src/backend/shop-actor/transaction.ts";
 import {

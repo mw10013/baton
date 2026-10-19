@@ -18,9 +18,8 @@ import { makeWorkflows } from "../../../../src/backend/shop-actor/workflows.ts";
 import { ReauthorizationRequired } from "../../../../src/backend/shopify.ts";
 import { ShopifyAdmin } from "../../../../src/backend/shopify-admin.ts";
 import { ShopifyAppEvents } from "../../../../src/backend/shopify-app-events.ts";
-import { ShopKey } from "../../../../src/contract/shop.ts";
 import { USAGE_METER_ORDER } from "../../../../src/domain/billing.ts";
-import { ShopGid } from "../../../../src/domain/platform.ts";
+import { ShopGid, ShopKey } from "../../../../src/domain/platform.ts";
 import * as ShopWork from "../../../../src/domain/shop-work.ts";
 import {
   ActorSqliteTest,

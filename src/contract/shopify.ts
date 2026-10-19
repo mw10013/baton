@@ -5,7 +5,7 @@
  * @module
  */
 import * as Schema from "effect/Schema";
-import { ShopKey } from "./shop.ts";
+import { ShopKey } from "../domain/platform.ts";
 
 /**
  * There is no offline session for the shop: the app was uninstalled or never installed here.

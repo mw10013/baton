@@ -14,7 +14,7 @@ import * as Redacted from "effect/Redacted";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import type { Email } from "../../../src/contract/auth.ts";
-import type { ShopKey } from "../../../src/contract/shop.ts";
+import { type ShopKey, type ShopSession } from "../../../src/domain/platform.ts";
 import { ShopifyAdmin, type ShopifyAdminError } from "../../../src/backend/shopify-admin.ts";
 import type { OrdersSyncParams } from "../../../src/backend/orders-sync-workflow.ts";
 import type { OrdersSyncWorkflows } from "../../../src/backend/shop-actor/orders.ts";
@@ -27,10 +27,7 @@ import { Auth } from "../../../src/backend/auth.ts";
 import { MagicLinkDelivery } from "../../../src/backend/magic-link-delivery.ts";
 import { Mailer } from "../../../src/backend/mailer.ts";
 import { MembershipRepository } from "../../../src/backend/membership-repository.ts";
-import {
-  ShopSessionRepository,
-  type ShopSessionRow,
-} from "../../../src/backend/shop-session-repository.ts";
+import { ShopSessionRepository } from "../../../src/backend/shop-session-repository.ts";
 import { SHOPIFY_API_KEY, SHOPIFY_API_SECRET_FAKE, Shopify } from "../../../src/backend/shopify.ts";
 import type { PlanStatus } from "../../../src/domain/billing.ts";
 import { ShopifyPartner } from "../../../src/backend/shopify-partner.ts";
@@ -60,7 +57,7 @@ export const TEST_SHOPIFY_APP = {
  * {@link Shopify} over {@link TEST_SHOPIFY_APP} and an in-memory {@link ShopSessionRepository} holding
  * `rows`, which stays in the context so a test can read what an exchange wrote.
  */
-export const testShopify = (rows: ReadonlyArray<ShopSessionRow> = []) =>
+export const testShopify = (rows: ReadonlyArray<ShopSession> = []) =>
   Shopify.layerWith({
     apiKey: TEST_SHOPIFY_APP.apiKey,
     apiSecret: Redacted.make(TEST_SHOPIFY_APP.apiSecret),

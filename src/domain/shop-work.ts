@@ -229,7 +229,7 @@ import {
   ConnectionRole,
   Email,
   formatNumber,
-  Shop,
+  ShopKey,
   ShopLimits,
   WorkflowLimits,
 } from "./platform.ts";
@@ -466,7 +466,7 @@ export type MemberId = typeof MemberId.Type;
  */
 export const Member = Schema.Struct({
   id: MemberId,
-  shop: Shop,
+  shop: ShopKey,
   email: Email,
   createdAt: Schema.Number,
 });
@@ -522,7 +522,7 @@ export type TeamName = typeof TeamName.Type;
  */
 export const Team = Schema.Struct({
   id: TeamId,
-  shop: Shop,
+  shop: ShopKey,
   name: TeamName,
   createdAt: Schema.Number,
 });
@@ -597,7 +597,7 @@ export type MemberDetail = typeof MemberDetail.Type;
  * error.
  */
 export const MemberAccess = Schema.Struct({
-  shop: Shop,
+  shop: ShopKey,
   memberId: MemberId,
   teams: Schema.Array(Schema.Struct({ id: TeamId, name: TeamName })),
 });

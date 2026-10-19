@@ -6,7 +6,7 @@ import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import type { LineItemNode, OrderNode } from "../../src/backend/order-sync.ts";
 import { ShopFixtureData } from "../../src/contract/fixture.ts";
-import type { ShopKey } from "../../src/contract/shop.ts";
+import type { ShopKey } from "../../src/domain/platform.ts";
 import { type MemberCaller, ORDERS_KEY } from "../../src/contract/shop-actor.ts";
 import * as ShopWork from "../../src/domain/shop-work.ts";
 import { SEED_SHOP } from "../seed-shops.ts";

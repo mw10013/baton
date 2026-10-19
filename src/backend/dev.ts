@@ -4,7 +4,7 @@ import * as Option from "effect/Option";
 import type { Email } from "../contract/auth.ts";
 import { DevRpcs, type ShopSessionView } from "../contract/dev.ts";
 import { ShopNotInstalled } from "../contract/fixture.ts";
-import type { ShopKey } from "../contract/shop.ts";
+import type { ShopKey } from "../domain/platform.ts";
 import { Fixtures } from "./fixture.ts";
 import { MembershipRepository } from "./membership-repository.ts";
 import { ShopActors } from "./shop-actors.ts";

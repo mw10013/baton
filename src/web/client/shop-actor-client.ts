@@ -28,7 +28,7 @@ import {
   shopKeyAtom,
 } from "./actor-connection.ts";
 import type { SetTeamMemberInput } from "../../contract/members.ts";
-import type { ShopKey } from "../../contract/shop.ts";
+import type { ShopKey } from "../../domain/platform.ts";
 import {
   type Notice,
   NoticeFrame,

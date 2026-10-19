@@ -6,7 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import type { ShopKey } from "../contract/shop.ts";
+import type { ShopKey } from "../domain/platform.ts";
 import type { ConnectionCaller, MemberCaller } from "../contract/shop-actor.ts";
 import { Auth } from "./auth.ts";
 import { MembershipRepository } from "./membership-repository.ts";

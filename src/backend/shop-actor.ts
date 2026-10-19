@@ -19,13 +19,12 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as SqlClient from "effect/sql/SqlClient";
 import type * as SqlError from "effect/sql/SqlError";
 import { Forbidden } from "../contract/auth.ts";
-import { ShopKey } from "../contract/shop.ts";
 import {
   OfflineSessionMissing,
   ShopifyUnavailable as ShopifyUnreachable,
 } from "../contract/shopify.ts";
 import type { BillingCycleInput } from "../domain/billing.ts";
-import { ShopLimits } from "../domain/platform.ts";
+import { ShopLimits, ShopKey } from "../domain/platform.ts";
 import { Email } from "../domain/platform.ts";
 import {
   type GetOrderDetailInput,

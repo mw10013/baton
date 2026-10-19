@@ -3,7 +3,7 @@ import { useHydrated, useRouter } from "@tanstack/react-router";
 import type * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { type ReactNode, useContext, useEffect, useRef, useState } from "react";
-import type { ShopKey } from "../../contract/shop.ts";
+import type { ShopKey } from "../../domain/platform.ts";
 import { paymentRequiredAtom } from "../client/actor-connection.ts";
 import { forgetAppGuard } from "../client/app-guard.ts";
 import { reloadFromServer } from "../client/live-load.ts";

@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type { LineItemNode, OrderNode } from "../../src/backend/order-sync.ts";
 import { ShopFixtureData } from "../../src/contract/fixture.ts";
-import type { ShopKey } from "../../src/contract/shop.ts";
+import type { ShopKey } from "../../src/domain/platform.ts";
 import {
   CONNECTION_CLOSE_PAYMENT_REQUIRED,
   CONNECTION_CLOSE_REVOKED,

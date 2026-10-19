@@ -9,7 +9,7 @@ import * as Schema from "effect/Schema";
 import { Rpc, RpcGroup } from "effect/rpc";
 import { Email } from "./auth.ts";
 import { FixtureConflict, FixtureCounts, ShopFixtureData, ShopNotInstalled } from "./fixture.ts";
-import { ShopKey } from "./shop.ts";
+import { ShopKey } from "../domain/platform.ts";
 
 /**
  * The part of a stored Shopify session a caller may read. It has no field for the access or the

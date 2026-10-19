@@ -1,24 +1,22 @@
 import { assert, describe, it } from "@effect/vitest";
+import { type ShopSession } from "../../../src/domain/platform.ts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { SEED_SHOP } from "../../seed-shops.ts";
-import {
-  ShopSessionRepository,
-  type ShopSessionRow,
-} from "../../../src/backend/shop-session-repository.ts";
+import { SEED_SHOP, SEED_SHOP_GID } from "../../seed-shops.ts";
+import { ShopSessionRepository } from "../../../src/backend/shop-session-repository.ts";
 import { ShopifyAdmin } from "../../../src/backend/shopify-admin.ts";
 import { QuietLogs, testShopify } from "./layers.ts";
 import { accessTokenBody, jsonResponse, withShopifyStub } from "./shopify-stub.ts";
 
 const MINUTE = 60 * 1000;
 
-const rowAt = (now: number): ShopSessionRow => ({
+const rowAt = (now: number): ShopSession => ({
   shop: SEED_SHOP,
-  shopGid: "gid://shopify/Shop/1",
+  shopGid: SEED_SHOP_GID,
   shopActorId: SEED_SHOP,
   scope: "read_orders",
   accessTokenExpiresAt: now + 60 * MINUTE,

@@ -27,7 +27,7 @@
  * issues, an item's card) is shop work's, not orders'. Billing is
  * downstream of orders through one shared field, `ShopOrder` field
  * `countedAt`, the counted order. Every context uses the platform dialect:
- * the ids (`Shop`, `ShopGid`, `EpochMillis`), `ShopLimits`, `ShopSession`
+ * the ids (`ShopKey`, `ShopGid`, `EpochMillis`), `ShopLimits`, `ShopSession`
  * and the connection. Orders never reads shop work, and platform reads
  * none of the three.
  *
@@ -53,7 +53,7 @@
  *
  * | word    | meaning                                                                                                | symbol                | screen                                                  |
  * | ------- | ------------------------------------------------------------------------------------------------------ | --------------------- | ------------------------------------------------------- |
- * | shop    | one Shopify store, the tenant                                                                          | `ShopSession`, `Shop` | store (Shopify's merchant word); its domain as the name |
+ * | shop    | one Shopify store, the tenant                                                                          | `ShopSession`, `ShopKey` | store (Shopify's merchant word); its domain as the name |
  * | ceiling | a per-shop limit the object enforces: `maxOpenOrders`, `maxMembers` on `ShopLimits` | `ShopLimits`          | the banner that names what stopped                      |
  * | memo    | a list read's last answer, kept in the object's memory until the next publish | the Cache values in ShopWorkAgent | (none)                                                  |
  * | socket       | a tab's one WebSocket to its shop's object, for the life of the tab; a series of connections                                                | `ShopAgentSocket`, `ShopAgentSocketProvider`       | (none): Connecting |
@@ -101,24 +101,42 @@ export const SqliteBoolean = Schema.Number.pipe(
   }),
 );
 
-/** Duplicates the contract's `ShopKey` until this one's callers move. */
-export const Shop = Schema.NonEmptyString.pipe(Schema.brand("Shop"));
-export type Shop = typeof Shop.Type;
+/**
+ * A shop, named by its myshopify domain: the key of a `ShopSession` row and the name of the
+ * shop's actor. The key also arrives in a URL path, which the route param and the Backend decode
+ * through this before it reaches a query or `getByName`, so it is held to the shape of a
+ * myshopify domain, not merely to what Shopify sent.
+ */
+export const ShopKey = Schema.String.check(
+  Schema.isPattern(/^[a-z0-9][a-z0-9-]{0,62}\.myshopify\.com$/u),
+).pipe(Schema.brand("ShopKey"));
+export type ShopKey = typeof ShopKey.Type;
 
 export const ShopGid = Schema.NonEmptyString.pipe(Schema.brand("ShopGid"));
 export type ShopGid = typeof ShopGid.Type;
 
-export const SessionId = Schema.NonEmptyString.pipe(Schema.brand("SessionId"));
-export type SessionId = typeof SessionId.Type;
-
+/**
+ * A `ShopSession` row: one shop's offline Admin API session. Times are epoch ms. The three plan
+ * columns are a cache that only a plan check writes.
+ */
 export const ShopSession = Schema.Struct({
-  shop: Shop,
+  shop: ShopKey,
   shopGid: ShopGid,
+  /**
+   * Names the shop's actor. It is the shop domain, because the actor is addressed by name
+   * (`ShopActors.getByName(shop)`), where legacy stored the Agents SDK's id. Set once, at insert.
+   */
+  shopActorId: Schema.String,
   scope: Schema.NullOr(Schema.String),
   accessTokenExpiresAt: Schema.NullOr(Schema.Number),
   accessToken: Schema.NullOr(Schema.String),
   refreshToken: Schema.NullOr(Schema.String),
   refreshTokenExpiresAt: Schema.NullOr(Schema.Number),
+  /**
+   * The lease that serializes refresh-token grants for the shop: while it is in the future, one
+   * caller is refreshing and the rest wait.
+   */
+  refreshLeaseUntil: Schema.NullOr(Schema.Number),
   /**
    * Cached plan handle and the instant that cache entry stops being fresh.
    *
@@ -149,21 +167,31 @@ export const ShopSession = Schema.Struct({
 export type ShopSession = typeof ShopSession.Type;
 
 /**
- * A `ShopSession` as the authentication path knows it: everything except the
- * plan cache columns, which `ShopSessionRepository.updatePlan` owns alone.
+ * A `ShopSession` as authentication knows it: everything but the plan columns and the refresh
+ * lease, so re-authenticating never disturbs a cached plan or a refresh in flight, and a fresh
+ * insert leaves them null, which reads as never fetched and unleased.
  *
- * A named schema rather than an inline omit because two places have to agree
- * about the boundary — the decode in `Shopify.ts` that turns a library session
- * into a row, and `upsertShopSession`'s parameter — and the whole reason the
- * split exists is that re-authentication must not disturb a cached plan.
+ * A named schema rather than an inline omit because two places have to agree about the
+ * boundary: the decode in `Shopify` that turns a library session into a row, and
+ * `ShopSessionRepository.upsert`'s parameter.
  */
 export const ShopSessionUpsert = Schema.Struct(
-  Struct.omit(ShopSession.fields, ["planHandle", "planHandleExpiresAt", "planBoundaryAt"]),
+  Struct.omit(ShopSession.fields, [
+    "refreshLeaseUntil",
+    "planHandle",
+    "planHandleExpiresAt",
+    "planBoundaryAt",
+  ]),
 );
 export type ShopSessionUpsert = typeof ShopSessionUpsert.Type;
 
+/**
+ * A `ShopSession` as the admin console reads it: the tokens replaced by whether each is present,
+ * and the refresh lease left out. The redacted reads project the tokens away in SQL, so a token
+ * never leaves D1 on this path.
+ */
 export const ShopSessionRedacted = Schema.Struct({
-  ...Struct.omit(ShopSession.fields, ["accessToken", "refreshToken"]),
+  ...Struct.omit(ShopSession.fields, ["accessToken", "refreshToken", "refreshLeaseUntil"]),
   hasAccessToken: SqliteBoolean,
   hasRefreshToken: SqliteBoolean,
 });
@@ -208,69 +236,13 @@ export const Email = Schema.String.pipe(
 );
 export type Email = typeof Email.Type;
 
-export const UserId = Schema.NonEmptyString.pipe(Schema.brand("UserId"));
-export type UserId = typeof UserId.Type;
-
 /**
- * Mirrors the FK-backed `UserRole` lookup table in `migrations/0001_init.sql`
- * and better-auth 1.7.7's admin-plugin defaults: without custom access control
- * only `user`/`admin` exist. `admin` = site operators (us) once `/admin`
- * migrates onto better-auth in phase 2; per-shop access is always a `Member`
- * row, never a role.
- */
-export const UserRole = Schema.Literals(["user", "admin"]);
-export type UserRole = typeof UserRole.Type;
-
-/**
- * The one rule on {@link UserRole}: an admin is a site operator and lives
- * under `/admin`; everyone else is a member and lives under `/shop`. The
- * Worker gate, both server-fn middlewares and the sign-in callback all
- * decide with this and nothing else; per-shop access is a `Member` row.
+ * The one rule on a Better Auth user's `role`: an admin (us, running the site) lives under
+ * `/admin`; everyone else is a member and lives under `/shop`. The role is `user` or `admin`
+ * only, Better Auth's admin plugin defaults with no custom access control, mirrored by the
+ * FK-backed `UserRole` lookup table. Per-shop access is always a `Member` row, never a role.
  */
 export const userIsAdmin = (user: { readonly role?: string | null }) => user.role === "admin";
-
-/**
- * A `User` row: encoded side is the D1 row (ISO text dates, 0/1 booleans),
- * decoded side the branded domain shape. Better-auth's `getSession` returns
- * the decoded side already (its adapter coerced the row), so the auth boundary
- * validates through `Schema.toType(User)` instead of re-running these
- * transforms.
- */
-export const User = Schema.Struct({
-  id: UserId,
-  name: Schema.String,
-  email: Email,
-  emailVerified: SqliteBoolean,
-  image: Schema.NullishOr(Schema.String),
-  role: UserRole,
-  banned: SqliteBoolean,
-  banReason: Schema.NullishOr(Schema.String),
-  banExpires: Schema.NullishOr(Schema.DateFromString),
-  createdAt: Schema.DateFromString,
-  updatedAt: Schema.DateFromString,
-});
-export type User = typeof User.Type;
-
-export const AuthSession = Schema.Struct({
-  id: SessionId,
-  expiresAt: Schema.DateFromString,
-  token: Schema.NonEmptyString,
-  createdAt: Schema.DateFromString,
-  updatedAt: Schema.DateFromString,
-  ipAddress: Schema.NullishOr(Schema.String),
-  userAgent: Schema.NullishOr(Schema.String),
-  userId: UserId,
-  impersonatedBy: Schema.NullishOr(UserId),
-});
-export type AuthSession = typeof AuthSession.Type;
-
-export interface SessionContext {
-  readonly user: User;
-  readonly session: AuthSession;
-}
-
-export const LoginInput = Schema.Struct({ email: Email });
-export type LoginInput = typeof LoginInput.Type;
 
 /**
  * Ceilings on a shop's workflow definitions, checked by `WorkflowRepository`
@@ -527,21 +499,6 @@ export const ConnectionRole = Schema.Literals(["merchant", "member"]);
 export type ConnectionRole = typeof ConnectionRole.Type;
 
 /**
- * The headers the Worker's connect gate writes onto the request it forwards to
- * the object, and the only channel by which identity crosses that boundary.
- * Named here so the gate and `ShopAgent.onConnect` cannot drift apart.
- *
- * `teamIds` is comma-separated because a header is a string and a team id is a
- * ULID-shaped token with no commas in it.
- *
- * The contract carries one `CONNECTION_HEADER` (`x-actor-connection`) instead of these four.
- */
-export const CONNECTION_ROLE_HEADER = "x-baton-role";
-export const CONNECTION_MEMBER_ID_HEADER = "x-baton-member-id";
-export const CONNECTION_MEMBER_EMAIL_HEADER = "x-baton-member-email";
-export const CONNECTION_TEAM_IDS_HEADER = "x-baton-team-ids";
-
-/**
  * Close codes the object sends on a connection it will not serve. `4403`
  * is a gate failure: the forwarded request carried no decodable identity,
  * which can only mean the Worker forwarded something malformed (a browser
@@ -581,56 +538,3 @@ export const CONNECTION_CLOSE_REVOKED = 3401;
  * one's callers move.
  */
 export const CONNECTION_CLOSE_DISPLACED = 4409;
-
-/**
- * The member ids whose open sockets a membership change has invalidated. Plain
- * RPC input — the Worker sends it after its own D1 write, and no browser can
- * reach it.
- */
-export const RevokeMemberConnectionsInput = Schema.Struct({
-  memberIds: Schema.Array(BoundedId),
-});
-export type RevokeMemberConnectionsInput = typeof RevokeMemberConnectionsInput.Type;
-
-/**
- * The invalidation, the one message the object sends: "re-read". Deliberately
- * not the new value: the Durable Object never learns what any tab is
- * rendering, and a re-read runs the same authenticated read the tab already
- * trusts. The tab throttles them (`INVALIDATION_THROTTLE_MS`).
- *
- * The cycle, both sides. `side` is where the step runs: the object or the
- * tab.
- *
- * | step       | side   | symbol                | rule                                                                                                | pinned by                                          |
- * | ---------- | ------ | --------------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
- * | identify   | object | `ShopAgent.onConnect` | a connection carries the gate's identity; the tab's `identified` flip runs the first read           | stores a merchant identity and tags the connection |
- * | publish    | object | `ShopAgent.publish`   | a write that succeeded sends the invalidation to every connection; the sites table lists the writes | every connection receives every publish            |
- * | invalidate | tab    | `useLiveQuery`        | a mounted live screen re-reads, throttled, deferred while hidden; the events table is on the hook   | a visible tab refetches on an invalidation         |
- *
- * A live screen reads one method twice: through `ShopAgentClient` in its
- * loader for the SSR paint, and through `useLiveQuery` over the socket
- * after. A socket `useQuery` outside the hook never re-reads and belongs on
- * a loader. Workflow configuration is loader data and changes on
- * navigation, except where an order page shows it; the sites table on
- * `ShopAgent.publish` names every write that publishes.
- *
- * Overlaps the contract's `Notice` until this one's callers move.
- */
-export const InvalidatedMessage = Schema.Struct({
-  type: Schema.Literal("invalidated"),
-});
-export type InvalidatedMessage = typeof InvalidatedMessage.Type;
-
-/**
- * Keep-alive frame pair for the `/app` ShopAgent WebSocket. The client pings
- * under the edge's ~300s idle-close window (`SOCKET_KEEPALIVE_MS`,
- * `ShopAgentContext.tsx`); the Durable Object registers the pair via
- * `ctx.setWebSocketAutoResponse` (`ShopAgent.ts`), so the Cloudflare runtime
- * answers without waking a hibernated object or billing duration
- * (refs/cloudflare-docs/src/content/partials/durable-objects/durable-objects-pricing.mdx)
- * and the ping never reaches `webSocketMessage`. Shared here because both
- * sides must agree byte-for-byte: a mismatch fails silently — no pong, so the
- * socket degrades to the pre-keepalive ~5-minute edge-close reconnect cycle.
- */
-export const SocketKeepalivePing = "ping";
-export const SocketKeepalivePong = "pong";

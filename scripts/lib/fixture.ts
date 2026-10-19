@@ -21,7 +21,7 @@ import * as Schema from "effect/Schema";
 
 import { fixture } from "../../fixture.ts";
 import type { ShopFixtureData } from "../../src/contract/fixture.ts";
-import { ShopKey } from "../../src/contract/shop.ts";
+import { ShopKey } from "../../src/domain/platform.ts";
 import { loadFixtureWhenInstalled } from "./load-fixture.ts";
 import { applyStoreFixture, domainOf, requireFixtureStore } from "./stores.ts";
 import { storeNameOf } from "./worktree.ts";

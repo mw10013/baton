@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
-import { ShopKey } from "../../../../src/contract/shop.ts";
+import { ShopKey } from "../../../../src/domain/platform.ts";
 import { memberLanding } from "../../../../src/web/client/session.ts";
 
 const shop = Schema.decodeUnknownSync(ShopKey);

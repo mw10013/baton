@@ -169,6 +169,9 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
 
 - **2026-10-19, Step 0:** the token could not list, so the account and namespace ids came from `cf` (its own OAuth login, read-only: `cf accounts list`, `cf durable-objects namespaces list`), and one read-only `cf durable-objects namespaces objects list` on the staging namespace stood in for the inventory read the token could not make. No scratch script reached distilled's `listNamespaceObjects` with a working credential; the scratch scripts (raw `fetch`, outside the repo in `/tmp`) are deleted.
 - **2026-10-19, Step 0 → Step 3:** Step 3 waits for the token (Step 0.3). Steps 1 and 2 proceed; so do the parts of Steps 4 and 5 that do not touch the inventory (dashboard Shops and Members sections, `/admin/shops`, `/admin/shop/$shop`, `PlanCache`, their browser and e2e titles, the billing spec). The inventory's pages, dashboard sections and titles land with Step 3.
+- **2026-10-19, Step 1:** also deleted `User` and `SessionContext` (imported by nothing, and built on `UserId`, `UserRole` and `AuthSession`, which the step deletes). `UserRole`'s rule (only `user` and `admin`, Better Auth's admin-plugin defaults, mirrored by the `UserRole` lookup table; per-shop access is a `Member` row) moved onto `userIsAdmin`, the symbol that enforces it. The header names' and the other deleted exports' rules are legacy's (the gate header, `Notice`, Effect RPC's pings replaced them); nothing carried over.
+- **2026-10-19, Step 1:** `CONNECTION_CLOSE_FORBIDDEN`, `CONNECTION_CLOSE_REVOKED`, `CONNECTION_CLOSE_DISPLACED` and `ConnectionRole` stay in `platform.ts` (the lead's note 2). `ConnectionRole` is imported (`shop-work.ts`, two components); the three close codes are imported by nothing (every caller takes the contract's copies), so they are duplicates left for a later sweep.
+- **2026-10-19, Step 1:** `shopGid` as `ShopGid` made `SubscriptionPlan`'s own `decodeShopGid` redundant; it is gone. The unit tests' rows take `SEED_SHOP_GID` (new, `test/seed-shops.ts`) or decode a `ShopGid`. Importers of `ShopKey` from inside `src/contract/` (`./shop.ts`) moved to the domain too.
 
 ### Issues
 
@@ -183,6 +186,7 @@ For the implementer. Append as you go. Keep each entry short, dated and tagged w
   - Account id `87997fc2724b0127effb8e4524989975`; actor namespace id `76be23649c4a49ea8772f89465f5ce82` (`baton-backend-staging_ShopActor`, class `ShopActor`, script `baton-backend-staging`, SQLite).
   - Objects (through `cf`, limit 100): **1**; `name` absent on it (see Issues); `hasStoredData` seen: `true`.
   - Cursor field: not observed (one page, and `cf` prints only `result`); distilled's pager follows `resultInfo.cursors.after`; its `ResultInfo` decodes `cursor` too. Unsettled until the token works.
+- **2026-10-19, Step 1:** `vp check --fix` clean (373 files). `vp test test/unit`: 52 files, 828 tests passed, 12.3 s.
 
 ### Human steps requested
 

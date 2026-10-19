@@ -7,7 +7,7 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import type * as Socket from "effect/socket/Socket";
 import { ReturnPath } from "../../contract/auth.ts";
-import type { ShopKey } from "../../contract/shop.ts";
+import type { ShopKey } from "../../domain/platform.ts";
 import {
   CONNECTION_CLOSE_DISPLACED,
   CONNECTION_CLOSE_FORBIDDEN,

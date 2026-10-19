@@ -17,7 +17,7 @@ import {
   stepsOf,
   workflowStateOf,
 } from "../contract/fixture.ts";
-import type { ShopKey } from "../contract/shop.ts";
+import type { ShopKey } from "../domain/platform.ts";
 import { type ShopIdentity, MembershipRepository } from "./membership-repository.ts";
 import { ShopActors } from "./shop-actors.ts";
 import { ShopSessionRepository } from "./shop-session-repository.ts";

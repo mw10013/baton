@@ -2,7 +2,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import type { ShopKey } from "../contract/shop.ts";
+import type { ShopKey } from "../domain/platform.ts";
 import { ShopSessionRepository } from "./shop-session-repository.ts";
 import { ReauthorizationRequired, Shopify, type EnsureShopSessionError } from "./shopify.ts";
 

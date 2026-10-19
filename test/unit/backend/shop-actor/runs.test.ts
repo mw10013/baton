@@ -33,9 +33,8 @@ import {
 } from "../../../../src/backend/shop-actor/workflow-repository.ts";
 import { ShopFixtureData } from "../../../../src/contract/fixture.ts";
 import { ORDERS_KEY } from "../../../../src/contract/shop-actor.ts";
-import { ShopKey } from "../../../../src/contract/shop.ts";
 import type { ShopOrder } from "../../../../src/domain/orders.ts";
-import { Email } from "../../../../src/domain/platform.ts";
+import { Email, ShopKey } from "../../../../src/domain/platform.ts";
 import * as ShopWork from "../../../../src/domain/shop-work.ts";
 import { ActorSqliteTest, makeD1Test, QuietLogs, seedD1 } from "../layers.ts";
 

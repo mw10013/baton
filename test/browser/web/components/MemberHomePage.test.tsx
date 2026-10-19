@@ -8,7 +8,7 @@ import {
   useLocation,
 } from "@tanstack/react-router";
 import { describe, expect, it } from "vite-plus/test";
-import type { ShopKey } from "../../../../src/contract/shop.ts";
+import type { ShopKey } from "../../../../src/domain/platform.ts";
 import MemberHomePage from "../../../../src/web/components/MemberHomePage.tsx";
 import { renderInApp } from "../../render.tsx";
 import { shopTestRegistry } from "../../shop-actor.ts";

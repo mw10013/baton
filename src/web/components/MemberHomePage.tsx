@@ -1,4 +1,4 @@
-import type { ShopKey } from "../../contract/shop.ts";
+import type { ShopKey } from "../../domain/platform.ts";
 import { useNavigateOnClick } from "./navigate.ts";
 import { Lines } from "./screen/Lines.tsx";
 

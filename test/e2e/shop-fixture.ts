@@ -7,7 +7,7 @@
 import * as Schema from "effect/Schema";
 import { Email } from "../../src/contract/auth.ts";
 import type { ShopFixtureData } from "../../src/contract/fixture.ts";
-import { ShopKey } from "../../src/contract/shop.ts";
+import { ShopKey } from "../../src/domain/platform.ts";
 import { TeamName } from "../../src/domain/shop-work.ts";
 
 /** This checkout's e2e store (`SHOPIFY_E2E_STORE`, which the config loads from `.env`). */

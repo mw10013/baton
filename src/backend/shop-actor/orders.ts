@@ -4,9 +4,8 @@ import * as Effect from "effect/Effect";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import type * as SqlError from "effect/sql/SqlError";
-import type { ShopKey } from "../../contract/shop.ts";
 import type { OrdersSyncResult, ShopOrder, SyncOrderResult } from "../../domain/orders.ts";
-import { ShopLimits } from "../../domain/platform.ts";
+import { ShopLimits, type ShopKey } from "../../domain/platform.ts";
 import { type ReconcileCounts, reconcileCountsChanged } from "../../domain/shop-work.ts";
 import { ORDERS_KEY, SYNC_KEY } from "../../contract/shop-actor.ts";
 import {

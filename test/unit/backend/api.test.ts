@@ -14,8 +14,8 @@ import {
   MagicLinkRequested,
   type RequestInfo,
 } from "../../../src/contract/auth.ts";
-import { type ShopKey } from "../../../src/contract/shop.ts";
-import { OTHER_SHOP, SEED_SHOP } from "../../seed-shops.ts";
+import { type ShopKey, type ShopSession } from "../../../src/domain/platform.ts";
+import { OTHER_SHOP, SEED_SHOP, SEED_SHOP_GID } from "../../seed-shops.ts";
 import type { ConnectionCaller, MemberCaller } from "../../../src/contract/shop-actor.ts";
 import { ShopActors } from "../../../src/backend/shop-actors.ts";
 import { BackendApi, SignInLimiter } from "../../../src/backend/api.ts";
@@ -49,10 +49,7 @@ import {
 import { Auth } from "../../../src/backend/auth.ts";
 import { SentMail } from "../../../src/backend/mailer.ts";
 import { ShopAccess, ShopAccessDenied } from "../../../src/backend/shop-access.ts";
-import {
-  ShopSessionRepository,
-  type ShopSessionRow,
-} from "../../../src/backend/shop-session-repository.ts";
+import { ShopSessionRepository } from "../../../src/backend/shop-session-repository.ts";
 
 const email = Schema.decodeUnknownSync(EmailFromInput);
 const decodeRequested = Schema.decodeSync(MagicLinkRequested);
@@ -66,9 +63,9 @@ const members: ReadonlyArray<MemberRow> = [
 const merchant: ConnectionCaller = { role: "merchant" };
 
 /** The seed's row for the seed shop: a stored token that never expires, so no exchange runs. */
-const seedSession: ShopSessionRow = {
+const seedSession: ShopSession = {
   shop: SEED_SHOP,
-  shopGid: "gid://shopify/Shop/1",
+  shopGid: SEED_SHOP_GID,
   shopActorId: SEED_SHOP,
   scope: "read_orders,write_orders",
   accessTokenExpiresAt: 4102444800000,

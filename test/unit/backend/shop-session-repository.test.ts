@@ -1,16 +1,14 @@
 import { assert, describe, it } from "@effect/vitest";
+import { type ShopSession } from "../../../src/domain/platform.ts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { SEED_SHOP } from "../../seed-shops.ts";
-import {
-  ShopSessionRepository,
-  type ShopSessionRow,
-} from "../../../src/backend/shop-session-repository.ts";
+import { SEED_SHOP, SEED_SHOP_GID } from "../../seed-shops.ts";
+import { ShopSessionRepository } from "../../../src/backend/shop-session-repository.ts";
 import { makeD1Test } from "./layers.ts";
 
-const row: ShopSessionRow = {
+const row: ShopSession = {
   shop: SEED_SHOP,
-  shopGid: "gid://shopify/Shop/1",
+  shopGid: SEED_SHOP_GID,
   shopActorId: SEED_SHOP,
   scope: "read_orders",
   accessTokenExpiresAt: 1_000,

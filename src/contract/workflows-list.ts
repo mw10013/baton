@@ -8,7 +8,7 @@
  * @module
  */
 import * as Schema from "effect/Schema";
-import { BoundedId, Email } from "../domain/platform.ts";
+import { BoundedId, Email, ShopKey } from "../domain/platform.ts";
 import {
   ListSearch,
   MemberAccess,
@@ -20,7 +20,6 @@ import {
   WorkflowsListData,
   WorkflowsListState,
 } from "../domain/shop-work.ts";
-import { ShopKey } from "./shop.ts";
 
 /**
  * `BackendApi.workflowsList`' input: the shop and the query the URL carries. `team` is the

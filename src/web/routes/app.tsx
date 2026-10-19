@@ -9,7 +9,7 @@ import {
 import { useContext, useEffect, useState } from "react";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { ShopKey } from "../../contract/shop.ts";
+import { ShopKey } from "../../domain/platform.ts";
 import { rememberHydratedAppGuard } from "../client/app-guard.ts";
 import { mintSessionToken } from "../client/app-bridge.ts";
 import { ShopSocket } from "../components/ShopSocket.tsx";

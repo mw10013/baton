@@ -7,7 +7,6 @@ import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { PlanUnsubscribed } from "../contract/billing.ts";
-import type { ShopKey } from "../contract/shop.ts";
 import {
   type Entitlements,
   entitlementsOfPlan,
@@ -16,10 +15,10 @@ import {
   planOfHandle,
   type PlanStatus,
 } from "../domain/billing.ts";
-import { ShopGid } from "../domain/platform.ts";
+import { type ShopKey, type ShopSession } from "../domain/platform.ts";
 import { MembershipRepository } from "./membership-repository.ts";
 import { ShopActors } from "./shop-actors.ts";
-import { ShopSessionRepository, type ShopSessionRow } from "./shop-session-repository.ts";
+import { ShopSessionRepository } from "./shop-session-repository.ts";
 import { planSelectionExitIframeHref, ShopifyPartner } from "./shopify-partner.ts";
 
 /**
@@ -130,7 +129,6 @@ const Unsubscribed = {
 } as const satisfies PlanStatus;
 
 const decodePlanHandle = Schema.decodeUnknownOption(PlanHandleSchema);
-const decodeShopGid = Schema.decodeUnknownEffect(ShopGid);
 
 /**
  * The one place a `Subscribed` status is built, so the cached path and the
@@ -155,7 +153,7 @@ const subscribed = (input: { readonly handle: PlanHandle; readonly boundaryAt: n
  * absence of any app subscription.
  */
 export const cachedStatus = (
-  shopSession: Pick<ShopSessionRow, "planHandle" | "planHandleExpiresAt" | "planBoundaryAt">,
+  shopSession: Pick<ShopSession, "planHandle" | "planHandleExpiresAt" | "planBoundaryAt">,
   now: number,
 ): Option.Option<PlanStatus> => {
   if (shopSession.planHandleExpiresAt === null || now >= shopSession.planHandleExpiresAt)
@@ -191,9 +189,7 @@ const make = Effect.gen(function* () {
   const d1 = <A>(effect: Effect.Effect<A>, message: string) =>
     effect.pipe(Effect.catchDefect((cause) => Effect.fail(planError(message)(cause))));
 
-  const revalidate = Effect.fn("SubscriptionPlan.revalidate")(function* (
-    shopSession: ShopSessionRow,
-  ) {
+  const revalidate = Effect.fn("SubscriptionPlan.revalidate")(function* (shopSession: ShopSession) {
     const active = yield* shopifyPartner
       .activeSubscription(shopSession.shopGid)
       .pipe(Effect.mapError(planError(`Plan revalidation failed for ${shopSession.shop}`)));
@@ -246,7 +242,7 @@ const make = Effect.gen(function* () {
     if (cycleStartAt !== null)
       yield* Effect.gen(function* () {
         yield* actors.setBillingCycle(shopSession.shop, {
-          shopGid: yield* decodeShopGid(shopSession.shopGid),
+          shopGid: shopSession.shopGid,
           cycleStartAt,
           cycleEndAt: appSubscription.boundaryAt,
           memberCount: yield* members.countMembers(shopSession.shop),

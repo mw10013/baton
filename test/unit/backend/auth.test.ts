@@ -13,7 +13,7 @@ import {
   ReturnPath,
   type RequestInfo,
 } from "../../../src/contract/auth.ts";
-import { type ShopKey } from "../../../src/contract/shop.ts";
+import type { ShopKey } from "../../../src/domain/platform.ts";
 import { SEED_SHOP } from "../../seed-shops.ts";
 import { ShopActors } from "../../../src/backend/shop-actors.ts";
 import { BackendApi, SignInLimiter } from "../../../src/backend/api.ts";

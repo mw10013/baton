@@ -7,7 +7,7 @@
  */
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
-import type { ShopKey } from "../../contract/shop.ts";
+import type { ShopKey } from "../../domain/platform.ts";
 import { ORDERS_KEY } from "../../contract/shop-actor.ts";
 import type { BillingCycleInput, ShopUsage } from "../../domain/billing.ts";
 import { ShopifyAppEvents } from "../shopify-app-events.ts";

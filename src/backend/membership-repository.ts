@@ -15,9 +15,8 @@ import {
   TeamNameTakenError,
   TeamNotFoundError,
 } from "../contract/members.ts";
-import { ShopKey } from "../contract/shop.ts";
 import { membersAtCeiling } from "../domain/billing.ts";
-import { Email as DomainEmail, ShopLimits } from "../domain/platform.ts";
+import { Email as DomainEmail, ShopLimits, ShopKey } from "../domain/platform.ts";
 import {
   Member,
   MemberAccess,

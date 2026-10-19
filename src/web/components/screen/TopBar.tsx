@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
-import type { ShopKey } from "../../../contract/shop.ts";
+import type { ShopKey } from "../../../domain/platform.ts";
 import { Inline } from "./Inline.tsx";
 import { BETWEEN_LINES } from "./layout.ts";
 

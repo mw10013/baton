@@ -1,6 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import type { ShopKey } from "../src/contract/shop.ts";
+import type { ShopKey } from "../src/domain/platform.ts";
 import { SHOPIFY_API_KEY, SHOPIFY_API_SECRET_FAKE } from "../src/backend/shopify.ts";
 
 /** A JSON object as one base64url JWT segment. */

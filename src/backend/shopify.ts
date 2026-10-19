@@ -25,13 +25,10 @@ import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import { InvalidSessionToken, ShopKey, type AdminSession } from "../contract/shop.ts";
+import { InvalidSessionToken, type AdminSession } from "../contract/shop.ts";
+import { ShopKey, ShopSessionUpsert, type ShopSession } from "../domain/platform.ts";
 import { OfflineSessionMissing, ReauthorizationRequired } from "../contract/shopify.ts";
-import {
-  ShopSessionRepository,
-  ShopSessionUpsert,
-  type ShopSessionRow,
-} from "./shop-session-repository.ts";
+import { ShopSessionRepository } from "./shop-session-repository.ts";
 
 export { OfflineSessionMissing, ReauthorizationRequired };
 
@@ -104,7 +101,7 @@ const pollDelay = Effect.flatMap(
  * Decided from the row's epoch-ms columns and the Effect clock, not `Session.isExpired`, which
  * reads `Date.now()`, so a test clock drives every branch.
  */
-const hasFreshAccessToken = (row: ShopSessionRow, now: number, buffer: number) =>
+const hasFreshAccessToken = (row: ShopSession, now: number, buffer: number) =>
   row.accessToken !== null &&
   row.accessTokenExpiresAt !== null &&
   row.accessTokenExpiresAt - buffer > now;
@@ -295,7 +292,7 @@ const make = (options: {
     });
 
     /** A stored row as the library's offline `Session`. */
-    const sessionOf = Effect.fn("Shopify.sessionOf")(function* (row: ShopSessionRow) {
+    const sessionOf = Effect.fn("Shopify.sessionOf")(function* (row: ShopSession) {
       const shopify = yield* api;
       const expires = yield* decodeExpiry(row.accessTokenExpiresAt).pipe(Effect.orDie);
       const refreshTokenExpires = yield* decodeExpiry(row.refreshTokenExpiresAt).pipe(Effect.orDie);
@@ -400,7 +397,7 @@ const make = (options: {
      * first; that row is adopted. A 401 goes to {@link recoverRefreshRace}.
      */
     const refresh = Effect.fn("Shopify.refresh")(
-      function* (row: ShopSessionRow, presented: string) {
+      function* (row: ShopSession, presented: string) {
         const { shop } = row;
         const { session } = yield* grant(shop, presented);
         const refreshed = yield* decodeRefreshedSession(session).pipe(Effect.orDie);

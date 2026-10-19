@@ -3,7 +3,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Schema from "effect/Schema";
-import type { ShopKey } from "../src/contract/shop.ts";
+import type { ShopKey } from "../src/domain/platform.ts";
 import { SHOPIFY_API_SECRET_FAKE } from "../src/backend/shopify.ts";
 
 const encodeBase64 = Schema.encodeSync(Schema.Uint8ArrayFromBase64);

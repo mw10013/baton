@@ -1,6 +1,6 @@
 import type { AnyRouter } from "@tanstack/react-router";
 import type { Role } from "../../contract/auth.ts";
-import type { ShopKey } from "../../contract/shop.ts";
+import type { ShopKey } from "../../domain/platform.ts";
 
 /** Each role has its own side of the site. */
 export const homeFor = (role: Role) => (role === "admin" ? "/admin" : "/shop");

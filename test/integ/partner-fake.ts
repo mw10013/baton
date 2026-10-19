@@ -4,7 +4,7 @@ import * as Layer from "effect/Layer";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import type { ShopKey } from "../../src/contract/shop.ts";
+import type { ShopKey } from "../../src/domain/platform.ts";
 import {
   type AppSubscription,
   PlanHandle,

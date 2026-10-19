@@ -10,7 +10,7 @@ import type {
   RenameTeamInput,
   SetTeamMemberInput,
 } from "../../contract/members.ts";
-import type { ShopKey } from "../../contract/shop.ts";
+import type { ShopKey } from "../../domain/platform.ts";
 import { ORDERS_KEY } from "../../contract/shop-actor.ts";
 import type { DeleteTeamResult, MemberId } from "../../domain/shop-work.ts";
 import type { MembershipRepository } from "../membership-repository.ts";

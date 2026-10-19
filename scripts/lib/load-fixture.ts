@@ -15,7 +15,7 @@ import { RpcClient, RpcSerialization } from "effect/rpc";
 
 import { DevRpcs } from "../../src/contract/dev.ts";
 import type { ShopFixtureData } from "../../src/contract/fixture.ts";
-import type { ShopKey } from "../../src/contract/shop.ts";
+import type { ShopKey } from "../../src/domain/platform.ts";
 
 /**
  * `LoadFixture` with `data` for `shop` on the server whose `/api/dev` is `url`. A shop that is

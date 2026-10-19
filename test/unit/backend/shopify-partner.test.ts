@@ -14,7 +14,7 @@ import {
   ShopifyPartnerConfig,
   shopifyPartnerConfig,
 } from "../../../src/backend/shopify-partner.ts";
-import { ShopKey } from "../../../src/contract/shop.ts";
+import { ShopKey } from "../../../src/domain/platform.ts";
 import { QuietLogs } from "./layers.ts";
 
 /**

@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { ORDERS_KEY } from "../../contract/shop-actor.ts";
-import type { ShopKey } from "../../contract/shop.ts";
+import type { ShopKey } from "../../domain/platform.ts";
 import {
   type AddStepInput,
   type AddTaskInput,

@@ -11,12 +11,12 @@ import {
   TeamNameTakenError,
   TeamNotFoundError,
 } from "../../../src/contract/members.ts";
-import { ShopKey } from "../../../src/contract/shop.ts";
 import {
   EMAIL_MAX_LENGTH,
   EMAIL_TOO_LONG,
   Email,
   ShopLimits,
+  ShopKey,
 } from "../../../src/domain/platform.ts";
 import {
   type SetupFacts,

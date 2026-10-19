@@ -7,17 +7,14 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
-import { ShopLimits } from "../../../src/domain/platform.ts";
+import { ShopLimits, type ShopSession } from "../../../src/domain/platform.ts";
 import { orderSyncQuery, orderSyncVariables } from "../../../src/backend/order-sync.ts";
 import { ABORT_UNINSTALLED } from "../../../src/backend/shop-actor/tag.ts";
-import {
-  ShopSessionRepository,
-  type ShopSessionRow,
-} from "../../../src/backend/shop-session-repository.ts";
+import { ShopSessionRepository } from "../../../src/backend/shop-session-repository.ts";
 import { ReauthorizationRequired, Shopify } from "../../../src/backend/shopify.ts";
 import type { ShopifyAdminError } from "../../../src/backend/shopify-admin.ts";
 import { orderRef, OrdersWebhookPayload, Webhooks } from "../../../src/backend/webhooks.ts";
-import { SEED_SHOP } from "../../seed-shops.ts";
+import { SEED_SHOP, SEED_SHOP_GID } from "../../seed-shops.ts";
 import { signWebhook } from "../../shopify-webhook.ts";
 import recorded from "./fixtures/order-sync-response.json";
 import {
@@ -33,9 +30,9 @@ import {
 import appToml from "../../../shopify.app.toml?raw";
 import stagingToml from "../../../shopify.app.staging.toml?raw";
 
-const session: ShopSessionRow = {
+const session: ShopSession = {
   shop: SEED_SHOP,
-  shopGid: "gid://shopify/Shop/1",
+  shopGid: SEED_SHOP_GID,
   shopActorId: SEED_SHOP,
   scope: "read_products",
   accessTokenExpiresAt: 1_900_000_000_000,
@@ -55,7 +52,7 @@ const session: ShopSessionRow = {
  * answering `replies`, and whose destroy answers `stub`, all recording into `calls`.
  */
 const layer = (
-  rows: ReadonlyArray<ShopSessionRow> = [session],
+  rows: ReadonlyArray<ShopSession> = [session],
   {
     calls = newCalls(),
     replies = [],

@@ -5,55 +5,15 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as Struct from "effect/Struct";
-import { ShopKey } from "../contract/shop.ts";
+import { ShopKey, ShopSession, type ShopSessionUpsert } from "../domain/platform.ts";
 import { AuthDb } from "./resources.ts";
-
-/**
- * A `ShopSession` row: Baton's `ShopSession`, one shop's offline Admin API session. Times are
- * epoch ms. `shopActorId` names the shop's actor; here it is the shop domain, because the actor
- * is addressed by name (`ShopActors.getByName(shop)`), where Baton stored the Agents SDK's id.
- * The three plan columns are a cache that only a plan check writes. `refreshLeaseUntil` is the
- * lease that serializes refresh-token grants for the shop: while it is in the future, one caller
- * is refreshing and the rest wait.
- */
-export const ShopSessionRow = Schema.Struct({
-  shop: ShopKey,
-  shopGid: Schema.String,
-  shopActorId: Schema.String,
-  scope: Schema.NullOr(Schema.String),
-  accessTokenExpiresAt: Schema.NullOr(Schema.Number),
-  accessToken: Schema.NullOr(Schema.String),
-  refreshToken: Schema.NullOr(Schema.String),
-  refreshTokenExpiresAt: Schema.NullOr(Schema.Number),
-  refreshLeaseUntil: Schema.NullOr(Schema.Number),
-  planHandle: Schema.NullOr(Schema.String),
-  planHandleExpiresAt: Schema.NullOr(Schema.Number),
-  planBoundaryAt: Schema.NullOr(Schema.Number),
-});
-export type ShopSessionRow = typeof ShopSessionRow.Type;
-
-/**
- * A row as authentication knows it: everything but the plan columns and the refresh lease, so
- * re-authenticating never disturbs a cached plan or a refresh in flight, and a fresh insert
- * leaves them null, which reads as never fetched and unleased.
- */
-export const ShopSessionUpsert = Schema.Struct(
-  Struct.omit(ShopSessionRow.fields, [
-    "refreshLeaseUntil",
-    "planHandle",
-    "planHandleExpiresAt",
-    "planBoundaryAt",
-  ]),
-);
-export type ShopSessionUpsert = typeof ShopSessionUpsert.Type;
 
 /** The plan cache columns, which only {@link ShopSessionRepository}' plan methods write. */
 type PlanCacheColumn = "planHandle" | "planHandleExpiresAt" | "planBoundaryAt";
 
 /** The token columns {@link ShopSessionRepository}' `rotateTokens` rewrites, by shop. */
 export type ShopSessionTokens = Pick<
-  ShopSessionRow,
+  ShopSession,
   "accessToken" | "accessTokenExpiresAt" | "refreshToken" | "refreshTokenExpiresAt"
 >;
 
@@ -61,7 +21,7 @@ export type ShopSessionTokens = Pick<
 const decodeWon = Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ shop: ShopKey })));
 
 /** Rows of the `ShopSession` table. A row that does not decode is a broken invariant, so it dies. */
-const decodeRows = Schema.decodeUnknownEffect(Schema.Array(ShopSessionRow));
+const decodeRows = Schema.decodeUnknownEffect(Schema.Array(ShopSession));
 
 const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
   Effect.gen(function* () {
@@ -184,7 +144,7 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
      * for its own narrow update instead of taxing the path that does not.
      */
     const updatePlan = Effect.fn("ShopSessionRepository.updatePlan")(function* (
-      plan: Pick<ShopSessionRow, "shop" | PlanCacheColumn>,
+      plan: Pick<ShopSession, "shop" | PlanCacheColumn>,
     ) {
       yield* sql`
         update ShopSession set
@@ -280,10 +240,10 @@ export class ShopSessionRepository extends Context.Service<
     Layer.effect(ShopSessionRepository, make(Effect.succeed(database)));
 
   /** `ShopSession` rows in memory, for tests. Every write edits the layer's own copy. */
-  static readonly layerTest = (seed: ReadonlyArray<ShopSessionRow>) =>
+  static readonly layerTest = (seed: ReadonlyArray<ShopSession>) =>
     Layer.sync(ShopSessionRepository, () => {
       const rows = new Map(seed.map((row) => [row.shop, row]));
-      const edit = (shop: ShopKey, change: Partial<ShopSessionRow>) =>
+      const edit = (shop: ShopKey, change: Partial<ShopSession>) =>
         Effect.sync(() => {
           const row = rows.get(shop);
           if (row !== undefined) rows.set(shop, { ...row, ...change });
@@ -342,7 +302,7 @@ export class ShopSessionRepository extends Context.Service<
             ...(refreshToken === undefined ? {} : { refreshToken }),
           }),
         updateScope: (shop: ShopKey, scope: string | null) => edit(shop, { scope }),
-        updatePlan: ({ shop, ...plan }: Pick<ShopSessionRow, "shop" | PlanCacheColumn>) =>
+        updatePlan: ({ shop, ...plan }: Pick<ShopSession, "shop" | PlanCacheColumn>) =>
           edit(shop, plan),
         shortenPlanExpiry: ({
           shop,

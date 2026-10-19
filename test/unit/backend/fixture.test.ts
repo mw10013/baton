@@ -5,14 +5,11 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { EmailFromInput } from "../../../src/contract/auth.ts";
 import { FIXTURE_ORDER_PREFIX, ShopFixtureData } from "../../../src/contract/fixture.ts";
-import { ShopKey } from "../../../src/contract/shop.ts";
+import { ShopGid, ShopKey, type ShopSession } from "../../../src/domain/platform.ts";
 import { type ActorFixtureRows, Fixtures, fixtureRows } from "../../../src/backend/fixture.ts";
 import { MembershipRepository } from "../../../src/backend/membership-repository.ts";
 import { ShopActors } from "../../../src/backend/shop-actors.ts";
-import {
-  ShopSessionRepository,
-  type ShopSessionRow,
-} from "../../../src/backend/shop-session-repository.ts";
+import { ShopSessionRepository } from "../../../src/backend/shop-session-repository.ts";
 import { type MemberRow, testMembershipRepository } from "./layers.ts";
 
 const shopKey = Schema.decodeUnknownSync(ShopKey);
@@ -20,9 +17,9 @@ const email = Schema.decodeUnknownSync(EmailFromInput);
 const shop = shopKey("fixture-shop.myshopify.com");
 const otherShop = shopKey("other-shop.myshopify.com");
 
-const session: ShopSessionRow = {
+const session: ShopSession = {
   shop,
-  shopGid: "gid://shopify/Shop/1",
+  shopGid: Schema.decodeUnknownSync(ShopGid)("gid://shopify/Shop/1"),
   shopActorId: shop,
   scope: null,
   accessTokenExpiresAt: null,
@@ -214,7 +211,7 @@ describe("Fixtures.load", () => {
     { id: "other-1", shop: otherShop, email: email("ana@example.com"), createdAt: 0 },
   ];
 
-  const harness = (sessions: ReadonlyArray<ShopSessionRow>) => {
+  const harness = (sessions: ReadonlyArray<ShopSession>) => {
     const revoked: Array<{ key: ShopKey; by: "member" | "session"; id: string }> = [];
     const loaded: Array<{ key: ShopKey; rows: ActorFixtureRows }> = [];
     const layer = Fixtures.layer.pipe(

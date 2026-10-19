@@ -12,7 +12,7 @@ import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import { RpcSerialization, RpcServer } from "effect/rpc";
 import * as Schema from "effect/Schema";
-import { ShopKey } from "../contract/shop.ts";
+import { ShopKey } from "../domain/platform.ts";
 import {
   CONNECTION_CLOSE_FORBIDDEN,
   CONNECTION_CLOSE_NOT_A_MEMBER,

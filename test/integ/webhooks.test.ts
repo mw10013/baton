@@ -9,7 +9,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
-import { ShopKey } from "../../src/contract/shop.ts";
+import { ShopKey } from "../../src/domain/platform.ts";
 import { ORDERS_KEY } from "../../src/contract/shop-actor.ts";
 import type { OrderNode } from "../../src/backend/order-sync.ts";
 import { SEED_SHOP } from "../seed-shops.ts";

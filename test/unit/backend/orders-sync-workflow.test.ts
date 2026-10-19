@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
+import { type ShopSession } from "../../../src/domain/platform.ts";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -19,11 +20,10 @@ import {
   ordersSyncBody,
 } from "../../../src/backend/orders-sync-workflow.ts";
 import { ShopActors } from "../../../src/backend/shop-actors.ts";
-import type { ShopSessionRow } from "../../../src/backend/shop-session-repository.ts";
 import { ReauthorizationRequired } from "../../../src/backend/shopify.ts";
 import type { ShopifyAdminError } from "../../../src/backend/shopify-admin.ts";
 import type { BulkOperation } from "../../../src/domain/orders.ts";
-import { SEED_SHOP } from "../../seed-shops.ts";
+import { SEED_SHOP, SEED_SHOP_GID } from "../../seed-shops.ts";
 import { type AdminCall, QuietLogs, testShopify, testShopifyAdmin } from "./layers.ts";
 
 /**
@@ -36,9 +36,9 @@ import { type AdminCall, QuietLogs, testShopify, testShopifyAdmin } from "./laye
 
 const WORKFLOW_ID = "wf-1";
 
-const session: ShopSessionRow = {
+const session: ShopSession = {
   shop: SEED_SHOP,
-  shopGid: "gid://shopify/Shop/1",
+  shopGid: SEED_SHOP_GID,
   shopActorId: SEED_SHOP,
   scope: "read_orders",
   accessTokenExpiresAt: 1_900_000_000_000,
@@ -150,7 +150,7 @@ const stubbedSteps = (run: Run) =>
 /** One run of the body for {@link SEED_SHOP} against Admin `replies`; its exit and record. */
 const runSync = (
   replies: Array<Effect.Effect<unknown, ShopifyAdminError>>,
-  rows: ReadonlyArray<ShopSessionRow> = [session],
+  rows: ReadonlyArray<ShopSession> = [session],
 ) =>
   Effect.gen(function* () {
     const run: Run = { steps: [], actor: [], admin: [] };

@@ -8,16 +8,13 @@ import * as Schema from "effect/Schema";
 import { EmailFromInput } from "../../../src/contract/auth.ts";
 import { DevRpcs } from "../../../src/contract/dev.ts";
 import { ShopFixtureData } from "../../../src/contract/fixture.ts";
-import { ShopKey } from "../../../src/contract/shop.ts";
-import { SEED_SHOP } from "../../seed-shops.ts";
+import { ShopKey, type ShopSession } from "../../../src/domain/platform.ts";
+import { SEED_SHOP, SEED_SHOP_GID } from "../../seed-shops.ts";
 import { DevHandlers } from "../../../src/backend/dev.ts";
 import { type ActorFixtureRows, Fixtures } from "../../../src/backend/fixture.ts";
 import { MembershipRepository } from "../../../src/backend/membership-repository.ts";
 import { ShopActors } from "../../../src/backend/shop-actors.ts";
-import {
-  ShopSessionRepository,
-  type ShopSessionRow,
-} from "../../../src/backend/shop-session-repository.ts";
+import { ShopSessionRepository } from "../../../src/backend/shop-session-repository.ts";
 import { type MemberRow, QuietLogs, testMembershipRepository, testShopify } from "./layers.ts";
 
 const email = Schema.decodeUnknownSync(EmailFromInput);
@@ -28,9 +25,9 @@ const fixture = (parts: object) =>
 
 const member = email("m1@m.com");
 const otherShop = Schema.decodeUnknownSync(ShopKey)("other-shop.myshopify.com");
-const session: ShopSessionRow = {
+const session: ShopSession = {
   shop: SEED_SHOP,
-  shopGid: "gid://shopify/Shop/1",
+  shopGid: SEED_SHOP_GID,
   shopActorId: SEED_SHOP,
   scope: "read_orders,read_products",
   accessTokenExpiresAt: 1_900_000_000_000,

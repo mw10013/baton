@@ -4,7 +4,7 @@ import * as Test from "alchemy/Test/Vitest";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
-import { ShopKey } from "../../src/contract/shop.ts";
+import { ShopKey } from "../../src/domain/platform.ts";
 import { CONNECTION_CLOSE_REVOKED, type MemberCaller } from "../../src/contract/shop-actor.ts";
 import * as ShopWork from "../../src/domain/shop-work.ts";
 import {

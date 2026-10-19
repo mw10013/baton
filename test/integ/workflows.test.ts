@@ -9,7 +9,7 @@ import * as Schema from "effect/Schema";
 import { MerchantRpcs, ORDERS_KEY } from "../../src/contract/shop-actor.ts";
 import { TeamName } from "../../src/domain/shop-work.ts";
 import * as ShopWork from "../../src/domain/shop-work.ts";
-import { ShopKey } from "../../src/contract/shop.ts";
+import { ShopKey } from "../../src/domain/platform.ts";
 import { ShopFixtureData } from "../../src/contract/fixture.ts";
 import { OTHER_SHOP, SEED_SHOP } from "../seed-shops.ts";
 import { mintSessionToken } from "../shopify-session-token.ts";

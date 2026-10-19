@@ -14,7 +14,6 @@ import {
   SubscriptionPlan,
   SubscriptionPlanError,
 } from "../../../src/backend/subscription-plan.ts";
-import { ShopKey } from "../../../src/contract/shop.ts";
 import {
   type AppSubscription,
   type BillingCycleInput,
@@ -22,7 +21,7 @@ import {
   type PlanStatus,
   planOfHandle,
 } from "../../../src/domain/billing.ts";
-import { Email, ShopGid } from "../../../src/domain/platform.ts";
+import { Email, ShopGid, ShopKey } from "../../../src/domain/platform.ts";
 import { makeD1Test, QuietLogs } from "./layers.ts";
 
 /**
@@ -35,7 +34,7 @@ const shop = Schema.decodeUnknownSync(ShopKey)("plan.myshopify.com");
 const shopGid = Schema.decodeUnknownSync(ShopGid)("gid://shopify/Shop/1");
 const shopKey = Schema.decodeUnknownSync(ShopKey);
 
-const shopSession = (key: ShopKey = shop, gid: string = shopGid) => ({
+const shopSession = (key: ShopKey = shop, gid: ShopGid = shopGid) => ({
   shop: key,
   shopGid: gid,
   shopActorId: key,
@@ -561,7 +560,9 @@ describe("SubscriptionPlan", () => {
             ["fresh", 10_001],
           ] as const) {
             const each = shopKey(`${name}.myshopify.com`);
-            yield* sessions.upsert(shopSession(each, `gid://shopify/Shop/${name}`));
+            yield* sessions.upsert(
+              shopSession(each, Schema.decodeUnknownSync(ShopGid)(`gid://shopify/Shop/${name}`)),
+            );
             yield* sessions.updatePlan({
               shop: each,
               planHandle: expiresAt === null ? null : "baton-pro",

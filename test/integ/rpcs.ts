@@ -13,7 +13,8 @@ import { Email, Forbidden, ReturnPath, Unauthorized } from "../../src/contract/a
 import { Auth } from "../../src/backend/auth.ts";
 import { MagicLinkDelivery } from "../../src/backend/magic-link-delivery.ts";
 import { MembershipRepository } from "../../src/backend/membership-repository.ts";
-import { InvalidSessionToken, NotAShopMember, ShopKey } from "../../src/contract/shop.ts";
+import { InvalidSessionToken, NotAShopMember } from "../../src/contract/shop.ts";
+import { ShopKey } from "../../src/domain/platform.ts";
 import {
   MemberWorkflowPageData,
   MemberWorkflowPageRequest,

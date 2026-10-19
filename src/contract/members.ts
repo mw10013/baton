@@ -1,7 +1,6 @@
 import * as Schema from "effect/Schema";
-import { Email, ShopLimits } from "../domain/platform.ts";
+import { Email, ShopLimits, ShopKey } from "../domain/platform.ts";
 import { ListSearch, MemberId, TeamId, TeamName } from "../domain/shop-work.ts";
-import { ShopKey } from "./shop.ts";
 
 /**
  * The shop's members are at their ceiling (`membersAtCeiling`) and the email is not already a
