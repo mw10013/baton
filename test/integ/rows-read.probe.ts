@@ -33,7 +33,7 @@ import Stack from "./stack.ts";
  * and the shop's actor ran for it, in D1 and the actor's SQLite. It proves the tallies count
  * against two statements whose rows are known: D1's `listShopsOf` seeks its email in the
  * `Member (email, shop)` index and steps its one entry plus the next, which ends the range, and
- * the actor's open-order count steps one index entry per open order.
+ * the actor's open-order count reads the one `ShopUsage` row.
  */
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
   providers: Cloudflare.providers(),
@@ -258,14 +258,25 @@ test(
       "2a webhook orders/create, one new order (3 items)",
       storeByWebhook(backendUrl, SEED_SHOP, orderNode(newOrder), lineItemNodes(newOrder)),
     );
-    // The actor's tallies count: the open-order count steps the partial index once per open order.
+    // The actor's tallies count: the order ceiling reads the one `ShopUsage` row per check.
     const openCount = measurements
       .at(-1)
-      ?.actor.statements.find(({ sql }) => sql.startsWith("select count(*) as openOrders"));
+      ?.actor.statements.find(({ sql }) => sql.startsWith("select openOrders from ShopUsage"));
+    assert.isAbove(openCount?.runs ?? 0, 0, "the webhook checks the order ceiling");
     assert.strictEqual(
       openCount?.rowsRead,
-      (openCount?.runs ?? 0) * OPEN_ORDERS,
-      "the actor reads every open order per count",
+      openCount?.runs,
+      "the actor reads one row per open-order count",
+    );
+    yield* measure(
+      backendUrl,
+      "2c webhook orders/updated, the new order fulfilled",
+      storeByWebhook(
+        backendUrl,
+        SEED_SHOP,
+        { ...orderNode(newOrder), displayFulfillmentStatus: "FULFILLED", updatedAt: Date.now() },
+        lineItemNodes(newOrder),
+      ),
     );
     yield* measure(
       backendUrl,
@@ -302,11 +313,20 @@ test(
     );
     assert.isNotNull(detail, "the order is stored");
 
-    yield* measure(
+    const usage = yield* measure(
       backendUrl,
       "4 getUsage",
       integ(backendUrl, (c) => c.GetUsage({ shop: SEED_SHOP })),
     );
+    const open = yield* integ(backendUrl, (c) =>
+      c.ListOrders({ shop: SEED_SHOP, cursor: null, ...MAKING }),
+    );
+    assert.strictEqual(
+      usage.openOrders,
+      OPEN_ORDERS + BULK_ORDERS,
+      "the open-order count after one order created and fulfilled and a bulk sync",
+    );
+    assert.strictEqual(usage.openOrders, open.page.openOrders, "usage agrees with the orders page");
 
     const teamIds = first.teams
       .filter((team) => teamsOfMember(0).includes(team.name as (typeof TEAMS)[number]))

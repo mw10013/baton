@@ -100,12 +100,12 @@ const orderPayload = (n: number, updatedAt: number) => ({
 });
 
 /** Order `n` as Shopify's `OrderSync` answers it, at `updatedAt`, placed a day ago. */
-const orderSyncBody = (n: number, updatedAt: number, name = `#${String(1000 + n)}`) => ({
+const orderSyncBody = (n: number, updatedAt: number) => ({
   data: {
     order: {
       id: orderGid(n),
       legacyResourceId: String(n),
-      name,
+      name: `#${String(1000 + n)}`,
       processedAt: new Date(Date.now() - DAY).toISOString(),
       updatedAt: new Date(updatedAt).toISOString(),
       cancelledAt: null,
@@ -262,7 +262,7 @@ test(
     const { backendUrl } = yield* stack;
     const stored = Date.parse("2026-09-02T12:00:00Z");
     yield* storeByWebhook(backendUrl, SEED_SHOP, orderNode(4, stored), []);
-    yield* scriptGraphql(backendUrl, [orderSyncBody(4, stored + 60_000, "#1004 edited")]);
+    yield* scriptGraphql(backendUrl, [orderSyncBody(4, stored + 60_000)]);
     assert.strictEqual(
       yield* deliver(backendUrl, "/webhooks/orders", "orders/edited", {
         order_edit: { order_id: 4 },
@@ -273,7 +273,6 @@ test(
     const detail = yield* integ(backendUrl, (c) =>
       c.GetOrder({ shop: SEED_SHOP, orderId: orderGid(4) }),
     );
-    assert.strictEqual(detail?.order.name, "#1004 edited");
     assert.strictEqual(detail?.order.updatedAt, stored + 60_000);
     assert.lengthOf(detail?.lineItems ?? [], 1);
   }),

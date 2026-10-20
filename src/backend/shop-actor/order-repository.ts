@@ -103,11 +103,11 @@ const json = (value: unknown) => JSON.stringify(value);
  */
 const OPEN = "fulfillmentStatus <> 'FULFILLED' and cancelledAt is null";
 /**
- * {@link OPEN} on an aliased `ShopOrder`, for statements that also read
- * `Run`: qualified so the predicate cannot bind to a run column of
- * the same name (both tables carry `id` and `note`).
+ * {@link OPEN} on an aliased `ShopOrder`: for statements that also read `Run`, qualified so the
+ * predicate cannot bind to a run column of the same name (both tables carry `id` and `note`),
+ * and for the actor's open-order triggers, on `new` and `old`.
  */
-const openAs = (alias: string) =>
+export const openAs = (alias: string) =>
   `${alias}.fulfillmentStatus <> 'FULFILLED' and ${alias}.cancelledAt is null`;
 const OPEN_RUN = `select 1 from Run r
   where r.orderId = ShopOrder.id and r.state = 'open'`;
@@ -279,14 +279,13 @@ export const makeOrderRepository = (sql: SqlClient.SqlClient, transaction: Trans
   });
 
   /**
-   * The open-order count, and its one definition: what {@link openOrdersAtCeiling} reads.
-   * Spelled through `OPEN` so the partial index `ShopOrder_open_idx` serves it, one index entry
-   * per open order.
+   * The open-order count, what {@link openOrdersAtCeiling} reads: `ShopUsage.openOrders`, one
+   * row, which the `ShopOrder_open_*` triggers in the actor's `migrations` keep.
    */
   const countOpenOrders = Effect.fn("OrderRepository.countOpenOrders")(function* () {
     const [row] = yield* sql<{
       readonly openOrders: number;
-    }>`select count(*) as openOrders from ShopOrder where ${sql.literal(OPEN)}`;
+    }>`select openOrders from ShopUsage where id = 1`;
     return row?.openOrders ?? 0;
   });
 
@@ -304,6 +303,10 @@ export const makeOrderRepository = (sql: SqlClient.SqlClient, transaction: Trans
    * write lost, and the items are then left alone too. Writing them anyway
    * would replace a fresh set with a stale one under a row that correctly
    * refused to move.
+   *
+   * The update leaves `legacyId` and `name` alone: Shopify never changes either on an order,
+   * and setting an indexed column rewrites its index entry, a billed row, even to the same
+   * value.
    *
    * Line items are replaced wholesale on every accepted write, so a removed
    * line disappears. Every fetch path asks Shopify for the first
@@ -400,8 +403,6 @@ export const makeOrderRepository = (sql: SqlClient.SqlClient, transaction: Trans
             ${bit(order.fullyPaid)}, ${order.note}, ${order.syncedAt}
           )
           on conflict(id) do update set
-            legacyId = excluded.legacyId,
-            name = excluded.name,
             processedAt = excluded.processedAt,
             updatedAt = excluded.updatedAt,
             cancelledAt = excluded.cancelledAt,

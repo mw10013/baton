@@ -186,12 +186,12 @@ describe("OrderRepository.upsertOrder", () => {
     runInRepository((repository) =>
       Effect.gen(function* () {
         yield* upsert(repository, anOrder({ updatedAt: 2000 }), [aLineItem(1)]);
-        const again = yield* upsert(repository, anOrder({ updatedAt: 2000, name: "#TIE" }), [
+        const again = yield* upsert(repository, anOrder({ updatedAt: 2000, note: "Tie" }), [
           aLineItem(2),
         ]);
         assert.strictEqual(again.written, true);
         const { order, lineItems } = Option.getOrThrow(yield* repository.getOrder(orderId(1)));
-        assert.strictEqual(order.name, "#TIE");
+        assert.strictEqual(order.note, "Tie");
         assert.strictEqual(lineItems.length, 1);
         assert.strictEqual(lineItems[0]?.id, lineItemId(2));
       }),
@@ -224,39 +224,41 @@ describe("OrderRepository.upsertOrder", () => {
 });
 
 describe("OrderRepository.upsertOrder columns", () => {
-  it.effect("a sync rewrites every column but countedAt", () =>
-    runInRepository((repository, sql) =>
-      Effect.gen(function* () {
-        const changed = anOrder({
-          legacyId: "2",
-          name: "#2002",
-          processedAt: 1500,
-          updatedAt: 2000,
-          cancelledAt: 1800,
-          fulfillmentStatus: "PARTIALLY_FULFILLED",
-          fullyPaid: true,
-          note: "Rush",
-          syncedAt: 3000,
-        });
-        yield* upsert(repository, anOrder(), [aLineItem(1)]);
-        yield* countOrder(sql, orderId(1), 1200);
-        yield* upsert(repository, changed, [aLineItem(1)]);
-        const [stored] = yield* sql`select * from ShopOrder where id = ${orderId(1)}`;
-        assert.deepStrictEqual(stored, {
-          id: changed.id,
-          legacyId: changed.legacyId,
-          name: changed.name,
-          processedAt: changed.processedAt,
-          updatedAt: changed.updatedAt,
-          cancelledAt: changed.cancelledAt,
-          fulfillmentStatus: changed.fulfillmentStatus,
-          fullyPaid: 1,
-          note: changed.note,
-          syncedAt: changed.syncedAt,
-          countedAt: 1200,
-        });
-      }),
-    ),
+  it.effect(
+    "a sync rewrites every column but countedAt and the insert-only legacyId and name",
+    () =>
+      runInRepository((repository, sql) =>
+        Effect.gen(function* () {
+          const changed = anOrder({
+            legacyId: "2",
+            name: "#2002",
+            processedAt: 1500,
+            updatedAt: 2000,
+            cancelledAt: 1800,
+            fulfillmentStatus: "PARTIALLY_FULFILLED",
+            fullyPaid: true,
+            note: "Rush",
+            syncedAt: 3000,
+          });
+          yield* upsert(repository, anOrder(), [aLineItem(1)]);
+          yield* countOrder(sql, orderId(1), 1200);
+          yield* upsert(repository, changed, [aLineItem(1)]);
+          const [stored] = yield* sql`select * from ShopOrder where id = ${orderId(1)}`;
+          assert.deepStrictEqual(stored, {
+            id: changed.id,
+            legacyId: anOrder().legacyId,
+            name: anOrder().name,
+            processedAt: changed.processedAt,
+            updatedAt: changed.updatedAt,
+            cancelledAt: changed.cancelledAt,
+            fulfillmentStatus: changed.fulfillmentStatus,
+            fullyPaid: 1,
+            note: changed.note,
+            syncedAt: changed.syncedAt,
+            countedAt: 1200,
+          });
+        }),
+      ),
   );
 });
 
@@ -996,6 +998,56 @@ describe("OrderRepository.sweepExpiredOrders, batch and chunking", () => {
           assert.strictEqual(yield* repository.lastSweepAt(), NOW);
         }),
       ),
+  );
+});
+
+describe("OrderRepository.countOpenOrders", () => {
+  it.effect("follows every write to ShopOrder: redelivery, cancel, reopen, sweep, delete", () =>
+    runInRepository((repository, sql) =>
+      Effect.gen(function* () {
+        const expect = (expected: number, step: string) =>
+          Effect.gen(function* () {
+            const [counted] = yield* sql`
+              select count(*) from ShopOrder
+              where fulfillmentStatus <> 'FULFILLED' and cancelledAt is null
+            `.values;
+            assert.strictEqual(Number(counted?.[0]), expected, `${step}: the rows`);
+            assert.strictEqual(yield* repository.countOpenOrders(), expected, step);
+          });
+        const first = anOrder({ processedAt: KEPT, updatedAt: KEPT });
+        yield* upsert(repository, first, []);
+        yield* expect(1, "an open order stored");
+        yield* upsert(
+          repository,
+          anOrder({
+            id: orderId(2),
+            legacyId: "2",
+            processedAt: KEPT,
+            fulfillmentStatus: "FULFILLED",
+          }),
+          [],
+        );
+        yield* expect(1, "a fulfilled order stored");
+        yield* upsert(repository, first, []);
+        yield* expect(1, "the open order redelivered");
+        yield* upsert(repository, { ...first, updatedAt: KEPT + 1, cancelledAt: KEPT + 1 }, []);
+        yield* expect(0, "the open order cancelled");
+        yield* upsert(repository, { ...first, updatedAt: KEPT + 2 }, []);
+        yield* expect(1, "the cancelled order reopened");
+        const old = anOrder({ id: orderId(3), legacyId: "3", processedAt: EXPIRED });
+        yield* upsert(repository, old, []);
+        yield* upsert(
+          repository,
+          { ...old, updatedAt: old.updatedAt + 1, fulfillmentStatus: "PARTIALLY_FULFILLED" },
+          [],
+        );
+        yield* expect(2, "an expired open order stored, then partly fulfilled");
+        yield* repository.sweepExpiredOrders({ now: NOW });
+        yield* expect(1, "the sweep deleted the expired open order");
+        yield* sql`delete from ShopOrder`;
+        yield* expect(0, "every order deleted");
+      }),
+    ),
   );
 });
 

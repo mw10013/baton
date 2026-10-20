@@ -53,7 +53,11 @@ import {
 } from "../contract/shop-actor.ts";
 import * as ActorSocket from "./actor-socket.ts";
 import type { ActorFixtureAdded, ActorFixtureRows } from "./fixture.ts";
-import { makeOrderRepository, type OrderRepositoryError } from "./shop-actor/order-repository.ts";
+import {
+  makeOrderRepository,
+  openAs,
+  type OrderRepositoryError,
+} from "./shop-actor/order-repository.ts";
 import { makeOrders } from "./shop-actor/orders.ts";
 import { makeRunRepository, type RunRepositoryError } from "./shop-actor/run-repository.ts";
 import { makeRuns } from "./shop-actor/runs.ts";
@@ -166,6 +170,14 @@ export const migrations = SqliteMigrator.fromRecord({
         on ShopOrder (processedAt desc, id desc)
         where fulfillmentStatus <> 'FULFILLED' and cancelledAt is null
     `;
+    // The order page's key and the order-number search's term. Both are set at insert and
+    // never change, so each costs one written row per new order.
+    yield* sql`
+      create index if not exists ShopOrder_legacyId on ShopOrder (legacyId)
+    `;
+    yield* sql`
+      create index if not exists ShopOrder_name on ShopOrder (name)
+    `;
     yield* sql`
       create table if not exists OrderLineItem (
         id text primary key,
@@ -196,7 +208,8 @@ export const migrations = SqliteMigrator.fromRecord({
     yield* sql`
       insert or ignore into SyncState (id) values (1)
     `;
-    // The usage counters of the current billing cycle, independent of the plan.
+    // The usage counters of the current billing cycle, independent of the plan, and the
+    // open-order count the order ceiling reads.
     yield* sql`
       create table if not exists ShopUsage (
         id integer primary key check (id = 1),
@@ -206,11 +219,41 @@ export const migrations = SqliteMigrator.fromRecord({
         ordersThisCycle integer not null default 0,
         ordersLimitedAt integer,
         lastSweepAt integer,
-        seatsThisCycle integer not null default 0
+        seatsThisCycle integer not null default 0,
+        openOrders integer not null default 0
       )
     `;
     yield* sql`
       insert or ignore into ShopUsage (id) values (1)
+    `;
+    // `ShopUsage.openOrders` is the open-order count, kept by these three triggers so every
+    // writer of `ShopOrder` (the upsert, the retention sweep, the fixture loaders, `removeOrder`)
+    // moves it in its own statement, with no writer to forget. The order ceiling reads it on
+    // every new order, where counting `ShopOrder_open_idx` read one row per open order. It
+    // starts at 0 because `ShopOrder` is created empty in this same migration.
+    yield* sql`
+      create trigger if not exists ShopOrder_open_insert after insert on ShopOrder
+      when ${sql.literal(openAs("new"))}
+      begin
+        update ShopUsage set openOrders = openOrders + 1 where id = 1;
+      end
+    `;
+    yield* sql`
+      create trigger if not exists ShopOrder_open_delete after delete on ShopOrder
+      when ${sql.literal(openAs("old"))}
+      begin
+        update ShopUsage set openOrders = openOrders - 1 where id = 1;
+      end
+    `;
+    yield* sql`
+      create trigger if not exists ShopOrder_open_update
+        after update of fulfillmentStatus, cancelledAt on ShopOrder
+      when (${sql.literal(openAs("new"))}) <> (${sql.literal(openAs("old"))})
+      begin
+        update ShopUsage
+        set openOrders = openOrders + (${sql.literal(openAs("new"))}) - (${sql.literal(openAs("old"))})
+        where id = 1;
+      end
     `;
     // The outbox of usage events still to report to Shopify.
     yield* sql`

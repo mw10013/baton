@@ -105,9 +105,6 @@ export interface UsageFlush {
   readonly remaining: number;
 }
 
-/** `orderIsOpen` in Orders, spelled so the partial index `ShopOrder_open_idx` serves it. */
-const OPEN = "fulfillmentStatus <> 'FULFILLED' and cancelledAt is null";
-
 /**
  * The meter over the actor's `sql`, built once per activation. `countOrder` runs inside its
  * caller's transaction; `setBillingCycle` opens its own under `transaction`; `flushUsageEvents`
@@ -317,7 +314,7 @@ export const makeUsageRepository = (sql: SqlClient.SqlClient, transaction: Trans
                lastSweepAt, seatsThisCycle,
                (select count(*) from UsageEvent
                 where cycleStartAt is null or occurredAt >= cycleStartAt) as pendingUsageEvents,
-               (select count(*) from ShopOrder where ${sql.literal(OPEN)}) as openOrders
+               openOrders
         from ShopUsage where id = 1
       `,
     );
