@@ -58,15 +58,15 @@ export const makeAuth = (options: AuthOptions = {}) =>
           ),
       }).pipe(Effect.provide(RuntimeContext.phantom));
 
-    /** Closes one session's sockets on every shop the address is a member of. */
-    const revokeSession = Effect.fn("Auth.revokeSession")(function* (
+    /** Closes the sessions' sockets on every shop the address is a member of. */
+    const revokeSessions = Effect.fn("Auth.revokeSessions")(function* (
       address: unknown,
-      sessionId: string,
+      sessionIds: ReadonlyArray<string>,
     ) {
       const email = decodeEmail(address);
       if (Option.isNone(email)) return;
       for (const shop of yield* members.listShopsOf(email.value))
-        yield* actors.revoke(shop, { by: "session", id: sessionId });
+        for (const id of sessionIds) yield* actors.revoke(shop, { by: "session", id });
     });
 
     /** Closes the member's sockets on every shop the address is a member of. */
@@ -153,7 +153,7 @@ export const makeAuth = (options: AuthOptions = {}) =>
                   yield* Effect.logInfo(
                     `Auth.sessionCreate: email=${email} revoked=${String(deletedIds.length)}`,
                   ).pipe(Effect.annotateLogs({ email, revoked: deletedIds.length }));
-                  for (const id of deletedIds) yield* revokeSession(email, id);
+                  yield* revokeSessions(email, deletedIds);
                 }).pipe(
                   Effect.scoped,
                   Effect.catchCause((cause) =>
@@ -178,7 +178,7 @@ export const makeAuth = (options: AuthOptions = {}) =>
                     endpoint.context.internalAdapter.findUserById(session.userId),
                   );
                   if (user === null) return;
-                  yield* revokeSession(user.email, session.id);
+                  yield* revokeSessions(user.email, [session.id]);
                 }).pipe(revocation("session.delete.after")),
               ),
           },
