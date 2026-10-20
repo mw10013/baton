@@ -336,8 +336,11 @@ test(
       "4 getUsage",
       integ(backendUrl, (c) => c.GetUsage({ shop: SEED_SHOP })),
     );
-    const open = yield* integ(backendUrl, (c) =>
-      c.ListOrders({ shop: SEED_SHOP, cursor: null, ...MAKING }),
+    // The index the merchant searches from: the bulk sync's notice emptied the memos.
+    const open = yield* measure(
+      backendUrl,
+      "1g listOrders Making, first page after the bulk sync's notice",
+      integ(backendUrl, (c) => c.ListOrders({ shop: SEED_SHOP, cursor: null, ...MAKING })),
     );
     assert.strictEqual(
       usage.openOrders,
@@ -374,12 +377,6 @@ test(
       });
     for (const [state, path] of listRunsCases) yield* listRuns(state, path);
 
-    // The index the merchant searches from: the bulk sync's notice emptied the memos.
-    yield* measure(
-      backendUrl,
-      "1g listOrders Making, first page after the bulk sync's notice",
-      integ(backendUrl, (c) => c.ListOrders({ shop: SEED_SHOP, cursor: null, ...MAKING })),
-    );
     const byNumber = yield* measure(
       backendUrl,
       "7a listOrders search, order number",
