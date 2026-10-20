@@ -25,6 +25,7 @@ import {
 import {
   type Actor,
   type ActorDisplay,
+  currentTasks as currentTasksOf,
   type BlockRunCommand,
   type ClosedReason,
   type EligibleContext,
@@ -216,7 +217,6 @@ export const makeRunRepository = (
     Schema.Array(
       Schema.Struct({
         ...RunListRun.fields,
-        stepCount: Schema.Number,
         orderCancelledAt: Schema.NullOr(Schema.Number),
         orderFulfillmentStatus: Schema.String,
       }),
@@ -379,23 +379,19 @@ export const makeRunRepository = (
    *
    * The first statement starts from the member's teams: each team's
    * open tasks through `RunTask_teamId_idx (teamId, doneAt)`, kept when
-   * the task is current and its run is open, which names the qualifying
-   * runs. Only then does it read those runs' current tasks, by `runId`.
-   * Starting from every open task instead, and asking of each whether
-   * its run has a current task on the teams, read every open run's tasks
-   * twice per task. The `cross join`s are the planner pin, as on
+   * their run is open, which names the candidate runs; then every task of
+   * those runs, by `runId`. Which tasks are current, whether one is on the
+   * teams, and the last step are {@link currentTasksOf}' rule over those rows
+   * in TypeScript: the same rule as `currentWhere` in SQL, which there
+   * re-read the run's tasks once for every task it tested. A candidate whose
+   * only open task on the teams waits behind an earlier step costs its
+   * tasks and is dropped. The `cross join`s are the planner pin, as on
    * the order repository's `listOrders`: SQLite keeps a `cross join`'s table
    * order (https://www.sqlite.org/optoverview.html#crossjoin), so the
    * read cannot turn around and drive from `Run`.
    *
-   * It still reads *every* current task of a qualifying run, including
-   * tasks owned by other teams: the row's step and its other teams are
-   * the run's, and it is why the row's own tasks are filtered in
-   * TypeScript after the read rather than in SQL. Nothing about the other teams'
-   * tasks is shipped.
-   *
-   * It is linear because each of the teams' open tasks is read once
-   * from the team index and every other row is a probe by `runId` or `id`.
+   * Only the row's own tasks are shipped; the other teams' tasks are read
+   * for the step and dropped.
    *
    * It ignores the member and the query: grouping, narrowing to a team,
    * search, sorting and the cut are `workflowsListFrom`'s, over
@@ -407,24 +403,29 @@ export const makeRunRepository = (
     teamIds: readonly TeamId[],
   ) {
     if (teamIds.length === 0) return [];
-    const current = yield* decodeTasks(
+    const tasks = yield* decodeTasks(
       yield* sql`
         select s.* from RunTask s
         where s.runId in (
           select m.runId from json_each(${json(teamIds)}) tt
           cross join RunTask m on m.teamId = tt.value and m.doneAt is null
           cross join Run r on r.id = m.runId and r.state = 'open'
-          where ${currentWhere("m")}
-        ) and ${currentWhere("s")}
+        )
         order by s.runId, s.position
       `,
     );
-    if (current.length === 0) return [];
-    const runIds = [...new Set(current.map((task) => task.runId))];
+    const byRun = new Map<string, RunTask[]>();
+    for (const task of tasks) byRun.set(task.runId, [...(byRun.get(task.runId) ?? []), task]);
+    /** The run's current tasks on the teams, for a run read as open. */
+    const ownCurrent = (runTasks: readonly RunTask[], run: { readonly state: RunState }) =>
+      currentTasksOf(run, runTasks).filter((task) => taskIsOnTeams(task, teamIds));
+    const runIds = [...byRun]
+      .filter(([, runTasks]) => ownCurrent(runTasks, { state: "open" }).length > 0)
+      .map(([runId]) => runId);
+    if (runIds.length === 0) return [];
     const runs = yield* decodeRunListRuns(
       yield* sql`
         select r.*,
-          (select max(step) from RunTask c where c.runId = r.id) as stepCount,
           o.cancelledAt as orderCancelledAt,
           o.fulfillmentStatus as orderFulfillmentStatus
         from Run r
@@ -433,27 +434,23 @@ export const makeRunRepository = (
         order by r.orderProcessedAt, r.lineItemId, r.id
       `,
     );
-    return runs.flatMap(
-      ({ stepCount, orderCancelledAt, orderFulfillmentStatus, ...run }): RunListItem[] => {
-        const [first, ...rest] = current
-          .filter((task) => task.runId === run.id && taskIsOnTeams(task, teamIds))
-          // Whatever the row does not render is dropped rather than nulled or carried: the
-          // shape is `RunListTask` and its JSDoc is why.
-          .map((task) =>
-            Struct.omit(task, ["doneAt", "doneByEmail", "doneByRole", "instructions"]),
-          );
-        return first === undefined
-          ? []
-          : [
-              {
-                run,
-                tasks: [first, ...rest],
-                stepCount,
-                order: { cancelledAt: orderCancelledAt, fulfillmentStatus: orderFulfillmentStatus },
-              },
-            ];
-      },
-    );
+    return runs.flatMap(({ orderCancelledAt, orderFulfillmentStatus, ...run }): RunListItem[] => {
+      const runTasks = byRun.get(run.id) ?? [];
+      const [first, ...rest] = ownCurrent(runTasks, run)
+        // Whatever the row does not render is dropped rather than nulled or carried: the
+        // shape is `RunListTask` and its JSDoc is why.
+        .map((task) => Struct.omit(task, ["doneAt", "doneByEmail", "doneByRole", "instructions"]));
+      return first === undefined
+        ? []
+        : [
+            {
+              run,
+              tasks: [first, ...rest],
+              stepCount: Math.max(...runTasks.map(({ step }) => step)),
+              order: { cancelledAt: orderCancelledAt, fulfillmentStatus: orderFulfillmentStatus },
+            },
+          ];
+    });
   });
 
   /**
