@@ -26,7 +26,7 @@ create table if not exists ShopSession (
 
 -- No soft delete: uniqueness is among existing rows only, so re-adding an email mints a new id.
 -- Every read of a shop's members is in email order, which the unique (shop, email) index
--- answers; no second index.
+-- answers. Reads by email alone (the sign-in gate, revocation) have their own index below.
 create table if not exists Member (
   id text primary key,
   shop text not null references ShopSession (shop) on delete cascade,
@@ -34,6 +34,11 @@ create table if not exists Member (
   createdAt integer not null,
   unique (shop, email)
 );
+
+-- An email's shops, read on every sign-in and revocation. It covers the read, so D1 reads one
+-- index entry per shop the email belongs to instead of every Member row; the price is one more
+-- row written per Member insert or delete, which is rare next to sign-ins.
+create index if not exists Member_email_shop_idx on Member (email, shop);
 
 -- Teams group a shop's members. They are identity, not work, so they live here beside Member,
 -- where foreign keys clean up after a deleted shop or member. A run task in the actor points at

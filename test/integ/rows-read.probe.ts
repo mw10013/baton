@@ -31,8 +31,9 @@ import Stack from "./stack.ts";
  *
  * Each path is bracketed by `TakeRowCounts`, so a path's rows are every statement the Backend
  * and the shop's actor ran for it, in D1 and the actor's SQLite. It proves the tallies count
- * against two statements whose rows are known: D1's `listShopsOf` reads every `Member` row (no
- * index on `email`), and the actor's open-order count steps one index entry per open order.
+ * against two statements whose rows are known: D1's `listShopsOf` seeks its email in the
+ * `Member (email, shop)` index and steps its one entry plus the next, which ends the range, and
+ * the actor's open-order count steps one index entry per open order.
  */
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
   providers: Cloudflare.providers(),
@@ -223,16 +224,15 @@ test(
     for (const address of MEMBERS.slice(0, 20)) yield* signIn(backendUrl, email(address));
     for (const address of MEMBERS.slice(20, 30))
       yield* integ(backendUrl, (c) => c.IssueMagicLink({ email: email(address) }));
-    const memberRows = MEMBERS.length + 1 + otherShop.members.length;
 
-    // The tallies count: `Member` has no index on `email`, so this reads every row.
+    // The tallies count: the email is in one shop, so the seek steps two index entries.
     yield* measure(
       backendUrl,
-      "calibration: D1 listShopsOf (full scan of Member)",
+      "calibration: D1 listShopsOf (index seek, one shop)",
       integ(backendUrl, (c) => c.ListShopsOf({ email: email(MEMBERS[0] ?? "") })),
     );
     const calibration = measurements.at(-1);
-    assert.strictEqual(calibration?.d1.rowsRead, memberRows, "D1 reads every Member row");
+    assert.strictEqual(calibration?.d1.rowsRead, 2, "D1 reads the email's entry and the next");
 
     const first = yield* measure(
       backendUrl,
