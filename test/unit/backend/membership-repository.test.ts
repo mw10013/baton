@@ -761,6 +761,38 @@ describe("MembershipRepository session cap and auth sweep", () => {
         }),
       ),
   );
+
+  it.live("sweepExpiredAuth runs batches until the expired rows are gone", () =>
+    run((repo, db) =>
+      Effect.gen(function* () {
+        const expired = 2 * ShopLimits.sweepBatch + 50;
+        seedSessions(db, [1_000]);
+        const session = db.prepare(
+          "insert into session (id, expiresAt, token, createdAt, updatedAt, userId) values (?, ?, ?, '', '', 'u1')",
+        );
+        const verification = db.prepare(
+          "insert into verification (id, identifier, value, expiresAt, createdAt, updatedAt) values (?, 'x', 'y', ?, '', '')",
+        );
+        verification.run("v-live", ISO(Date.UTC(2100, 0, 1)));
+        for (let n = 0; n < expired; n++) {
+          session.run(`old${String(n)}`, ISO(Date.UTC(2000, 0, 1)), `old${String(n)}`);
+          verification.run(`old${String(n)}`, ISO(Date.UTC(2000, 0, 1)));
+        }
+        const swept = yield* repo.sweepExpiredAuth();
+        strictEqual(swept.sessions, expired);
+        strictEqual(swept.verifications, expired);
+        strictEqual(sessionIds(db).join(","), "s0");
+        strictEqual(
+          db
+            .prepare("select id from verification")
+            .all()
+            .map((row) => String(row.id))
+            .join(","),
+          "v-live",
+        );
+      }),
+    ),
+  );
 });
 
 /**

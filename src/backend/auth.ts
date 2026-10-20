@@ -188,25 +188,7 @@ export const makeAuth = (options: AuthOptions = {}) =>
         magicLink({
           expiresIn: MAGIC_LINK_TTL_SECONDS,
           storeToken: "hashed",
-          sendMagicLink: ({ email: to, url }) =>
-            runPromise(
-              Effect.gen(function* () {
-                // The one request that creates a `verification` row pays to trim the expired ones,
-                // and the `session` rows those sign-ins left behind. Logged and swallowed on
-                // failure: storage housekeeping must never be the reason someone cannot sign in.
-                yield* members.sweepExpiredAuth().pipe(
-                  Effect.scoped,
-                  Effect.catchCause((cause) =>
-                    Effect.logWarning(
-                      `Auth.sendMagicLink: email=${to}: expired-auth sweep failed`,
-                      cause,
-                    ).pipe(Effect.annotateLogs({ email: to })),
-                  ),
-                  Effect.provide(RuntimeContext.phantom),
-                );
-                return yield* delivery.deliver(to, url);
-              }),
-            ),
+          sendMagicLink: ({ email: to, url }) => runPromise(delivery.deliver(to, url)),
         }),
         admin(),
       ],

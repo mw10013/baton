@@ -132,7 +132,7 @@ export type RowCounts = typeof RowCounts.Type;
  *   with it; the other procedures here are the paths it measures that no other procedure reaches:
  *   `GetOrderDetail`, `ListRuns`, `GetUsage` and `OrdersStream` are the {@link ShopActors}
  *   methods (`OrdersStream` is `onOrdersStream`, the bulk sync's last step), and `ListShopsOf`
- *   and `SweepExpiredAuth` the {@link MembershipRepository} methods.
+ *   and `SweepExpiredAuth` (the daily cron's sweep) the {@link MembershipRepository} methods.
  */
 export const IntegRpcs = RpcGroup.make(
   Rpc.make("IssueMagicLink", {

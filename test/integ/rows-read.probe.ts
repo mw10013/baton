@@ -439,8 +439,13 @@ test(
     );
     yield* measure(
       backendUrl,
-      "8b D1 sweepExpiredAuth",
+      "8b D1 sweepExpiredAuth, the daily cron",
       integ(backendUrl, (c) => c.SweepExpiredAuth({})),
+    );
+    yield* measure(
+      backendUrl,
+      "8c magic-link send (no sweep)",
+      integ(backendUrl, (c) => c.IssueMagicLink({ email: email(MEMBERS[30] ?? "") })),
     );
     record();
   }),

@@ -150,6 +150,15 @@ export interface ShopIdentityReplaced {
   readonly teams: number;
 }
 
+/**
+ * The most batches {@link MembershipRepository}'s `sweepExpiredAuth` runs per table in one cron
+ * run: 25 × `ShopLimits.sweepBatch` is 5,000 rows a day per table, far above a day's sign-ins.
+ * Each batch reads up to the whole unindexed table, so a backlog (rows left by days the cron
+ * failed) is worked off over the following days instead of one run paying batches × table rows
+ * of D1 reads.
+ */
+const AUTH_SWEEP_MAX_BATCHES = 25;
+
 const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
   Effect.gen(function* () {
     const sql = yield* SQL.D1(database);
@@ -716,29 +725,54 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
     }, Effect.orDie);
 
     /**
-     * Deletes expired `session` and `verification` rows, `ShopLimits.sweepBatch` of each. Both
-     * tables only grow on the sign-in path, so the sign-in path is where they are trimmed: no
-     * alarm, no cron, and the cost lands on the request that created the rows in the first
-     * place. Better Auth already refuses an expired row, so this frees storage and nothing else,
-     * which is why the caller is expected to log and continue on failure rather than fail the
-     * sign-in. Better Auth stores its times as ISO text, so `now` is compared as one.
+     * Deletes expired `session` and `verification` rows, `ShopLimits.sweepBatch` at a time per
+     * table, until a batch comes back short or {@link AUTH_SWEEP_MAX_BATCHES} have run, and
+     * answers how many of each it deleted. Run once a day by the Backend's cron, never on a
+     * request: `expiresAt` has no index (one would cost a written row on every session and
+     * verification write), so each batch reads up to the whole table, every shop's rows.
+     *
+     * An expired row lingers up to a day. That is storage, not access: Better Auth refuses an
+     * expired session or verification when it reads one, whether or not the row is still here.
+     * Better Auth stores its times as ISO text, so `now` is compared as one.
+     *
+     * @see refs/better-auth/packages/better-auth/src/api/routes/session.ts `getSession`, the
+     * `session.session.expiresAt < new Date()` check
+     * @see refs/better-auth/packages/better-auth/src/db/internal-adapter.ts
+     * `consumeVerificationValue`, the "Single expiry gate"
      */
     const sweepExpiredAuth = Effect.fn("MembershipRepository.sweepExpiredAuth")(function* () {
       const now = new Date(yield* Clock.currentTimeMillis).toISOString();
+      const sweep = <E, R>(deleteBatch: () => Effect.Effect<ReadonlyArray<unknown>, E, R>) =>
+        Effect.gen(function* () {
+          let deleted = 0;
+          for (let batch = 0; batch < AUTH_SWEEP_MAX_BATCHES; batch++) {
+            const rows = yield* deleteBatch();
+            deleted += rows.length;
+            if (rows.length < ShopLimits.sweepBatch) break;
+          }
+          return deleted;
+        });
       // `in (select ... limit ?)`, not `delete ... limit`: the latter needs a SQLite compile-time
       // flag that is not guaranteed here.
-      yield* sql`
-        delete from session where id in (
-          select id from session where expiresAt < ${now}
-          limit ${ShopLimits.sweepBatch}
-        )
-      `;
-      yield* sql`
-        delete from verification where id in (
-          select id from verification where expiresAt < ${now}
-          limit ${ShopLimits.sweepBatch}
-        )
-      `;
+      const sessions = yield* sweep(
+        () => sql`
+          delete from session where id in (
+            select id from session where expiresAt < ${now}
+            limit ${ShopLimits.sweepBatch}
+          )
+          returning id
+        `,
+      );
+      const verifications = yield* sweep(
+        () => sql`
+          delete from verification where id in (
+            select id from verification where expiresAt < ${now}
+            limit ${ShopLimits.sweepBatch}
+          )
+          returning id
+        `,
+      );
+      return { sessions, verifications };
     }, Effect.orDie);
 
     /**

@@ -187,7 +187,9 @@ export const backendProps = {
  *
  * {@link DevRpcs} on `/api/dev` exists only with the `DEV_ENDPOINT` binding; see there.
  *
- * It runs the daily plan check on a cron, `17 4 * * *` ({@link revalidateStalePlans}).
+ * It runs a daily cron, `17 4 * * *`: the plan check ({@link revalidateStalePlans}), then the
+ * expired-auth sweep (`MembershipRepository.sweepExpiredAuth`). One handler runs both because
+ * the event source routes a fire by its expression, one handler to an expression.
  */
 export const backendBody = Effect.gen(function* () {
   // Built once per isolate. Yielding the bindings here attaches them to the Worker.
@@ -201,13 +203,24 @@ export const backendBody = Effect.gen(function* () {
     MembershipRepository | ShopifyAdmin | ShopActors | ShopSessionRepository
   >();
   const planServices = yield* Effect.context<ShopSessionRepository | SubscriptionPlan>();
-  // The daily plan check (`revalidateStalePlans`). The event source swallows a handler's failure,
-  // so the failure is logged here.
+  const members = yield* MembershipRepository;
+  // The event source swallows a handler's failure, so each job logs its own, and one job's
+  // failure does not skip the other.
   yield* Cloudflare.Workers.cron("17 4 * * *", () =>
-    revalidateStalePlans().pipe(
-      Effect.provide(planServices),
-      Effect.catchCause((cause) => Effect.logError("scheduled.revalidatePlans", cause)),
-    ),
+    Effect.gen(function* () {
+      yield* revalidateStalePlans().pipe(
+        Effect.provide(planServices),
+        Effect.catchCause((cause) => Effect.logError("scheduled.revalidatePlans", cause)),
+      );
+      yield* members.sweepExpiredAuth().pipe(
+        Effect.tap(({ sessions, verifications }) =>
+          Effect.logInfo(
+            `scheduled.sweepExpiredAuth: sessions=${String(sessions)} verifications=${String(verifications)}`,
+          ).pipe(Effect.annotateLogs({ sessions, verifications })),
+        ),
+        Effect.catchCause((cause) => Effect.logError("scheduled.sweepExpiredAuth", cause)),
+      );
+    }),
   );
   const devEndpoint = Option.isSome(yield* Config.option(Config.String("DEV_ENDPOINT")));
   // The RPC server is built per request, inside the request's scope (workerd pins I/O to
