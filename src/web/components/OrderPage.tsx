@@ -34,7 +34,7 @@ import {
   type TaskActions,
   taskActions,
   type TaskName,
-  type TeamWithMemberCount,
+  type TeamIdName,
   VERB_LABEL,
   type WorkflowName,
   type WorkflowNameRow,
@@ -157,7 +157,7 @@ const MULTI_MATCH_SENTENCE = "More than one workflow matches this item, so none 
 const MERCHANT: Actor = { role: "merchant" };
 
 /** The teams as select options: names only. */
-const teamOptions = (teams: readonly TeamWithMemberCount[]) =>
+const teamOptions = (teams: readonly TeamIdName[]) =>
   teams.map((team) => (
     <s-option key={team.id} value={team.id}>
       {team.name}

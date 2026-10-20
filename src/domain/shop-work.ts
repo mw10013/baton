@@ -535,14 +535,24 @@ export const TeamSummary = Schema.Struct({
 export type TeamSummary = typeof TeamSummary.Type;
 
 /**
+ * A team as the orders screens and run creation read it from D1: what a task's `teamId`
+ * resolves against and its name. No `memberCount`, which nothing there shows and which would
+ * read every `TeamMember` row on each call.
+ */
+export const TeamIdName = Schema.Struct({
+  id: TeamId,
+  name: TeamName,
+});
+export type TeamIdName = typeof TeamIdName.Type;
+
+/**
  * The shop's teams, read live from D1 as the Durable Object hands it to pages: what the team
  * Workflow selects list and what a workflow's faults ({@link WorkflowFault}) are
  * computed against. `memberCount` is the `empty_team` fault's input, so the
  * workflow screens need no second read.
  */
 export const TeamWithMemberCount = Schema.Struct({
-  id: TeamId,
-  name: TeamName,
+  ...TeamIdName.fields,
   memberCount: Schema.Number,
 });
 export type TeamWithMemberCount = typeof TeamWithMemberCount.Type;
@@ -2058,7 +2068,7 @@ export const OrdersIndexData = Schema.Struct({
    * `unassigned` was derived from, carried so the route can fill the team
    * filter without a second read.
    */
-  teams: Schema.Array(TeamWithMemberCount),
+  teams: Schema.Array(TeamIdName),
 });
 export type OrdersIndexData = typeof OrdersIndexData.Type;
 
@@ -3896,7 +3906,7 @@ export const OrderPageData = Schema.Struct({
    */
   otherWorkflows: Schema.Array(WorkflowNameRow),
   /** The shop's live teams: the Assign team select's choices, and what decides which open tasks are unassigned. */
-  teams: Schema.Array(TeamWithMemberCount),
+  teams: Schema.Array(TeamIdName),
 });
 export type OrderPageData = typeof OrderPageData.Type;
 

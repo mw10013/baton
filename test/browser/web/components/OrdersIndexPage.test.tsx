@@ -62,7 +62,7 @@ const pageOf = (
     matches: options.matches ?? null,
   },
   syncState: { inFlight: false, lastError: null },
-  teams: [{ id: TEAM, name: Schema.decodeUnknownSync(TeamName)("Bench"), memberCount: 1 }],
+  teams: [{ id: TEAM, name: Schema.decodeUnknownSync(TeamName)("Bench") }],
 });
 
 const idle: OrdersSyncStatus = { inFlight: false, lastError: null };

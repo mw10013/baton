@@ -50,7 +50,7 @@ import {
   type StartTaskInput,
   type TaskActions,
   TeamId,
-  type TeamWithMemberCount,
+  type TeamIdName,
   runActions,
   taskActions,
   unitsToMake,
@@ -101,7 +101,7 @@ class OrdersMemoKey extends Data.Class<{
   readonly q: ListSearch | null;
   readonly show: OrdersShow | null;
   readonly team: TeamId | null;
-  readonly teams: ReadonlyArray<TeamWithMemberCount>;
+  readonly teams: ReadonlyArray<TeamIdName>;
 }> {}
 
 /**
@@ -111,7 +111,7 @@ class OrdersMemoKey extends Data.Class<{
  */
 class CountsMemoKey extends Data.Class<{
   readonly team: TeamId | null;
-  readonly teams: ReadonlyArray<TeamWithMemberCount>;
+  readonly teams: ReadonlyArray<TeamIdName>;
 }> {}
 
 /** A workflows list read's memo key: the member's teams, sorted, so two members on the same teams share one entry. */
@@ -331,19 +331,10 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
     });
 
   /**
-   * The shop's teams, read live from D1 with member counts: what every task pointer is resolved
-   * against (an id not in it is unassigned) and where `teamName` is snapshotted from.
+   * The shop's teams, read live from D1: what every task pointer is resolved against (an id not
+   * in it is unassigned) and where `teamName` is snapshotted from.
    */
-  const teams = () =>
-    membershipRepository.listTeams(shop).pipe(
-      Effect.map((teams) =>
-        teams.map(({ id, name, memberCount }): TeamWithMemberCount => ({
-          id,
-          name,
-          memberCount,
-        })),
-      ),
-    );
+  const teams = () => membershipRepository.listTeamNames(shop);
 
   /**
    * Loads what creating runs needs before any transaction opens: the shop's

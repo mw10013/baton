@@ -27,6 +27,7 @@ import {
   TeamDetail,
   TeamId,
   TeamName,
+  TeamIdName,
   TeamSummary,
 } from "../domain/shop-work.ts";
 import { AuthDb } from "./resources.ts";
@@ -434,6 +435,22 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
         order by t.name
       `;
       return yield* decodeRows(Schema.Array(TeamSummary))(rows);
+    }, Effect.orDie);
+
+    /**
+     * Every team of the shop by name, without {@link listTeams}' `memberCount`: one
+     * `Team (shop, name)` index range, where the count reads each team's `TeamMember` rows. The
+     * read behind every orders index call, so it stays to the rows it ships.
+     */
+    const listTeamNames = Effect.fn("MembershipRepository.listTeamNames")(function* (
+      shop: ShopKey,
+    ) {
+      const rows = yield* sql`
+        select id, name from Team
+        where shop = ${shop}
+        order by name
+      `;
+      return yield* decodeRows(Schema.Array(TeamIdName))(rows);
     }, Effect.orDie);
 
     /**
@@ -913,6 +930,7 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
       addMemberTeams,
       listTeamsPage,
       listTeams,
+      listTeamNames,
       teamWithMemberExists,
       createTeam,
       renameTeam,

@@ -807,8 +807,8 @@ test(
       assert.strictEqual(item?.tasks[0]?.teamName, "B");
       const after = yield* client.MerchantGetOrderDetail({ legacyId: "1" });
       assert.deepStrictEqual(
-        after?.teams.map((t) => [t.name, t.memberCount]),
-        [["B", 0]],
+        after?.teams.map((t) => t.name),
+        ["B"],
       );
       // A *started* task can be assigned too: only teamId/teamName move, so history keeps
       // whoever began it and the new team takes it to done.

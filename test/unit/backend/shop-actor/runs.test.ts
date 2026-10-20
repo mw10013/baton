@@ -137,10 +137,10 @@ const harness = <A, E>(
       });
     const membership: MembershipRepository["Service"] = {
       ...realMembership,
-      listTeams: (key) =>
+      listTeamNames: (key) =>
         Effect.suspend(() => {
           events.push({ kind: "listTeams", inTransaction: depth > 0 });
-          return realMembership.listTeams(key);
+          return realMembership.listTeamNames(key);
         }),
     };
     const orderRepository = (wrap.orders ?? ((r) => r))(makeOrderRepository(sql, transaction));
