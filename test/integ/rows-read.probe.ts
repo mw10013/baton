@@ -416,6 +416,48 @@ test(
     }).pipe(Effect.scoped);
     yield* listRuns("started_by_you", "5e listRuns, one member, started_by_you after 5d's notice");
 
+    /** Stores order `n` by webhook and returns whether its runs have a task on the member's teams. */
+    const webhookOrder = (n: number, path: string) =>
+      Effect.gen(function* () {
+        yield* measure(
+          backendUrl,
+          path,
+          storeByWebhook(backendUrl, SEED_SHOP, orderNode(n), lineItemNodes(n)),
+        );
+        const stored = yield* integ(backendUrl, (c) =>
+          c.GetOrderDetail({ shop: SEED_SHOP, legacyId: String(n) }),
+        );
+        assert.isAbove(stored?.runs.length ?? 0, 0, `${path}: the order's items start runs`);
+        return (stored?.runs ?? []).some(({ tasks }) =>
+          tasks.some(({ teamId }) => teamId !== null && teamIds.includes(teamId)),
+        );
+      });
+    const rowsOf = (path: string) =>
+      measurements.find((measurement) => measurement.path === path)?.actor.rowsRead ?? 0;
+    const cold = "5a listRuns, one member, started_by_you (cold)";
+    // Order 3753's items are `line-5` and `line-6`: Packing, QA, Printing and Sewing.
+    assert.isFalse(
+      yield* webhookOrder(
+        newOrder + BULK_ORDERS + 2,
+        "5f webhook orders/create, runs on none of the member's teams",
+      ),
+      "5f: no run of the order is on the member's teams",
+    );
+    const afterOutside = "5g listRuns, one member, started_by_you after 5f's notice";
+    yield* listRuns("started_by_you", afterOutside);
+    // Order 3756's `line-2` item has a task on Finishing, one of the member's teams.
+    assert.isTrue(
+      yield* webhookOrder(
+        newOrder + BULK_ORDERS + 5,
+        "5h webhook orders/create, a run on the member's teams",
+      ),
+      "5h: a run of the order is on the member's teams",
+    );
+    const afterInside = "5i listRuns, one member, started_by_you after 5h's notice";
+    yield* listRuns("started_by_you", afterInside);
+    assert.strictEqual(rowsOf(afterOutside), 0, "5g: the member's lists are memo hits");
+    assert.isAbove(rowsOf(afterInside), rowsOf(cold) / 2, "5i: the member's open runs recompute");
+
     const sessionToken = yield* mintSessionToken({ shop: SEED_SHOP });
     const workflows = yield* integ(backendUrl, (c) =>
       c.ApiWorkflowsPage({ sessionToken, state: null, q: null, after: null }),

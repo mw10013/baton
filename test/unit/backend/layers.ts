@@ -14,6 +14,7 @@ import * as Redacted from "effect/Redacted";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import type { Email } from "../../../src/contract/auth.ts";
+import { ORDERS_KEY } from "../../../src/contract/shop-actor.ts";
 import { type ShopKey, type ShopSession } from "../../../src/domain/platform.ts";
 import { ShopifyAdmin, type ShopifyAdminError } from "../../../src/backend/shopify-admin.ts";
 import type { OrdersSyncParams } from "../../../src/backend/orders-sync-workflow.ts";
@@ -40,6 +41,9 @@ import { SubscriptionPlan } from "../../../src/backend/subscription-plan.ts";
 export const noReconciler = Effect.succeed(() =>
   Effect.succeed({ created: 0, resized: 0, closed: 0, multiMatch: 0 }),
 );
+
+/** A `teamsOfOrder` for `makeOrders` beside {@link noReconciler}: no order has a run. */
+export const noRunTeams = () => Effect.succeed([]);
 
 /** The `AUTH_ORIGIN` the test Backend's Better Auth runs under, so links resolve against it. */
 export const TEST_ORIGIN = "http://test.local";
@@ -359,6 +363,8 @@ export const testOrderActors = (calls: OrderActorCalls, stub: Effect.Effect<void
               admin,
               ordersSync: testOrdersSyncWorkflows(),
               notify,
+              notifyRuns: () => notify([ORDERS_KEY]),
+              teamsOfOrder: noRunTeams,
               reconciler: noReconciler,
               flushUsage: Effect.void,
               shop: key,

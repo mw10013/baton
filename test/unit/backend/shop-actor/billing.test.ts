@@ -124,6 +124,8 @@ const harness = <A, E>(
       admin: yield* ShopifyAdmin,
       ordersSync: testOrdersSyncWorkflows(),
       notify: () => Effect.void,
+      notifyRuns: () => Effect.void,
+      teamsOfOrder: runRepository.teamsOfOrder,
       reconciler: runs.reconciler(),
       flushUsage,
       shop,

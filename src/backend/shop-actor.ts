@@ -535,6 +535,8 @@ const makeShopActor = Effect.gen(function* () {
       admin,
       ordersSync,
       notify,
+      notifyRuns: runs.notifyRuns,
+      teamsOfOrder: runRepository.teamsOfOrder,
       reconciler: runs.reconciler(),
       flushUsage,
       shop,

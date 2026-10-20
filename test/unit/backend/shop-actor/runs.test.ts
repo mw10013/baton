@@ -16,7 +16,10 @@ import {
   makeOrderRepository,
   type OrderRepository,
 } from "../../../../src/backend/shop-actor/order-repository.ts";
+import { OrderSyncResponse } from "../../../../src/backend/order-sync.ts";
+import { makeOrders } from "../../../../src/backend/shop-actor/orders.ts";
 import { runOrdersStream } from "../../../../src/backend/shop-actor/orders-stream.ts";
+import { ShopifyAdmin } from "../../../../src/backend/shopify-admin.ts";
 import {
   makeRunRepository,
   type RunRepository,
@@ -37,7 +40,14 @@ import { ORDERS_KEY } from "../../../../src/contract/shop-actor.ts";
 import type { ShopOrder } from "../../../../src/domain/orders.ts";
 import { Email, ShopKey } from "../../../../src/domain/platform.ts";
 import * as ShopWork from "../../../../src/domain/shop-work.ts";
-import { ActorSqliteTest, makeD1Test, QuietLogs, seedD1 } from "../layers.ts";
+import {
+  ActorSqliteTest,
+  makeD1Test,
+  QuietLogs,
+  seedD1,
+  testOrdersSyncWorkflows,
+  testShopifyAdmin,
+} from "../layers.ts";
 
 /**
  * The runs application service over the actor's real repositories on a fresh in-memory SQLite
@@ -98,6 +108,8 @@ const harness = <A, E>(
     readonly add: (data: unknown) => Effect.Effect<FixtureLoaded>;
     /** Runs `effect` from inside the raw `notify`, the next time it is called. */
     readonly onNextNotify: (effect: Effect.Effect<void>) => void;
+    /** Delivers an `orders/updated` webhook the actor's orders service fetches as `order`. */
+    readonly webhook: (order: SyncedOrder) => Effect.Effect<void>;
   }) => Effect.Effect<A, E>,
   wrap: Wrap = {},
 ) =>
@@ -157,6 +169,28 @@ const harness = <A, E>(
       }),
       shop,
     });
+    const adminReplies: Array<Effect.Effect<unknown>> = [];
+    const orders = makeOrders({
+      repository: orderRepository,
+      transaction,
+      admin: yield* ShopifyAdmin.pipe(Effect.provide(testShopifyAdmin(adminReplies, []))),
+      ordersSync: testOrdersSyncWorkflows(),
+      notify: runs.notify,
+      notifyRuns: runs.notifyRuns,
+      teamsOfOrder: runRepository.teamsOfOrder,
+      reconciler: runs.reconciler(),
+      flushUsage: Effect.void,
+      shop,
+    });
+    const webhook = (order: SyncedOrder) =>
+      Effect.gen(function* () {
+        adminReplies.push(Effect.succeed(encodeOrderSync({ order })));
+        yield* orders.syncOrderWebhook({
+          orderId: order.id,
+          topic: "orders/updated",
+          updatedAt: null,
+        });
+      }).pipe(Effect.orDie);
     const put = (data: unknown, replace: boolean) =>
       Effect.gen(function* () {
         const rows = fixtureRows(fixtureData(data), Date.now(), () => crypto.randomUUID());
@@ -203,8 +237,50 @@ const harness = <A, E>(
       onNextNotify: (effect) => {
         next = effect;
       },
+      webhook,
     });
   }).pipe(Effect.provide(ActorSqliteTest), Effect.provide(QuietLogs));
+
+/** An order as Shopify's `OrderSync` answers it. */
+type SyncedOrder = NonNullable<(typeof OrderSyncResponse)["Type"]["order"]>;
+const encodeOrderSync = Schema.encodeSync(OrderSyncResponse);
+
+/**
+ * Order `n` as a webhook fetches it: one unfulfilled, paid item carrying `tags`, at version
+ * `updatedAt`.
+ */
+const syncedOrder = (
+  n: number,
+  tags: ReadonlyArray<string>,
+  updatedAt: number,
+  overrides: Partial<SyncedOrder> = {},
+): SyncedOrder => ({
+  id: `gid://shopify/Order/${String(n)}`,
+  legacyResourceId: String(n),
+  name: `#${String(1000 + n)}`,
+  processedAt: n,
+  updatedAt,
+  cancelledAt: null,
+  displayFulfillmentStatus: "UNFULFILLED",
+  fullyPaid: true,
+  note: null,
+  lineItems: {
+    pageInfo: { hasNextPage: false },
+    nodes: [
+      {
+        id: `gid://shopify/LineItem/${String(n)}`,
+        title: `Item ${String(n)}`,
+        variantTitle: null,
+        sku: null,
+        quantity: 1,
+        currentQuantity: 1,
+        customAttributes: [],
+        product: { tags },
+      },
+    ],
+  },
+  ...overrides,
+});
 
 /** What a loaded fixture lets a test look up: the ids it minted. */
 interface FixtureLoaded {
@@ -896,6 +972,113 @@ describe("the list memo", () => {
           assert.strictEqual(anas.counts.done, 1);
           assert.strictEqual(anas.items[0]?.tasks[0]?.name, "Finish");
           assert.deepStrictEqual(bens, bensBefore);
+        }),
+      wrap,
+    );
+  });
+
+  /** Ana on Bench, Ben on Shop, Bench's Board and Shop's Ring, and no orders. */
+  const benchAndShop = {
+    members: [ANA, BEN],
+    teams: [
+      { name: "Bench", members: [ANA] },
+      { name: "Shop", members: [BEN] },
+    ],
+    workflows: [twoTask("Board", "board"), twoTask("Ring", "ring", "Shop")],
+    orders: [],
+  };
+
+  it.effect("a webhook recomputes only the lists of teams its order's runs are on", () => {
+    const { count, wrap } = counting();
+    return harness(
+      ({ runs, load, webhook, events }) =>
+        Effect.gen(function* () {
+          const loaded = yield* load(benchAndShop);
+          const ana = loaded.member(ANA);
+          const ben = loaded.member(BEN);
+          const read = (member: RunMember) =>
+            runs.listRuns({ teamIds: member.teamIds, memberEmail: member.email, query: READY });
+          yield* webhook(syncedOrder(1, ["board"], 1));
+          yield* webhook(syncedOrder(2, ["ring"], 1));
+          assert.strictEqual((yield* read(ana)).items.length, 1);
+          const bensBefore = yield* read(ben);
+          assert.strictEqual(bensBefore.items.length, 1);
+          const before = { ...count };
+          events.length = 0;
+          yield* webhook(syncedOrder(1, ["board"], 2, { displayFulfillmentStatus: "FULFILLED" }));
+          assert.deepStrictEqual(notices(events), [[ORDERS_KEY]]);
+          const anas = yield* read(ana);
+          const bens = yield* read(ben);
+          assert.strictEqual(anas.items.length, 0);
+          assert.strictEqual(anas.counts.done, 1);
+          assert.deepStrictEqual(bens, bensBefore);
+          assert.strictEqual(count.runs, before.runs + 1);
+          assert.strictEqual(count.recent, before.recent + 1);
+        }),
+      wrap,
+    );
+  });
+
+  it.effect("a webhook whose reconcile starts a run recomputes the lists of its teams", () => {
+    const { count, wrap } = counting();
+    return harness(
+      ({ runs, load, webhook }) =>
+        Effect.gen(function* () {
+          const loaded = yield* load(benchAndShop);
+          const ana = loaded.member(ANA);
+          const ben = loaded.member(BEN);
+          const read = (member: RunMember) =>
+            runs.listRuns({ teamIds: member.teamIds, memberEmail: member.email, query: READY });
+          const anasBefore = yield* read(ana);
+          assert.strictEqual((yield* read(ben)).items.length, 0);
+          const before = { ...count };
+          yield* webhook(syncedOrder(1, ["ring"], 1));
+          assert.strictEqual((yield* read(ben)).items.length, 1);
+          assert.deepStrictEqual(yield* read(ana), anasBefore);
+          assert.strictEqual(count.runs, before.runs + 1);
+        }),
+      wrap,
+    );
+  });
+
+  it.effect("a webhook that leaves its order no run recomputes the teams the runs were on", () => {
+    const { count, wrap: counted } = counting();
+    /** A reconcile that also deletes the order's runs, which today's reconcile never does. */
+    let dropRuns: Effect.Effect<void> = Effect.void;
+    const wrap: Wrap = {
+      ...counted,
+      runs: (real) => {
+        const inner = counted.runs?.(real) ?? real;
+        return {
+          ...inner,
+          reconcileOrder: (input) =>
+            inner.reconcileOrder(input).pipe(Effect.tap(() => Effect.suspend(() => dropRuns))),
+        };
+      },
+    };
+    return harness(
+      ({ runs, load, webhook, sql }) =>
+        Effect.gen(function* () {
+          const loaded = yield* load(benchAndShop);
+          const ana = loaded.member(ANA);
+          const read = runs.listRuns({
+            teamIds: ana.teamIds,
+            memberEmail: ana.email,
+            query: READY,
+          });
+          const order = syncedOrder(1, ["board"], 1);
+          yield* webhook(order);
+          assert.strictEqual((yield* read).items.length, 1);
+          const before = { ...count };
+          dropRuns = Effect.orDie(
+            Effect.gen(function* () {
+              yield* sql`delete from RunTask where runId in (select id from Run where orderId = ${order.id})`;
+              yield* sql`delete from Run where orderId = ${order.id}`;
+            }),
+          );
+          yield* webhook({ ...order, updatedAt: 2 });
+          assert.strictEqual((yield* read).items.length, 0);
+          assert.strictEqual(count.runs, before.runs + 1);
         }),
       wrap,
     );

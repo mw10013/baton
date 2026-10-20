@@ -6,7 +6,11 @@ import * as Option from "effect/Option";
 import type * as SqlError from "effect/sql/SqlError";
 import type { OrdersSyncResult, ShopOrder, SyncOrderResult } from "../../domain/orders.ts";
 import { ShopLimits, type ShopKey } from "../../domain/platform.ts";
-import { type ReconcileCounts, reconcileCountsChanged } from "../../domain/shop-work.ts";
+import {
+  type ReconcileCounts,
+  reconcileCountsChanged,
+  type TeamId,
+} from "../../domain/shop-work.ts";
 import { ORDERS_KEY, SYNC_KEY } from "../../contract/shop-actor.ts";
 import {
   OrderSyncResponse,
@@ -43,7 +47,7 @@ export type OrderWebhookStatus = "stale" | "refused" | "gone" | "stored";
  * Backend's `ShopifyAdmin` (which ensures, and so refreshes, the offline session on every call),
  * the actor's handle on the sync Workflow, its `notify` and its shop, the runs application
  * service's `reconciler` (the per-order reconcile, loaded before the upsert's transaction opens)
- * and the billing seam `flushUsage`.
+ * and `notifyRuns`, the run repository's `teamsOfOrder`, and the billing seam `flushUsage`.
  *
  * No Admin call runs inside the repository's transaction: the transaction closes the object's
  * input gate, behind which a timer never fires, and the refresh's retries and lease poll are
@@ -57,6 +61,8 @@ export const makeOrders = <R>({
   admin,
   ordersSync,
   notify,
+  notifyRuns,
+  teamsOfOrder,
   reconciler,
   flushUsage,
   shop,
@@ -66,6 +72,10 @@ export const makeOrders = <R>({
   readonly admin: (typeof ShopifyAdmin)["Service"];
   readonly ordersSync: OrdersSyncWorkflows;
   readonly notify: (invalidated: ReadonlyArray<string>) => Effect.Effect<void, never, R>;
+  readonly notifyRuns: (teamIds: ReadonlyArray<TeamId>) => Effect.Effect<void, never, R>;
+  readonly teamsOfOrder: (
+    orderId: string,
+  ) => Effect.Effect<ReadonlyArray<TeamId>, SqlError.SqlError | RunRepositoryError>;
   readonly reconciler: Effect.Effect<
     (order: ShopOrder) => Effect.Effect<ReconcileCounts, SqlError.SqlError | RunRepositoryError>
   >;
@@ -89,6 +99,11 @@ export const makeOrders = <R>({
    * webhook. Notifies {@link ORDERS_KEY} when the order row moved or the sweep deleted a row, and
    * only then: a sweep is a write the screens show even when the order did not change, and a
    * rewrite of the same version shows nothing new (rule 17).
+   *
+   * Without a sweep, the write reached only this order and its runs, so the notice goes through
+   * `notifyRuns` with the teams the order's runs are on before the upsert and after its reconcile
+   * (`teamsOfOrder`): the reconcile may create a run, and either side alone could miss a team.
+   * The sweep deletes other orders' runs, which it does not name, so it notifies in full.
    */
   const fetchAndUpsertOrder = Effect.fn("Orders.fetchAndUpsertOrder")(function* (orderId: string) {
     const { order } = yield* admin.graphqlDecode(shop, OrderSyncResponse, orderSyncQuery, {
@@ -106,6 +121,7 @@ export const makeOrders = <R>({
       ).pipe(Effect.annotateLogs({ shop, orderId, limit: ShopLimits.maxLineItemsPerOrder }));
     const { lineItems, ...node } = order;
     const reconcile = yield* reconciler;
+    const teamsBefore = yield* teamsOfOrder(node.id);
     const shopOrder = toShopOrder({ node, syncedAt: yield* Clock.currentTimeMillis });
     const upsert = yield* repository.upsertOrder({
       order: shopOrder,
@@ -128,7 +144,8 @@ export const makeOrders = <R>({
       yield* Effect.logInfo(
         `Orders.fetchAndUpsertOrder: shop=${shop} sweptOrders=${String(swept.orders)} sweptRuns=${String(swept.runs)}`,
       ).pipe(Effect.annotateLogs({ shop, sweptOrders: swept.orders, sweptRuns: swept.runs }));
-    if (changed || sweptAny) yield* notify([ORDERS_KEY]);
+    if (sweptAny) yield* notify([ORDERS_KEY]);
+    else if (changed) yield* notifyRuns([...teamsBefore, ...(yield* teamsOfOrder(node.id))]);
     return { _tag: "Upserted", written, fresh, changed, refused } as const;
   });
 

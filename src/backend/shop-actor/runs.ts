@@ -188,9 +188,10 @@ const runResult = <E extends { readonly _tag: string }, R>(
  * Its memos live per activation and are shared by every tab of the shop: the orders index's
  * page, its Show counts, the workflows list's rows and its Done or closed half. {@link notify}
  * clears them all whenever it names `ORDERS_KEY`: every sender of a notice goes through it, so no
- * write can leave a memo answering stale rows. A write to one run notifies through
- * {@link notifyRun} instead, which leaves the team-keyed memos of teams the run has no task on:
- * those rows are per run, and nothing they read changed. The Done or closed half also expires
+ * write can leave a memo answering stale rows. A write confined to runs it can name and their
+ * orders (a run verb, or a webhook's upsert and reconcile) notifies through {@link notifyRuns}
+ * instead, which leaves the team-keyed memos of teams those runs have no task on: those rows are
+ * per run, and nothing they read changed. The Done or closed half also expires
  * when its window slides past the oldest moment it counts. A memo read stays outside any
  * transaction, because the lookup runs on a forked fiber.
  */
@@ -292,7 +293,7 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
   /**
    * The actor's `notify`, which empties every memo first when `invalidated` names
    * `ORDERS_KEY`: an order or one of its runs changed. Every sender of a notice uses this one
-   * or {@link notifyRun}.
+   * or {@link notifyRuns}.
    */
   const notify = (invalidated: ReadonlyArray<string>) =>
     Effect.gen(function* () {
@@ -306,16 +307,17 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
     });
 
   /**
-   * The `ORDERS_KEY` notice after a write to one run whose tasks are on `teamIds`: the orders
-   * index's memos go, and of the team-keyed ones only those sharing a team with the run. A
-   * team set's rows are per run and read only that run's own tasks and order, so a run with no
-   * task on the set cannot move them.
+   * The `ORDERS_KEY` notice after a write confined to some runs and their orders, whose tasks
+   * are on `teamIds` before or after the write: the orders index's memos go, and of the
+   * team-keyed ones only those sharing a team with the runs. A team set's rows are per run and
+   * read only that run's own tasks and order, so a run with no task on the set cannot move them.
+   * A write that deletes rows, or reaches runs it cannot name, uses {@link notify}.
    *
    * A verb calls it as the last step of its write, so only after a write that succeeded: a
    * refused call wrote nothing a screen shows, so a notice would cost every live screen a
    * refetch for no change.
    */
-  const notifyRun = (teamIds: ReadonlyArray<TeamId>) =>
+  const notifyRuns = (teamIds: ReadonlyArray<TeamId>) =>
     Effect.gen(function* () {
       yield* Cache.invalidateAll(ordersMemo);
       yield* Cache.invalidateAll(countsMemo);
@@ -597,7 +599,7 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
         const { tasks } = yield* requireRunAction(runId, MERCHANT, "cancel");
         yield* runRepository.cancelRun({ runId });
         yield* log(`Runs.merchantCancelRun: shop=${shop} runId=${runId}`, { runId });
-        yield* notifyRun(teamsOfRun(tasks));
+        yield* notifyRuns(teamsOfRun(tasks));
       }),
     ).pipe(Effect.withSpan("Runs.merchantCancelRun"));
 
@@ -625,7 +627,7 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
         yield* log(`Runs.merchantMarkTaskDone: shop=${shop} task=${runTaskId}`, {
           task: runTaskId,
         });
-        yield* notifyRun(teamsOfRun(tasks));
+        yield* notifyRuns(teamsOfRun(tasks));
       }),
     ).pipe(Effect.withSpan("Runs.merchantMarkTaskDone"));
 
@@ -637,7 +639,7 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
         yield* log(`Runs.merchantReopenTask: shop=${shop} task=${runTaskId}`, {
           task: runTaskId,
         });
-        yield* notifyRun(teamsOfRun(tasks));
+        yield* notifyRuns(teamsOfRun(tasks));
       }),
     ).pipe(Effect.withSpan("Runs.merchantReopenTask"));
 
@@ -650,7 +652,7 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
         yield* log(`Runs.merchantPutBackTask: shop=${shop} task=${runTaskId}`, {
           task: runTaskId,
         });
-        yield* notifyRun(teamsOfRun(tasks));
+        yield* notifyRuns(teamsOfRun(tasks));
       }),
     ).pipe(Effect.withSpan("Runs.merchantPutBackTask"));
 
@@ -661,7 +663,7 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
         const { tasks } = yield* requireRunAction(runId, MERCHANT, "note");
         yield* runRepository.setRunNote({ runId, note });
         yield* log(`Runs.merchantSetRunNote: shop=${shop} runId=${runId}`, { runId });
-        yield* notifyRun(teamsOfRun(tasks));
+        yield* notifyRuns(teamsOfRun(tasks));
       }),
     ).pipe(Effect.withSpan("Runs.merchantSetRunNote"));
 
@@ -672,7 +674,7 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
         const { tasks } = yield* requireRunAction(runId, MERCHANT, "block");
         yield* runRepository.blockRun({ runId, actor: MERCHANT, reason });
         yield* log(`Runs.merchantBlockRun: shop=${shop} runId=${runId}`, { runId });
-        yield* notifyRun(teamsOfRun(tasks));
+        yield* notifyRuns(teamsOfRun(tasks));
       }),
     ).pipe(Effect.withSpan("Runs.merchantBlockRun"));
 
@@ -682,7 +684,7 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
         const { tasks } = yield* requireRunAction(runId, MERCHANT, "unblock");
         yield* runRepository.unblockRun({ runId });
         yield* log(`Runs.merchantUnblockRun: shop=${shop} runId=${runId}`, { runId });
-        yield* notifyRun(teamsOfRun(tasks));
+        yield* notifyRuns(teamsOfRun(tasks));
       }),
     ).pipe(Effect.withSpan("Runs.merchantUnblockRun"));
 
@@ -709,7 +711,7 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
           teamId,
         },
       );
-      yield* notifyRun([...teamsOfRun(tasks), team.id]);
+      yield* notifyRuns([...teamsOfRun(tasks), team.id]);
       return { _tag: "Assigned" } satisfies AssignRunTaskTeamResult;
     },
     Effect.catchTags({
@@ -814,7 +816,7 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
           `Runs.memberStartTask: shop=${shop} task=${runTaskId} memberId=${member.memberId}`,
           { task: runTaskId, memberId: member.memberId },
         );
-        yield* notifyRun(teamsOfRun(tasks));
+        yield* notifyRuns(teamsOfRun(tasks));
       }),
     ).pipe(Effect.withSpan("Runs.memberStartTask"));
 
@@ -827,7 +829,7 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
           `Runs.memberMarkTaskDone: shop=${shop} task=${runTaskId} memberId=${member.memberId}`,
           { task: runTaskId, memberId: member.memberId },
         );
-        yield* notifyRun(teamsOfRun(tasks));
+        yield* notifyRuns(teamsOfRun(tasks));
       }),
     ).pipe(Effect.withSpan("Runs.memberMarkTaskDone"));
 
@@ -841,7 +843,7 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
           `Runs.memberReopenTask: shop=${shop} task=${runTaskId} memberId=${member.memberId}`,
           { task: runTaskId, memberId: member.memberId },
         );
-        yield* notifyRun(teamsOfRun(tasks));
+        yield* notifyRuns(teamsOfRun(tasks));
       }),
     ).pipe(Effect.withSpan("Runs.memberReopenTask"));
 
@@ -855,7 +857,7 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
           `Runs.memberPutBackTask: shop=${shop} task=${runTaskId} memberId=${member.memberId}`,
           { task: runTaskId, memberId: member.memberId },
         );
-        yield* notifyRun(teamsOfRun(tasks));
+        yield* notifyRuns(teamsOfRun(tasks));
       }),
     ).pipe(Effect.withSpan("Runs.memberPutBackTask"));
 
@@ -872,7 +874,7 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
             memberId: member.memberId,
           },
         );
-        yield* notifyRun(teamsOfRun(tasks));
+        yield* notifyRuns(teamsOfRun(tasks));
       }),
     ).pipe(Effect.withSpan("Runs.memberSetRunNote"));
 
@@ -885,7 +887,7 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
           runId,
           memberId: member.memberId,
         });
-        yield* notifyRun(teamsOfRun(tasks));
+        yield* notifyRuns(teamsOfRun(tasks));
       }),
     ).pipe(Effect.withSpan("Runs.memberBlockRun"));
 
@@ -895,7 +897,7 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
       Effect.gen(function* () {
         const { tasks } = yield* requireRunAction(runId, member, "unblock");
         yield* runRepository.unblockRun({ runId, teamIds: member.teamIds });
-        yield* notifyRun(teamsOfRun(tasks));
+        yield* notifyRuns(teamsOfRun(tasks));
       }),
     ).pipe(Effect.withSpan("Runs.memberUnblockRun"));
 
@@ -1097,6 +1099,7 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
 
   return {
     notify,
+    notifyRuns,
     applyFixture,
     eligibleContext,
     reconciler,

@@ -14,6 +14,7 @@ import {
   ActorSqliteTest,
   type AdminCall,
   noReconciler,
+  noRunTeams,
   QuietLogs,
   testOrdersSyncWorkflows,
   testShopifyAdmin,
@@ -71,6 +72,11 @@ const withOrders = <A, E>(
         Effect.sync(() => {
           notices.push(invalidated);
         }),
+      notifyRuns: () =>
+        Effect.sync(() => {
+          notices.push([ORDERS_KEY]);
+        }),
+      teamsOfOrder: noRunTeams,
       reconciler: noReconciler,
       flushUsage: Effect.sync(() => {
         flushes.count += 1;

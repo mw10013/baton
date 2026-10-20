@@ -57,7 +57,7 @@ import {
   type SetRunNoteCommand,
   type StartTaskCommand,
   searchTerm,
-  type TeamId,
+  TeamId,
   type TeamName,
   taskIsOnTeams,
   type UnblockRunCommand,
@@ -222,6 +222,10 @@ export const makeRunRepository = (
       }),
     ),
     "Invalid RunListRun row",
+  );
+  const decodeTeamIds = decode(
+    Schema.Array(Schema.Struct({ teamId: TeamId })),
+    "Invalid RunTask teamId row",
   );
   const decodeOrderStates = decode(
     Schema.Array(Schema.Struct({ id: Schema.String, ...OrderState.fields })),
@@ -450,6 +454,22 @@ export const makeRunRepository = (
             ];
       },
     );
+  });
+
+  /**
+   * The teams the order's runs have a task on, in any state: whose workflows list and Done half
+   * a write to the order or to its runs can move, because those rows read only their own run's
+   * tasks and order ({@link runListItems}, {@link listRecent}).
+   */
+  const teamsOfOrder = Effect.fn("RunRepository.teamsOfOrder")(function* (orderId: string) {
+    const rows = yield* decodeTeamIds(
+      yield* sql`
+        select distinct s.teamId from Run r
+        join RunTask s on s.runId = r.id
+        where r.orderId = ${orderId} and s.teamId is not null
+      `,
+    );
+    return rows.map(({ teamId }) => teamId);
   });
 
   const withTasks = (runs: readonly Run[]) =>
@@ -1322,6 +1342,7 @@ export const makeRunRepository = (
     cancelRun,
     runListItems,
     listRecent,
+    teamsOfOrder,
     reopenTask,
     putBackTask,
     getRunPage,
