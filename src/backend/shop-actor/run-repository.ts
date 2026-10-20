@@ -862,19 +862,26 @@ export const makeRunRepository = (
    * search `total` is how many of the window match before the cut
    * (`WorkflowsListData` `matches`); the Done or closed count
    * the strip shows (`RunListCounts`) is read with `q: null`.
+   *
+   * `oldest` is the earliest `doneAt` or `closedAt` that `total` counts, `null` when it counts
+   * nothing: the answer stands, absent a write, until the window slides past it. `counted` is
+   * that answer for the same `teamIds` and `q`, read earlier and still standing: it is returned
+   * as it is, and only the rows are read.
    */
   const listRecent = Effect.fn("RunRepository.listRecent")(function* ({
     teamIds,
     since,
     limit,
     q,
+    counted,
   }: {
     readonly teamIds: readonly string[];
     readonly since: number;
     readonly limit: number;
     readonly q: ListSearch | null;
+    readonly counted?: { readonly total: number; readonly oldest: number | null };
   }) {
-    if (teamIds.length === 0) return { items: [], total: 0 };
+    if (teamIds.length === 0) return { items: [], total: 0, oldest: null };
     const teams = json(teamIds);
     /**
      * {@link searchTerm} over the run's snapshot of its item, aliased
@@ -912,19 +919,29 @@ export const makeRunRepository = (
             and t.teamId in (select value from json_each(${teams}))
         )
     `;
-    const countedTasks = yield* sql`
-      select count(*) from RunTask s
-      where s.doneAt >= ${since}
-        and s.teamId in (select value from json_each(${teams}))
-        and exists (
-          select 1 from Run r where r.id = s.runId and ${matching}
-        )
-    `.values;
-    const countedClosed =
-      yield* sql`select count(*) from Run r where ${closedWhere} and ${matching}`.values;
-    const total = Number(countedTasks[0]?.[0] ?? 0) + Number(countedClosed[0]?.[0] ?? 0);
+    const count = Effect.gen(function* () {
+      const tasks = yield* sql`
+        select count(*), min(s.doneAt) from RunTask s
+        where s.doneAt >= ${since}
+          and s.teamId in (select value from json_each(${teams}))
+          and exists (
+            select 1 from Run r where r.id = s.runId and ${matching}
+          )
+      `.values;
+      const closed =
+        yield* sql`select count(*), min(r.closedAt) from Run r where ${closedWhere} and ${matching}`
+          .values;
+      const earliest = [tasks[0]?.[1], closed[0]?.[1]].flatMap((at) =>
+        at === null || at === undefined ? [] : [Number(at)],
+      );
+      return {
+        total: Number(tasks[0]?.[0] ?? 0) + Number(closed[0]?.[0] ?? 0),
+        oldest: earliest.length === 0 ? null : Math.min(...earliest),
+      };
+    });
+    const { total, oldest } = counted ?? (yield* count);
     // Collapsed: the strip still counts the day, so the counts are read and the rows are not.
-    if (limit === 0) return { items: [], total };
+    if (limit === 0) return { items: [], total, oldest };
     const done = yield* decodeTasks(
       yield* sql`
         select s.* from RunTask s
@@ -982,7 +999,7 @@ export const makeRunRepository = (
       .toSorted((a, b) => b.at - a.at)
       .slice(0, limit)
       .map(({ at: _at, ...item }): RecentItem => item);
-    return { items, total };
+    return { items, total, oldest };
   });
 
   /**

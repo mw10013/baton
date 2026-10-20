@@ -2476,15 +2476,17 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
         strictEqual(both.total, 3);
         deepStrictEqual(shape(both.items), ["task Finish", "closed merchant_cancelled"]);
         // Collapsed: the count and no rows.
-        deepStrictEqual(
-          yield* runs.listRecent({
-            teamIds: [TEAM_A.id],
-            since,
-            limit: 0,
-            q: null,
-          }),
-          { items: [], total: 2 },
-        );
+        const collapsed = yield* runs.listRecent({
+          teamIds: [TEAM_A.id],
+          since,
+          limit: 0,
+          q: null,
+        });
+        deepStrictEqual(collapsed.items, []);
+        strictEqual(collapsed.total, 2);
+        // The oldest moment counted is Team A's Cut, done before the cancel.
+        const cut = teamA.items.find((item) => item.kind === "task");
+        strictEqual(collapsed.oldest, cut?.kind === "task" ? cut.task.doneAt : -1);
         // A team with nothing on the run, and a window after it: nothing.
         strictEqual(
           (yield* runs.listRecent({
@@ -2495,15 +2497,14 @@ describe("RunRepository tasks, workflows list, blocks, delete", () => {
           })).total,
           0,
         );
-        strictEqual(
-          (yield* runs.listRecent({
-            teamIds: [TEAM_A.id, TEAM_B.id],
-            since: Date.now() + 60_000,
-            limit: 10,
-            q: null,
-          })).total,
-          0,
-        );
+        const after = yield* runs.listRecent({
+          teamIds: [TEAM_A.id, TEAM_B.id],
+          since: Date.now() + 60_000,
+          limit: 10,
+          q: null,
+        });
+        strictEqual(after.total, 0);
+        strictEqual(after.oldest, null);
       }),
     ),
   );

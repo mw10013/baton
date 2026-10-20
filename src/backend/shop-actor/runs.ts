@@ -104,18 +104,46 @@ class OrdersMemoKey extends Data.Class<{
   readonly teams: ReadonlyArray<TeamWithMemberCount>;
 }> {}
 
+/**
+ * The orders index's Show counts' memo key: all they depend on (the order repository's
+ * `countOrders`), so every page, Show value and search under one team shares an entry, across
+ * tabs.
+ */
+class CountsMemoKey extends Data.Class<{
+  readonly team: TeamId | null;
+  readonly teams: ReadonlyArray<TeamWithMemberCount>;
+}> {}
+
 /** A workflows list read's memo key: the member's teams, sorted, so two members on the same teams share one entry. */
 class RunsMemoKey extends Data.Class<{
   readonly teamIds: ReadonlyArray<TeamId>;
 }> {}
 
 /**
+ * The Done or closed half's memo key, without a search: the teams it reads, sorted, and how
+ * many rows (`limit` 0 is the count alone).
+ */
+class RecentMemoKey extends Data.Class<{
+  readonly teamIds: ReadonlyArray<TeamId>;
+  readonly limit: number;
+}> {}
+
+/** The Done or closed half as the run repository's `listRecent` reads it. */
+type RecentHalf = Effect.Success<ReturnType<RunRepository["listRecent"]>>;
+
+type MemoKey = OrdersMemoKey | CountsMemoKey | RunsMemoKey | RecentMemoKey;
+
+/**
  * A failed lookup expires at once, so the next read retries; a success is
- * kept until the next notice naming `ORDERS_KEY` clears it. `Cache` otherwise stores the
+ * kept until a notice clears it ({@link makeRuns}). `Cache` otherwise stores the
  * failure's `Exit` and replays it to every later `get`.
  */
 const keepSuccesses = (exit: Exit.Exit<unknown, unknown>) =>
   Exit.isFailure(exit) ? Duration.zero : Duration.infinity;
+
+/** The teams a run's tasks are on: whose workflows list and Done half a write to it can change. */
+const teamsOfRun = (tasks: ReadonlyArray<RunTask>): ReadonlyArray<TeamId> =>
+  tasks.flatMap(({ teamId }) => (teamId === null ? [] : [teamId]));
 
 /**
  * The bound on keys per memo. The keys in use are the filter combinations
@@ -157,10 +185,14 @@ const runResult = <E extends { readonly _tag: string }, R>(
  * teams are read first ({@link eligibleContext}), and each repository write opens its own
  * transaction after.
  *
- * Its two memos, the orders index's page and the workflows list's rows, live per activation and
- * are cleared by {@link notify} whenever it names `ORDERS_KEY`: every sender of a notice goes
- * through this `notify`, so no write can leave a memo answering stale rows. A memo read stays
- * outside any transaction, because the lookup runs on a forked fiber.
+ * Its memos live per activation and are shared by every tab of the shop: the orders index's
+ * page, its Show counts, the workflows list's rows and its Done or closed half. {@link notify}
+ * clears them all whenever it names `ORDERS_KEY`: every sender of a notice goes through it, so no
+ * write can leave a memo answering stale rows. A write to one run notifies through
+ * {@link notifyRun} instead, which leaves the team-keyed memos of teams the run has no task on:
+ * those rows are per run, and nothing they read changed. The Done or closed half also expires
+ * when its window slides past the oldest moment it counts. A memo read stays outside any
+ * transaction, because the lookup runs on a forked fiber.
  */
 export const makeRuns = Effect.fnUntraced(function* <R>({
   runRepository,
@@ -187,13 +219,21 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
    * learns whether it paid the read, with no second lookup that a concurrent notice could race.
    * A caller that joined another's lookup in flight reads as a hit, which it is.
    */
-  const missed = new WeakSet<OrdersMemoKey | RunsMemoKey>();
-  /** The orders index's memo; the rule is on {@link makeRuns}. */
+  const missed = new WeakSet<MemoKey>();
+  /** The orders index's page memo; the rule is on {@link makeRuns}. */
   const ordersMemo = yield* Cache.makeWith(
     (key: OrdersMemoKey) => {
       missed.add(key);
       const { limit, cursor, q, show, team, teams } = key;
       return orderRepository.listOrders({ limit, cursor, q, show, team, teams });
+    },
+    { capacity: MEMO_CAPACITY, timeToLive: keepSuccesses },
+  );
+  /** The orders index's Show counts' memo; the rule is on {@link makeRuns}. */
+  const countsMemo = yield* Cache.makeWith(
+    (key: CountsMemoKey) => {
+      missed.add(key);
+      return orderRepository.countOrders({ team: key.team, teams: key.teams });
     },
     { capacity: MEMO_CAPACITY, timeToLive: keepSuccesses },
   );
@@ -205,25 +245,87 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
     },
     { capacity: MEMO_CAPACITY, timeToLive: keepSuccesses },
   );
-  /** One debug line per memo read: whether `key`'s `Cache.get` ran the lookup ({@link missed}). */
-  const logMemo = (operation: string, key: OrdersMemoKey | RunsMemoKey) => {
-    const memo = missed.has(key) ? "miss" : "hit";
-    return Effect.logDebug(`${operation}: shop=${shop} memo=${memo}`).pipe(
-      Effect.annotateLogs({ shop, memo }),
-    );
-  };
+  /**
+   * The Done or closed half's memo, searches aside (`listRuns`). Kept until a notice clears it
+   * or the window slides past the oldest moment it counts, after which a fresh read would count
+   * one fewer.
+   */
+  const recentMemo = yield* Cache.makeWith(
+    (
+      key: RecentMemoKey,
+    ): Effect.Effect<
+      { readonly recent: RecentHalf; readonly validFor: Duration.Duration },
+      Effect.Error<ReturnType<RunRepository["listRecent"]>>
+    > =>
+      Effect.gen(function* () {
+        missed.add(key);
+        const since = (yield* Clock.currentTimeMillis) - DONE_WINDOW_MS;
+        // The rows' count is the collapsed entry's, which a member saw first.
+        const counted =
+          key.limit === 0
+            ? undefined
+            : (yield* Cache.get(recentMemo, new RecentMemoKey({ teamIds: key.teamIds, limit: 0 })))
+                .recent;
+        const recent = yield* runRepository.listRecent({
+          teamIds: key.teamIds,
+          limit: key.limit,
+          since,
+          q: null,
+          counted,
+        });
+        const validFor =
+          recent.oldest === null
+            ? Duration.infinity
+            : Duration.millis(
+                Math.max(0, recent.oldest + DONE_WINDOW_MS - (yield* Clock.currentTimeMillis)),
+              );
+        return { recent, validFor };
+      }),
+    {
+      capacity: MEMO_CAPACITY,
+      timeToLive: (exit) => (Exit.isFailure(exit) ? Duration.zero : exit.value.validFor),
+    },
+  );
+  /** Whether `key`'s `Cache.get` ran the lookup ({@link missed}), for a debug line. */
+  const memoState = (key: MemoKey) => (missed.has(key) ? "miss" : "hit");
 
   /**
-   * The actor's `notify`, which empties both memos first when `invalidated` names
-   * `ORDERS_KEY`: an order or one of its runs changed. Every sender of a notice uses this one.
+   * The actor's `notify`, which empties every memo first when `invalidated` names
+   * `ORDERS_KEY`: an order or one of its runs changed. Every sender of a notice uses this one
+   * or {@link notifyRun}.
    */
   const notify = (invalidated: ReadonlyArray<string>) =>
     Effect.gen(function* () {
       if (invalidated.includes(ORDERS_KEY)) {
         yield* Cache.invalidateAll(ordersMemo);
+        yield* Cache.invalidateAll(countsMemo);
         yield* Cache.invalidateAll(runsMemo);
+        yield* Cache.invalidateAll(recentMemo);
       }
       yield* rawNotify(invalidated);
+    });
+
+  /**
+   * The `ORDERS_KEY` notice after a write to one run whose tasks are on `teamIds`: the orders
+   * index's memos go, and of the team-keyed ones only those sharing a team with the run. A
+   * team set's rows are per run and read only that run's own tasks and order, so a run with no
+   * task on the set cannot move them.
+   *
+   * A verb calls it as the last step of its write, so only after a write that succeeded: a
+   * refused call wrote nothing a screen shows, so a notice would cost every live screen a
+   * refetch for no change.
+   */
+  const notifyRun = (teamIds: ReadonlyArray<TeamId>) =>
+    Effect.gen(function* () {
+      yield* Cache.invalidateAll(ordersMemo);
+      yield* Cache.invalidateAll(countsMemo);
+      const touched = (key: RunsMemoKey | RecentMemoKey) =>
+        key.teamIds.some((teamId) => teamIds.includes(teamId));
+      for (const key of Array.from(yield* Cache.keys(runsMemo)))
+        if (touched(key)) yield* Cache.invalidate(runsMemo, key);
+      for (const key of Array.from(yield* Cache.keys(recentMemo)))
+        if (touched(key)) yield* Cache.invalidate(recentMemo, key);
+      yield* rawNotify([ORDERS_KEY]);
     });
 
   /**
@@ -322,20 +424,27 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
     }).pipe(Effect.ensuring(flushUsage), Effect.orDie, Effect.withSpan("Runs.reconcileAll"));
 
   /**
-   * The orders index read, for the loader and the socket alike. The page is memoized (the rule
-   * on {@link makeRuns}), keyed by the input and the D1 teams, which are read live on every
-   * call: they are the one input outside the actor, so a team change is a new key rather than
-   * a stale entry. `syncState` is read live, outside the memo.
+   * The orders index read, for the loader and the socket alike. The page and its Show counts
+   * are memoized apart (the rule on {@link makeRuns}): the page by the input, the counts by the
+   * team alone, both with the D1 teams, which are read live on every call: they are the one
+   * input outside the actor, so a team change is a new key rather than a stale entry.
+   * `syncState` is read live, outside the memos.
    */
   const listOrders = Effect.fn("Runs.listOrders")(function* (input: ListOrdersInput) {
     // One read of the teams for both consumers: the repository derives `unassigned` from it,
     // and `OrdersIndexData` carries it so the route can name the ids it gets back.
     const shopTeams = yield* teams();
-    const key = new OrdersMemoKey({ ...input, teams: shopTeams });
-    const page = yield* Cache.get(ordersMemo, key);
-    yield* logMemo("Runs.listOrders", key);
+    const pageKey = new OrdersMemoKey({ ...input, teams: shopTeams });
+    const countsKey = new CountsMemoKey({ team: input.team, teams: shopTeams });
+    const page = yield* Cache.get(ordersMemo, pageKey);
+    const counts = yield* Cache.get(countsMemo, countsKey);
+    const memo = memoState(pageKey);
+    const countsMemoState = memoState(countsKey);
+    yield* Effect.logDebug(
+      `Runs.listOrders: shop=${shop} memo=${memo} counts=${countsMemoState}`,
+    ).pipe(Effect.annotateLogs({ shop, memo, counts: countsMemoState }));
     return {
-      page,
+      page: { ...page, ...counts },
       syncState: yield* orderRepository.getSyncStatus(yield* Clock.currentTimeMillis),
       teams: shopTeams,
     } satisfies OrdersIndexData;
@@ -411,15 +520,8 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
       const { run, order } = gate.value;
       if (!allowed(taskActions(actor, order, run, task)))
         return yield* new RunNotAllowedError({ runId: run.id, teamId: "" });
-      return task;
+      return { ...gate.value, task };
     });
-
-  /**
-   * A verb notifies only after a write that succeeded: a refused call wrote nothing a screen
-   * shows, so a notice would cost every live screen a refetch for no change.
-   */
-  const notifyIfOk = (result: { readonly _tag: string }) =>
-    result._tag === "Ok" ? notify([ORDERS_KEY]) : Effect.void;
 
   const log = (message: string, annotations: Record<string, unknown>) =>
     Effect.logInfo(message).pipe(Effect.annotateLogs({ shop, ...annotations }));
@@ -492,11 +594,12 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
   const merchantCancelRun = ({ runId }: RunIdInput) =>
     runResult(
       Effect.gen(function* () {
-        yield* requireRunAction(runId, MERCHANT, "cancel");
+        const { tasks } = yield* requireRunAction(runId, MERCHANT, "cancel");
         yield* runRepository.cancelRun({ runId });
         yield* log(`Runs.merchantCancelRun: shop=${shop} runId=${runId}`, { runId });
+        yield* notifyRun(teamsOfRun(tasks));
       }),
-    ).pipe(Effect.tap(notifyIfOk), Effect.withSpan("Runs.merchantCancelRun"));
+    ).pipe(Effect.withSpan("Runs.merchantCancelRun"));
 
   /**
    * The merchant's task and block writes on a run, from the order page's
@@ -517,65 +620,71 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
   const merchantMarkTaskDone = ({ runTaskId }: MarkTaskDoneInput) =>
     runResult(
       Effect.gen(function* () {
-        yield* requireTaskAction(runTaskId, MERCHANT, ({ done }) => done);
+        const { tasks } = yield* requireTaskAction(runTaskId, MERCHANT, ({ done }) => done);
         yield* runRepository.markTaskDone({ runTaskId, actor: MERCHANT });
         yield* log(`Runs.merchantMarkTaskDone: shop=${shop} task=${runTaskId}`, {
           task: runTaskId,
         });
+        yield* notifyRun(teamsOfRun(tasks));
       }),
-    ).pipe(Effect.tap(notifyIfOk), Effect.withSpan("Runs.merchantMarkTaskDone"));
+    ).pipe(Effect.withSpan("Runs.merchantMarkTaskDone"));
 
   const merchantReopenTask = ({ runTaskId }: ReopenTaskInput) =>
     runResult(
       Effect.gen(function* () {
-        yield* requireTaskAction(runTaskId, MERCHANT, ({ reopen }) => reopen);
+        const { tasks } = yield* requireTaskAction(runTaskId, MERCHANT, ({ reopen }) => reopen);
         yield* runRepository.reopenTask({ runTaskId, actor: MERCHANT });
         yield* log(`Runs.merchantReopenTask: shop=${shop} task=${runTaskId}`, {
           task: runTaskId,
         });
+        yield* notifyRun(teamsOfRun(tasks));
       }),
-    ).pipe(Effect.tap(notifyIfOk), Effect.withSpan("Runs.merchantReopenTask"));
+    ).pipe(Effect.withSpan("Runs.merchantReopenTask"));
 
   /** Put back from the order page; the rule is on the run repository's `putBackTask`. */
   const merchantPutBackTask = ({ runTaskId }: PutBackTaskInput) =>
     runResult(
       Effect.gen(function* () {
-        yield* requireTaskAction(runTaskId, MERCHANT, ({ putBack }) => putBack);
+        const { tasks } = yield* requireTaskAction(runTaskId, MERCHANT, ({ putBack }) => putBack);
         yield* runRepository.putBackTask({ runTaskId, actor: MERCHANT });
         yield* log(`Runs.merchantPutBackTask: shop=${shop} task=${runTaskId}`, {
           task: runTaskId,
         });
+        yield* notifyRun(teamsOfRun(tasks));
       }),
-    ).pipe(Effect.tap(notifyIfOk), Effect.withSpan("Runs.merchantPutBackTask"));
+    ).pipe(Effect.withSpan("Runs.merchantPutBackTask"));
 
   /** The note itself never reaches the log line: worker text is unbounded and not ours to index. */
   const merchantSetRunNote = ({ runId, note }: SetRunNoteInput) =>
     runResult(
       Effect.gen(function* () {
-        yield* requireRunAction(runId, MERCHANT, "note");
+        const { tasks } = yield* requireRunAction(runId, MERCHANT, "note");
         yield* runRepository.setRunNote({ runId, note });
         yield* log(`Runs.merchantSetRunNote: shop=${shop} runId=${runId}`, { runId });
+        yield* notifyRun(teamsOfRun(tasks));
       }),
-    ).pipe(Effect.tap(notifyIfOk), Effect.withSpan("Runs.merchantSetRunNote"));
+    ).pipe(Effect.withSpan("Runs.merchantSetRunNote"));
 
   /** The reason itself never reaches the log line, as the note does not. */
   const merchantBlockRun = ({ runId, reason }: BlockRunInput) =>
     runResult(
       Effect.gen(function* () {
-        yield* requireRunAction(runId, MERCHANT, "block");
+        const { tasks } = yield* requireRunAction(runId, MERCHANT, "block");
         yield* runRepository.blockRun({ runId, actor: MERCHANT, reason });
         yield* log(`Runs.merchantBlockRun: shop=${shop} runId=${runId}`, { runId });
+        yield* notifyRun(teamsOfRun(tasks));
       }),
-    ).pipe(Effect.tap(notifyIfOk), Effect.withSpan("Runs.merchantBlockRun"));
+    ).pipe(Effect.withSpan("Runs.merchantBlockRun"));
 
   const merchantUnblockRun = ({ runId }: RunIdInput) =>
     runResult(
       Effect.gen(function* () {
-        yield* requireRunAction(runId, MERCHANT, "unblock");
+        const { tasks } = yield* requireRunAction(runId, MERCHANT, "unblock");
         yield* runRepository.unblockRun({ runId });
         yield* log(`Runs.merchantUnblockRun: shop=${shop} runId=${runId}`, { runId });
+        yield* notifyRun(teamsOfRun(tasks));
       }),
-    ).pipe(Effect.tap(notifyIfOk), Effect.withSpan("Runs.merchantUnblockRun"));
+    ).pipe(Effect.withSpan("Runs.merchantUnblockRun"));
 
   /**
    * Points an open task at a team. The team check lives here, not in the repository: `Team` is a
@@ -586,7 +695,7 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
    */
   const merchantAssignRunTaskTeam = Effect.fn("Runs.merchantAssignRunTaskTeam")(
     function* ({ runTaskId, teamId }: AssignRunTaskTeamInput) {
-      yield* requireTaskAction(runTaskId, MERCHANT, ({ assign }) => assign);
+      const { tasks } = yield* requireTaskAction(runTaskId, MERCHANT, ({ assign }) => assign);
       const team = (yield* teams()).find((candidate) => candidate.id === teamId);
       if (team === undefined) return { _tag: "TeamNotFound" } satisfies AssignRunTaskTeamResult;
       yield* runRepository.assignRunTaskTeam({
@@ -600,7 +709,7 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
           teamId,
         },
       );
-      yield* notify([ORDERS_KEY]);
+      yield* notifyRun([...teamsOfRun(tasks), team.id]);
       return { _tag: "Assigned" } satisfies AssignRunTaskTeamResult;
     },
     Effect.catchTags({
@@ -630,13 +739,11 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
    * the team list already narrowed. A search ignores the team, so its rows
    * are read over every team of the member while the count stays narrowed.
    *
-   * The current half is memoized (the rule on {@link makeRuns}): the rows the member's teams own
-   * (the run repository's `runListItems`), keyed by the team ids sorted, so members
-   * on the same teams share one computation, and each member's grouping
-   * (`workflowsListFrom`) runs on every read because it is per
-   * member and reads no rows. `listRecent` is outside the memo: its window
-   * slides with the clock, so the same key would not mean the same answer a
-   * minute later.
+   * Both halves are memoized (the rule on {@link makeRuns}), keyed by the team ids sorted, so
+   * members on the same teams share one computation: the rows the member's teams own (the run
+   * repository's `runListItems`), and the Done or closed half without a search. Each member's
+   * grouping (`workflowsListFrom`) runs on every read because it is per member and reads no
+   * rows. A search's Done or closed half is read live.
    */
   const listRuns = Effect.fn("Runs.listRuns")(function* ({
     teamIds,
@@ -650,17 +757,21 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
     const started = yield* Clock.currentTimeMillis;
     const key = new RunsMemoKey({ teamIds: teamIds.toSorted() });
     const teamRows = yield* Cache.get(runsMemo, key);
-    yield* logMemo("Runs.listRuns", key);
     const { counts, items, matches: openMatches } = workflowsListFrom(teamRows, memberEmail, query);
-    const recentTeamIds =
-      query.team === null ? teamIds : teamIds.filter((teamId) => teamId === query.team);
-    const since = started - DONE_WINDOW_MS;
-    const recent = yield* runRepository.listRecent({
-      teamIds: recentTeamIds,
-      since,
+    const recentKey = new RecentMemoKey({
+      teamIds: (query.team === null
+        ? teamIds
+        : teamIds.filter((teamId) => teamId === query.team)
+      ).toSorted(),
       limit: query.q === null && workflowsListStateIsDone(query.state) ? query.limit : 0,
-      q: null,
     });
+    const { recent } = yield* Cache.get(recentMemo, recentKey);
+    const memo = memoState(key);
+    const recentMemoState = memoState(recentKey);
+    yield* Effect.logDebug(
+      `Runs.listRuns: shop=${shop} memo=${memo} recent=${recentMemoState}`,
+    ).pipe(Effect.annotateLogs({ shop, memo, recent: recentMemoState }));
+    const since = started - DONE_WINDOW_MS;
     /**
      * The search's Done or closed half, read over every team with the
      * term: its rows, and its `total` is how many of the window match
@@ -697,58 +808,62 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
   const memberStartTask = ({ runTaskId }: StartTaskInput, member: RunMember) =>
     runResult(
       Effect.gen(function* () {
-        yield* requireTaskAction(runTaskId, member, ({ start }) => start);
+        const { tasks } = yield* requireTaskAction(runTaskId, member, ({ start }) => start);
         yield* runRepository.startTask({ runTaskId, actor: member, teamIds: member.teamIds });
         yield* log(
           `Runs.memberStartTask: shop=${shop} task=${runTaskId} memberId=${member.memberId}`,
           { task: runTaskId, memberId: member.memberId },
         );
+        yield* notifyRun(teamsOfRun(tasks));
       }),
-    ).pipe(Effect.tap(notifyIfOk), Effect.withSpan("Runs.memberStartTask"));
+    ).pipe(Effect.withSpan("Runs.memberStartTask"));
 
   const memberMarkTaskDone = ({ runTaskId }: MarkTaskDoneInput, member: RunMember) =>
     runResult(
       Effect.gen(function* () {
-        yield* requireTaskAction(runTaskId, member, ({ done }) => done);
+        const { tasks } = yield* requireTaskAction(runTaskId, member, ({ done }) => done);
         yield* runRepository.markTaskDone({ runTaskId, actor: member, teamIds: member.teamIds });
         yield* log(
           `Runs.memberMarkTaskDone: shop=${shop} task=${runTaskId} memberId=${member.memberId}`,
           { task: runTaskId, memberId: member.memberId },
         );
+        yield* notifyRun(teamsOfRun(tasks));
       }),
-    ).pipe(Effect.tap(notifyIfOk), Effect.withSpan("Runs.memberMarkTaskDone"));
+    ).pipe(Effect.withSpan("Runs.memberMarkTaskDone"));
 
   /** Reopen, the member's Undo. Notifies like the others. */
   const memberReopenTask = ({ runTaskId }: ReopenTaskInput, member: RunMember) =>
     runResult(
       Effect.gen(function* () {
-        yield* requireTaskAction(runTaskId, member, ({ reopen }) => reopen);
+        const { tasks } = yield* requireTaskAction(runTaskId, member, ({ reopen }) => reopen);
         yield* runRepository.reopenTask({ runTaskId, actor: member, teamIds: member.teamIds });
         yield* log(
           `Runs.memberReopenTask: shop=${shop} task=${runTaskId} memberId=${member.memberId}`,
           { task: runTaskId, memberId: member.memberId },
         );
+        yield* notifyRun(teamsOfRun(tasks));
       }),
-    ).pipe(Effect.tap(notifyIfOk), Effect.withSpan("Runs.memberReopenTask"));
+    ).pipe(Effect.withSpan("Runs.memberReopenTask"));
 
   /** Put back; the rule is on the run repository's `putBackTask`. */
   const memberPutBackTask = ({ runTaskId }: PutBackTaskInput, member: RunMember) =>
     runResult(
       Effect.gen(function* () {
-        yield* requireTaskAction(runTaskId, member, ({ putBack }) => putBack);
+        const { tasks } = yield* requireTaskAction(runTaskId, member, ({ putBack }) => putBack);
         yield* runRepository.putBackTask({ runTaskId, actor: member, teamIds: member.teamIds });
         yield* log(
           `Runs.memberPutBackTask: shop=${shop} task=${runTaskId} memberId=${member.memberId}`,
           { task: runTaskId, memberId: member.memberId },
         );
+        yield* notifyRun(teamsOfRun(tasks));
       }),
-    ).pipe(Effect.tap(notifyIfOk), Effect.withSpan("Runs.memberPutBackTask"));
+    ).pipe(Effect.withSpan("Runs.memberPutBackTask"));
 
   /** The note itself never reaches the log line: worker text is unbounded and not ours to index. */
   const memberSetRunNote = ({ runId, note }: SetRunNoteInput, member: RunMember) =>
     runResult(
       Effect.gen(function* () {
-        yield* requireRunAction(runId, member, "note");
+        const { tasks } = yield* requireRunAction(runId, member, "note");
         yield* runRepository.setRunNote({ runId, teamIds: member.teamIds, note });
         yield* log(
           `Runs.memberSetRunNote: shop=${shop} runId=${runId} memberId=${member.memberId}`,
@@ -757,29 +872,32 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
             memberId: member.memberId,
           },
         );
+        yield* notifyRun(teamsOfRun(tasks));
       }),
-    ).pipe(Effect.tap(notifyIfOk), Effect.withSpan("Runs.memberSetRunNote"));
+    ).pipe(Effect.withSpan("Runs.memberSetRunNote"));
 
   const memberBlockRun = ({ runId, reason }: BlockRunInput, member: RunMember) =>
     runResult(
       Effect.gen(function* () {
-        yield* requireRunAction(runId, member, "block");
+        const { tasks } = yield* requireRunAction(runId, member, "block");
         yield* runRepository.blockRun({ runId, actor: member, teamIds: member.teamIds, reason });
         yield* log(`Runs.memberBlockRun: shop=${shop} runId=${runId} memberId=${member.memberId}`, {
           runId,
           memberId: member.memberId,
         });
+        yield* notifyRun(teamsOfRun(tasks));
       }),
-    ).pipe(Effect.tap(notifyIfOk), Effect.withSpan("Runs.memberBlockRun"));
+    ).pipe(Effect.withSpan("Runs.memberBlockRun"));
 
   /** No log line, as legacy had none. */
   const memberUnblockRun = ({ runId }: RunIdInput, member: RunMember) =>
     runResult(
       Effect.gen(function* () {
-        yield* requireRunAction(runId, member, "unblock");
+        const { tasks } = yield* requireRunAction(runId, member, "unblock");
         yield* runRepository.unblockRun({ runId, teamIds: member.teamIds });
+        yield* notifyRun(teamsOfRun(tasks));
       }),
-    ).pipe(Effect.tap(notifyIfOk), Effect.withSpan("Runs.memberUnblockRun"));
+    ).pipe(Effect.withSpan("Runs.memberUnblockRun"));
 
   /**
    * The fixture's work on its runs, legacy's `seedOrders` after its upserts: per order, in the

@@ -8,6 +8,7 @@ import * as Option from "effect/Option";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 import { fixtureRows } from "../../../../src/backend/fixture.ts";
 import { MembershipRepository } from "../../../../src/backend/membership-repository.ts";
 import { insertFixtureRows } from "../../../../src/backend/shop-actor.ts";
@@ -620,9 +621,9 @@ describe("Runs usage flush", () => {
   );
 });
 
-/** A counting wrapper over the two list reads the memos hold. */
+/** A counting wrapper over the list reads the memos hold. */
 const counting = () => {
-  const count = { orders: 0, runs: 0 };
+  const count = { orders: 0, counts: 0, runs: 0, recent: 0 };
   const wrap: Wrap = {
     orders: (real) => ({
       ...real,
@@ -631,6 +632,11 @@ const counting = () => {
           count.orders += 1;
           return real.listOrders(input);
         }),
+      countOrders: (input) =>
+        Effect.suspend(() => {
+          count.counts += 1;
+          return real.countOrders(input);
+        }),
     }),
     runs: (real) => ({
       ...real,
@@ -638,6 +644,11 @@ const counting = () => {
         Effect.suspend(() => {
           count.runs += 1;
           return real.runListItems(teamIds);
+        }),
+      listRecent: (input) =>
+        Effect.suspend(() => {
+          count.recent += 1;
+          return real.listRecent(input);
         }),
     }),
   };
@@ -690,12 +701,12 @@ describe("the list memo", () => {
         yield* runs.notify([ORDERS_KEY]);
         yield* read;
         assert.deepStrictEqual(logged, [
-          `Runs.listOrders: shop=${shop} memo=miss`,
-          `Runs.listRuns: shop=${shop} memo=miss`,
-          `Runs.listOrders: shop=${shop} memo=hit`,
-          `Runs.listRuns: shop=${shop} memo=hit`,
-          `Runs.listOrders: shop=${shop} memo=miss`,
-          `Runs.listRuns: shop=${shop} memo=miss`,
+          `Runs.listOrders: shop=${shop} memo=miss counts=miss`,
+          `Runs.listRuns: shop=${shop} memo=miss recent=miss`,
+          `Runs.listOrders: shop=${shop} memo=hit counts=hit`,
+          `Runs.listRuns: shop=${shop} memo=hit recent=hit`,
+          `Runs.listOrders: shop=${shop} memo=miss counts=miss`,
+          `Runs.listRuns: shop=${shop} memo=miss recent=miss`,
         ]);
       }).pipe(
         Effect.provide(capturing),
@@ -726,8 +737,14 @@ describe("the list memo", () => {
           const before = { ...count };
           const [fresh, list] = yield* read;
           assert.strictEqual(fresh.page.orders.length, 0);
+          assert.strictEqual(fresh.page.openOrders, 0);
           assert.strictEqual(list.items.length, 0);
-          assert.deepStrictEqual(count, { orders: before.orders + 1, runs: before.runs + 1 });
+          assert.deepStrictEqual(count, {
+            orders: before.orders + 1,
+            counts: before.counts + 1,
+            runs: before.runs + 1,
+            recent: before.recent + 1,
+          });
         }),
       wrap,
     );
@@ -797,6 +814,128 @@ describe("the list memo", () => {
           assert.strictEqual(count.runs - before, 1);
           assert.strictEqual(mine.counts.started_by_you, 1);
           assert.strictEqual(theirs.counts.started_by_you, 0);
+        }),
+      wrap,
+    );
+  });
+
+  it.effect("every page, Show and search under one team share one count, until a write", () => {
+    const { count, wrap } = counting();
+    return harness(
+      ({ runs, load, runRepository }) =>
+        Effect.gen(function* () {
+          yield* load(oneBoard);
+          const making = listOrdersInput({ ...EVERY_ORDER, show: "making" });
+          const search = listOrdersInput({ ...EVERY_ORDER, q: "Board" });
+          const first = yield* runs.listOrders(EVERY_ORDER);
+          yield* runs.listOrders(making);
+          const found = yield* runs.listOrders(search);
+          assert.strictEqual(count.counts, 1);
+          assert.strictEqual(count.orders, 3);
+          assert.deepStrictEqual(found.page.counts, first.page.counts);
+          assert.strictEqual(first.page.counts.not_started, 1);
+          assert.strictEqual(first.page.counts.making, 0);
+          const { tasks } = yield* onlyRun(runRepository, 1);
+          const cut = tasks[0];
+          if (cut === undefined) return yield* Effect.die(new Error("no Cut"));
+          assert.strictEqual((yield* runs.merchantMarkTaskDone({ runTaskId: cut.id }))._tag, "Ok");
+          const after = yield* runs.listOrders(making);
+          assert.strictEqual(count.counts, 2);
+          assert.strictEqual(after.page.counts.not_started, 0);
+          assert.strictEqual(after.page.counts.making, 1);
+          assert.strictEqual(after.page.orders.length, 1);
+        }),
+      wrap,
+    );
+  });
+
+  it.effect("a write to one run recomputes only the lists of teams it has a task on", () => {
+    const { count, wrap } = counting();
+    return harness(
+      ({ runs, load, runRepository, events }) =>
+        Effect.gen(function* () {
+          const loaded = yield* load({
+            members: [ANA, BEN],
+            teams: [
+              { name: "Bench", members: [ANA] },
+              { name: "Shop", members: [BEN] },
+            ],
+            workflows: [twoTask("Board", "board"), twoTask("Ring", "ring", "Shop")],
+            orders: [
+              {
+                n: 1,
+                lineItems: [
+                  { title: "Board", quantity: 1, tags: ["board"] },
+                  { title: "Ring", quantity: 1, tags: ["ring"] },
+                ],
+              },
+            ],
+          });
+          const ana = loaded.member(ANA);
+          const ben = loaded.member(BEN);
+          const read = (member: RunMember) =>
+            runs.listRuns({ teamIds: member.teamIds, memberEmail: member.email, query: READY });
+          yield* read(ana);
+          const bensBefore = yield* read(ben);
+          const before = { ...count };
+          const board = (yield* runsOf(runRepository, 1)).find(
+            ({ tasks }) => tasks[0]?.teamId === ana.teamIds[0],
+          );
+          const cut = board?.tasks[0];
+          if (cut === undefined) return yield* Effect.die(new Error("no Board run"));
+          events.length = 0;
+          assert.strictEqual(
+            (yield* runs.memberMarkTaskDone({ runTaskId: cut.id }, ana))._tag,
+            "Ok",
+          );
+          assert.deepStrictEqual(notices(events), [[ORDERS_KEY]]);
+          const anas = yield* read(ana);
+          const bens = yield* read(ben);
+          assert.strictEqual(count.runs, before.runs + 1);
+          assert.strictEqual(count.recent, before.recent + 1);
+          assert.strictEqual(anas.counts.done, 1);
+          assert.strictEqual(anas.items[0]?.tasks[0]?.name, "Finish");
+          assert.deepStrictEqual(bens, bensBefore);
+        }),
+      wrap,
+    );
+  });
+
+  it.effect("the Done count drops when the window slides past its oldest task", () => {
+    const { count, wrap } = counting();
+    return harness(
+      ({ runs, load, runRepository }) =>
+        Effect.gen(function* () {
+          const loaded = yield* load(oneBoard);
+          const ana = loaded.member(ANA);
+          const { tasks } = yield* onlyRun(runRepository, 1);
+          const cut = tasks[0];
+          if (cut === undefined) return yield* Effect.die(new Error("no Cut"));
+          yield* runs.memberMarkTaskDone({ runTaskId: cut.id }, ana);
+          const read = runs.listRuns({
+            teamIds: ana.teamIds,
+            memberEmail: ana.email,
+            query: READY,
+          });
+          const readDone = runs.listRuns({
+            teamIds: ana.teamIds,
+            memberEmail: ana.email,
+            query: runQuery({ team: null, state: "done", limit: 25, q: null }),
+          });
+          assert.strictEqual((yield* read).counts.done, 1);
+          const done = yield* readDone;
+          assert.strictEqual(done.counts.done, 1);
+          assert.strictEqual(done.recent.length, 1);
+          yield* TestClock.adjust(ShopWork.DONE_WINDOW_MS - 1);
+          assert.strictEqual((yield* read).counts.done, 1);
+          assert.strictEqual((yield* readDone).recent.length, 1);
+          assert.strictEqual(count.recent, 2);
+          yield* TestClock.adjust(2);
+          assert.strictEqual((yield* read).counts.done, 0);
+          const gone = yield* readDone;
+          assert.strictEqual(gone.counts.done, 0);
+          assert.strictEqual(gone.recent.length, 0);
+          assert.strictEqual(count.recent, 4);
         }),
       wrap,
     );

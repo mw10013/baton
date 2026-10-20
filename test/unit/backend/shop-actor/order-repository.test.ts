@@ -1145,7 +1145,10 @@ const rowOf = (page: OrdersPage, name: string) =>
 const flagged = (page: OrdersPage, field: "unassigned") =>
   page.orders.filter((row) => row[field]).map((row) => row.order.name);
 
-/** `listOrders` with no search, the given filter and team, against `teams`. */
+/**
+ * The orders index's `OrdersPage` as the actor composes it: `listOrders`' page with
+ * `countOrders`' counts, with the given filter, team and search, against `teams`.
+ */
 const listWith = (
   repository: OrderRepository,
   show: OrdersShow | null,
@@ -1163,14 +1166,17 @@ const listWith = (
     readonly cursor?: string | null;
   } = {},
 ) =>
-  repository.listOrders({
-    limit,
-    cursor: cursor === null ? null : Schema.decodeUnknownSync(OrdersCursor)(cursor),
-    q: q === null ? null : Schema.decodeUnknownSync(ListSearch)(q),
-    show,
-    team,
-    teams,
-  });
+  Effect.all([
+    repository.listOrders({
+      limit,
+      cursor: cursor === null ? null : Schema.decodeUnknownSync(OrdersCursor)(cursor),
+      q: q === null ? null : Schema.decodeUnknownSync(ListSearch)(q),
+      show,
+      team,
+      teams,
+    }),
+    repository.countOrders({ team, teams }),
+  ]).pipe(Effect.map(([page, counts]): OrdersPage => ({ ...page, ...counts })));
 
 describe("OrderRepository.listOrders", () => {
   it.effect("pages newest first through a keyset cursor", () =>

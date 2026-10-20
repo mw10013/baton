@@ -511,23 +511,68 @@ export const makeOrderRepository = (sql: SqlClient.SqlClient, transaction: Trans
   });
 
   /**
-   * The orders index's read: one page of orders with their per-order run facts, the Show
-   * counts and, under a search, the match count.
+   * `OrderRow.unassigned` in SQL, bound to the teams the caller read from D1: an order with an
+   * open run holding an open task whose team is none of them.
+   */
+  const unassignedRunOf = (teams: EligibleContext["teams"]) => {
+    const liveIds = teams.map(({ id }) => id);
+    const unassigned =
+      liveIds.length === 0
+        ? sql.literal("1 = 1")
+        : sql`(s.teamId is null or s.teamId not in ${sql.in(liveIds)})`;
+    return sql`exists (
+      select 1 from Run r
+      where r.orderId = ShopOrder.id and r.state = 'open'
+        and exists (
+          select 1 from RunTask s
+          where s.runId = r.id and s.doneAt is null and ${unassigned}
+        )
+    )`;
+  };
+
+  /**
+   * `ListOrdersInput.team`, whose JSDoc carries the rules, as
+   * a `where`. The outer run is aliased `wr` because {@link currentWhere}
+   * binds `p` for the task's own run inside its subqueries (see its
+   * JSDoc).
+   *
+   * `+s.teamId` is SQLite's unary plus, which keeps that term from
+   * choosing an index (https://www.sqlite.org/optoverview.html,
+   * "Disabling index use"). Without it `RunTask_teamId_idx (teamId,
+   * doneAt)` matches two of the subquery's terms (`currentWhere`
+   * starts with `doneAt is null`) against the unique `(runId,
+   * position)`'s one, and the planner drives from the team's open
+   * tasks once per open order: open orders × the team's open tasks.
+   * With it `runId` is the only indexable term on `RunTask`, so the
+   * plan is `Run` by `(orderId, state)`, then `RunTask` by `runId`.
+   */
+  const teamFilterOf = (team: ListOrdersInput["team"]) =>
+    team === null
+      ? sql.literal("1 = 1")
+      : sql`${sql.literal(OPEN)} and exists (
+          select 1 from Run wr
+          join RunTask s on s.runId = wr.id
+          where wr.orderId = ShopOrder.id
+            and wr.state = 'open'
+            and wr.blockedAt is null
+            and +s.teamId = ${team}
+            and ${sql.literal(currentWhere("s"))}
+        )`;
+
+  /**
+   * The orders index's read: one page of orders with their per-order run facts and, under a
+   * search, the match count. The Show counts are {@link countOrders}', which depend on less of
+   * the input.
    *
    * `show` filters by `OrdersShow`, each SQL fragment restating a
    * branch of `orderPosition` or, for Issues, the union of `orderIssues`'
    * elements; each must move with the function it restates.
-   * Open, the open positions, Issues and the `counts` aggregate spell out
+   * Open, the open positions and Issues spell out
    * `fulfillmentStatus <> 'FULFILLED' and cancelledAt is null` verbatim so
-   * SQLite can prove they are served by the partial `ShopOrder_open_idx`,
-   * which is what keeps a count from reading the shop's whole history.
+   * SQLite can prove they are served by the partial `ShopOrder_open_idx`.
    *
    * `q` set means `show` and `team` are not applied: search
    * ignores the filters (`ListOrdersInput.q`).
-   *
-   * `counts` follows `OrderCounts`: a count is what choosing that
-   * value would show, given the team. One count per filter value, narrowed
-   * by `team` and by nothing else.
    *
    * The default read (Making, no team, no search) is linear in open orders because every
    * per-order fact is a probe by the order's id: `Run` through `(orderId, state)`, the item's
@@ -549,52 +594,8 @@ export const makeOrderRepository = (sql: SqlClient.SqlClient, transaction: Trans
     /** The shop's teams, read live from D1: what `unassigned` is derived against (`OrderRow`). */
     readonly teams: EligibleContext["teams"];
   }) {
-    /**
-     * Bound to the teams the caller read from D1. `unassignedRun` is
-     * `OrderRow.unassigned` in SQL.
-     */
-    const liveIds = teams.map(({ id }) => id);
-    const unassigned =
-      liveIds.length === 0
-        ? sql.literal("1 = 1")
-        : sql`(s.teamId is null or s.teamId not in ${sql.in(liveIds)})`;
-    const runWithTask = (task: typeof unassigned) => sql`exists (
-      select 1 from Run r
-      where r.orderId = ShopOrder.id and r.state = 'open'
-        and exists (
-          select 1 from RunTask s
-          where s.runId = r.id and s.doneAt is null and ${task}
-        )
-    )`;
-    const unassignedRun = runWithTask(unassigned);
-    /**
-     * `ListOrdersInput.team`, whose JSDoc carries the rules, as
-     * a `where`. The outer run is aliased `wr` because {@link currentWhere}
-     * binds `p` for the task's own run inside its subqueries (see its
-     * JSDoc).
-     *
-     * `+s.teamId` is SQLite's unary plus, which keeps that term from
-     * choosing an index (https://www.sqlite.org/optoverview.html,
-     * "Disabling index use"). Without it `RunTask_teamId_idx (teamId,
-     * doneAt)` matches two of the subquery's terms (`currentWhere`
-     * starts with `doneAt is null`) against the unique `(runId,
-     * position)`'s one, and the planner drives from the team's open
-     * tasks once per open order: open orders × the team's open tasks.
-     * With it `runId` is the only indexable term on `RunTask`, so the
-     * plan is `Run` by `(orderId, state)`, then `RunTask` by `runId`.
-     */
-    const teamFilter =
-      team === null
-        ? sql.literal("1 = 1")
-        : sql`${sql.literal(OPEN)} and exists (
-            select 1 from Run wr
-            join RunTask s on s.runId = wr.id
-            where wr.orderId = ShopOrder.id
-              and wr.state = 'open'
-              and wr.blockedAt is null
-              and +s.teamId = ${team}
-              and ${sql.literal(currentWhere("s"))}
-          )`;
+    const unassignedRun = unassignedRunOf(teams);
+    const teamFilter = teamFilterOf(team);
     /**
      * The open positions partition the open orders by run state and
      * payment, as `orderPosition` says: no open and no done run
@@ -770,6 +771,53 @@ export const makeOrderRepository = (sql: SqlClient.SqlClient, transaction: Trans
       ]),
     );
     /**
+     * `OrdersPage.matches`: read only under a search, over every
+     * stored order, because the search ignores the filters and the
+     * screen's line says how many it found, not how many one page holds.
+     */
+    const matches =
+      q === null
+        ? null
+        : Number(
+            (yield* sql`select count(*) from ShopOrder where ${searchFilter}`.values)[0]?.[0] ?? 0,
+          );
+    const last = orders.at(-1);
+    return {
+      orders: orders.map((order) => ({
+        order,
+        itemUnits: units.get(order.id) ?? 0,
+        runs: runs.get(order.id) ?? { open: 0, done: 0, blocked: 0, started: 0 },
+        unassigned: unassignedIds.has(order.id),
+        multiMatchItems: multiMatch.get(order.id) ?? 0,
+      })),
+      limit,
+      nextCursor: page.length > limit && last !== undefined ? encodeCursor(last) : null,
+      matches,
+    } satisfies Omit<OrdersPage, "counts" | "openOrders">;
+  });
+
+  /**
+   * `OrdersPage`'s `counts` and `openOrders`: a function of the team and the live team ids
+   * alone, never of the page, the Show value or the search, so a caller may keep one answer for
+   * every page, Show value and search under that team.
+   *
+   * `counts` follows `OrderCounts`: a count is what choosing that value would show, given the
+   * team. One count per filter value, narrowed by `team` and by nothing else. It spells out
+   * `fulfillmentStatus <> 'FULFILLED' and cancelledAt is null` verbatim so the partial
+   * `ShopOrder_open_idx` serves it, which is what keeps a count from reading the shop's whole
+   * history.
+   */
+  const countOrders = Effect.fn("OrderRepository.countOrders")(function* ({
+    team,
+    teams,
+  }: {
+    readonly team: ListOrdersInput["team"];
+    /** The shop's teams, read live from D1: what `unassigned` is derived against (`OrderRow`). */
+    readonly teams: EligibleContext["teams"];
+  }) {
+    const unassignedRun = unassignedRunOf(teams);
+    const teamFilter = teamFilterOf(team);
+    /**
      * `OrderCounts` in one statement over the open orders the
      * team leaves: one count per Show value, never the Show filter
      * itself, and never the search, which ignores the filters. `run_summary` is the per-page
@@ -833,32 +881,7 @@ export const makeOrderRepository = (sql: SqlClient.SqlClient, transaction: Trans
       made: Number(countRow?.[4] ?? 0),
       issues: Number(countRow?.[5] ?? 0),
     } satisfies OrderCounts;
-    /**
-     * `OrdersPage.matches`: read only under a search, over every
-     * stored order, because the search ignores the filters and the
-     * screen's line says how many it found, not how many one page holds.
-     */
-    const matches =
-      q === null
-        ? null
-        : Number(
-            (yield* sql`select count(*) from ShopOrder where ${searchFilter}`.values)[0]?.[0] ?? 0,
-          );
-    const last = orders.at(-1);
-    return {
-      orders: orders.map((order) => ({
-        order,
-        itemUnits: units.get(order.id) ?? 0,
-        runs: runs.get(order.id) ?? { open: 0, done: 0, blocked: 0, started: 0 },
-        unassigned: unassignedIds.has(order.id),
-        multiMatchItems: multiMatch.get(order.id) ?? 0,
-      })),
-      limit,
-      nextCursor: page.length > limit && last !== undefined ? encodeCursor(last) : null,
-      counts,
-      openOrders,
-      matches,
-    } satisfies OrdersPage;
+    return { counts, openOrders } satisfies Pick<OrdersPage, "counts" | "openOrders">;
   });
 
   /**
@@ -1100,6 +1123,7 @@ export const makeOrderRepository = (sql: SqlClient.SqlClient, transaction: Trans
     markOrdersLimited,
     clearOrdersLimited,
     listOrders,
+    countOrders,
     getSyncState,
     setSyncError,
     setSyncErrorIfEmpty,

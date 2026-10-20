@@ -252,11 +252,19 @@ test(
       "1c listOrders Making, first page again (memo)",
       integ(backendUrl, (c) => c.ListOrders({ shop: SEED_SHOP, cursor: null, ...MAKING })),
     );
+    yield* measure(
+      backendUrl,
+      "1e listOrders Show all, first page (another tab, same team)",
+      integ(backendUrl, (c) =>
+        c.ListOrders({ shop: SEED_SHOP, cursor: null, ...MAKING, show: "all" }),
+      ),
+    );
     const newOrder = FIRST_ORDER + OPEN_ORDERS + FULFILLED_ORDERS;
+    const newNode = orderNode(newOrder);
     yield* measure(
       backendUrl,
       "2a webhook orders/create, one new order (3 items)",
-      storeByWebhook(backendUrl, SEED_SHOP, orderNode(newOrder), lineItemNodes(newOrder)),
+      storeByWebhook(backendUrl, SEED_SHOP, newNode, lineItemNodes(newOrder)),
     );
     // The actor's tallies count: the order ceiling reads the one `ShopUsage` row per check.
     const openCount = measurements
@@ -281,6 +289,16 @@ test(
     yield* measure(
       backendUrl,
       "1d listOrders Making, first page after the webhook's notice",
+      integ(backendUrl, (c) => c.ListOrders({ shop: SEED_SHOP, cursor: null, ...MAKING })),
+    );
+    yield* measure(
+      backendUrl,
+      "2c webhook orders/updated, the same order unchanged",
+      storeByWebhook(backendUrl, SEED_SHOP, newNode, lineItemNodes(newOrder)),
+    );
+    yield* measure(
+      backendUrl,
+      "1f listOrders Making, first page after the unchanged webhook",
       integ(backendUrl, (c) => c.ListOrders({ shop: SEED_SHOP, cursor: null, ...MAKING })),
     );
 
@@ -331,29 +349,37 @@ test(
     const teamIds = first.teams
       .filter((team) => teamsOfMember(0).includes(team.name as (typeof TEAMS)[number]))
       .map((team) => Schema.decodeUnknownSync(TeamId)(team.id));
-    // The member's open runs are memoized per team set, so only the first read is cold; the
-    // Done counts and rows (`listRecent`) are read on every call.
+    // The member's open runs and the Done count are memoized per team set, so only the first
+    // read is cold; the Done rows are memoized per team set and limit.
     const listRunsCases = [
       ["started_by_you", "5a listRuns, one member, started_by_you (cold)"],
-      ["ready", "5b listRuns, one member, ready (open runs memoized)"],
-      ["done", "5c listRuns, one member, done (open runs memoized)"],
+      ["ready", "5b listRuns, one member, ready (memoized)"],
+      ["done", "5c listRuns, one member, done (open runs and Done count memoized)"],
     ] as const;
-    for (const [state, path] of listRunsCases) {
-      const runs = yield* measure(
-        backendUrl,
-        path,
-        integ(backendUrl, (c) =>
-          c.ListRuns({
-            shop: SEED_SHOP,
-            teamIds,
-            memberEmail: email(MEMBERS[0] ?? ""),
-            query: { team: null, state, limit: 25, q: null },
-          }),
-        ),
-      );
-      assert.isAbove(runs.counts[state], 0, `${path}: the member has runs`);
-    }
+    const listRuns = (state: (typeof listRunsCases)[number][0], path: string) =>
+      Effect.gen(function* () {
+        const runs = yield* measure(
+          backendUrl,
+          path,
+          integ(backendUrl, (c) =>
+            c.ListRuns({
+              shop: SEED_SHOP,
+              teamIds,
+              memberEmail: email(MEMBERS[0] ?? ""),
+              query: { team: null, state, limit: 25, q: null },
+            }),
+          ),
+        );
+        assert.isAbove(runs.counts[state], 0, `${path}: the member has runs`);
+      });
+    for (const [state, path] of listRunsCases) yield* listRuns(state, path);
 
+    // The index the merchant searches from: the bulk sync's notice emptied the memos.
+    yield* measure(
+      backendUrl,
+      "1g listOrders Making, first page after the bulk sync's notice",
+      integ(backendUrl, (c) => c.ListOrders({ shop: SEED_SHOP, cursor: null, ...MAKING })),
+    );
     const byNumber = yield* measure(
       backendUrl,
       "7a listOrders search, order number",
@@ -369,6 +395,29 @@ test(
         c.ListOrders({ shop: SEED_SHOP, ...MAKING, cursor: null, q: search("coaster") }),
       ),
     );
+
+    // `fixture-1017` is untouched by the fixture's progress, and its `line-5` item's run is on
+    // Packing, QA and Printing: none of the member's teams.
+    const otherTeams = yield* integ(backendUrl, (c) =>
+      c.GetOrderDetail({ shop: SEED_SHOP, legacyId: "fixture-1017" }),
+    );
+    const otherRun = otherTeams?.runs.find(({ run }) => run.workflowName === "Line 5");
+    const otherTask = otherRun?.tasks[0];
+    assert.isDefined(otherTask, "the other teams' run is stored");
+    assert.isFalse(
+      otherRun?.tasks.some(({ teamId }) => teamId !== null && teamIds.includes(teamId)),
+      "the run has no task on the member's teams",
+    );
+    yield* Effect.gen(function* () {
+      const { client } = yield* openAs(backendUrl, SEED_SHOP, { role: "merchant" });
+      const done = yield* measure(
+        backendUrl,
+        "5d merchant Done on a run with no task on the member's teams",
+        client.MerchantMarkTaskDone({ runTaskId: otherTask?.id ?? "" }),
+      );
+      assert.strictEqual(done._tag, "Ok", "the other teams' task is done");
+    }).pipe(Effect.scoped);
+    yield* listRuns("started_by_you", "5e listRuns, one member, started_by_you after 5d's notice");
 
     const sessionToken = yield* mintSessionToken({ shop: SEED_SHOP });
     const workflows = yield* integ(backendUrl, (c) =>
