@@ -25,7 +25,6 @@ import {
 import {
   type Actor,
   type ActorDisplay,
-  currentTasks as currentTasksOf,
   type BlockRunCommand,
   type ClosedReason,
   type EligibleContext,
@@ -217,6 +216,7 @@ export const makeRunRepository = (
     Schema.Array(
       Schema.Struct({
         ...RunListRun.fields,
+        stepCount: Schema.Number,
         orderCancelledAt: Schema.NullOr(Schema.Number),
         orderFulfillmentStatus: Schema.String,
       }),
@@ -379,19 +379,15 @@ export const makeRunRepository = (
    *
    * The first statement starts from the member's teams: each team's
    * open tasks through `RunTask_teamId_idx (teamId, doneAt)`, kept when
-   * their run is open, which names the candidate runs; then every task of
-   * those runs, by `runId`. Which tasks are current, whether one is on the
-   * teams, and the last step are {@link currentTasksOf}' rule over those rows
-   * in TypeScript: the same rule as `currentWhere` in SQL, which there
-   * re-read the run's tasks once for every task it tested. A candidate whose
-   * only open task on the teams waits behind an earlier step costs its
-   * tasks and is dropped. The `cross join`s are the planner pin, as on
+   * their run is open and the task is in the run's `currentStep`, which is
+   * `currentWhere`'s rule kept on the row ({@link recomputeState}): these are
+   * the rows' own tasks, and no other task of the run is read. Testing
+   * `currentWhere` here instead re-read a run's tasks for every task it
+   * tested. The `cross join`s are the planner pin, as on
    * the order repository's `listOrders`: SQLite keeps a `cross join`'s table
    * order (https://www.sqlite.org/optoverview.html#crossjoin), so the
-   * read cannot turn around and drive from `Run`.
-   *
-   * Only the row's own tasks are shipped; the other teams' tasks are read
-   * for the step and dropped.
+   * read cannot turn around and drive from `Run`. The second reads those
+   * runs, their `stepCount` and their order's state, by id.
    *
    * It ignores the member and the query: grouping, narrowing to a team,
    * search, sorting and the cut are `workflowsListFrom`'s, over
@@ -403,26 +399,16 @@ export const makeRunRepository = (
     teamIds: readonly TeamId[],
   ) {
     if (teamIds.length === 0) return [];
-    const tasks = yield* decodeTasks(
+    const own = yield* decodeTasks(
       yield* sql`
-        select s.* from RunTask s
-        where s.runId in (
-          select m.runId from json_each(${json(teamIds)}) tt
-          cross join RunTask m on m.teamId = tt.value and m.doneAt is null
-          cross join Run r on r.id = m.runId and r.state = 'open'
-        )
-        order by s.runId, s.position
+        select m.* from json_each(${json([...new Set(teamIds)])}) tt
+        cross join RunTask m on m.teamId = tt.value and m.doneAt is null
+        cross join Run r on r.id = m.runId and r.state = 'open' and r.currentStep = m.step
+        order by m.runId, m.position
       `,
     );
-    const byRun = new Map<string, RunTask[]>();
-    for (const task of tasks) byRun.set(task.runId, [...(byRun.get(task.runId) ?? []), task]);
-    /** The run's current tasks on the teams, for a run read as open. */
-    const ownCurrent = (runTasks: readonly RunTask[], run: { readonly state: RunState }) =>
-      currentTasksOf(run, runTasks).filter((task) => taskIsOnTeams(task, teamIds));
-    const runIds = [...byRun]
-      .filter(([, runTasks]) => ownCurrent(runTasks, { state: "open" }).length > 0)
-      .map(([runId]) => runId);
-    if (runIds.length === 0) return [];
+    if (own.length === 0) return [];
+    const runIds = [...new Set(own.map((task) => task.runId))];
     const runs = yield* decodeRunListRuns(
       yield* sql`
         select r.*,
@@ -434,23 +420,27 @@ export const makeRunRepository = (
         order by r.orderProcessedAt, r.lineItemId, r.id
       `,
     );
-    return runs.flatMap(({ orderCancelledAt, orderFulfillmentStatus, ...run }): RunListItem[] => {
-      const runTasks = byRun.get(run.id) ?? [];
-      const [first, ...rest] = ownCurrent(runTasks, run)
-        // Whatever the row does not render is dropped rather than nulled or carried: the
-        // shape is `RunListTask` and its JSDoc is why.
-        .map((task) => Struct.omit(task, ["doneAt", "doneByEmail", "doneByRole", "instructions"]));
-      return first === undefined
-        ? []
-        : [
-            {
-              run,
-              tasks: [first, ...rest],
-              stepCount: Math.max(...runTasks.map(({ step }) => step)),
-              order: { cancelledAt: orderCancelledAt, fulfillmentStatus: orderFulfillmentStatus },
-            },
-          ];
-    });
+    return runs.flatMap(
+      ({ orderCancelledAt, orderFulfillmentStatus, stepCount, ...run }): RunListItem[] => {
+        const [first, ...rest] = own
+          .filter((task) => task.runId === run.id)
+          // Whatever the row does not render is dropped rather than nulled or carried: the
+          // shape is `RunListTask` and its JSDoc is why.
+          .map((task) =>
+            Struct.omit(task, ["doneAt", "doneByEmail", "doneByRole", "instructions"]),
+          );
+        return first === undefined || !runIsOpen(run)
+          ? []
+          : [
+              {
+                run,
+                tasks: [first, ...rest],
+                stepCount,
+                order: { cancelledAt: orderCancelledAt, fulfillmentStatus: orderFulfillmentStatus },
+              },
+            ];
+      },
+    );
   });
 
   /**
@@ -484,7 +474,11 @@ export const makeRunRepository = (
    * transaction with nothing to drift. Two states are derived: `done`
    * when every task is done, `open` otherwise. `startedAt`
    * ({@link Run}) is recomputed in the same statement, the
-   * earliest task start, so the run-level checks see both at once.
+   * earliest task start, so the run-level checks see both at once, and so is
+   * `currentStep`, the lowest step with an open task (null once every task is
+   * done), which {@link runListItems} reads in place of `currentWhere`. Every
+   * write that moves a task's `doneAt` calls this; `insertRun` and the close
+   * set it themselves.
    *
    * Only ever called on an open run: every caller gates on
    * {@link runIsOpen}, or on not {@link runIsClosed} for
@@ -502,6 +496,9 @@ export const makeRunRepository = (
           from RunTask s where s.runId = Run.id
         ),
         startedAt = (select min(startedAt) from RunTask s where s.runId = Run.id),
+        currentStep = (
+          select min(step) from RunTask s where s.runId = Run.id and s.doneAt is null
+        ),
         updatedAt = ${now}
       where id = ${runId}
     `.pipe(Effect.asVoid);
@@ -516,7 +513,7 @@ export const makeRunRepository = (
   const closeOpenRuns = (where: Statement.Fragment, reason: ClosedReason, now: number) =>
     sql`
       update Run
-      set state = 'closed', closedAt = ${now}, closedReason = ${reason},
+      set state = 'closed', closedAt = ${now}, closedReason = ${reason}, currentStep = null,
           blockedAt = null, blockReason = null, blockedBy = null,
           updatedAt = ${now}
       where ${where} and state = 'open'
@@ -551,7 +548,7 @@ export const makeRunRepository = (
         insert into Run (
           id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
           lineItemId, lineItemTitle, variantTitle, sku, quantity, lineItemProperties,
-          state, createdAt, updatedAt
+          state, currentStep, stepCount, createdAt, updatedAt
         ) values (
           ${runId}, ${workflow.id}, ${workflow.name}, ${order.id},
           ${order.name}, ${order.processedAt},
@@ -559,7 +556,8 @@ export const makeRunRepository = (
           ${lineItem.variantTitle}, ${lineItem.sku},
           ${unitsToMake(lineItem)},
           ${json(lineItem.properties)},
-          'open', ${now}, ${now}
+          'open', ${Math.min(...tasks.map(({ step }) => step))},
+          ${Math.max(...tasks.map(({ step }) => step))}, ${now}, ${now}
         )
         on conflict do nothing
         returning *

@@ -609,12 +609,12 @@ describe("RunRepository one row per item", () => {
           insert into Run (
             id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
             lineItemId, lineItemTitle, variantTitle, sku, quantity,
-            lineItemProperties, state,
+            lineItemProperties, state, currentStep, stepCount,
             createdAt, updatedAt
           ) values (
             'raw', ${b.id}, 'Workflow b', ${ORDER_ID}, '#1001', 0,
             ${live.run.lineItemId}, 'Item', null, null, 1,
-            '[]', 'open', 0, 0
+            '[]', 'open', 1, 1, 0, 0
           )
         `);
           strictEqual(raw._tag, "SqlError");
@@ -629,12 +629,12 @@ describe("RunRepository one row per item", () => {
           insert into Run (
             id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
             lineItemId, lineItemTitle, variantTitle, sku, quantity,
-            lineItemProperties, state,
+            lineItemProperties, state, currentStep, stepCount,
             createdAt, updatedAt
           ) values (
             'raw', ${b.id}, 'Workflow b', ${ORDER_ID}, '#1001', 0,
             ${live.run.lineItemId}, 'Item', null, null, 1,
-            '[]', 'open', 0, 0
+            '[]', 'open', 1, 1, 0, 0
           )
         `);
           strictEqual(again._tag, "SqlError");

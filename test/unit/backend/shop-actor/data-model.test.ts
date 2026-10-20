@@ -176,10 +176,10 @@ const insertRun = (id: string) =>
         insert into Run (
           id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
           lineItemId, lineItemTitle, variantTitle, sku, quantity,
-          lineItemProperties, state, createdAt, updatedAt
+          lineItemProperties, state, currentStep, stepCount, createdAt, updatedAt
         ) values (
           ${id}, 'wf', 'Mugs', ${ORDER_ID}, '#1001', 0,
-          ${LINE_ITEM_ID}, 'Mug', null, null, 1, '[]', 'open', 0, 0
+          ${LINE_ITEM_ID}, 'Mug', null, null, 1, '[]', 'open', 1, 1, 0, 0
         )
       `,
     ),
@@ -347,6 +347,34 @@ describe("data model", () => {
     ),
   );
 
+  it.live("`currentStep` is the lowest open step on an open run and null on any other", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const runs = yield* RunRepository;
+        const { runId } = yield* seedRun;
+        const currentStep = sql<{
+          readonly currentStep: number | null;
+        }>`select currentStep from Run where id = ${runId}`.pipe(
+          Effect.map(([run]) => run?.currentStep),
+        );
+        strictEqual(yield* currentStep, 1);
+        const cleared = yield* Effect.flip(
+          sql`update Run set currentStep = null where id = ${runId}`,
+        );
+        strictEqual(cleared._tag, "SqlError");
+        const [detail] = yield* runs.listRunsForOrder({ orderId: ORDER_ID });
+        const runTaskId = detail?.tasks[0]?.id ?? "";
+        yield* runs.markTaskDone({ runTaskId, actor: MERCHANT });
+        strictEqual(yield* currentStep, null);
+        yield* runs.reopenTask({ runTaskId, actor: MERCHANT });
+        strictEqual(yield* currentStep, 1);
+        yield* runs.cancelRun({ runId });
+        strictEqual(yield* currentStep, null);
+      }),
+    ),
+  );
+
   it.live("only an open run can be blocked; a run that is done or closed carries no block", () =>
     runInRepository(
       Effect.gen(function* () {
@@ -371,7 +399,7 @@ describe("data model", () => {
         strictEqual(blockClosed._tag, "SqlError");
         yield* sql`delete from Run where id = ${runId}`;
         yield* insertRun("done");
-        yield* sql`update Run set state = 'done', startedAt = 1 where id = 'done'`;
+        yield* sql`update Run set state = 'done', currentStep = null, startedAt = 1 where id = 'done'`;
         const blockDone = yield* Effect.flip(sql`
           update Run set blockedAt = 1, blockedBy = '{"role":"merchant"}'
           where id = 'done'
@@ -559,7 +587,7 @@ describe("data model", () => {
           yield* sql`delete from Run where id = ${runId}`;
           yield* insertRun("done");
           const doneUnstarted = yield* Effect.flip(
-            sql`update Run set state = 'done' where id = 'done'`,
+            sql`update Run set state = 'done', currentStep = null where id = 'done'`,
           );
           strictEqual(doneUnstarted._tag, "SqlError");
         }),

@@ -848,11 +848,11 @@ const runWith = (id: string, state: string, updatedAt: number) => (sql: SqlClien
     insert into Run (
       id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
       lineItemId, lineItemTitle, variantTitle, sku, quantity,
-      lineItemProperties, state, createdAt, updatedAt
+      lineItemProperties, state, currentStep, stepCount, createdAt, updatedAt
     ) values (
       ${`run-${id}-${state}`}, 'wf', 'Workflow', ${id}, '#1',
       0, ${`li-${id}`}, 'Item', null, null, 1, '[]',
-      ${state}, ${updatedAt}, ${updatedAt}
+      ${state}, ${state === "open" ? 1 : null}, 1, ${updatedAt}, ${updatedAt}
     )
   `;
 
@@ -1294,12 +1294,12 @@ const seedStates = (repository: OrderRepository, sql: SqlClient.SqlClient) =>
           insert into Run (
             id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
             lineItemId, lineItemTitle, variantTitle, sku, quantity, lineItemProperties,
-            state, startedAt, closedAt, closedReason, createdAt, updatedAt
+            state, currentStep, stepCount, startedAt, closedAt, closedReason, createdAt, updatedAt
           ) values (
             ${`run-${String(n)}-${String(index)}`}, 'wf', 'Workflow',
             ${orderId(n)}, ${`#10${String(n).padStart(2, "0")}`}, 0,
             ${`${lineItemId(n)}-${String(index)}`}, 'Item', null, null, 1,
-            '[]', ${state},
+            '[]', ${state}, ${state === "open" ? 1 : null}, 1,
             ${state === "done" || (state === "open" && started) ? 1 : null},
             ${state === "closed" ? 1 : null},
             ${state === "closed" ? "merchant_cancelled" : null}, 0, 0
@@ -1342,10 +1342,10 @@ const seedIssues = (repository: OrderRepository, sql: SqlClient.SqlClient) =>
       insert into Run (
         id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
         lineItemId, lineItemTitle, variantTitle, sku, quantity, lineItemProperties,
-        state, closedAt, closedReason, createdAt, updatedAt
+        state, currentStep, stepCount, closedAt, closedReason, createdAt, updatedAt
       ) values (
         'run-15-0', 'wf', 'Workflow', ${orderId(15)}, '#1015', 0,
-        ${`${lineItemId(15)}-0`}, 'Item', null, null, 1, '[]', 'open', null,
+        ${`${lineItemId(15)}-0`}, 'Item', null, null, 1, '[]', 'open', 1, 1, null,
         null, 0, 0
       )
     `;
@@ -1585,7 +1585,7 @@ describe("OrderRepository.listOrders filters", () => {
         Effect.gen(function* () {
           const { list } = yield* seedIssues(repository, sql);
           // A stale block on a fulfilled order's run is not an issue.
-          yield* sql`update Run set state = 'open', blockedAt = 1, blockedBy = '{"role":"merchant"}' where id = 'run-7-0'`;
+          yield* sql`update Run set state = 'open', currentStep = 1, blockedAt = 1, blockedBy = '{"role":"merchant"}' where id = 'run-7-0'`;
           const all = yield* list("all");
           const issues = yield* list("issues");
           // Choosing `#1014` (unpaid), `#1013` and `#1012`, unassigned `#1004`, blocked `#1003`.
@@ -1726,7 +1726,7 @@ describe("OrderRepository.listOrders filters", () => {
       Effect.gen(function* () {
         const { list } = yield* seedIssues(repository, sql);
         // A leftover open run with a current task on Cut, on a fulfilled order.
-        yield* sql`update Run set state = 'open' where id = 'run-7-0'`;
+        yield* sql`update Run set state = 'open', currentStep = 1 where id = 'run-7-0'`;
         yield* sql`
           insert into RunTask
             (id, runId, position, step, name, teamId, teamName, doneAt)
@@ -1920,11 +1920,11 @@ describe("OrderRepository.listOrders team", () => {
         insert into Run (
           id, workflowId, workflowName, orderId, orderName, orderProcessedAt,
           lineItemId, lineItemTitle, variantTitle, sku, quantity, lineItemProperties,
-          state, createdAt, updatedAt
+          state, currentStep, stepCount, createdAt, updatedAt
         ) values (
           'run-3-2', 'wf', 'Workflow', ${orderId(3)}, '#1003', 0,
           ${`${lineItemId(3)}-2`}, 'Item', null, null, 1, '[]', 'open',
-          0, 0
+          1, 1, 0, 0
         )
       `;
       yield* task("s3a", "run-3-1", 1, "team-cut");
@@ -1949,8 +1949,8 @@ describe("OrderRepository.listOrders team", () => {
     runInRepository((repository, sql) =>
       Effect.gen(function* () {
         const { task, list } = yield* waitingFixture(repository, sql);
-        yield* sql`update Run set state = 'open', blockedAt = 1, blockedBy = '{"role":"merchant"}' where id = 'run-7-0'`;
-        yield* sql`update Run set state = 'open' where id = 'run-6-0'`;
+        yield* sql`update Run set state = 'open', currentStep = 1, blockedAt = 1, blockedBy = '{"role":"merchant"}' where id = 'run-7-0'`;
+        yield* sql`update Run set state = 'open', currentStep = 1 where id = 'run-6-0'`;
         yield* task("s7", "run-7-0", 1, "team-cut");
         yield* task("s6", "run-6-0", 1, "team-cut");
         yield* task("s6b", "run-6-0", 1, "team-gone");

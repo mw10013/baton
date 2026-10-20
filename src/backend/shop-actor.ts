@@ -306,6 +306,12 @@ export const migrations = SqliteMigrator.fromRecord({
         state text not null check (state in ('open', 'done', 'closed')),
         -- The earliest task start, null until a task starts; derived and stored like state.
         startedAt integer,
+        -- An open run's lowest step with an open task, and null on a run that is not open:
+        -- derived and stored like state, so the workflows list finds a run's current tasks
+        -- without reading its others.
+        currentStep integer,
+        -- The run's last step: its tasks are fixed when it is created.
+        stepCount integer not null,
         -- The one hold a person sets. blockedBy is who, as JSON (role and email, no id);
         -- blockReason is optional, so only blockedAt and blockedBy move together.
         blockedAt integer,
@@ -319,6 +325,7 @@ export const migrations = SqliteMigrator.fromRecord({
         -- SQLite checks each statement, not the transaction, so a close sets state, closedAt
         -- and closedReason and clears the block in one update.
         check ((state = 'closed') = (closedAt is not null)),
+        check ((state = 'open') = (currentStep is not null)),
         check ((closedAt is null) = (closedReason is null)),
         check (blockedAt is null or state = 'open'),
         check ((blockedAt is null) = (blockedBy is null)),
