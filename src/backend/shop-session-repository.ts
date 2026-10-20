@@ -13,6 +13,7 @@ import {
   type ShopSessionUpsert,
 } from "../domain/platform.ts";
 import { AuthDb } from "./resources.ts";
+import { countedD1 } from "./row-counts.ts";
 
 /** The plan cache columns, which only {@link ShopSessionRepository}' plan methods write. */
 type PlanCacheColumn = "planHandle" | "planHandleExpiresAt" | "planBoundaryAt";
@@ -338,7 +339,10 @@ export class ShopSessionRepository extends Context.Service<
 >()("app/ShopSessionRepository") {
   static readonly layer = Layer.effect(
     ShopSessionRepository,
-    Effect.flatMap(Cloudflare.D1.QueryDatabase(AuthDb), (d1) => make(d1)),
+    Cloudflare.D1.QueryDatabase(AuthDb).pipe(
+      Effect.flatMap((d1) => countedD1(d1.raw)),
+      Effect.flatMap(make),
+    ),
   );
 
   /**

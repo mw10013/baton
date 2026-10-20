@@ -213,7 +213,11 @@ export default defineConfig(({ command, mode, isPreview }) => {
           // under test, so `vp build` and `vp run dev` do not run the script.
           test: {
             name: "integ",
-            include: ["test/integ/**/*.test.ts"],
+            // The rows-read probe measures rather than tests, so only its script (`probe:rows-read`) runs it.
+            include: [
+              "test/integ/**/*.test.ts",
+              ...(process.env.ROWS_READ_PROBE ? ["test/integ/rows-read.probe.ts"] : []),
+            ],
             env:
               mode === "test"
                 ? { ALCHEMY_DEV: "1", ALCHEMY_TEST_STAGE: stageOf("test") }

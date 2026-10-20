@@ -30,6 +30,7 @@ import {
   TeamSummary,
 } from "../domain/shop-work.ts";
 import { AuthDb } from "./resources.ts";
+import { countedD1 } from "./row-counts.ts";
 
 /**
  * Decodes stored rows. A row that does not decode is a broken invariant, not a failure a caller
@@ -911,7 +912,10 @@ export class MembershipRepository extends Context.Service<
 >()("app/MembershipRepository") {
   static readonly layer = Layer.effect(
     MembershipRepository,
-    Effect.flatMap(Cloudflare.D1.QueryDatabase(AuthDb), (d1) => make(d1)),
+    Cloudflare.D1.QueryDatabase(AuthDb).pipe(
+      Effect.flatMap((d1) => countedD1(d1.raw)),
+      Effect.flatMap(make),
+    ),
   );
 
   /**

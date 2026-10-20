@@ -75,6 +75,7 @@ import { ShopSessionRepository } from "./shop-session-repository.ts";
 import type { EnsureShopSessionError } from "./shopify.ts";
 import { runOrdersStream } from "./shop-actor/orders-stream.ts";
 import { ShopifyAdmin } from "./shopify-admin.ts";
+import { countActorStorage, rowCountsOn } from "./row-counts.ts";
 
 const encodeNotice = Schema.encodeSync(NoticeFrame);
 const decodeConnectionHeader = Schema.decodeUnknownOption(Schema.fromJsonString(ConnectionCaller));
@@ -423,7 +424,8 @@ const makeShopActor = Effect.gen(function* () {
     // Every actor is reached by name (`getByName`), so a nameless id is a broken invariant.
     const shop = yield* Effect.fromOption(decodeShopKey(state.id.name)).pipe(Effect.orDie);
     const runtime = yield* Effect.context<RuntimeContext>();
-    const sql = yield* Layer.build(SqliteClient.layer({ storage: state.raw.storage })).pipe(
+    const storage = (yield* rowCountsOn) ? countActorStorage(state.raw.storage) : state.raw.storage;
+    const sql = yield* Layer.build(SqliteClient.layer({ storage })).pipe(
       Effect.map((context) => Context.get(context, SqlClient.SqlClient)),
     );
     yield* SqliteMigrator.run({ loader: migrations }).pipe(

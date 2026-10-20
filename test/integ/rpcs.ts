@@ -22,15 +22,19 @@ import {
   WorkflowsListRequest,
 } from "../../src/contract/workflows-list.ts";
 import { ListOrdersRequest, OrderDetailRequest } from "../../src/contract/orders.ts";
+import { takeRowCounts } from "../../src/backend/row-counts.ts";
 import {
   SetupFactsRequest,
   WorkflowDetailRequest,
   WorkflowsPageRequest,
 } from "../../src/contract/workflows.ts";
 import {
+  GetOrderDetailInput,
   ListOrdersInput,
+  ListRunsInput,
   OrderPageData,
   OrdersIndexData,
+  WorkflowsListData,
   SetupFacts,
   WorkflowPageData,
   WorkflowsIndexData,
@@ -70,6 +74,26 @@ export const ShopifyFakeCall = Schema.Struct({
 });
 export type ShopifyFakeCall = typeof ShopifyFakeCall.Type;
 
+/** One statement's rows, as `takeRowCounts` tallies them. */
+const StatementCounts = Schema.Struct({
+  sql: Schema.String,
+  runs: Schema.Number,
+  rowsRead: Schema.Number,
+  rowsWritten: Schema.Number,
+  rowsReturned: Schema.Number,
+});
+
+/** One database's rows, as `takeRowCounts` tallies them. */
+export const RowCounts = Schema.Struct({
+  runs: Schema.Number,
+  rowsRead: Schema.Number,
+  rowsWritten: Schema.Number,
+  rowsReturned: Schema.Number,
+  unmetered: Schema.Number,
+  statements: Schema.Array(StatementCounts),
+});
+export type RowCounts = typeof RowCounts.Type;
+
 /**
  * The integ procedures.
  *
@@ -103,6 +127,12 @@ export type ShopifyFakeCall = typeof ShopifyFakeCall.Type;
  *   whether the fake refuses every send from then on.
  * - `ShopIdentityNames` answers the emails of `shop`'s `Member` rows and the names of its `Team`
  *   rows, read from D1 alone ({@link MembershipRepository}' `identityNames`), so it never reaches the actor.
+ * - `TakeRowCounts` answers the rows read and written since the last take, per database and per
+ *   statement, and starts new tallies (`takeRowCounts`). The rows-read probe brackets each path
+ *   with it; the other procedures here are the paths it measures that no other procedure reaches:
+ *   `GetOrderDetail`, `ListRuns`, `GetUsage` and `OrdersStream` are the {@link ShopActors}
+ *   methods (`OrdersStream` is `onOrdersStream`, the bulk sync's last step), and `ListShopsOf`
+ *   and `SweepExpiredAuth` the {@link MembershipRepository} methods.
  */
 export const IntegRpcs = RpcGroup.make(
   Rpc.make("IssueMagicLink", {
@@ -190,6 +220,25 @@ export const IntegRpcs = RpcGroup.make(
     payload: { shop: ShopKey },
     success: Schema.Struct({ emails: Schema.Array(Email), teams: Schema.Array(Schema.String) }),
   }),
+  Rpc.make("TakeRowCounts", {
+    payload: {},
+    success: Schema.Struct({ actor: RowCounts, d1: RowCounts }),
+  }),
+  Rpc.make("GetOrderDetail", {
+    payload: { shop: ShopKey, ...GetOrderDetailInput.fields },
+    success: Schema.NullOr(OrderPageData),
+  }),
+  Rpc.make("ListRuns", {
+    payload: { shop: ShopKey, ...ListRunsInput.fields },
+    success: WorkflowsListData,
+  }),
+  Rpc.make("GetUsage", { payload: { shop: ShopKey }, success: ShopUsage }),
+  Rpc.make("OrdersStream", {
+    payload: { shop: ShopKey, workflowId: Schema.String, url: Schema.String },
+    success: Schema.Struct({}),
+  }),
+  Rpc.make("ListShopsOf", { payload: { email: Email }, success: Schema.Array(ShopKey) }),
+  Rpc.make("SweepExpiredAuth", { payload: {}, success: Schema.Struct({}) }),
 );
 
 const decodeHomePlan = Schema.decodeUnknownSync(HomePlan);
@@ -264,6 +313,13 @@ export const IntegHandlers = IntegRpcs.toLayer(
       ApiUsage: (payload) => api.usage(noRequest, payload),
       AppEventsSent: ({ refuse }) => appEventsFake.takeSent(refuse),
       ShopIdentityNames: ({ shop }) => members.identityNames(shop),
+      TakeRowCounts: () => Effect.sync(takeRowCounts),
+      GetOrderDetail: ({ shop, ...input }) => actors.getOrderDetail(shop, input),
+      ListRuns: ({ shop, ...input }) => actors.listRuns(shop, input),
+      GetUsage: ({ shop }) => actors.getUsage(shop),
+      OrdersStream: ({ shop, ...input }) => actors.onOrdersStream(shop, input).pipe(Effect.as({})),
+      ListShopsOf: ({ email }) => members.listShopsOf(email),
+      SweepExpiredAuth: () => members.sweepExpiredAuth().pipe(Effect.as({})),
     });
   }),
 );
