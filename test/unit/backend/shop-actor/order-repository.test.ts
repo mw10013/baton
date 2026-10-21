@@ -208,6 +208,27 @@ describe("OrderRepository.upsertOrder", () => {
     ),
   );
 
+  /** A product's tags can change without the order's `updatedAt` moving, and they pick its workflow. */
+  it.effect("a same-version write takes a line's new product tags and keeps its other lines", () =>
+    runInRepository((repository) =>
+      Effect.gen(function* () {
+        yield* upsert(repository, anOrder({ updatedAt: 2000 }), [aLineItem(1), aLineItem(2)]);
+        yield* upsert(repository, anOrder({ updatedAt: 2000 }), [
+          aLineItem(1, { productTags: ["blanket"] }),
+          aLineItem(2),
+        ]);
+        const { lineItems } = Option.getOrThrow(yield* repository.getOrder(orderId(1)));
+        assert.deepStrictEqual(
+          lineItems.map(({ id, productTags }) => [id, productTags]),
+          [
+            [lineItemId(1), ["blanket"]],
+            [lineItemId(2), ["engraved"]],
+          ],
+        );
+      }),
+    ),
+  );
+
   it.effect(
     "upsertOrder reports changed for a fresh row and a newer updatedAt, and not for the same version",
     () =>

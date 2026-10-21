@@ -227,31 +227,55 @@ export const makeOrderRepository = (sql: SqlClient.SqlClient, transaction: Trans
     return state;
   });
 
-  const insertLineItems = (lineItems: readonly OrderLineItem[]) =>
-    Effect.forEach(
-      lineItems,
-      (item) => sql`
-        insert into OrderLineItem (
-          id, orderId, title, variantTitle, sku,
-          quantity, currentQuantity, productTags, properties
-        ) values (
-          ${item.id}, ${item.orderId},
-          ${item.title}, ${item.variantTitle}, ${item.sku},
-          ${item.quantity}, ${item.currentQuantity},
-          ${json(item.productTags)}, ${json(item.properties)}
-        )
-        on conflict(id) do update set
-          orderId = excluded.orderId,
-          title = excluded.title,
-          variantTitle = excluded.variantTitle,
-          sku = excluded.sku,
-          quantity = excluded.quantity,
-          currentQuantity = excluded.currentQuantity,
-          productTags = excluded.productTags,
-          properties = excluded.properties
-      `,
-      { discard: true },
-    );
+  /**
+   * Makes the order's stored lines equal `lineItems` while writing only the
+   * lines that differ. A line Shopify no longer sends is deleted, and a line
+   * whose every column matches the stored one is not touched: an upsert whose
+   * `where` is false bills no written row and fires no update trigger, so a
+   * webhook that moves only the order (a payment, a fulfillment, a note) and a
+   * re-sync of the same version write no lines. The lines are still compared
+   * on every write, because a product's tags can change without the order's
+   * `updatedAt` moving.
+   */
+  const writeLineItems = (orderId: string, lineItems: readonly OrderLineItem[]) =>
+    Effect.gen(function* () {
+      yield* sql`
+        delete from OrderLineItem
+        where orderId = ${orderId}
+          and id not in (select value from json_each(${json(lineItems.map((item) => item.id))}))
+      `;
+      yield* Effect.forEach(
+        lineItems,
+        (item) => sql`
+          insert into OrderLineItem (
+            id, orderId, title, variantTitle, sku,
+            quantity, currentQuantity, productTags, properties
+          ) values (
+            ${item.id}, ${item.orderId},
+            ${item.title}, ${item.variantTitle}, ${item.sku},
+            ${item.quantity}, ${item.currentQuantity},
+            ${json(item.productTags)}, ${json(item.properties)}
+          )
+          on conflict(id) do update set
+            orderId = excluded.orderId,
+            title = excluded.title,
+            variantTitle = excluded.variantTitle,
+            sku = excluded.sku,
+            quantity = excluded.quantity,
+            currentQuantity = excluded.currentQuantity,
+            productTags = excluded.productTags,
+            properties = excluded.properties
+          where (
+            orderId, title, variantTitle, sku,
+            quantity, currentQuantity, productTags, properties
+          ) is not (
+            excluded.orderId, excluded.title, excluded.variantTitle, excluded.sku,
+            excluded.quantity, excluded.currentQuantity, excluded.productTags, excluded.properties
+          )
+        `,
+        { discard: true },
+      );
+    });
 
   /** Flags that a new order was refused at {@link ShopLimits.maxOpenOrders}; `coalesce` keeps the first refusal's instant. */
   const markOrdersLimited = Effect.fn("OrderRepository.markOrdersLimited")(function* (now: number) {
@@ -292,8 +316,8 @@ export const makeOrderRepository = (sql: SqlClient.SqlClient, transaction: Trans
    * and setting an indexed column rewrites its index entry, a billed row, even to the same
    * value.
    *
-   * Line items are replaced wholesale on every accepted write, so a removed
-   * line disappears. Every fetch path asks Shopify for the first
+   * Every accepted write makes the stored lines equal the incoming set, so a
+   * removed line disappears ({@link writeLineItems} writes only what differs). Every fetch path asks Shopify for the first
    * `ShopLimits.maxLineItemsPerOrder` (250), which is the maximum any
    * connection page may carry, and neither pages: an order with more is
    * stored with its first 250 and logged, never merged. 250 is
@@ -405,8 +429,7 @@ export const makeOrderRepository = (sql: SqlClient.SqlClient, transaction: Trans
             refused: false,
             afterWrite: Option.none<A>(),
           };
-        yield* sql`delete from OrderLineItem where orderId = ${order.id}`;
-        yield* insertLineItems(lineItems);
+        yield* writeLineItems(order.id, lineItems);
         const after = afterWrite === undefined ? Option.none<A>() : Option.some(yield* afterWrite);
         return { written: true, fresh, changed, refused: false, afterWrite: after };
       }),
