@@ -220,4 +220,10 @@ export const wireBackend = Effect.fn("wireBackend")(function* (
     Match.when("staging", () => Effect.void),
     Match.exhaustive,
   );
+  // Staging alone logs every orders counts read at info, to measure how often one is cold.
+  yield* Match.value(environment).pipe(
+    Match.when("staging", () => backend.bind("OrderFactsLog", { env: { ORDER_FACTS_LOG: "on" } })),
+    Match.whenOr("dev", "test", "e2e", () => Effect.void),
+    Match.exhaustive,
+  );
 });

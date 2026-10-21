@@ -6,8 +6,10 @@
  * @module
  */
 import type { NonEmptyReadonlyArray } from "effect/Array";
+import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Match from "effect/Match";
+import * as Option from "effect/Option";
 import * as Semaphore from "effect/Semaphore";
 import type { ShopOrder } from "../../domain/orders.ts";
 import type { ShopKey } from "../../domain/platform.ts";
@@ -106,7 +108,17 @@ interface FactsState {
   readonly marked: Map<ShopOrder["id"], number>;
 }
 
-/** What a settle reads; also the debug line's `read=`. */
+/**
+ * Whether each counts read logs at info rather than debug: the `ORDER_FACTS_LOG` binding is
+ * present, which only staging binds. How often a read is cold, after the actor hibernated and
+ * lost its facts, against how often it patches is what decides whether the facts should be stored.
+ */
+const settleLogOn = Config.option(Config.String("ORDER_FACTS_LOG")).pipe(
+  Effect.map(Option.isSome),
+  Effect.orDie,
+);
+
+/** What a settle reads; also the log line's `read=`. */
 type SettlePlan =
   | { readonly _tag: "Hit" }
   | { readonly _tag: "Patch"; readonly orderIds: NonEmptyReadonlyArray<ShopOrder["id"]> }
@@ -145,6 +157,7 @@ export const makeOrderFacts = Effect.fnUntraced(function* ({
   const state: FactsState = { facts: null, seq: 0, fullAt: 0, shopMarkedAt: 0, marked: new Map() };
   /** One settle at a time: concurrent readers of a cold actor share one full read. */
   const settling = yield* Semaphore.make(1);
+  const logSettle = (yield* settleLogOn) ? Effect.logInfo : Effect.logDebug;
 
   /** After a write confined to these orders committed. Reads nothing. */
   const markOrders = (orderIds: ReadonlyArray<ShopOrder["id"]>) =>
@@ -207,7 +220,7 @@ export const makeOrderFacts = Effect.fnUntraced(function* ({
       Patch: ({ orderIds }) => `read=patch orders=${String(orderIds.length)}`,
       Full: ({ reason }) => `read=full reason=${reason}`,
     });
-    yield* Effect.logDebug(`OrderFacts.counts: shop=${shop} ${read}`).pipe(
+    yield* logSettle(`OrderFacts.counts: shop=${shop} ${read}`).pipe(
       Effect.annotateLogs({ shop, read: plan._tag }),
     );
     return countsOf(state.facts?.values() ?? [], team, new Set(teams.map(({ id }) => id)));
