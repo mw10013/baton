@@ -4,6 +4,7 @@
  *
  * @module
  */
+import type { NonEmptyReadonlyArray } from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
@@ -22,11 +23,12 @@ import { retentionCutoff, ShopLimits } from "../../domain/platform.ts";
 import {
   type EligibleContext,
   type ListOrdersInput,
-  type OrderCounts,
+  type OrderRow,
   type OrdersPage,
   prefixPatterns,
   type RunCounts,
   searchTerm,
+  TeamId,
 } from "../../domain/shop-work.ts";
 import { SYNC_STALE_MS } from "../orders-sync-constants.ts";
 import { currentWhere } from "./current-where.ts";
@@ -170,20 +172,43 @@ const MULTI_MATCH_ITEM = `select 1 from OrderLineItem li
  */
 const MULTI_MATCH = `exists (${MULTI_MATCH_ITEM})`;
 
+/** Which open orders `readOrderFacts` reads: every one, or the ones a write named. */
+export type OrderFactsScope =
+  | { readonly _tag: "Open" }
+  | { readonly _tag: "Orders"; readonly orderIds: NonEmptyReadonlyArray<ShopOrder["id"]> };
+
 /**
- * Each counted filter value's predicate over the `facts` rows of the count
- * statement in `listOrders`: `showFilter` restated over per-order facts
- * instead of correlated subqueries, and moving with it. `OPEN` is the
- * statement's own `where`. `issues` is the three `orderIssues`
- * elements or'd.
+ * One open order as the Show counts need it: what `orderPosition` and `orderIssues` read, and
+ * the two team sets the team filter and `unassigned` test. Nothing here is bound to the D1
+ * teams, so a team created, renamed or deleted in D1 stales no row.
  */
-const COUNT_FACT = {
-  no_workflow: "openRuns = 0 and doneRuns = 0 and fullyPaid",
-  not_started: "openRuns > 0 and doneRuns = 0 and startedRuns = 0",
-  making: "openRuns > 0 and (doneRuns > 0 or startedRuns > 0)",
-  made: "doneRuns > 0 and openRuns = 0",
-  issues: "multiMatch or unassigned or blockedRuns > 0",
-} as const satisfies Record<keyof OrderCounts, string>;
+export interface OrderFactRow extends Pick<OrderRow, "order" | "runs" | "multiMatchItems"> {
+  /**
+   * The distinct `teamId`s of the open tasks of the order's open runs, blocked or not, null
+   * included: what `OrderRow.unassigned` tests against the live teams.
+   */
+  readonly taskTeams: ReadonlyArray<TeamId | null>;
+  /**
+   * The distinct teams of the current tasks of the order's open, unblocked runs: the teams the
+   * order waits on, the rule on `ListOrdersInput.team`.
+   */
+  readonly currentTeams: ReadonlyArray<TeamId>;
+}
+
+/**
+ * An {@link OrderFactRow} as `readOrderFacts` selects it: the order's columns, its run counts as
+ * a JSON array in `RunCounts` order, and its two team sets as a JSON pair.
+ */
+const OrderFactColumns = Schema.Struct({
+  ...ShopOrder.fields,
+  runs: Schema.fromJsonString(
+    Schema.Tuple([Schema.Number, Schema.Number, Schema.Number, Schema.Number]),
+  ),
+  teams: Schema.fromJsonString(
+    Schema.Tuple([Schema.Array(Schema.NullOr(TeamId)), Schema.Array(TeamId)]),
+  ),
+  multiMatchItems: Schema.Number,
+});
 
 const bit = (value: boolean) => (value ? 1 : 0);
 
@@ -225,6 +250,7 @@ export const makeOrderRepository = (sql: SqlClient.SqlClient, transaction: Trans
   const decodeLineItems = decode(Schema.Array(OrderLineItem), "Invalid OrderLineItem row");
   const decodeSyncState = decode(Schema.Array(SyncState), "Invalid SyncState row");
   const decodeSyncTracking = decode(Schema.Array(SyncTracking), "Invalid SyncState row");
+  const decodeOrderFacts = decode(Schema.Array(OrderFactColumns), "Invalid order facts row");
 
   /** One order's items, in id order. */
   const lineItemsOf = (orderId: string) =>
@@ -561,8 +587,8 @@ export const makeOrderRepository = (sql: SqlClient.SqlClient, transaction: Trans
 
   /**
    * The orders index's read: one page of orders with their per-order run facts and, under a
-   * search, the match count. The Show counts are {@link countOrders}', which depend on less of
-   * the input.
+   * search, the match count. The Show counts come from {@link readOrderFacts}, which depend on
+   * less of the input.
    *
    * `show` filters by `OrdersShow`, each SQL fragment restating a
    * branch of `orderPosition` or, for Issues, the union of `orderIssues`'
@@ -797,91 +823,83 @@ export const makeOrderRepository = (sql: SqlClient.SqlClient, transaction: Trans
   });
 
   /**
-   * `OrdersPage`'s `counts` and `openOrders`: a function of the team and the live team ids
-   * alone, never of the page, the Show value or the search, so a caller may keep one answer for
-   * every page, Show value and search under that team.
+   * The facts of the open orders in `scope` ({@link OrderFactsScope}), one row per open order. An
+   * id in `scope` that is not an open order (closed, swept, never stored) has no row.
    *
-   * `counts` follows `OrderCounts`: a count is what choosing that value would show, given the
-   * team. One count per filter value, narrowed by `team` and by nothing else. It spells out
-   * `fulfillmentStatus <> 'FULFILLED' and cancelledAt is null` verbatim so the partial
-   * `ShopOrder_open_idx` serves it, which is what keeps a count from reading the shop's whole
-   * history.
+   * One statement for both scopes, driven once from `ShopOrder` and differing only in that
+   * drive's `scope` term, so a full read and a patch cannot disagree on any fact. A full read
+   * walks `ShopOrder_open_idx`; a patch probes the primary key once per id. Every fact is then a
+   * probe by the order's id, each the rule the page's own reads restate: `runs` is `listOrders`'
+   * `runRows`, through `Run_orderId_state_idx`; `teams` holds the tasks `unassignedRunOf` tests,
+   * and the current ones as `teamFilterOf` finds them, by {@link currentWhere}, reading tasks by
+   * `runId`; `multiMatchItems` is its `multiMatchRows` with the run test first, the same predicate,
+   * which spares the workflow probe for every item that already has a run.
+   *
+   * Correlated scalars rather than grouped joins: on the Durable Object a `group by` over every
+   * open order's runs or tasks bills each row it sorts, and a join of grouped results bills the
+   * automatic index it builds, which together cost more than the probes. The ids travel as one
+   * JSON parameter (`json_each`) rather than `sql.in`, because a patch may name hundreds of
+   * orders and the Durable Object caps a statement's bound parameters.
    */
-  const countOrders = Effect.fn("OrderRepository.countOrders")(function* ({
-    team,
-    teams,
-  }: {
-    readonly team: ListOrdersInput["team"];
-    /** The shop's teams, read live from D1: what `unassigned` is derived against (`OrderRow`). */
-    readonly teams: EligibleContext["teams"];
-  }) {
-    const unassignedRun = unassignedRunOf(teams);
-    const teamFilter = teamFilterOf(team);
-    /**
-     * `OrderCounts` in one statement over the open orders the
-     * team leaves: one count per Show value, never the Show filter
-     * itself, and never the search, which ignores the filters. `run_summary` is the per-page
-     * `runRows` aggregate hoisted over every open order, one grouped
-     * read of `Run` in place of a correlated `exists` per fragment;
-     * `MULTI_MATCH` and `unassignedRun` stay correlated, walking items and
-     * tasks. `facts` is materialised so each correlated term runs once
-     * per order however many sums read it. The sums restate
-     * `showFilter` over those facts ({@link COUNT_FACT}) and must move
-     * with it.
-     *
-     * `run_summary` is a `cross join`, which SQLite reads as "keep this
-     * table order" (https://www.sqlite.org/optoverview.html#crossjoin):
-     * with no `sqlite_stat1` the planner may otherwise drive from `Run`
-     * and read every run the retention window keeps, closed orders
-     * included. Driven from `ShopOrder_open_idx` through the prefix of
-     * `Run_orderId_state_idx`, the read is the open orders' runs only.
-     * The correlated fragments in `facts` probe the same index with
-     * both terms. The `ShopOrder` columns are qualified for the reason
-     * on {@link openAs}.
-     */
-    const [countRow] = yield* sql`
-      with run_summary as (
-        select r.orderId,
-          sum(r.state = 'open') as openRuns,
-          sum(r.state = 'done') as doneRuns,
-          sum(r.state = 'open' and r.blockedAt is not null) as blockedRuns,
-          sum(r.state = 'open' and r.startedAt is not null) as startedRuns
-        from ShopOrder o
-        cross join Run r on r.orderId = o.id
-        where ${sql.literal(openAs("o"))}
-        group by r.orderId
-      ),
-      facts as materialized (
+  const readOrderFacts = Effect.fn("OrderRepository.readOrderFacts")(function* (
+    scope: OrderFactsScope,
+  ) {
+    const scoped = Match.valueTags(scope, {
+      Open: () => sql.literal("1 = 1"),
+      Orders: ({ orderIds }) => sql`o.id in (select value from json_each(${json(orderIds)}))`,
+    });
+    const rows = yield* decodeOrderFacts(
+      yield* sql`
         select
-          coalesce(rs.openRuns, 0) as openRuns,
-          coalesce(rs.doneRuns, 0) as doneRuns,
-          coalesce(rs.blockedRuns, 0) as blockedRuns,
-          coalesce(rs.startedRuns, 0) as startedRuns,
-          ShopOrder.fullyPaid as fullyPaid,
-          (${sql.literal(MULTI_MATCH)}) as multiMatch,
-          ${unassignedRun} as unassigned
-        from ShopOrder
-        left join run_summary rs on rs.orderId = ShopOrder.id
-        where ${sql.and([OPEN, teamFilter])}
-      )
-      select
-        count(*),
-        sum(${sql.literal(COUNT_FACT.no_workflow)}),
-        sum(${sql.literal(COUNT_FACT.not_started)}),
-        sum(${sql.literal(COUNT_FACT.making)}),
-        sum(${sql.literal(COUNT_FACT.made)}),
-        sum(${sql.literal(COUNT_FACT.issues)})
-      from facts
-    `.values;
-    const openOrders = Number(countRow?.[0] ?? 0);
-    const counts = {
-      no_workflow: Number(countRow?.[1] ?? 0),
-      not_started: Number(countRow?.[2] ?? 0),
-      making: Number(countRow?.[3] ?? 0),
-      made: Number(countRow?.[4] ?? 0),
-      issues: Number(countRow?.[5] ?? 0),
-    } satisfies OrderCounts;
-    return { counts, openOrders } satisfies Pick<OrdersPage, "counts" | "openOrders">;
+          o.id, o.legacyId, o.name, o.processedAt, o.updatedAt, o.cancelledAt,
+          o.fulfillmentStatus, o.fullyPaid, o.note, o.syncedAt,
+          (
+            select json_array(
+              coalesce(sum(r.state = 'open'), 0),
+              coalesce(sum(r.state = 'done'), 0),
+              coalesce(sum(r.state = 'open' and r.blockedAt is not null), 0),
+              coalesce(sum(r.state = 'open' and r.startedAt is not null), 0)
+            )
+            from Run r
+            where r.orderId = o.id
+          ) as runs,
+          (
+            select json_array(
+              json_group_array(distinct s.teamId),
+              json_group_array(distinct s.teamId) filter (
+                where r.blockedAt is null and s.teamId is not null
+                  and ${sql.literal(currentWhere("s"))}
+              )
+            )
+            from Run r
+            cross join RunTask s on s.runId = r.id
+            where r.orderId = o.id and r.state = 'open' and s.doneAt is null
+          ) as teams,
+          (
+            select count(*)
+            from OrderLineItem li
+            where li.orderId = o.id and li.currentQuantity > 0
+              and not exists (${sql.literal(RUN_FOR_ITEM)})
+              and ${sql.literal(ITEM_MATCHES)} >= 2
+          ) as multiMatchItems
+        from ShopOrder o
+        where ${sql.literal(openAs("o"))} and ${scoped}
+      `,
+    );
+    return rows.map(
+      ({
+        runs: [open, done, blocked, started],
+        teams: [taskTeams, currentTeams],
+        multiMatchItems,
+        ...order
+      }): OrderFactRow => ({
+        order,
+        runs: { open, done, blocked, started },
+        multiMatchItems,
+        taskTeams,
+        currentTeams,
+      }),
+    );
   });
 
   /**
@@ -1123,7 +1141,7 @@ export const makeOrderRepository = (sql: SqlClient.SqlClient, transaction: Trans
     markOrdersLimited,
     clearOrdersLimited,
     listOrders,
-    countOrders,
+    readOrderFacts,
     getSyncState,
     setSyncError,
     setSyncErrorIfEmpty,

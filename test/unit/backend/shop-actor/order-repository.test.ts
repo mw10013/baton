@@ -8,9 +8,11 @@ import * as Statement from "effect/sql/Statement";
 import { fixture } from "../../../../fixture.ts";
 import { fixtureRows } from "../../../../src/backend/fixture.ts";
 import { insertFixtureRows } from "../../../../src/backend/shop-actor.ts";
+import { countsOf, orderFactOf } from "../../../../src/backend/shop-actor/order-facts.ts";
 import {
   ITEM_MATCHES,
   openOrdersAtCeiling,
+  type OrderFactsScope,
   type OrderRepository,
 } from "../../../../src/backend/shop-actor/order-repository.ts";
 import { type OrderLineItem, orderIsOpen, type ShopOrder } from "../../../../src/domain/orders.ts";
@@ -1146,8 +1148,8 @@ const flagged = (page: OrdersPage, field: "unassigned") =>
   page.orders.filter((row) => row[field]).map((row) => row.order.name);
 
 /**
- * The orders index's `OrdersPage` as the actor composes it: `listOrders`' page with
- * `countOrders`' counts, with the given filter, team and search, against `teams`.
+ * The orders index's `OrdersPage` as the actor composes it: `listOrders`' page with the counts
+ * of a full `readOrderFacts`, with the given filter, team and search, against `teams`.
  */
 const listWith = (
   repository: OrderRepository,
@@ -1175,8 +1177,13 @@ const listWith = (
       team,
       teams,
     }),
-    repository.countOrders({ team, teams }),
-  ]).pipe(Effect.map(([page, counts]): OrdersPage => ({ ...page, ...counts })));
+    repository.readOrderFacts({ _tag: "Open" }),
+  ]).pipe(
+    Effect.map(([page, rows]): OrdersPage => ({
+      ...page,
+      ...countsOf(rows.map(orderFactOf), team, new Set(teams.map(({ id }) => id))),
+    })),
+  );
 
 describe("OrderRepository.listOrders", () => {
   it.effect("pages newest first through a keyset cursor", () =>
@@ -1453,51 +1460,93 @@ describe("OrderRepository.listOrders by tag", () => {
 const reads = (plan: readonly string[], alias: string) =>
   plan.filter((detail) => new RegExp(`^(?:SEARCH|SCAN) ${alias}\\b`, "u").test(detail));
 
+/** The plans of the statements `effect` runs, each captured compiled and explained with its own parameters. */
+const plansOf = <A, E>(sql: SqlClient.SqlClient, effect: Effect.Effect<A, E>) =>
+  Effect.gen(function* () {
+    const captured: Array<readonly [string, ReadonlyArray<unknown>]> = [];
+    yield* effect.pipe(
+      Effect.provideService(Statement.CurrentTransformer, (self) =>
+        Effect.sync(() => {
+          captured.push(self.compile());
+          return self;
+        }),
+      ),
+    );
+    return yield* Effect.forEach(captured, ([query, params]) =>
+      sql
+        .unsafe<{ readonly detail: string }>(`explain query plan ${query}`, params)
+        .pipe(Effect.map((rows) => ({ query, plan: rows.map((row) => row.detail) }))),
+    );
+  });
+
 /**
- * The plans of the statements `listOrders` runs, read from the statement
- * text it executed: each statement is captured compiled through `Statement.CurrentTransformer`
- * and explained with its own parameters. Every plan here is the no-statistics plan: nothing runs
- * `analyze`, and neither does the actor.
+ * The plans of the statements the orders index runs, read from the statement text it executed.
+ * Every plan here is the no-statistics plan: nothing runs `analyze`, and neither does the actor.
  */
 describe("OrderRepository.listOrders query plans", () => {
-  const countsPlan = (team: TeamId | null) =>
+  const factsPlan = (scope: OrderFactsScope) =>
     runInRepository((repository, sql) =>
       Effect.gen(function* () {
-        const { list } = yield* seedIssues(repository, sql);
-        const captured: Array<readonly [string, ReadonlyArray<unknown>]> = [];
-        yield* list(null, team).pipe(
-          Effect.provideService(Statement.CurrentTransformer, (self) =>
-            Effect.sync(() => {
-              captured.push(self.compile());
-              return self;
-            }),
-          ),
-        );
-        const counts = captured.find(([query]) => query.includes("run_summary"));
-        if (counts === undefined) return yield* Effect.die("no counts statement");
-        const [query, params] = counts;
-        const rows = yield* sql.unsafe<{ readonly detail: string }>(
-          `explain query plan ${query}`,
-          params,
-        );
-        return rows.map((row) => row.detail);
+        yield* seedIssues(repository, sql);
+        const [statement] = yield* plansOf(sql, repository.readOrderFacts(scope));
+        if (statement === undefined) return yield* Effect.die("no facts statement");
+        return statement.plan;
       }),
     );
 
+  /** What both scopes' plans share: every probe by the order's id, never a table scan. */
+  const assertProbes = (plan: readonly string[]) => {
+    const runs = reads(plan, "r").filter((detail) => !detail.includes("(lineItemId=?)"));
+    assert.isTrue(runs.length > 0, plan.join("\n"));
+    assert.isTrue(
+      runs.every((detail) => detail.startsWith("SEARCH r USING INDEX Run_orderId_state_idx")),
+      plan.join("\n"),
+    );
+    const tasks = reads(plan, "s");
+    assert.isTrue(tasks.length > 0, plan.join("\n"));
+    assert.isTrue(
+      tasks.every((detail) =>
+        detail.startsWith("SEARCH s USING INDEX sqlite_autoindex_RunTask_2 (runId=?)"),
+      ),
+      plan.join("\n"),
+    );
+    assert.isFalse(
+      plan.some((detail) => detail.includes("RunTask_teamId_idx")),
+      plan.join("\n"),
+    );
+    const workflows = reads(plan, "w");
+    assert.isTrue(workflows.length > 0, plan.join("\n"));
+    assert.isTrue(
+      workflows.every((detail) => detail.startsWith("SEARCH w") && detail.includes("(tag=?)")),
+      plan.join("\n"),
+    );
+  };
+
   // No `analyze`: the plan is the one the actor runs.
-  it.effect("the counts statement probes Run by order and state and Workflow by tag", () =>
+  it.effect("a full read of the facts walks the open orders and probes everything by order", () =>
     Effect.gen(function* () {
-      const plan = yield* countsPlan(null);
-      const runs = reads(plan, "r").filter((detail) => !detail.includes("(lineItemId=?)"));
-      assert.isTrue(runs.length > 0, plan.join("\n"));
+      const plan = yield* factsPlan({ _tag: "Open" });
+      assertProbes(plan);
+      const orders = reads(plan, "o");
+      assert.isTrue(orders.length > 0, plan.join("\n"));
       assert.isTrue(
-        runs.every((detail) => detail.startsWith("SEARCH r USING INDEX Run_orderId_state_idx")),
+        orders.every((detail) => detail.includes("ShopOrder_open_idx")),
         plan.join("\n"),
       );
-      const workflows = reads(plan, "w");
-      assert.isTrue(workflows.length > 0, plan.join("\n"));
+    }),
+  );
+
+  // No `analyze`: the plan is the one the actor runs.
+  it.effect("a patch of the facts drives from the primary key, never the open orders", () =>
+    Effect.gen(function* () {
+      const plan = yield* factsPlan({ _tag: "Orders", orderIds: [orderId(3), orderId(13)] });
+      assertProbes(plan);
+      const orders = reads(plan, "o");
+      assert.isTrue(orders.length > 0, plan.join("\n"));
       assert.isTrue(
-        workflows.every((detail) => detail.startsWith("SEARCH w") && detail.includes("(tag=?)")),
+        orders.every((detail) =>
+          detail.startsWith("SEARCH o USING INDEX sqlite_autoindex_ShopOrder_1 (id=?)"),
+        ),
         plan.join("\n"),
       );
     }),
@@ -1505,25 +1554,32 @@ describe("OrderRepository.listOrders query plans", () => {
 
   // No `analyze`: the plan is the one the actor runs.
   it.effect("the team filter reads a run's tasks by run, never the team's tasks by team", () =>
-    Effect.gen(function* () {
-      const plan = yield* countsPlan(aTeamId("team-cut"));
-      const wr = reads(plan, "wr");
-      assert.isTrue(wr.length > 0, plan.join("\n"));
-      assert.isTrue(
-        wr.every((detail) => detail.startsWith("SEARCH wr USING INDEX Run_orderId_state_idx")),
-        plan.join("\n"),
-      );
-      assert.isTrue(
-        reads(plan, "s").some((detail) =>
-          detail.startsWith("SEARCH s USING INDEX sqlite_autoindex_RunTask_2 (runId=?)"),
-        ),
-        plan.join("\n"),
-      );
-      assert.isFalse(
-        plan.some((detail) => detail.includes("RunTask_teamId_idx")),
-        plan.join("\n"),
-      );
-    }),
+    runInRepository((repository, sql) =>
+      Effect.gen(function* () {
+        const { list } = yield* seedIssues(repository, sql);
+        const page = (yield* plansOf(sql, list(null, aTeamId("team-cut")))).find(({ query }) =>
+          query.includes(" wr"),
+        );
+        if (page === undefined) return yield* Effect.die("no page statement");
+        const { plan } = page;
+        const wr = reads(plan, "wr");
+        assert.isTrue(wr.length > 0, plan.join("\n"));
+        assert.isTrue(
+          wr.every((detail) => detail.startsWith("SEARCH wr USING INDEX Run_orderId_state_idx")),
+          plan.join("\n"),
+        );
+        assert.isTrue(
+          reads(plan, "s").some((detail) =>
+            detail.startsWith("SEARCH s USING INDEX sqlite_autoindex_RunTask_2 (runId=?)"),
+          ),
+          plan.join("\n"),
+        );
+        assert.isFalse(
+          plan.some((detail) => detail.includes("RunTask_teamId_idx")),
+          plan.join("\n"),
+        );
+      }),
+    ),
   );
 });
 
@@ -1660,6 +1716,52 @@ describe("OrderRepository.listOrders filters", () => {
           made: 0,
           issues: 2,
         });
+      }),
+    ),
+  );
+
+  /**
+   * `OrderRow.unassigned` as the counts derive it from the facts: an open task on no team (a
+   * SQL null the facts carry through `json_group_array`) and one on a team D1 no longer has are
+   * each an issue; a done task on no team is not.
+   */
+  it.effect("Issues counts an open task on no team or on a team gone, and no done task", () =>
+    runInRepository((repository, sql) =>
+      Effect.gen(function* () {
+        yield* seedStates(repository, sql);
+        const teams = Schema.decodeUnknownSync(Schema.Array(TeamWithMemberCount))([
+          { id: "team-cut", name: "Cut", memberCount: 1 },
+        ]);
+        const task = (id: string, runId: string, teamId: string | null, doneAt: number | null) => {
+          const role = doneAt === null ? null : "merchant";
+          return sql`
+            insert into RunTask (
+              id, runId, position, step, name, teamId, teamName,
+              startedAt, startedByRole, doneAt, doneByRole
+            ) values (
+              ${id}, ${runId}, ${id === "s3-done" ? 1 : 2}, 1, 'Task', ${teamId}, 'Team',
+              ${doneAt}, ${role}, ${doneAt}, ${role}
+            )
+          `;
+        };
+        const issues = Effect.gen(function* () {
+          const page = yield* listWith(repository, "issues", { teams });
+          assert.strictEqual(page.counts.issues, page.orders.length);
+          return names(page);
+        });
+        // The multi-match orders alone.
+        const multi = ["#1014", "#1013", "#1012"];
+        yield* task("s3-done", "run-3-1", null, 1);
+        assert.deepStrictEqual(yield* issues, multi);
+        yield* task("s3", "run-3-1", null, null);
+        assert.deepStrictEqual(yield* issues, [...multi, "#1003"]);
+        yield* task("s4", "run-4-1", "team-gone", null);
+        assert.deepStrictEqual(yield* issues, [...multi, "#1004", "#1003"]);
+        const [unassigned] = yield* repository.readOrderFacts({
+          _tag: "Orders",
+          orderIds: [orderId(3)],
+        });
+        assert.deepStrictEqual(unassigned?.taskTeams, [null]);
       }),
     ),
   );

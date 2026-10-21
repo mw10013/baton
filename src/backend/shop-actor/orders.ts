@@ -23,6 +23,7 @@ import { ShopifyUnavailable } from "../shopify.ts";
 import type { ShopifyAdmin } from "../shopify-admin.ts";
 import type { OrderRepository } from "./order-repository.ts";
 import type { RunRepositoryError } from "./run-repository.ts";
+import type { RunsTouched } from "./runs.ts";
 import type { Transaction } from "./transaction.ts";
 import type { OrdersSyncParams } from "../orders-sync-workflow.ts";
 
@@ -72,7 +73,7 @@ export const makeOrders = <R>({
   readonly admin: (typeof ShopifyAdmin)["Service"];
   readonly ordersSync: OrdersSyncWorkflows;
   readonly notify: (invalidated: ReadonlyArray<string>) => Effect.Effect<void, never, R>;
-  readonly notifyRuns: (teamIds: ReadonlyArray<TeamId>) => Effect.Effect<void, never, R>;
+  readonly notifyRuns: (touched: RunsTouched) => Effect.Effect<void, never, R>;
   readonly teamsOfOrder: (
     orderId: string,
   ) => Effect.Effect<ReadonlyArray<TeamId>, SqlError.SqlError | RunRepositoryError>;
@@ -101,8 +102,9 @@ export const makeOrders = <R>({
    * rewrite of the same version shows nothing new (rule 17).
    *
    * Without a sweep, the write reached only this order and its runs, so the notice goes through
-   * `notifyRuns` with the teams the order's runs are on before the upsert and after its reconcile
-   * (`teamsOfOrder`): the reconcile may create a run, and either side alone could miss a team.
+   * `notifyRuns` with the order and the teams its runs are on before the upsert and after its
+   * reconcile (`teamsOfOrder`): the reconcile may create a run, and either side alone could miss
+   * a team.
    * The sweep deletes other orders' runs, which it does not name, so it notifies in full.
    */
   const fetchAndUpsertOrder = Effect.fn("Orders.fetchAndUpsertOrder")(function* (orderId: string) {
@@ -145,7 +147,11 @@ export const makeOrders = <R>({
         `Orders.fetchAndUpsertOrder: shop=${shop} sweptOrders=${String(swept.orders)} sweptRuns=${String(swept.runs)}`,
       ).pipe(Effect.annotateLogs({ shop, sweptOrders: swept.orders, sweptRuns: swept.runs }));
     if (sweptAny) yield* notify([ORDERS_KEY]);
-    else if (changed) yield* notifyRuns([...teamsBefore, ...(yield* teamsOfOrder(node.id))]);
+    else if (changed)
+      yield* notifyRuns({
+        orderIds: [node.id],
+        teamIds: [...teamsBefore, ...(yield* teamsOfOrder(node.id))],
+      });
     return { _tag: "Upserted", written, fresh, changed, refused } as const;
   });
 

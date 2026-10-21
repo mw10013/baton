@@ -794,6 +794,14 @@ test(
       const page = yield* client.MerchantGetOrderDetail({ legacyId: "1" });
       assert.strictEqual(page?.runs[0]?.tasks[0]?.teamId, null);
       assert.deepStrictEqual(page?.teams, []);
+      // Durable Object SQLite keeps the nulled pointer through the Show counts' facts.
+      const issues = { limit: 25, cursor: null, q: null, show: "issues", team: null } as const;
+      const stuck = yield* client.MerchantListOrders(issues);
+      assert.strictEqual(stuck.page.counts.issues, 1, "a task on no team is an issue");
+      assert.deepStrictEqual(
+        stuck.page.orders.map(({ unassigned }) => unassigned),
+        [true],
+      );
 
       assert.deepStrictEqual(yield* client.MerchantAssignRunTaskTeam({ runTaskId, teamId: a.id }), {
         _tag: "TeamNotFound",
@@ -802,6 +810,8 @@ test(
       assert.deepStrictEqual(yield* client.MerchantAssignRunTaskTeam({ runTaskId, teamId: b.id }), {
         _tag: "Assigned",
       });
+      const assigned = yield* client.MerchantListOrders(issues);
+      assert.strictEqual(assigned.page.counts.issues, 0, "the assigned task is no issue");
       const [item] = yield* currentRows(yield* member("b0", [b.id]));
       assert.strictEqual(item?.tasks[0]?.id, runTaskId);
       assert.strictEqual(item?.tasks[0]?.teamName, "B");

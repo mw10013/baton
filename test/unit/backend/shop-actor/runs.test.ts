@@ -14,9 +14,11 @@ import { MembershipRepository } from "../../../../src/backend/membership-reposit
 import { insertFixtureRows } from "../../../../src/backend/shop-actor.ts";
 import {
   makeOrderRepository,
+  type OrderFactsScope,
   type OrderRepository,
 } from "../../../../src/backend/shop-actor/order-repository.ts";
 import { OrderSyncResponse } from "../../../../src/backend/order-sync.ts";
+import { makeMembership } from "../../../../src/backend/shop-actor/membership.ts";
 import { makeOrders } from "../../../../src/backend/shop-actor/orders.ts";
 import { runOrdersStream } from "../../../../src/backend/shop-actor/orders-stream.ts";
 import { ShopifyAdmin } from "../../../../src/backend/shopify-admin.ts";
@@ -35,6 +37,7 @@ import {
   type WorkflowRepository,
   WorkflowRepositoryError,
 } from "../../../../src/backend/shop-actor/workflow-repository.ts";
+import { makeWorkflows } from "../../../../src/backend/shop-actor/workflows.ts";
 import { ShopFixtureData } from "../../../../src/contract/fixture.ts";
 import { ORDERS_KEY } from "../../../../src/contract/shop-actor.ts";
 import type { ShopOrder } from "../../../../src/domain/orders.ts";
@@ -697,9 +700,13 @@ describe("Runs usage flush", () => {
   );
 });
 
-/** A counting wrapper over the list reads the memos hold. */
+/**
+ * A counting wrapper over the list reads the memos hold. `counts` counts the order facts' reads,
+ * and `factScopes` records each one's scope.
+ */
 const counting = () => {
   const count = { orders: 0, counts: 0, runs: 0, recent: 0 };
+  const factScopes: Array<OrderFactsScope["_tag"]> = [];
   const wrap: Wrap = {
     orders: (real) => ({
       ...real,
@@ -708,10 +715,11 @@ const counting = () => {
           count.orders += 1;
           return real.listOrders(input);
         }),
-      countOrders: (input) =>
+      readOrderFacts: (scope) =>
         Effect.suspend(() => {
           count.counts += 1;
-          return real.countOrders(input);
+          factScopes.push(scope._tag);
+          return real.readOrderFacts(scope);
         }),
     }),
     runs: (real) => ({
@@ -728,7 +736,7 @@ const counting = () => {
         }),
     }),
   };
-  return { count, wrap };
+  return { count, factScopes, wrap };
 };
 
 const READY = runQuery({ team: null, state: "ready", limit: 25, q: null });
@@ -761,7 +769,8 @@ describe("the list memo", () => {
     const capturing = Logger.layer([
       Logger.make(({ message, logLevel }) => {
         const line = String(Array.isArray(message) ? message[0] : message);
-        if (logLevel === "Debug" && line.includes("memo=")) logged.push(line);
+        if (logLevel === "Debug" && (line.includes("memo=") || line.includes("read=")))
+          logged.push(line);
       }),
     ]);
     return harness(({ runs, load }) =>
@@ -777,11 +786,14 @@ describe("the list memo", () => {
         yield* runs.notify([ORDERS_KEY]);
         yield* read;
         assert.deepStrictEqual(logged, [
-          `Runs.listOrders: shop=${shop} memo=miss counts=miss`,
+          `OrderFacts.counts: shop=${shop} read=full reason=cold`,
+          `Runs.listOrders: shop=${shop} memo=miss`,
           `Runs.listRuns: shop=${shop} memo=miss recent=miss`,
-          `Runs.listOrders: shop=${shop} memo=hit counts=hit`,
+          `OrderFacts.counts: shop=${shop} read=hit`,
+          `Runs.listOrders: shop=${shop} memo=hit`,
           `Runs.listRuns: shop=${shop} memo=hit recent=hit`,
-          `Runs.listOrders: shop=${shop} memo=miss counts=miss`,
+          `OrderFacts.counts: shop=${shop} read=full reason=shop`,
+          `Runs.listOrders: shop=${shop} memo=miss`,
           `Runs.listRuns: shop=${shop} memo=miss recent=miss`,
         ]);
       }).pipe(
@@ -896,7 +908,7 @@ describe("the list memo", () => {
   });
 
   it.effect("every page, Show and search under one team share one count, until a write", () => {
-    const { count, wrap } = counting();
+    const { count, factScopes, wrap } = counting();
     return harness(
       ({ runs, load, runRepository }) =>
         Effect.gen(function* () {
@@ -916,7 +928,8 @@ describe("the list memo", () => {
           if (cut === undefined) return yield* Effect.die(new Error("no Cut"));
           assert.strictEqual((yield* runs.merchantMarkTaskDone({ runTaskId: cut.id }))._tag, "Ok");
           const after = yield* runs.listOrders(making);
-          assert.strictEqual(count.counts, 2);
+          // The write named its order: the second read is that order's alone.
+          assert.deepStrictEqual(factScopes, ["Open", "Orders"]);
           assert.strictEqual(after.page.counts.not_started, 0);
           assert.strictEqual(after.page.counts.making, 1);
           assert.strictEqual(after.page.orders.length, 1);
@@ -1154,6 +1167,179 @@ describe("the list memo", () => {
             }),
         }),
       },
+    );
+  });
+});
+
+describe("the Show counts' facts", () => {
+  /**
+   * The guard against a writer that forgets to name its orders: after every write, the counts a
+   * warm activation serves from its patched facts equal those a cold activation reads in full,
+   * for every team and for none. Each step moves some count, so a missed mark shows; the run
+   * verbs and the webhooks must patch, the workflow edit and the team delete read in full.
+   */
+  it.effect("patched facts count what a full read counts, after every kind of write", () => {
+    const { factScopes, wrap } = counting();
+    return harness(
+      ({ runs, load, webhook, membership, runRepository, sql, transaction }) =>
+        Effect.gen(function* () {
+          const loaded = yield* load({
+            members: [ANA, BEN],
+            teams: [
+              { name: "Bench", members: [ANA] },
+              { name: "Shop", members: [BEN] },
+            ],
+            workflows: [
+              {
+                name: "Board",
+                tag: "board",
+                tasks: [
+                  { name: "Cut", team: "Bench" },
+                  { name: "Finish", team: "Shop" },
+                ],
+              },
+              twoTask("Ring", "ring", "Shop"),
+              twoTask("Plank", "plank"),
+            ],
+            orders: [
+              { n: 1, lineItems: [{ title: "Board", quantity: 1, tags: ["board"] }] },
+              { n: 2, lineItems: [{ title: "Ring", quantity: 1, tags: ["ring"] }] },
+              { n: 3, lineItems: [{ title: "Board", quantity: 1, tags: ["board", "plank"] }] },
+            ],
+          });
+          const ana = loaded.member(ANA);
+          const ben = loaded.member(BEN);
+          const bench = ShopWork.TeamId.make(loaded.teamId("Bench"));
+          const shopTeam = ShopWork.TeamId.make(loaded.teamId("Shop"));
+          const workflowRepository = makeWorkflowRepository(sql, transaction);
+          const workflows = makeWorkflows({
+            repository: workflowRepository,
+            membershipRepository: membership,
+            reconcileAll: runs.reconcileAll,
+            notify: runs.notify,
+            shop,
+          });
+          const members = makeMembership({
+            membershipRepository: membership,
+            workflowRepository,
+            reconcileAll: runs.reconcileAll,
+            notify: runs.notify,
+            revoke: () => Effect.succeed(0),
+            shop,
+          });
+          /** The counts under no team and under each team, from `service`. */
+          const countsFrom = (service: typeof runs) =>
+            Effect.forEach([null, bench, shopTeam], (team) =>
+              service
+                .listOrders({ ...EVERY_ORDER, team })
+                .pipe(Effect.map(({ page }) => ({ counts: page.counts, open: page.openOrders }))),
+            );
+          /** The counts a cold activation reads: a runs service of its own over the same stores. */
+          const fresh = Effect.gen(function* () {
+            const cold = yield* makeRuns({
+              runRepository,
+              orderRepository: makeOrderRepository(sql, transaction),
+              workflowRepository,
+              membershipRepository: membership,
+              transaction,
+              notify: () => Effect.void,
+              flushUsage: Effect.void,
+              shop,
+            });
+            return yield* countsFrom(cold);
+          });
+          let previous = yield* countsFrom(runs);
+          assert.deepStrictEqual(previous, yield* fresh);
+          const step = (name: string, read: "Orders" | "Open", write: Effect.Effect<unknown>) =>
+            Effect.gen(function* () {
+              yield* write;
+              factScopes.length = 0;
+              const warm = yield* countsFrom(runs);
+              assert.deepStrictEqual(warm, yield* fresh, `${name}: patched equals full`);
+              assert.notDeepEqual(warm, previous, `${name}: moves a count`);
+              assert.isTrue(
+                factScopes.length > 0 && factScopes.every((scope) => scope === read),
+                `${name}: reads ${read}, read ${factScopes.join(",")}`,
+              );
+              previous = warm;
+            });
+          const taskOf = (n: number, workflowName: string, index: number) =>
+            Effect.gen(function* () {
+              const detail = (yield* runsOf(runRepository, n)).find(
+                ({ run }) => run.workflowName === workflowName,
+              );
+              const task = detail?.tasks[index];
+              if (detail === undefined || task === undefined)
+                return yield* Effect.die(new Error(`no ${workflowName} task on order ${n}`));
+              return { run: detail.run, task };
+            });
+          const ok = (result: Effect.Effect<{ readonly _tag: string }>, expected = "Ok") =>
+            Effect.map(result, ({ _tag }) => assert.strictEqual(_tag, expected));
+
+          const cut = yield* taskOf(1, "Board", 0);
+          yield* step("start", "Orders", ok(runs.memberStartTask({ runTaskId: cut.task.id }, ana)));
+          yield* step(
+            "done",
+            "Orders",
+            ok(runs.memberMarkTaskDone({ runTaskId: cut.task.id }, ana)),
+          );
+          const ring = yield* taskOf(2, "Ring", 0);
+          yield* step(
+            "block",
+            "Orders",
+            ok(
+              runs.memberBlockRun(
+                { runId: ring.run.id, reason: ShopWork.BlockReason.make("No stock") },
+                ben,
+              ),
+            ),
+          );
+          yield* step("unblock", "Orders", ok(runs.merchantUnblockRun({ runId: ring.run.id })));
+          yield* step(
+            "assign",
+            "Orders",
+            ok(
+              runs.merchantAssignRunTaskTeam({ runTaskId: ring.task.id, teamId: bench }),
+              "Assigned",
+            ),
+          );
+          yield* step("cancel", "Orders", ok(runs.merchantCancelRun({ runId: cut.run.id })));
+          yield* step("webhook create", "Orders", webhook(syncedOrder(4, ["board"], 1)));
+          yield* step(
+            "webhook create, two matches",
+            "Orders",
+            webhook(syncedOrder(5, ["board", "ring"], 1)),
+          );
+          yield* step("webhook update", "Orders", webhook(syncedOrder(5, ["ring"], 2)));
+          yield* step(
+            "webhook fulfil",
+            "Orders",
+            webhook(syncedOrder(4, ["board"], 2, { displayFulfillmentStatus: "FULFILLED" })),
+          );
+          yield* step(
+            "webhook cancel",
+            "Orders",
+            webhook(syncedOrder(5, ["ring"], 3, { cancelledAt: 3 })),
+          );
+          yield* step(
+            "workflow off",
+            "Open",
+            ok(
+              workflows.setWorkflowState(
+                ShopWork.SetWorkflowStateInput.make({
+                  workflowId: loaded.workflowId("Plank"),
+                  state: "inactive",
+                }),
+              ),
+            ),
+          );
+          yield* step(
+            "team delete",
+            "Open",
+            ok(members.deleteTeam({ teamId: shopTeam }), "Deleted"),
+          );
+        }),
+      wrap,
     );
   });
 });

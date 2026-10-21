@@ -240,6 +240,22 @@ test(
       integ(backendUrl, (c) => c.ListOrders({ shop: SEED_SHOP, cursor: null, ...MAKING })),
     );
     assert.strictEqual(first.page.orders.length, 25, "a full first page");
+    // Another team's counts come from the facts the cold read filled: only the page reads.
+    const cutting = first.teams.find((team) => team.name === "Cutting");
+    assert.isDefined(cutting, "the fixture's teams are listed");
+    const byTeam = yield* measure(
+      backendUrl,
+      "1a2 listOrders Making, filtered to one team (counts from the facts)",
+      integ(backendUrl, (c) =>
+        c.ListOrders({
+          shop: SEED_SHOP,
+          cursor: null,
+          ...MAKING,
+          team: Schema.decodeUnknownSync(TeamId)(cutting?.id),
+        }),
+      ),
+    );
+    assert.isAbove(byTeam.page.openOrders, 0, "the team has open orders waiting on it");
     yield* measure(
       backendUrl,
       "1b listOrders Making, second page (cursor)",
@@ -415,6 +431,12 @@ test(
       assert.strictEqual(done._tag, "Ok", "the other teams' task is done");
     }).pipe(Effect.scoped);
     yield* listRuns("started_by_you", "5e listRuns, one member, started_by_you after 5d's notice");
+    // The Done named its run's order: the counts re-read that order alone.
+    yield* measure(
+      backendUrl,
+      "5d2 listOrders Making, first page after 5d's notice",
+      integ(backendUrl, (c) => c.ListOrders({ shop: SEED_SHOP, cursor: null, ...MAKING })),
+    );
 
     /** Stores order `n` by webhook and returns whether its runs have a task on the member's teams. */
     const webhookOrder = (n: number, path: string) =>
