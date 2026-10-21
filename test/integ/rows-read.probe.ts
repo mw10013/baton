@@ -498,6 +498,95 @@ test(
 
     yield* measure(
       backendUrl,
+      "6b listOrders Making, first page after the activation's notice (whole shop)",
+      integ(backendUrl, (c) => c.ListOrders({ shop: SEED_SHOP, cursor: null, ...MAKING })),
+    );
+
+    // The bulk file again, every order as stored: Sync from Shopify over a shop that did not move.
+    yield* integ(backendUrl, (c) =>
+      c.ScriptShopify({
+        replies: [{ route: "bulk", status: 200, body: bulk.flatMap(bulkLines).join("\n") }],
+      }),
+    );
+    yield* measure(
+      backendUrl,
+      `2d bulk sync, the same ${String(BULK_ORDERS)} orders unchanged (re-stream)`,
+      integ(backendUrl, (c) =>
+        c.OrdersStream({
+          shop: SEED_SHOP,
+          workflowId: "probe-sync-again",
+          url: `${backendUrl}/api/integ/bulk/2`,
+        }),
+      ),
+    );
+    yield* measure(
+      backendUrl,
+      "1h listOrders Making, first page after the unchanged re-stream's notice",
+      integ(backendUrl, (c) => c.ListOrders({ shop: SEED_SHOP, cursor: null, ...MAKING })),
+    );
+
+    /** The actor's activation, read over a member socket of its own, closed before it answers. */
+    const activation = Effect.scoped(
+      Effect.gen(function* () {
+        const { client } = yield* openAs(backendUrl, SEED_SHOP, {
+          role: "member",
+          memberId: "probe-activation",
+          memberEmail: email("probe-activation@probe.test"),
+          teamIds: [],
+          userId: "user-probe-activation",
+          sessionId: "session-probe-activation",
+          sessionExpiresAt: Date.now() + 600_000,
+        });
+        return (yield* client.MemberActivation()).id;
+      }),
+    );
+    /** Ends the activation and wakes a fresh one, proven by its new id; reads nothing measured. */
+    const evict = Effect.gen(function* () {
+      const before = yield* activation;
+      yield* integ(backendUrl, (c) => c.EvictActor({ shop: SEED_SHOP }));
+      assert.notStrictEqual(yield* activation, before, "a fresh activation");
+    });
+    /** The first task of order `legacyId`'s first open run. */
+    const openTask = (legacyId: string) =>
+      Effect.gen(function* () {
+        const page = yield* integ(backendUrl, (c) =>
+          c.GetOrderDetail({ shop: SEED_SHOP, legacyId }),
+        );
+        const task = page?.runs.find(({ run }) => run.state === "open")?.tasks[0];
+        assert.isDefined(task, `${legacyId} has an open run`);
+        return task?.id ?? "";
+      });
+    const merchantDone = (path: string, runTaskId: string) =>
+      Effect.gen(function* () {
+        const { client } = yield* openAs(backendUrl, SEED_SHOP, { role: "merchant" });
+        const done = yield* measure(backendUrl, path, client.MerchantMarkTaskDone({ runTaskId }));
+        assert.strictEqual(done._tag, "Ok", `${path}: the task is done`);
+      }).pipe(Effect.scoped);
+    const listMaking = (path: string) =>
+      measure(
+        backendUrl,
+        path,
+        integ(backendUrl, (c) => c.ListOrders({ shop: SEED_SHOP, cursor: null, ...MAKING })),
+      );
+
+    const coldTask = yield* openTask("fixture-1027");
+    const evictedTask = yield* openTask("fixture-1047");
+    yield* evict;
+    yield* listMaking("9a listOrders Making, first page in a fresh activation, no write since");
+    yield* evict;
+    yield* merchantDone("9b merchant Done in a fresh activation", coldTask);
+    yield* listMaking("9c listOrders Making, first page after 9b's notice (cold after write)");
+    yield* merchantDone("9d merchant Done, warm", evictedTask);
+    yield* evict;
+    yield* listMaking("9e listOrders Making, first page after a Done and an eviction");
+    assert.isBelow(
+      rowsOf("9c listOrders Making, first page after 9b's notice (cold after write)"),
+      rowsOf("1a listOrders Making, first page (cold)") / 4,
+      "9c: a fresh activation loads the stored facts and patches the one order",
+    );
+
+    yield* measure(
+      backendUrl,
       "8a D1 listShopsOf, one email",
       integ(backendUrl, (c) => c.ListShopsOf({ email: email(MEMBERS[0] ?? "") })),
     );

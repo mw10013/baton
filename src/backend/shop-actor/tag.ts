@@ -27,6 +27,12 @@ import type { OrdersStreamCounts } from "./orders-stream.ts";
 export const ABORT_UNINSTALLED = "uninstalled";
 
 /**
+ * The reason `ShopActor.evict` aborts the object with, which `ShopActors.evict` reads as success
+ * the way {@link ABORT_UNINSTALLED} is read for a destroy.
+ */
+export const ABORT_EVICTED = "evicted";
+
+/**
  * The methods the Backend and the orders sync Workflow may call on {@link ShopActor}'s stub, and
  * nothing else: the written contract of who may call the actor outside its socket. Declared, not
  * inferred from the implementation, so the tag's type does not depend on it.
@@ -79,6 +85,7 @@ export interface ShopActorShape {
     readonly message: string;
   }) => Effect.Effect<void>;
   readonly destroy: () => Effect.Effect<void>;
+  readonly evict: () => Effect.Effect<void>;
 }
 
 /**

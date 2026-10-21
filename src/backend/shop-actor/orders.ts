@@ -102,7 +102,7 @@ export const makeOrders = <R>({
    * rewrite of the same version shows nothing new (rule 17).
    *
    * Without a sweep, the write reached only this order and its runs, so the notice goes through
-   * `notifyRuns` with the order and the teams its runs are on before the upsert and after its
+   * `notifyRuns` with the teams the order's runs are on before the upsert and after its
    * reconcile (`teamsOfOrder`): the reconcile may create a run, and either side alone could miss
    * a team.
    * The sweep deletes other orders' runs, which it does not name, so it notifies in full.
@@ -148,10 +148,7 @@ export const makeOrders = <R>({
       ).pipe(Effect.annotateLogs({ shop, sweptOrders: swept.orders, sweptRuns: swept.runs }));
     if (sweptAny) yield* notify([ORDERS_KEY]);
     else if (changed)
-      yield* notifyRuns({
-        orderIds: [node.id],
-        teamIds: [...teamsBefore, ...(yield* teamsOfOrder(node.id))],
-      });
+      yield* notifyRuns({ teamIds: [...teamsBefore, ...(yield* teamsOfOrder(node.id))] });
     return { _tag: "Upserted", written, fresh, changed, refused } as const;
   });
 

@@ -13,8 +13,13 @@ import { fixtureRows } from "../../../../src/backend/fixture.ts";
 import { MembershipRepository } from "../../../../src/backend/membership-repository.ts";
 import { insertFixtureRows } from "../../../../src/backend/shop-actor.ts";
 import {
+  makeOrderFactStore,
+  makeOrderFacts,
+  type OrderFactStore,
+  type SettlePlan,
+} from "../../../../src/backend/shop-actor/order-facts.ts";
+import {
   makeOrderRepository,
-  type OrderFactsScope,
   type OrderRepository,
 } from "../../../../src/backend/shop-actor/order-repository.ts";
 import { OrderSyncResponse } from "../../../../src/backend/order-sync.ts";
@@ -89,9 +94,10 @@ type Event =
   | { readonly kind: "flush" }
   | { readonly kind: "notify"; readonly invalidated: ReadonlyArray<string> };
 
-/** What a test may wrap: the repositories before `makeRuns` sees them. */
+/** What a test may wrap: the repositories and the facts store before `makeRuns` sees them. */
 interface Wrap {
   readonly orders?: (real: OrderRepository) => OrderRepository;
+  readonly facts?: (real: OrderFactStore) => OrderFactStore;
   readonly runs?: (real: RunRepository) => RunRepository;
   readonly workflows?: (real: WorkflowRepository) => WorkflowRepository;
 }
@@ -153,10 +159,12 @@ const harness = <A, E>(
     const runRepository = (wrap.runs ?? ((r) => r))(
       makeRunRepository(sql, transaction, () => Effect.void),
     );
+    const orderFactStore = (wrap.facts ?? ((r) => r))(makeOrderFactStore(sql, transaction));
     let next: Effect.Effect<void> | null = null;
     const runs = yield* makeRuns({
       runRepository,
       orderRepository,
+      orderFactStore,
       workflowRepository,
       membershipRepository: membership,
       transaction,
@@ -199,6 +207,7 @@ const harness = <A, E>(
         const rows = fixtureRows(fixtureData(data), Date.now(), () => crypto.randomUUID());
         if (replace) {
           yield* membership.replaceShop(shop, rows.identity);
+          yield* orderFactStore.oweRebuild;
           yield* sql`delete from RunTask`;
           yield* sql`delete from Run`;
           yield* sql`delete from OrderLineItem`;
@@ -701,12 +710,12 @@ describe("Runs usage flush", () => {
 });
 
 /**
- * A counting wrapper over the list reads the memos hold. `counts` counts the order facts' reads,
- * and `factScopes` records each one's scope.
+ * A counting wrapper over the list reads the memos hold. `counts` counts the order facts' settles
+ * that read facts (all but a hit), and `factReads` records each one's plan.
  */
 const counting = () => {
   const count = { orders: 0, counts: 0, runs: 0, recent: 0 };
-  const factScopes: Array<OrderFactsScope["_tag"]> = [];
+  const factReads: Array<SettlePlan["_tag"]> = [];
   const wrap: Wrap = {
     orders: (real) => ({
       ...real,
@@ -715,12 +724,19 @@ const counting = () => {
           count.orders += 1;
           return real.listOrders(input);
         }),
-      readOrderFacts: (scope) =>
-        Effect.suspend(() => {
-          count.counts += 1;
-          factScopes.push(scope._tag);
-          return real.readOrderFacts(scope);
-        }),
+    }),
+    facts: (real) => ({
+      ...real,
+      settle: (warm) =>
+        real.settle(warm).pipe(
+          Effect.tap(({ plan }) =>
+            Effect.sync(() => {
+              if (plan._tag === "Hit") return;
+              count.counts += 1;
+              factReads.push(plan._tag);
+            }),
+          ),
+        ),
     }),
     runs: (real) => ({
       ...real,
@@ -736,7 +752,7 @@ const counting = () => {
         }),
     }),
   };
-  return { count, factScopes, wrap };
+  return { count, factReads, wrap };
 };
 
 const READY = runQuery({ team: null, state: "ready", limit: 25, q: null });
@@ -786,13 +802,13 @@ describe("the list memo", () => {
         yield* runs.notify([ORDERS_KEY]);
         yield* read;
         assert.deepStrictEqual(logged, [
-          `OrderFacts.counts: shop=${shop} read=full reason=cold`,
+          `OrderFacts.counts: shop=${shop} read=rebuild reason=stale`,
           `Runs.listOrders: shop=${shop} memo=miss`,
           `Runs.listRuns: shop=${shop} memo=miss recent=miss`,
           `OrderFacts.counts: shop=${shop} read=hit`,
           `Runs.listOrders: shop=${shop} memo=hit`,
           `Runs.listRuns: shop=${shop} memo=hit recent=hit`,
-          `OrderFacts.counts: shop=${shop} read=full reason=shop`,
+          `OrderFacts.counts: shop=${shop} read=hit`,
           `Runs.listOrders: shop=${shop} memo=miss`,
           `Runs.listRuns: shop=${shop} memo=miss recent=miss`,
         ]);
@@ -821,6 +837,8 @@ describe("the list memo", () => {
           yield* sql`delete from ShopOrder`;
           const [stale] = yield* read;
           assert.strictEqual(stale.page.orders.length, 1);
+          // The counts follow the write itself: the triggers marked it.
+          assert.strictEqual(stale.page.openOrders, 0);
           yield* runs.notify([ORDERS_KEY]);
           const before = { ...count };
           const [fresh, list] = yield* read;
@@ -829,7 +847,7 @@ describe("the list memo", () => {
           assert.strictEqual(list.items.length, 0);
           assert.deepStrictEqual(count, {
             orders: before.orders + 1,
-            counts: before.counts + 1,
+            counts: before.counts,
             runs: before.runs + 1,
             recent: before.recent + 1,
           });
@@ -908,7 +926,7 @@ describe("the list memo", () => {
   });
 
   it.effect("every page, Show and search under one team share one count, until a write", () => {
-    const { count, factScopes, wrap } = counting();
+    const { count, factReads, wrap } = counting();
     return harness(
       ({ runs, load, runRepository }) =>
         Effect.gen(function* () {
@@ -928,8 +946,8 @@ describe("the list memo", () => {
           if (cut === undefined) return yield* Effect.die(new Error("no Cut"));
           assert.strictEqual((yield* runs.merchantMarkTaskDone({ runTaskId: cut.id }))._tag, "Ok");
           const after = yield* runs.listOrders(making);
-          // The write named its order: the second read is that order's alone.
-          assert.deepStrictEqual(factScopes, ["Open", "Orders"]);
+          // The write marked its order: the second read is that order's alone.
+          assert.deepStrictEqual(factReads, ["Rebuild", "Patch"]);
           assert.strictEqual(after.page.counts.not_started, 0);
           assert.strictEqual(after.page.counts.making, 1);
           assert.strictEqual(after.page.orders.length, 1);
@@ -1171,177 +1189,270 @@ describe("the list memo", () => {
   });
 });
 
+/** Carries a value out of a transaction that must roll back. */
+class Rollback<A> {
+  readonly value: A;
+  constructor(value: A) {
+    this.value = value;
+  }
+}
+
 describe("the Show counts' facts", () => {
+  it.effect("a fresh activation under other triggers remakes them and rebuilds", () =>
+    harness(({ runs, load, sql, transaction }) =>
+      Effect.gen(function* () {
+        yield* load(oneBoard);
+        const before = yield* runs.listOrders(EVERY_ORDER);
+        assert.strictEqual(before.page.counts.not_started, 1);
+        // An older deploy's store: its own version, and no trigger that sees the write below.
+        const triggers = yield* sql<{ readonly name: string }>`
+          select name from sqlite_master where type = 'trigger' and name glob 'OrderFact_*'
+        `;
+        for (const { name } of triggers) yield* sql`drop trigger ${sql(name)}`;
+        yield* sql`create trigger OrderFact_Old_insert after insert on Workflow begin select 1; end`;
+        yield* sql`update OrderFactState set version = 'older' where id = 1`;
+        yield* sql`update ShopOrder set fulfillmentStatus = 'FULFILLED'`;
+        const facts = yield* makeOrderFacts({
+          store: makeOrderFactStore(sql, transaction),
+          shop,
+        });
+        const after = yield* facts.counts({ team: null, teams: [] });
+        assert.strictEqual(after.openOrders, 0, "the unmarked write is counted");
+        const remade = yield* sql<{ readonly name: string }>`
+          select name from sqlite_master where type = 'trigger' and name glob 'OrderFact_*'
+        `;
+        assert.deepStrictEqual(
+          remade.map(({ name }) => name).toSorted(),
+          triggers.map(({ name }) => name).toSorted(),
+        );
+      }),
+    ),
+  );
+
   /**
-   * The guard against a writer that forgets to name its orders: after every write, the counts a
-   * warm activation serves from its patched facts equal those a cold activation reads in full,
-   * for every team and for none. Each step moves some count, so a missed mark shows; the run
-   * verbs and the webhooks must patch, the workflow edit and the team delete read in full.
+   * The guard against a write the triggers miss: after every write, the counts the warm
+   * activation serves from its patched facts equal those a fresh activation serves over the same
+   * storage (the stored facts plus the stored marks, as after a hibernation) and those a rebuild
+   * gathers, for every team and for none. Each step moves some count, so a missed mark shows; the
+   * run verbs, the webhooks and the fixture add must patch, the workflow edit, the team delete
+   * and the fixture load rebuild. The fresh activation and the rebuild run inside a transaction
+   * that rolls back, so the warm one still finds the marks they would have retired.
    */
-  it.effect("patched facts count what a full read counts, after every kind of write", () => {
-    const { factScopes, wrap } = counting();
-    return harness(
-      ({ runs, load, webhook, membership, runRepository, sql, transaction }) =>
-        Effect.gen(function* () {
-          const loaded = yield* load({
-            members: [ANA, BEN],
-            teams: [
-              { name: "Bench", members: [ANA] },
-              { name: "Shop", members: [BEN] },
-            ],
-            workflows: [
-              {
-                name: "Board",
-                tag: "board",
-                tasks: [
-                  { name: "Cut", team: "Bench" },
-                  { name: "Finish", team: "Shop" },
-                ],
-              },
-              twoTask("Ring", "ring", "Shop"),
-              twoTask("Plank", "plank"),
-            ],
-            orders: [
-              { n: 1, lineItems: [{ title: "Board", quantity: 1, tags: ["board"] }] },
-              { n: 2, lineItems: [{ title: "Ring", quantity: 1, tags: ["ring"] }] },
-              { n: 3, lineItems: [{ title: "Board", quantity: 1, tags: ["board", "plank"] }] },
-            ],
-          });
-          const ana = loaded.member(ANA);
-          const ben = loaded.member(BEN);
-          const bench = ShopWork.TeamId.make(loaded.teamId("Bench"));
-          const shopTeam = ShopWork.TeamId.make(loaded.teamId("Shop"));
-          const workflowRepository = makeWorkflowRepository(sql, transaction);
-          const workflows = makeWorkflows({
-            repository: workflowRepository,
-            membershipRepository: membership,
-            reconcileAll: runs.reconcileAll,
-            notify: runs.notify,
-            shop,
-          });
-          const members = makeMembership({
-            membershipRepository: membership,
-            workflowRepository,
-            reconcileAll: runs.reconcileAll,
-            notify: runs.notify,
-            revoke: () => Effect.succeed(0),
-            shop,
-          });
-          /** The counts under no team and under each team, from `service`. */
-          const countsFrom = (service: typeof runs) =>
-            Effect.forEach([null, bench, shopTeam], (team) =>
-              service
+  it.effect(
+    "patched facts count what a fresh activation and a rebuild count, after every kind of write",
+    () => {
+      const { factReads, wrap } = counting();
+      return harness(
+        ({ runs, load, add, webhook, membership, runRepository, sql, transaction }) =>
+          Effect.gen(function* () {
+            const loaded = yield* load({
+              members: [ANA, BEN],
+              teams: [
+                { name: "Bench", members: [ANA] },
+                { name: "Shop", members: [BEN] },
+              ],
+              workflows: [
+                {
+                  name: "Board",
+                  tag: "board",
+                  tasks: [
+                    { name: "Cut", team: "Bench" },
+                    { name: "Finish", team: "Shop" },
+                  ],
+                },
+                twoTask("Ring", "ring", "Shop"),
+                twoTask("Plank", "plank"),
+              ],
+              orders: [
+                { n: 1, lineItems: [{ title: "Board", quantity: 1, tags: ["board"] }] },
+                { n: 2, lineItems: [{ title: "Ring", quantity: 1, tags: ["ring"] }] },
+                { n: 3, lineItems: [{ title: "Board", quantity: 1, tags: ["board", "plank"] }] },
+              ],
+            });
+            const ana = loaded.member(ANA);
+            const ben = loaded.member(BEN);
+            const bench = ShopWork.TeamId.make(loaded.teamId("Bench"));
+            const shopTeam = ShopWork.TeamId.make(loaded.teamId("Shop"));
+            const teams = [null, bench, shopTeam];
+            const workflowRepository = makeWorkflowRepository(sql, transaction);
+            const workflows = makeWorkflows({
+              repository: workflowRepository,
+              membershipRepository: membership,
+              reconcileAll: runs.reconcileAll,
+              notify: runs.notify,
+              shop,
+            });
+            const members = makeMembership({
+              membershipRepository: membership,
+              workflowRepository,
+              reconcileAll: runs.reconcileAll,
+              notify: runs.notify,
+              revoke: () => Effect.succeed(0),
+              shop,
+            });
+            /** The warm activation's counts under no team and under each team. */
+            const warmCounts = Effect.forEach(teams, (team) =>
+              runs
                 .listOrders({ ...EVERY_ORDER, team })
                 .pipe(Effect.map(({ page }) => ({ counts: page.counts, open: page.openOrders }))),
             );
-          /** The counts a cold activation reads: a runs service of its own over the same stores. */
-          const fresh = Effect.gen(function* () {
-            const cold = yield* makeRuns({
-              runRepository,
-              orderRepository: makeOrderRepository(sql, transaction),
-              workflowRepository,
-              membershipRepository: membership,
-              transaction,
-              notify: () => Effect.void,
-              flushUsage: Effect.void,
-              shop,
-            });
-            return yield* countsFrom(cold);
-          });
-          let previous = yield* countsFrom(runs);
-          assert.deepStrictEqual(previous, yield* fresh);
-          const step = (name: string, read: "Orders" | "Open", write: Effect.Effect<unknown>) =>
-            Effect.gen(function* () {
-              yield* write;
-              factScopes.length = 0;
-              const warm = yield* countsFrom(runs);
-              assert.deepStrictEqual(warm, yield* fresh, `${name}: patched equals full`);
-              assert.notDeepEqual(warm, previous, `${name}: moves a count`);
-              assert.isTrue(
-                factScopes.length > 0 && factScopes.every((scope) => scope === read),
-                `${name}: reads ${read}, read ${factScopes.join(",")}`,
-              );
-              previous = warm;
-            });
-          const taskOf = (n: number, workflowName: string, index: number) =>
-            Effect.gen(function* () {
-              const detail = (yield* runsOf(runRepository, n)).find(
-                ({ run }) => run.workflowName === workflowName,
-              );
-              const task = detail?.tasks[index];
-              if (detail === undefined || task === undefined)
-                return yield* Effect.die(new Error(`no ${workflowName} task on order ${n}`));
-              return { run: detail.run, task };
-            });
-          const ok = (result: Effect.Effect<{ readonly _tag: string }>, expected = "Ok") =>
-            Effect.map(result, ({ _tag }) => assert.strictEqual(_tag, expected));
-
-          const cut = yield* taskOf(1, "Board", 0);
-          yield* step("start", "Orders", ok(runs.memberStartTask({ runTaskId: cut.task.id }, ana)));
-          yield* step(
-            "done",
-            "Orders",
-            ok(runs.memberMarkTaskDone({ runTaskId: cut.task.id }, ana)),
-          );
-          const ring = yield* taskOf(2, "Ring", 0);
-          yield* step(
-            "block",
-            "Orders",
-            ok(
-              runs.memberBlockRun(
-                { runId: ring.run.id, reason: ShopWork.BlockReason.make("No stock") },
-                ben,
-              ),
-            ),
-          );
-          yield* step("unblock", "Orders", ok(runs.merchantUnblockRun({ runId: ring.run.id })));
-          yield* step(
-            "assign",
-            "Orders",
-            ok(
-              runs.merchantAssignRunTaskTeam({ runTaskId: ring.task.id, teamId: bench }),
-              "Assigned",
-            ),
-          );
-          yield* step("cancel", "Orders", ok(runs.merchantCancelRun({ runId: cut.run.id })));
-          yield* step("webhook create", "Orders", webhook(syncedOrder(4, ["board"], 1)));
-          yield* step(
-            "webhook create, two matches",
-            "Orders",
-            webhook(syncedOrder(5, ["board", "ring"], 1)),
-          );
-          yield* step("webhook update", "Orders", webhook(syncedOrder(5, ["ring"], 2)));
-          yield* step(
-            "webhook fulfil",
-            "Orders",
-            webhook(syncedOrder(4, ["board"], 2, { displayFulfillmentStatus: "FULFILLED" })),
-          );
-          yield* step(
-            "webhook cancel",
-            "Orders",
-            webhook(syncedOrder(5, ["ring"], 3, { cancelledAt: 3 })),
-          );
-          yield* step(
-            "workflow off",
-            "Open",
-            ok(
-              workflows.setWorkflowState(
-                ShopWork.SetWorkflowStateInput.make({
-                  workflowId: loaded.workflowId("Plank"),
-                  state: "inactive",
+            /**
+             * The counts of a fresh activation's facts over the same storage, then of the same
+             * facts after a rebuild is owed, all rolled back.
+             */
+            const freshCounts = Effect.gen(function* () {
+              const live = yield* membership.listTeamNames(shop);
+              const countsOf = (facts: Effect.Success<ReturnType<typeof makeOrderFacts>>) =>
+                Effect.forEach(teams, (team) =>
+                  facts
+                    .counts({ team, teams: live })
+                    .pipe(Effect.map(({ counts, openOrders }) => ({ counts, open: openOrders }))),
+                );
+              const rolled = yield* transaction(
+                Effect.gen(function* () {
+                  const store = makeOrderFactStore(sql, transaction);
+                  const facts = yield* makeOrderFacts({ store, shop });
+                  const fresh = yield* countsOf(facts);
+                  yield* store.oweRebuild;
+                  const rebuilt = yield* countsOf(facts);
+                  return yield* Effect.fail(new Rollback({ fresh, rebuilt }));
                 }),
+              ).pipe(Effect.flip, Effect.orDie);
+              if (!(rolled instanceof Rollback))
+                return yield* Effect.die(new Error("the fresh read did not roll back"));
+              return rolled.value;
+            });
+            const assertAgree = (name: string) =>
+              Effect.gen(function* () {
+                const { fresh, rebuilt } = yield* freshCounts;
+                const warm = yield* warmCounts;
+                assert.deepStrictEqual(fresh, rebuilt, `${name}: the fresh activation's facts`);
+                assert.deepStrictEqual(warm, rebuilt, `${name}: the warm activation's facts`);
+                return warm;
+              });
+            let previous = yield* assertAgree("loaded");
+            const step = (name: string, read: SettlePlan["_tag"], write: Effect.Effect<unknown>) =>
+              Effect.gen(function* () {
+                yield* write;
+                factReads.length = 0;
+                const warm = yield* assertAgree(name);
+                assert.notDeepEqual(warm, previous, `${name}: moves a count`);
+                assert.deepStrictEqual(factReads, [read], `${name}: reads ${read}`);
+                previous = warm;
+              });
+            const taskOf = (n: number, workflowName: string, index: number) =>
+              Effect.gen(function* () {
+                const detail = (yield* runsOf(runRepository, n)).find(
+                  ({ run }) => run.workflowName === workflowName,
+                );
+                const task = detail?.tasks[index];
+                if (detail === undefined || task === undefined)
+                  return yield* Effect.die(new Error(`no ${workflowName} task on order ${n}`));
+                return { run: detail.run, task };
+              });
+            const ok = (result: Effect.Effect<{ readonly _tag: string }>, expected = "Ok") =>
+              Effect.map(result, ({ _tag }) => assert.strictEqual(_tag, expected));
+
+            const cut = yield* taskOf(1, "Board", 0);
+            yield* step(
+              "start",
+              "Patch",
+              ok(runs.memberStartTask({ runTaskId: cut.task.id }, ana)),
+            );
+            yield* step(
+              "done",
+              "Patch",
+              ok(runs.memberMarkTaskDone({ runTaskId: cut.task.id }, ana)),
+            );
+            const ring = yield* taskOf(2, "Ring", 0);
+            yield* step(
+              "block",
+              "Patch",
+              ok(
+                runs.memberBlockRun(
+                  { runId: ring.run.id, reason: ShopWork.BlockReason.make("No stock") },
+                  ben,
+                ),
               ),
-            ),
-          );
-          yield* step(
-            "team delete",
-            "Open",
-            ok(members.deleteTeam({ teamId: shopTeam }), "Deleted"),
-          );
-        }),
-      wrap,
-    );
-  });
+            );
+            yield* step("unblock", "Patch", ok(runs.merchantUnblockRun({ runId: ring.run.id })));
+            yield* step(
+              "assign",
+              "Patch",
+              ok(
+                runs.merchantAssignRunTaskTeam({ runTaskId: ring.task.id, teamId: bench }),
+                "Assigned",
+              ),
+            );
+            yield* step("cancel", "Patch", ok(runs.merchantCancelRun({ runId: cut.run.id })));
+            yield* step("webhook create", "Patch", webhook(syncedOrder(4, ["board"], 1)));
+            yield* step(
+              "webhook create, two matches",
+              "Patch",
+              webhook(syncedOrder(5, ["board", "ring"], 1)),
+            );
+            yield* step("webhook update", "Patch", webhook(syncedOrder(5, ["ring"], 2)));
+            yield* step(
+              "webhook fulfil",
+              "Patch",
+              webhook(syncedOrder(4, ["board"], 2, { displayFulfillmentStatus: "FULFILLED" })),
+            );
+            yield* step(
+              "webhook cancel",
+              "Patch",
+              webhook(syncedOrder(5, ["ring"], 3, { cancelledAt: 3 })),
+            );
+            // A reopened order has no stored facts, so its items mark nothing: only the order's own
+            // trigger can.
+            yield* step("webhook reopen", "Patch", webhook(syncedOrder(4, ["board"], 4)));
+            yield* step(
+              "fixture add, one order closed after its runs",
+              "Patch",
+              add({
+                members: [],
+                teams: [],
+                workflows: [],
+                orders: [
+                  { n: 8, lineItems: [{ title: "Ring", quantity: 1, tags: ["ring"] }] },
+                  {
+                    n: 9,
+                    lineItems: [{ title: "Board", quantity: 1, tags: ["board"] }],
+                    started: true,
+                    after: { fulfillmentStatus: "FULFILLED" },
+                  },
+                ],
+              }),
+            );
+            yield* step(
+              "workflow off",
+              "Rebuild",
+              ok(
+                workflows.setWorkflowState(
+                  ShopWork.SetWorkflowStateInput.make({
+                    workflowId: loaded.workflowId("Plank"),
+                    state: "inactive",
+                  }),
+                ),
+              ),
+            );
+            yield* step(
+              "team delete",
+              "Rebuild",
+              ok(members.deleteTeam({ teamId: shopTeam }), "Deleted"),
+            );
+            yield* step(
+              "fixture load",
+              "Rebuild",
+              load({
+                ...oneBoard,
+                orders: [{ n: 1, lineItems: [{ title: "Board", quantity: 2, tags: ["board"] }] }],
+              }),
+            );
+          }),
+        wrap,
+      );
+    },
+  );
 });
 
 const BULK_URL = "https://storage.googleapis.test/bulk-orders.jsonl";

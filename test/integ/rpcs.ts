@@ -133,6 +133,8 @@ export type RowCounts = typeof RowCounts.Type;
  *   `GetOrderDetail`, `ListRuns`, `GetUsage` and `OrdersStream` are the {@link ShopActors}
  *   methods (`OrdersStream` is `onOrdersStream`, the bulk sync's last step), and `ListShopsOf`
  *   and `SweepExpiredAuth` (the daily cron's sweep) the {@link MembershipRepository} methods.
+ *   `EvictActor` ends `shop`'s actor's activation and keeps its storage (`ShopActors.evict`), so
+ *   the probe's next call runs in a fresh activation, as after a hibernation.
  */
 export const IntegRpcs = RpcGroup.make(
   Rpc.make("IssueMagicLink", {
@@ -239,6 +241,7 @@ export const IntegRpcs = RpcGroup.make(
   }),
   Rpc.make("ListShopsOf", { payload: { email: Email }, success: Schema.Array(ShopKey) }),
   Rpc.make("SweepExpiredAuth", { payload: {}, success: Schema.Struct({}) }),
+  Rpc.make("EvictActor", { payload: { shop: ShopKey }, success: Schema.Struct({}) }),
 );
 
 const decodeHomePlan = Schema.decodeUnknownSync(HomePlan);
@@ -320,6 +323,7 @@ export const IntegHandlers = IntegRpcs.toLayer(
       OrdersStream: ({ shop, ...input }) => actors.onOrdersStream(shop, input).pipe(Effect.as({})),
       ListShopsOf: ({ email }) => members.listShopsOf(email),
       SweepExpiredAuth: () => members.sweepExpiredAuth().pipe(Effect.as({})),
+      EvictActor: ({ shop }) => actors.evict(shop).pipe(Effect.as({})),
     });
   }),
 );

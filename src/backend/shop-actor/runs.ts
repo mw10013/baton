@@ -4,7 +4,6 @@
  *
  * @module
  */
-import type { NonEmptyReadonlyArray } from "effect/Array";
 import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
@@ -46,7 +45,6 @@ import {
   type RunResult,
   RunNote,
   runIsOpen,
-  type Run,
   type RunTask,
   type SetRunNoteInput,
   type StartTaskInput,
@@ -64,7 +62,7 @@ import {
 } from "../../domain/shop-work.ts";
 import type { ActorFixtureRows } from "../fixture.ts";
 import type { MembershipRepository } from "../membership-repository.ts";
-import { makeOrderFacts } from "./order-facts.ts";
+import { makeOrderFacts, type OrderFactStore } from "./order-facts.ts";
 import type { OrderRepository } from "./order-repository.ts";
 import {
   type ReconcileContext,
@@ -136,23 +134,21 @@ const keepSuccesses = (exit: Exit.Exit<unknown, unknown>) =>
 
 /**
  * What a write confined to some runs and their orders names in its notice ({@link makeRuns}'
- * `notifyRuns`): the orders whose Show counts it may have moved, and the teams whose workflows
- * list and Done half it may have moved. A write that cannot name its orders notifies in full.
+ * `notifyRuns`): the teams whose workflows list and Done half it may have moved. A write that
+ * cannot name them notifies in full.
  */
 export interface RunsTouched {
-  readonly orderIds: NonEmptyReadonlyArray<ShopOrder["id"]>;
   readonly teamIds: ReadonlyArray<TeamId>;
 }
 
 /**
- * The {@link RunsTouched} of a run write, from the gate it passed: the run's order, and the
- * teams its tasks are on plus any the write moves a task to.
+ * The {@link RunsTouched} of a run write, from the gate it passed: the teams its tasks are on
+ * plus any the write moves a task to.
  */
 const touchedBy = (
-  { run, tasks }: { readonly run: Pick<Run, "orderId">; readonly tasks: ReadonlyArray<RunTask> },
+  { tasks }: { readonly tasks: ReadonlyArray<RunTask> },
   ...movedTo: ReadonlyArray<TeamId>
 ): RunsTouched => ({
-  orderIds: [run.orderId],
   teamIds: [...tasks.flatMap(({ teamId }) => (teamId === null ? [] : [teamId])), ...movedTo],
 });
 
@@ -197,19 +193,20 @@ const runResult = <E extends { readonly _tag: string }, R>(
  * transaction after.
  *
  * Its memos live per activation and are shared by every tab of the shop: the orders index's
- * page, the workflows list's rows and its Done or closed half, and the Show counts' facts
- * ({@link makeOrderFacts}). {@link notify} clears the memos and owes the facts a full read
- * whenever it names `ORDERS_KEY`: every sender of a notice goes through it, so no write can
- * leave a memo answering stale rows. A write confined to runs it can name and their orders (a
- * run verb, or a webhook's upsert and reconcile) notifies through {@link notifyRuns} instead,
- * which marks only those orders' facts and leaves the team-keyed memos of teams those runs have
- * no task on: those rows are per run, and nothing they read changed. The Done or closed half
- * also expires when its window slides past the oldest moment it counts. A memo read stays
- * outside any transaction, because the lookup runs on a forked fiber.
+ * page and the workflows list's rows and its Done or closed half. {@link notify} clears them
+ * whenever it names `ORDERS_KEY`: every sender of a notice goes through it, so no write can leave
+ * a memo answering stale rows. A write confined to runs it can name (a run verb, or a webhook's
+ * upsert and reconcile) notifies through {@link notifyRuns} instead, which leaves the team-keyed
+ * memos of teams those runs have no task on: those rows are per run, and nothing they read
+ * changed. The Done or closed half also expires when its window slides past the oldest moment
+ * it counts. A memo read stays outside any transaction, because the lookup runs on a forked
+ * fiber. The Show counts ({@link makeOrderFacts}) hear of no notice: their stored marks are
+ * written by the writes themselves.
  */
 export const makeRuns = Effect.fnUntraced(function* <R>({
   runRepository,
   orderRepository,
+  orderFactStore,
   workflowRepository,
   membershipRepository,
   transaction,
@@ -219,6 +216,7 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
 }: {
   readonly runRepository: RunRepository;
   readonly orderRepository: OrderRepository;
+  readonly orderFactStore: OrderFactStore;
   readonly workflowRepository: WorkflowRepository;
   readonly membershipRepository: (typeof MembershipRepository)["Service"];
   readonly transaction: Transaction;
@@ -243,10 +241,7 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
     { capacity: MEMO_CAPACITY, timeToLive: keepSuccesses },
   );
   /** The orders index's Show counts; the rule is on {@link makeRuns}. */
-  const orderFacts = yield* makeOrderFacts({
-    readOrderFacts: orderRepository.readOrderFacts,
-    shop,
-  });
+  const orderFacts = yield* makeOrderFacts({ store: orderFactStore, shop });
   /** The workflows list's memo; the rule is on {@link makeRuns}. */
   const runsMemo = yield* Cache.makeWith(
     (key: RunsMemoKey) => {
@@ -300,14 +295,13 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
   const memoState = (key: MemoKey) => (missed.has(key) ? "miss" : "hit");
 
   /**
-   * The actor's `notify`, which empties every memo and marks every order's facts first when
-   * `invalidated` names `ORDERS_KEY`: an order or one of its runs changed. Every sender of a
-   * notice uses this one or {@link notifyRuns}.
+   * The actor's `notify`, which empties every memo first when `invalidated` names `ORDERS_KEY`:
+   * an order or one of its runs changed. Every sender of a notice uses this one or
+   * {@link notifyRuns}.
    */
   const notify = (invalidated: ReadonlyArray<string>) =>
     Effect.gen(function* () {
       if (invalidated.includes(ORDERS_KEY)) {
-        yield* orderFacts.markShop;
         yield* Cache.invalidateAll(ordersMemo);
         yield* Cache.invalidateAll(runsMemo);
         yield* Cache.invalidateAll(recentMemo);
@@ -317,8 +311,8 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
 
   /**
    * The `ORDERS_KEY` notice after a write confined to some runs and their orders
-   * ({@link RunsTouched}): those orders' facts are marked, the orders index's page memo goes,
-   * and of the team-keyed memos only those sharing a team with the runs. A team set's rows are
+   * ({@link RunsTouched}): the orders index's page memo goes, and of the team-keyed memos only
+   * those sharing a team with the runs. A team set's rows are
    * per run and read only that run's own tasks and order, so a run with no task on the set
    * cannot move them. A write that deletes rows, or reaches runs it cannot name, uses
    * {@link notify}.
@@ -327,9 +321,8 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
    * refused call wrote nothing a screen shows, so a notice would cost every live screen a
    * refetch for no change.
    */
-  const notifyRuns = ({ orderIds, teamIds }: RunsTouched) =>
+  const notifyRuns = ({ teamIds }: RunsTouched) =>
     Effect.gen(function* () {
-      yield* orderFacts.markOrders(orderIds);
       yield* Cache.invalidateAll(ordersMemo);
       const touched = (key: RunsMemoKey | RecentMemoKey) =>
         key.teamIds.some((teamId) => teamIds.includes(teamId));

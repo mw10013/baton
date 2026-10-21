@@ -7,6 +7,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import { MembershipRepository } from "../../../../src/backend/membership-repository.ts";
 import { makeBilling } from "../../../../src/backend/shop-actor/billing.ts";
+import { makeOrderFactStore } from "../../../../src/backend/shop-actor/order-facts.ts";
 import { makeOrderRepository } from "../../../../src/backend/shop-actor/order-repository.ts";
 import { makeOrders } from "../../../../src/backend/shop-actor/orders.ts";
 import { makeRunRepository } from "../../../../src/backend/shop-actor/run-repository.ts";
@@ -104,6 +105,7 @@ const harness = <A, E>(
     const runs = yield* makeRuns({
       runRepository,
       orderRepository,
+      orderFactStore: makeOrderFactStore(sql, transaction),
       workflowRepository,
       membershipRepository: membership,
       transaction,

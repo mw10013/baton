@@ -8,15 +8,19 @@ import * as Statement from "effect/sql/Statement";
 import { fixture } from "../../../../fixture.ts";
 import { fixtureRows } from "../../../../src/backend/fixture.ts";
 import { insertFixtureRows } from "../../../../src/backend/shop-actor.ts";
-import { countsOf, orderFactOf } from "../../../../src/backend/shop-actor/order-facts.ts";
+import {
+  GATHER_ALL,
+  GATHER_MARKED,
+  makeOrderFactStore,
+  makeOrderFacts,
+} from "../../../../src/backend/shop-actor/order-facts.ts";
 import {
   ITEM_MATCHES,
   openOrdersAtCeiling,
-  type OrderFactsScope,
   type OrderRepository,
 } from "../../../../src/backend/shop-actor/order-repository.ts";
 import { type OrderLineItem, orderIsOpen, type ShopOrder } from "../../../../src/domain/orders.ts";
-import { ShopGid, ShopLimits } from "../../../../src/domain/platform.ts";
+import { ShopGid, ShopKey, ShopLimits } from "../../../../src/domain/platform.ts";
 import { USAGE_METER_MEMBER, USAGE_METER_ORDER } from "../../../../src/domain/billing.ts";
 import {
   ShopifyAppEvents,
@@ -52,13 +56,17 @@ import { ActorSqliteTest, testOrderRepository } from "../layers.ts";
 
 /** `body` with the repository and its client, on a fresh database. */
 const runInRepository = <A, E>(
-  body: (repository: OrderRepository, sql: SqlClient.SqlClient) => Effect.Effect<A, E>,
+  body: (
+    repository: OrderRepository,
+    sql: SqlClient.SqlClient,
+  ) => Effect.Effect<A, E, SqlClient.SqlClient>,
 ) =>
   Effect.gen(function* () {
     return yield* body(yield* testOrderRepository, yield* SqlClient.SqlClient);
   }).pipe(Effect.provide(ActorSqliteTest));
 
 const orderId = (n: number) => `gid://shopify/Order/${String(n)}`;
+const SHOP = Schema.decodeUnknownSync(ShopKey)("orders.myshopify.com");
 const lineItemId = (n: number) => `gid://shopify/LineItem/${String(n)}`;
 
 const anOrder = (overrides: Partial<ShopOrder> = {}): ShopOrder => ({
@@ -1149,7 +1157,8 @@ const flagged = (page: OrdersPage, field: "unassigned") =>
 
 /**
  * The orders index's `OrdersPage` as the actor composes it: `listOrders`' page with the counts
- * of a full `readOrderFacts`, with the given filter, team and search, against `teams`.
+ * of a fresh activation's order facts over the same storage, with the given filter, team and
+ * search, against `teams`.
  */
 const listWith = (
   repository: OrderRepository,
@@ -1177,13 +1186,15 @@ const listWith = (
       team,
       teams,
     }),
-    repository.readOrderFacts({ _tag: "Open" }),
-  ]).pipe(
-    Effect.map(([page, rows]): OrdersPage => ({
-      ...page,
-      ...countsOf(rows.map(orderFactOf), team, new Set(teams.map(({ id }) => id))),
-    })),
-  );
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const facts = yield* makeOrderFacts({
+        store: makeOrderFactStore(sql, syncTransaction(sql)),
+        shop: SHOP,
+      });
+      return yield* facts.counts({ team, teams });
+    }),
+  ]).pipe(Effect.map(([page, counts]): OrdersPage => ({ ...page, ...counts })));
 
 describe("OrderRepository.listOrders", () => {
   it.effect("pages newest first through a keyset cursor", () =>
@@ -1461,7 +1472,7 @@ const reads = (plan: readonly string[], alias: string) =>
   plan.filter((detail) => new RegExp(`^(?:SEARCH|SCAN) ${alias}\\b`, "u").test(detail));
 
 /** The plans of the statements `effect` runs, each captured compiled and explained with its own parameters. */
-const plansOf = <A, E>(sql: SqlClient.SqlClient, effect: Effect.Effect<A, E>) =>
+const plansOf = <A, E, R>(sql: SqlClient.SqlClient, effect: Effect.Effect<A, E, R>) =>
   Effect.gen(function* () {
     const captured: Array<readonly [string, ReadonlyArray<unknown>]> = [];
     yield* effect.pipe(
@@ -1472,7 +1483,9 @@ const plansOf = <A, E>(sql: SqlClient.SqlClient, effect: Effect.Effect<A, E>) =>
         }),
       ),
     );
-    return yield* Effect.forEach(captured, ([query, params]) =>
+    // The order facts' trigger DDL is captured too, and explaining it would prepare it again.
+    const reads = captured.filter(([query]) => /^\s*select\b/iu.test(query));
+    return yield* Effect.forEach(reads, ([query, params]) =>
       sql
         .unsafe<{ readonly detail: string }>(`explain query plan ${query}`, params)
         .pipe(Effect.map((rows) => ({ query, plan: rows.map((row) => row.detail) }))),
@@ -1484,13 +1497,12 @@ const plansOf = <A, E>(sql: SqlClient.SqlClient, effect: Effect.Effect<A, E>) =>
  * Every plan here is the no-statistics plan: nothing runs `analyze`, and neither does the actor.
  */
 describe("OrderRepository.listOrders query plans", () => {
-  const factsPlan = (scope: OrderFactsScope) =>
+  const factsPlan = (gather: string) =>
     runInRepository((repository, sql) =>
       Effect.gen(function* () {
         yield* seedIssues(repository, sql);
-        const [statement] = yield* plansOf(sql, repository.readOrderFacts(scope));
-        if (statement === undefined) return yield* Effect.die("no facts statement");
-        return statement.plan;
+        const rows = yield* sql.unsafe<{ readonly detail: string }>(`explain query plan ${gather}`);
+        return rows.map((row) => row.detail);
       }),
     );
 
@@ -1525,7 +1537,7 @@ describe("OrderRepository.listOrders query plans", () => {
   // No `analyze`: the plan is the one the actor runs.
   it.effect("a full read of the facts walks the open orders and probes everything by order", () =>
     Effect.gen(function* () {
-      const plan = yield* factsPlan({ _tag: "Open" });
+      const plan = yield* factsPlan(GATHER_ALL);
       assertProbes(plan);
       const orders = reads(plan, "o");
       assert.isTrue(orders.length > 0, plan.join("\n"));
@@ -1539,7 +1551,7 @@ describe("OrderRepository.listOrders query plans", () => {
   // No `analyze`: the plan is the one the actor runs.
   it.effect("a patch of the facts drives from the primary key, never the open orders", () =>
     Effect.gen(function* () {
-      const plan = yield* factsPlan({ _tag: "Orders", orderIds: [orderId(3), orderId(13)] });
+      const plan = yield* factsPlan(GATHER_MARKED);
       assertProbes(plan);
       const orders = reads(plan, "o");
       assert.isTrue(orders.length > 0, plan.join("\n"));
@@ -1757,11 +1769,6 @@ describe("OrderRepository.listOrders filters", () => {
         assert.deepStrictEqual(yield* issues, [...multi, "#1003"]);
         yield* task("s4", "run-4-1", "team-gone", null);
         assert.deepStrictEqual(yield* issues, [...multi, "#1004", "#1003"]);
-        const [unassigned] = yield* repository.readOrderFacts({
-          _tag: "Orders",
-          orderIds: [orderId(3)],
-        });
-        assert.deepStrictEqual(unassigned?.taskTeams, [null]);
       }),
     ),
   );

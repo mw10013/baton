@@ -1845,6 +1845,12 @@ export const OrderRow = Schema.Struct({
 export type OrderRow = typeof OrderRow.Type;
 
 /**
+ * The order fields {@link orderPosition} and {@link orderIssues} read, and all the Show counts'
+ * stored facts keep of an order.
+ */
+export type OrderStanding = Pick<ShopOrder, "cancelledAt" | "fulfillmentStatus" | "fullyPaid">;
+
+/**
  * Shop work's reading of an order, from {@link orderIsCancelled} and
  * {@link orderIsFulfilled} in Orders: its {@link OrderPosition}, one for
  * every order.
@@ -1872,7 +1878,13 @@ export type OrderRow = typeof OrderRow.Type;
  * page — which rebuilds the aggregate from its own runs — does not have
  * to invent a value for every row field the index adds later.
  */
-export const orderPosition = ({ order, runs }: Pick<OrderRow, "order" | "runs">): OrderPosition =>
+export const orderPosition = ({
+  order,
+  runs,
+}: {
+  readonly order: OrderStanding;
+  readonly runs: RunCounts;
+}): OrderPosition =>
   Match.value({
     cancelled: orderIsCancelled(order),
     fulfilled: orderIsFulfilled(order),
@@ -1901,7 +1913,10 @@ export const orderIssues = ({
   runs,
   unassigned,
   multiMatchItems,
-}: Pick<OrderRow, "order" | "runs" | "unassigned" | "multiMatchItems">): readonly OrderIssue[] => {
+}: { readonly order: OrderStanding } & Pick<
+  OrderRow,
+  "runs" | "unassigned" | "multiMatchItems"
+>): readonly OrderIssue[] => {
   if (!orderIsOpen(order)) return [];
   const issue: Record<OrderIssue, boolean> = {
     multi_match: multiMatchItems > 0,

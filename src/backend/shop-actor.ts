@@ -58,6 +58,7 @@ import {
   openAs,
   type OrderRepositoryError,
 } from "./shop-actor/order-repository.ts";
+import { makeOrderFactStore } from "./shop-actor/order-facts.ts";
 import { makeOrders } from "./shop-actor/orders.ts";
 import { makeRunRepository, type RunRepositoryError } from "./shop-actor/run-repository.ts";
 import { makeRuns } from "./shop-actor/runs.ts";
@@ -71,6 +72,7 @@ import { makeWorkflows } from "./shop-actor/workflows.ts";
 import { MembershipRepository } from "./membership-repository.ts";
 import { OrdersSyncWorkflow } from "./orders-sync-workflow.ts";
 import ShopActor, {
+  ABORT_EVICTED,
   ABORT_UNINSTALLED,
   type RevokeInput,
   type ShopActorShape,
@@ -379,6 +381,31 @@ export const migrations = SqliteMigrator.fromRecord({
     yield* sql`
       create index if not exists RunTask_teamId_idx on RunTask (teamId, doneAt)
     `;
+    // The orders index's Show counts, stored (`makeOrderFactStore`): one row per open order, the
+    // orders marked since, and one row saying whether a whole-shop rebuild is owed and which code
+    // made the marking triggers, which that code makes at activation rather than here. No
+    // secondary index, so a mark or a fact is one written row. Seeded owing a rebuild.
+    yield* sql`
+      create table if not exists OrderFact (
+        orderId text primary key,
+        facts text not null
+      ) without rowid
+    `;
+    yield* sql`
+      create table if not exists OrderFactDirty (
+        orderId text primary key
+      ) without rowid
+    `;
+    yield* sql`
+      create table if not exists OrderFactState (
+        id integer primary key check (id = 1),
+        shopStale integer not null default 1 check (shopStale in (0, 1)),
+        version text
+      )
+    `;
+    yield* sql`
+      insert or ignore into OrderFactState (id) values (1)
+    `;
   }),
 });
 
@@ -492,6 +519,7 @@ const makeShopActor = Effect.gen(function* () {
     /** Every multi-statement write's transaction; see {@link syncTransaction}. */
     const transaction = syncTransaction(sql);
     const orderRepository = makeOrderRepository(sql, transaction);
+    const orderFactStore = makeOrderFactStore(sql, transaction);
     const workflowRepository = makeWorkflowRepository(sql, transaction);
     const usageRepository = makeUsageRepository(sql, transaction);
     /**
@@ -525,6 +553,7 @@ const makeShopActor = Effect.gen(function* () {
     const runs = yield* makeRuns({
       runRepository,
       orderRepository,
+      orderFactStore,
       workflowRepository,
       membershipRepository,
       transaction,
@@ -857,7 +886,8 @@ const makeShopActor = Effect.gen(function* () {
      * Replaces the shop's work with a fixture's rows, in one {@link transaction}: every order,
      * line item, workflow, run and run task goes, `SyncState` goes back to the single row the
      * migration inserts, the orders' two `ShopUsage` columns (`ordersLimitedAt`, `lastSweepAt`,
-     * facts about the orders just deleted) are cleared, and `rows` are written. Not `storage.deleteAll`, which would also drop
+     * facts about the orders just deleted) are cleared, and `rows` are written. The Show counts' stored
+     * facts are owed a rebuild first, so their triggers mark none of the orders replaced. Not `storage.deleteAll`, which would also drop
      * the migrator's record of the schema. Answers the counts read back inside the transaction.
      *
      * The meter is untouched: the rest of `ShopUsage` (its cycle, its counts, the `shopGid` a push wrote) and
@@ -869,6 +899,7 @@ const makeShopActor = Effect.gen(function* () {
       function* (rows: ActorFixtureRows) {
         const counts = yield* transaction(
           Effect.gen(function* () {
+            yield* orderFactStore.oweRebuild;
             yield* sql`delete from RunTask`;
             yield* sql`delete from Run`;
             yield* sql`delete from OrderLineItem`;
@@ -1205,6 +1236,18 @@ const makeShopActor = Effect.gen(function* () {
     }, Effect.provide(runtime));
 
     /**
+     * Ends this activation with {@link ABORT_EVICTED}, keeping storage, as an eviction after
+     * hibernation does: the next call starts a fresh activation with nothing in memory. Dev and
+     * test machinery only: it lets the rows-read probe measure a read in a fresh activation.
+     */
+    const evict = Effect.fn("ShopActor.evict")(function* () {
+      yield* Effect.logInfo(`ShopActor.evict: shop=${shop} activation=${activationId}`).pipe(
+        Effect.annotateLogs({ shop, activation: activationId }),
+      );
+      yield* state.abort(ABORT_EVICTED);
+    }, Effect.provide(runtime));
+
+    /**
      * Logs the close at Info with the caller's role and the close code and reason, then hands
      * the socket to the transport. A socket without an identity logs `role=none`.
      */
@@ -1242,6 +1285,7 @@ const makeShopActor = Effect.gen(function* () {
       onOrdersSyncEmpty,
       onOrdersSyncError,
       destroy,
+      evict,
     };
     return {
       fetch,

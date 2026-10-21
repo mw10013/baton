@@ -15,7 +15,7 @@ import { FixtureConflict } from "../contract/fixture.ts";
 import type { ListWorkflowsInput } from "../domain/shop-work.ts";
 import type { ActorFixtureRows } from "./fixture.ts";
 import type { Dependencies } from "alchemy";
-import ShopActor, { ABORT_UNINSTALLED, type RevokeInput } from "./shop-actor/tag.ts";
+import ShopActor, { ABORT_EVICTED, ABORT_UNINSTALLED, type RevokeInput } from "./shop-actor/tag.ts";
 import type { BillingCycleInput } from "../domain/billing.ts";
 
 /**
@@ -34,7 +34,7 @@ import type { BillingCycleInput } from "../domain/billing.ts";
 export const settleDestroy = (key: ShopKey, call: Effect.Effect<void>) =>
   call.pipe(
     Effect.catchCause((cause) =>
-      isUninstallAbort(Cause.squash(cause)) ? Effect.void : Effect.failCause(cause),
+      isAbort(Cause.squash(cause), ABORT_UNINSTALLED) ? Effect.void : Effect.failCause(cause),
     ),
     Effect.tap(() =>
       Effect.logInfo(`ShopActors.destroy: shop=${key} status=destroyed`).pipe(
@@ -48,10 +48,11 @@ export const settleDestroy = (key: ShopKey, call: Effect.Effect<void>) =>
     ),
   );
 
-const isUninstallAbort = (error: unknown) =>
+/** Whether `error` is the stub call's rejection by the actor's own abort with `reason`. */
+const isAbort = (error: unknown, reason: string) =>
   error instanceof Cloudflare.RpcCallError &&
   error.cause instanceof Error &&
-  error.cause.message === ABORT_UNINSTALLED;
+  error.cause.message === reason;
 
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -247,8 +248,24 @@ const make = <R>(namespace: Effect.Effect<Effect.Success<typeof ShopActor>, neve
       yield* settleDestroy(key, actors.getByName(key).destroy());
     });
 
+    /**
+     * Ends the shop's actor's activation, keeping its storage; see `evict` on {@link ShopActor}.
+     * The abort lands mid-call, so its rejection is success, as for {@link settleDestroy}.
+     */
+    const evict = Effect.fn("ShopActors.evict")(function* (key: ShopKey) {
+      yield* actors
+        .getByName(key)
+        .evict()
+        .pipe(
+          Effect.catchCause((cause) =>
+            isAbort(Cause.squash(cause), ABORT_EVICTED) ? Effect.void : Effect.failCause(cause),
+          ),
+        );
+    });
+
     return {
       destroy,
+      evict,
       revoke,
       getUsage,
       setBillingCycle,
@@ -303,7 +320,7 @@ export class ShopActors extends Context.Service<
    * cycle push in `cycles`, answers an empty shop's usage and a flush that leaves nothing, records
    * each fixture load in `loaded` and each fixture add in `added`, answering the counts of its
    * rows (it never finds a clash), applies no fixture work, and records each order removal in `removedOrders`, answering
-   * that there was one. Its order, workflow and sync methods and `destroy` die: a test that reaches them
+   * that there was one. Its order, workflow and sync methods, `destroy` and `evict` die: a test that reaches them
    * overrides them.
    */
   static readonly layerTest = (
@@ -373,5 +390,6 @@ export class ShopActors extends Context.Service<
       onOrdersSyncEmpty: () => Effect.die(new Error("ShopActors.layerTest: onOrdersSyncEmpty")),
       onOrdersSyncError: () => Effect.die(new Error("ShopActors.layerTest: onOrdersSyncError")),
       destroy: () => Effect.die(new Error("ShopActors.layerTest: destroy")),
+      evict: () => Effect.die(new Error("ShopActors.layerTest: evict")),
     });
 }
