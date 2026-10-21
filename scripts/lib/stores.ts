@@ -11,8 +11,8 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
-import { fixture, skuOf } from "../../fixture.ts";
-import type { Product, StoreOrder } from "../../src/contract/fixture.ts";
+import { skuOf } from "../../fixture.ts";
+import type { Product, ShopFixture, StoreOrder } from "../../src/contract/fixture.ts";
 import { runCommand } from "./command.ts";
 import { StoreOf, storeNameOf, type StoreEnvironment } from "./worktree.ts";
 
@@ -273,9 +273,15 @@ const productSetInput = (wanted: Product) => ({
   }),
 });
 
+/** A fixture's store half: what {@link applyStoreFixture} writes into a store. */
+export type StoreFixture = Pick<ShopFixture, "products" | "storeOrders">;
+
 /** The table's orders that have no open order carrying their tag. */
-export const missingOrders = (orders: readonly StoredOrder[]): readonly StoreOrder[] =>
-  fixture.storeOrders.filter(
+export const missingOrders = (
+  orders: readonly StoredOrder[],
+  wanted: readonly StoreOrder[],
+): readonly StoreOrder[] =>
+  wanted.filter(
     (wanted) =>
       !orders.some((order) => order.cancelledAt === null && order.tags.includes(wanted.tag)),
   );
@@ -474,14 +480,99 @@ const readOrders = Effect.fn("readOrders")(function* (domain: string) {
   return orders.nodes;
 });
 
+const DraftOrderCreated = Schema.Struct({
+  draftOrderCreate: Schema.Struct({
+    draftOrder: Schema.NullOr(Schema.Struct({ id: Schema.String })),
+    userErrors: UserErrors,
+  }),
+});
+
+const DraftOrderCompleted = Schema.Struct({
+  draftOrderComplete: Schema.Struct({
+    draftOrder: Schema.NullOr(
+      Schema.Struct({
+        order: Schema.NullOr(Schema.Struct({ id: Schema.String, name: Schema.String })),
+      }),
+    ),
+    userErrors: UserErrors,
+  }),
+});
+
+/**
+ * Places `wanted` on `domain` as a paid order tagged `tags`, with no customer or notice, through
+ * a draft order that is completed: `orderCreate` needs an offline token, and the CLI's store auth
+ * is an online one. `products` must already hold every variant the order's lines name.
+ */
+const placeOrder = Effect.fn("placeOrder")(function* (
+  domain: string,
+  products: readonly StoredProduct[],
+  wanted: StoreOrder,
+  tags: readonly string[],
+) {
+  const lineItems = yield* Effect.forEach(wanted.lines, (line) => {
+    const id = products
+      .find((product) => product.handle === line.handle)
+      ?.variants.nodes.find((node) =>
+        node.selectedOptions.some((option) => option.value === line.value),
+      )?.id;
+    return id === undefined
+      ? Effect.fail(
+          new StoresError({ message: `no variant ${line.value} on product ${line.handle}` }),
+        )
+      : Effect.succeed({
+          variantId: id,
+          quantity: line.quantity,
+          customAttributes: Object.entries(line.properties).map(([key, value]) => ({
+            key,
+            value,
+          })),
+        });
+  });
+  const draft = yield* execute(domain, DraftOrderCreated, DRAFT_ORDER_CREATE, {
+    variables: { input: { lineItems, tags } },
+    mutation: true,
+  });
+  yield* failOnErrors(`draftOrderCreate ${wanted.tag}`, draft.draftOrderCreate.userErrors);
+  const draftId = draft.draftOrderCreate.draftOrder?.id;
+  if (draftId === undefined)
+    return yield* new StoresError({ message: `draftOrderCreate ${wanted.tag}: no draft order` });
+  const completed = yield* execute(domain, DraftOrderCompleted, DRAFT_ORDER_COMPLETE, {
+    variables: { id: draftId },
+    mutation: true,
+  });
+  yield* failOnErrors(`draftOrderComplete ${wanted.tag}`, completed.draftOrderComplete.userErrors);
+  const order = completed.draftOrderComplete.draftOrder?.order;
+  if (order === null || order === undefined)
+    return yield* new StoresError({ message: `draftOrderComplete ${wanted.tag}: no order` });
+  return order;
+});
+
+/**
+ * Places one paid order for `wanted` on dev store `store`, tagged with its own tag only, and
+ * answers its GID and name. Not marked as a fixture order, so the next fixture run cancels it.
+ * The store must be one {@link requireFixtureStore} accepts, and the order's products must exist.
+ */
+export const createStoreOrder = Effect.fn("createStoreOrder")(function* (
+  store: string,
+  wanted: StoreOrder,
+) {
+  const { environment, index } = yield* requireFixtureStore(store);
+  const domain = domainOf(storeNameOf(environment, index));
+  yield* requireStoreAuth(domain);
+  return yield* placeOrder(domain, yield* readProducts(domain), wanted, [wanted.tag]);
+});
+
 /**
  * Reads the orders until none of the table's orders is missing from the list. The list lags a
  * completed draft order by more than ten seconds, and a rerun that read it too soon would create
  * the orders again. Fails after about two minutes.
  */
-const waitForOrders = Effect.fn("waitForOrders")(function* (domain: string) {
+const waitForOrders = Effect.fn("waitForOrders")(function* (
+  domain: string,
+  wanted: readonly StoreOrder[],
+) {
   for (let attempt = 0; attempt < 40; attempt += 1) {
-    if (missingOrders(yield* readOrders(domain)).length === 0) return;
+    if (missingOrders(yield* readOrders(domain), wanted).length === 0) return;
     yield* Effect.sleep("3 seconds");
   }
   return yield* new StoresError({
@@ -490,8 +581,7 @@ const waitForOrders = Effect.fn("waitForOrders")(function* (domain: string) {
 });
 
 /**
- * Brings dev store `store` to the dev fixture's store half (`products` and `storeOrders` in
- * `fixture.ts`), printing one line per product and order. Every step reads before it writes, so a second run changes nothing. The
+ * Brings dev store `store` to `table`, a fixture's store half, printing one line per product and order. Every step reads before it writes, so a second run changes nothing. The
  * store must be one {@link requireFixtureStore} accepts and must have store auth with the needed scopes
  * ({@link requireStoreAuth}); both are checked before any mutation.
  *
@@ -504,14 +594,17 @@ const waitForOrders = Effect.fn("waitForOrders")(function* (domain: string) {
  *    notice. Through a draft order that is completed, not `orderCreate`: that needs an offline
  *    token, and the CLI's store auth is an online one.
  */
-export const applyStoreFixture = Effect.fn("applyStoreFixture")(function* (store: string) {
+export const applyStoreFixture = Effect.fn("applyStoreFixture")(function* (
+  store: string,
+  table: StoreFixture,
+) {
   const { environment, index } = yield* requireFixtureStore(store);
   const domain = domainOf(storeNameOf(environment, index));
   yield* requireStoreAuth(domain);
 
   const stored = yield* readProducts(domain);
-  const named = new Set(fixture.products.map(({ handle }) => handle));
-  for (const wanted of fixture.products) {
+  const named = new Set(table.products.map(({ handle }) => handle));
+  for (const wanted of table.products) {
     const existing = stored.find(({ handle }) => handle === wanted.handle);
     if (existing !== undefined && productMatches(existing, wanted)) {
       yield* Console.log(`ok    product ${wanted.handle}: already as the table says`);
@@ -569,78 +662,18 @@ export const applyStoreFixture = Effect.fn("applyStoreFixture")(function* (store
     yield* Console.log(`ok    order ${leftover.name}: cancelled, no refund, no restock, no notice`);
   }
 
-  const missing = missingOrders(orders);
-  for (const wanted of fixture.storeOrders)
+  const missing = missingOrders(orders, table.storeOrders);
+  for (const wanted of table.storeOrders)
     if (!missing.includes(wanted)) yield* Console.log(`ok    order ${wanted.tag}: already open`);
   if (missing.length === 0) return;
 
   // Read again: the variant ids exist only after the products are written.
   const products = yield* readProducts(domain);
-  const variantId = (handle: string, value: string): Effect.Effect<string, StoresError> => {
-    const id = products
-      .find((product) => product.handle === handle)
-      ?.variants.nodes.find((node) =>
-        node.selectedOptions.some((option) => option.value === value),
-      )?.id;
-    return id === undefined
-      ? Effect.fail(new StoresError({ message: `no variant ${value} on product ${handle}` }))
-      : Effect.succeed(id);
-  };
   for (const wanted of missing) {
-    const lineItems = yield* Effect.forEach(wanted.lines, (line) =>
-      variantId(line.handle, line.value).pipe(
-        Effect.map((id) => ({
-          variantId: id,
-          quantity: line.quantity,
-          customAttributes: Object.entries(line.properties).map(([key, value]) => ({
-            key,
-            value,
-          })),
-        })),
-      ),
-    );
-    const draft = yield* execute(
-      domain,
-      Schema.Struct({
-        draftOrderCreate: Schema.Struct({
-          draftOrder: Schema.NullOr(Schema.Struct({ id: Schema.String })),
-          userErrors: UserErrors,
-        }),
-      }),
-      DRAFT_ORDER_CREATE,
-      {
-        variables: { input: { lineItems, tags: [FIXTURE_ORDER_TAG, wanted.tag] } },
-        mutation: true,
-      },
-    );
-    yield* failOnErrors(`draftOrderCreate ${wanted.tag}`, draft.draftOrderCreate.userErrors);
-    const draftId = draft.draftOrderCreate.draftOrder?.id;
-    if (draftId === undefined)
-      return yield* new StoresError({ message: `draftOrderCreate ${wanted.tag}: no draft order` });
-    const completed = yield* execute(
-      domain,
-      Schema.Struct({
-        draftOrderComplete: Schema.Struct({
-          draftOrder: Schema.NullOr(
-            Schema.Struct({
-              order: Schema.NullOr(Schema.Struct({ name: Schema.String })),
-            }),
-          ),
-          userErrors: UserErrors,
-        }),
-      }),
-      DRAFT_ORDER_COMPLETE,
-      { variables: { id: draftId }, mutation: true },
-    );
-    yield* failOnErrors(
-      `draftOrderComplete ${wanted.tag}`,
-      completed.draftOrderComplete.userErrors,
-    );
-    yield* Console.log(
-      `ok    order ${wanted.tag}: created as ${completed.draftOrderComplete.draftOrder?.order?.name ?? "?"}`,
-    );
+    const order = yield* placeOrder(domain, products, wanted, [FIXTURE_ORDER_TAG, wanted.tag]);
+    yield* Console.log(`ok    order ${wanted.tag}: created as ${order.name}`);
   }
-  yield* waitForOrders(domain);
+  yield* waitForOrders(domain, table.storeOrders);
   yield* Console.log("ok    orders: listed by the store");
 });
 
@@ -658,24 +691,6 @@ export const requireTestOrderStore = (store: string) =>
         }),
     ),
   );
-
-const DraftOrderCreated = Schema.Struct({
-  draftOrderCreate: Schema.Struct({
-    draftOrder: Schema.NullOr(Schema.Struct({ id: Schema.String })),
-    userErrors: UserErrors,
-  }),
-});
-
-const DraftOrderCompleted = Schema.Struct({
-  draftOrderComplete: Schema.Struct({
-    draftOrder: Schema.NullOr(
-      Schema.Struct({
-        order: Schema.NullOr(Schema.Struct({ id: Schema.String, name: Schema.String })),
-      }),
-    ),
-    userErrors: UserErrors,
-  }),
-});
 
 /**
  * Creates one paid order on e2e store `store`, tagged `tag`, through a completed draft order with

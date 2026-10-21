@@ -35,6 +35,8 @@
     "e2e:auth": "node scripts/shopify-admin-auth.ts",
     "test:e2e:ui": "vp exec playwright test --ui",
     "help:screenshots": "node --env-file=.env scripts/help-screenshots.ts",
+    "tts": "node scripts/tts.ts",
+    "screencast": "node --env-file=.env scripts/screencast.ts",
     "deploy:staging": "alchemy deploy --stage staging --yes",
     "cloud:reset": "node scripts/cloud-reset.ts",
     "stage-config": "alchemy deploy --config stacks/stage-config.ts",

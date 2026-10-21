@@ -60,7 +60,7 @@ import {
 } from "../src/web/components/help/pictures.ts";
 import { clickHoisted, editorFrame, hoistedEnabled } from "../test/e2e/embedded/app.ts";
 import { runCommand } from "./lib/command.ts";
-import { appFrame, awaitHydration, gotoApp } from "./lib/embedded-app.ts";
+import { appFrame, awaitHydration, gotoApp, HIDE_OVERLAYS } from "./lib/embedded-app.ts";
 import { applyFixture } from "./lib/fixture.ts";
 import {
   adminSessionFresh,
@@ -257,14 +257,6 @@ const MEMBER_SHOTS: readonly {
 /** The app's own frame in the admin document, and the editor window's. */
 const APP_IFRAME = 'iframe[src*="embedded=1"]:not([src*="chrome=window"])';
 const EDITOR_IFRAME = 'iframe[src*="chrome=window"]';
-
-/**
- * The Shopify admin overlays a merchant picture must not show: the dev mini console, the Sidekick
- * composer, the Sidekick field around it (its grey banner sits at the foot of the content area,
- * positioned absolutely, not fixed) and the toast viewport. The class stems are Shopify's
- * generated names and change without notice; {@link overlapCheck} is what holds when they do.
- */
-const HIDE_OVERLAYS = `[class*="_Composer_"], [class*="_SidekickField_"], [class*="_MiniConsole_"], #admin-next-toast-viewport { visibility: hidden !important; }`;
 
 /**
  * Marks the admin's own part of a picture (the title bar the page shape found, the editor's
@@ -739,7 +731,7 @@ const awaitFrameButton = (scope: FrameLocator | Locator, name: string) =>
  * Puts the dev fixture back, mid-run: the Orders block deletes the team Packing for its Needs a
  * team pictures, and no later picture may see that.
  */
-const loadFixture = applyFixture({ waitForInstall: false });
+const loadFixture = applyFixture({ fixture, waitForInstall: false });
 
 /**
  * The editor window's Close, the X the admin draws in the window's title bar, returning once the

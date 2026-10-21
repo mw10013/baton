@@ -8,9 +8,10 @@
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
 import * as Effect from "effect/Effect";
 
+import { fixture } from "../fixture.ts";
 import { applyFixture } from "./lib/fixture.ts";
 
-applyFixture({ waitForInstall: false }).pipe(
+applyFixture({ fixture, waitForInstall: false }).pipe(
   Effect.provide(NodeServices.layer),
   NodeRuntime.runMain,
 );

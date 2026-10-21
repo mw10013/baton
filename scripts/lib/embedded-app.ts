@@ -12,6 +12,15 @@ export const appFrame = (page: Page): FrameLocator =>
   page.frameLocator('iframe[src*="embedded=1"]:not([src*="chrome=window"])');
 
 /**
+ * CSS that hides the Shopify admin overlays a recording or picture must not show: the dev mini
+ * console, the Sidekick composer, the Sidekick field around it (its grey banner sits at the foot
+ * of the content area, positioned absolutely, not fixed) and the toast viewport. The class stems
+ * are Shopify's generated names and change without notice, so a caller that must not film an
+ * overlay checks for one too, as `help-screenshots`' overlap check does.
+ */
+export const HIDE_OVERLAYS = `[class*="_Composer_"], [class*="_SidekickField_"], [class*="_MiniConsole_"], #admin-next-toast-viewport { visibility: hidden !important; }`;
+
+/**
  * Waits until the document in `scope` is safe to interact with: the `data-hydrated` marker on
  * `<body>`, which flips in the commit that clears the body's `inert`. Playwright's actionability
  * is inert-blind, so a click inside an inert subtree passes every check and is silently
@@ -28,10 +37,14 @@ export const awaitHydration = (scope: Page | FrameLocator, timeout?: number): Pr
  * Whether it is expanded comes from the Shopify admin session the storage state was exported from, so it
  * varies between machines and runs; it is closed here rather than left to whoever opened it last.
  *
- * Expansion is read from the panel's geometry, not the toggle: the button keeps the name "Close
- * Dev Console" in both states and has no `aria-expanded`, so an unconditional click would
- * expand a collapsed console every other run. Collapsing slides the "Dev Console" heading below
- * the viewport. No heading means no console (a production-like admin), and nothing to do.
+ * Expansion is read from the panel's geometry, not the toggle: the button keeps its name in both
+ * states and has no `aria-expanded`, so an unconditional click would expand a collapsed console
+ * every other run. Collapsing slides the "Dev Console" heading below the viewport. No heading
+ * means no console (a production-like admin), and nothing to do.
+ *
+ * The toggle is found by Shopify's generated class stem: its accessible name is `hide`, which
+ * another admin button shares. Self-contained, because `scripts/browser.ts` sends its source
+ * into a browser session.
  */
 export const closeDevConsole = async (page: Page): Promise<void> => {
   const heading = page.getByRole("heading", { name: "Dev Console" }).first();
@@ -39,7 +52,7 @@ export const closeDevConsole = async (page: Page): Promise<void> => {
   const expanded = () =>
     heading.evaluate((el) => el.getBoundingClientRect().bottom < globalThis.innerHeight);
   if (!(await expanded())) return;
-  await page.getByRole("button", { name: "Close Dev Console" }).evaluate((el) => {
+  await page.locator('button[aria-label="hide"][class*="_MinimizeButton_"]').evaluate((el) => {
     (el as HTMLElement).click();
   });
   await page.waitForFunction(

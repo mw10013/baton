@@ -34,3 +34,5 @@ playwright/
 *.njsproj
 *.sln
 *.sw?
+
+/tmp/

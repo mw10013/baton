@@ -39,6 +39,7 @@ import path from "node:path";
 import process from "node:process";
 
 import { runCommand } from "./lib/command.ts";
+import { fixture } from "../fixture.ts";
 import { applyFixture } from "./lib/fixture.ts";
 import {
   adminUrl,
@@ -100,7 +101,7 @@ const openAppAndApplyFixture = Effect.gen(function* () {
   yield* step(`open ${url}`, runCommand("open", [url])).pipe(
     Effect.catch(() => Console.log(`open   ${url} in a browser signed in to Shopify`)),
   );
-  yield* applyFixture({ waitForInstall: true }).pipe(
+  yield* applyFixture({ fixture, waitForInstall: true }).pipe(
     Effect.mapError((error) => new ServerError({ message: error.message })),
   );
 });
