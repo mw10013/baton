@@ -42,6 +42,7 @@ Staging logs: use `cf o11y telemetry query` on `cloudflare-workers`, filtering `
 
 ## SQL
 - Lowercase keywords, positional parameters (the `sql` template's interpolations), never values spliced into the text.
+- Price a query or schema change at the marginal rate: rows read and rows written per call, times how often it runs. Never weigh cost against a plan's included allowance; that allowance is shared by every shop and Worker on the account.
 
 ## UI: Polaris web components
 - Layout lives only in named parts under `src/web/components/screen/`. Elsewhere, no `s-stack`, `s-grid`, `s-box` or layout props (`gap`, `padding`, …); a new shape is a new part.
