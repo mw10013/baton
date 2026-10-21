@@ -1,4 +1,5 @@
 import { expect, test } from "./fixtures.ts";
+import { E2E_SHOP } from "./shop-fixture.ts";
 
 /**
  * The Website's HTTP behavior, through the `request` fixture alone: no page, so no browser. The
@@ -28,8 +29,15 @@ test.describe("signed out", () => {
 test.describe("as a member", () => {
   test.use({ storageState: "playwright/.auth/member.json" });
 
-  test("a signed-in member's request to the member area returns HTML", async ({ request }) => {
+  test("a member of one shop is sent past Your stores to its workflows list", async ({
+    request,
+  }) => {
     const response = await request.get("/shop", { maxRedirects: 0 });
+    expect(response.headers().location).toBe(`/shop/${E2E_SHOP}/workflows`);
+  });
+
+  test("a signed-in member's request to their shop returns HTML", async ({ request }) => {
+    const response = await request.get(`/shop/${E2E_SHOP}/workflows`, { maxRedirects: 0 });
     expect(response.headers()["content-type"]).toContain("text/html");
   });
 

@@ -5,18 +5,19 @@ import { E2E_SHOP } from "./shop-fixture.ts";
 test.describe("as a member", () => {
   test.use({ storageState: "playwright/.auth/member.json" });
 
-  test("the admin side sends a member home", async ({ goto, page }) => {
+  test("the admin side sends a member of one shop to its workflows list", async ({
+    goto,
+    page,
+  }) => {
     await goto("/admin");
-    await expect(page).toHaveURL(/\/shop$/);
+    await expect(page).toHaveURL(new RegExp(`/shop/${E2E_SHOP}/workflows$`));
   });
 
-  test("the member home lists the member's one shop and opens it", async ({ goto, page }) => {
+  test("a member of one shop sees nothing about shops", async ({ goto, page }) => {
     await goto("/shop");
-    // Polaris renders the link text in a shadow root, so the links are found by accessible name.
-    await expect(page.getByRole("link", { name: /\.myshopify\.com$/ })).toHaveCount(1);
-    await page.getByRole("link", { name: E2E_SHOP }).click();
-    // The shop's root is its workflows list.
     await expect(page).toHaveURL(new RegExp(`/shop/${E2E_SHOP}/workflows$`));
+    await expect(page.getByRole("link", { name: "Help" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Your stores" })).toHaveCount(0);
   });
 });
 

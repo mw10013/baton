@@ -10,21 +10,25 @@ import { LapsedPage } from "../../../../src/web/components/LapsedPage.tsx";
 import { renderInApp } from "../../render.tsx";
 import { shopTestRegistry } from "../../shop-actor.ts";
 
+const render = async (yourStores: boolean) => {
+  const root = createRootRoute();
+  const router = createRouter({
+    routeTree: root.addChildren([
+      createRoute({
+        getParentRoute: () => root,
+        path: "/",
+        component: () => <LapsedPage shop="lapsed.myshopify.com" yourStores={yourStores} />,
+      }),
+      createRoute({ getParentRoute: () => root, path: "/shop" }),
+    ]),
+    history: createMemoryHistory({ initialEntries: ["/"] }),
+  });
+  return renderInApp(<RouterProvider router={router} />, shopTestRegistry({}));
+};
+
 describe("LapsedPage", () => {
   it("says the store's subscription is not active, who renews it, and links to Your stores", async () => {
-    const root = createRootRoute();
-    const router = createRouter({
-      routeTree: root.addChildren([
-        createRoute({
-          getParentRoute: () => root,
-          path: "/",
-          component: () => <LapsedPage shop="lapsed.myshopify.com" />,
-        }),
-        createRoute({ getParentRoute: () => root, path: "/shop" }),
-      ]),
-      history: createMemoryHistory({ initialEntries: ["/"] }),
-    });
-    const screen = await renderInApp(<RouterProvider router={router} />, shopTestRegistry({}));
+    const screen = await render(true);
     expect(
       screen.container.querySelector('s-section[heading="Subscription inactive"]'),
     ).not.toBeNull();
@@ -39,5 +43,11 @@ describe("LapsedPage", () => {
     await expect
       .element(screen.getByRole("link", { name: "Your stores" }))
       .toHaveAttribute("href", "/shop");
+  });
+
+  it("has no Your stores link for a member of this shop alone", async () => {
+    const screen = await render(false);
+    await expect.element(screen.getByText(/subscription is not active/)).toBeVisible();
+    expect(screen.getByRole("link", { name: "Your stores" }).elements()).toHaveLength(0);
   });
 });
