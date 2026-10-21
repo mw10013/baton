@@ -115,9 +115,9 @@ type SettlePlan =
 /**
  * The marked orders past which one full read costs fewer rows than the patch: the full read's
  * rows over one order's patch, from the rows-read probe (`vp run probe:rows-read`), where 2,400
- * open orders read 87,115 rows in full and one order's patch 45.
+ * open orders read 52,556 rows in full and one order's patch 25.
  */
-const PATCH_LIMIT = 1935;
+const PATCH_LIMIT = 2102;
 
 /** The plan for the state as it is now. */
 const planSettle = (state: FactsState): SettlePlan => {

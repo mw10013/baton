@@ -1,30 +1,26 @@
 /**
  * The step half of `currentTasks` as SQL: a task is current when it is
  * open and no task in an earlier step of the same run is open
- * (`WorkflowTask`). Evaluated live, so a task whose earlier step
- * is reopened leaves the workflows list again without a write. The subquery is
+ * (`WorkflowTask`), evaluated live from the tasks. The subquery is
  * `exists` and stops at its first row. One definition, interpolated as a
- * literal with the outer alias, so the workflows list and every action agree.
+ * literal with the outer alias, so every action agrees.
  *
  * **It does not test the run's state.** `currentTasks` returns nothing
  * on a run that is not open (`runIsOpen`); this predicate reads
  * the task's own run's tasks and nothing else, so on a closed run it still
  * matches the open tasks the run keeps as its record. Every caller supplies
- * the run test: the run repository's `runListItems` and the order repository's team filter
- * join `Run` with `state = 'open'`, the task guards
+ * the run test: the task guards
  * check `runIsOpen` in `requireActionable` before they ask, and
  * `getRunPage` reads it only for an open run. Block's team gate
  * (`requireCurrentTeam`) runs inside writes that refuse a run that is not
  * open. A new caller adds the run test or reads the wrong tasks. The state
- * stays out of the predicate because every caller already joins or holds the
- * run, and a second `Run` lookup per task row would be paid on the workflows list's
- * hottest query.
+ * stays out of the predicate because every caller already holds the run.
  *
- * A module of its own rather than a closure in one repository because three
- * readers depend on agreeing exactly: the member's workflows list (`runListItems`), every
- * task action's guard, and the orders index's team filter, which runs
- * inside the order repository. A second copy would drift, and a
- * merchant filter that disagrees with a worker's workflows list is worse than no filter.
+ * The list reads (the member's workflows list, the orders index's team filter and its Show
+ * counts) test `Run.currentStep` instead, this rule kept on the row by the run repository's
+ * `recomputeState` in the same statement as the run's state. They must agree with this
+ * predicate exactly: a merchant filter that disagrees with a worker's workflows list, or either
+ * with what a task action allows, is worse than no filter.
  *
  * The inner subquery binds the alias `p`. A caller must not use it for an
  * outer table it joins: SQLite resolves an unqualified inner reference

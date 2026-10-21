@@ -1996,7 +1996,7 @@ describe("OrderRepository.listOrders team issues", () => {
 
 /**
  * `ListOrdersInput.team`: the orders with a current task on the team
- * on an open run, through the same `currentWhere` the member's workflows list
+ * on an open run, through the same `Run.currentStep` the member's workflows list
  * runs on. The fixture reuses {@link seedStates}' runs and hangs tasks off them; on
  * #1003 and #1004, `run-N-0` is done and `run-N-1` is open.
  */

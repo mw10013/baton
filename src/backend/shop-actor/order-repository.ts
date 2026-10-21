@@ -31,7 +31,6 @@ import {
   TeamId,
 } from "../../domain/shop-work.ts";
 import { SYNC_STALE_MS } from "../orders-sync-constants.ts";
-import { currentWhere } from "./current-where.ts";
 import type { Transaction } from "./transaction.ts";
 
 /**
@@ -558,15 +557,15 @@ export const makeOrderRepository = (sql: SqlClient.SqlClient, transaction: Trans
 
   /**
    * `ListOrdersInput.team`, whose JSDoc carries the rules, as
-   * a `where`. The outer run is aliased `wr` because {@link currentWhere}
-   * binds `p` for the task's own run inside its subqueries (see its
-   * JSDoc).
+   * a `where`. A task is current when it is open and in its run's `currentStep`, which is
+   * `currentWhere`'s rule kept on the row (`recomputeState`), as the member's workflows list
+   * reads it: testing `currentWhere` instead re-reads a run's tasks for every task it tests.
    *
    * `+s.teamId` is SQLite's unary plus, which keeps that term from
    * choosing an index (https://www.sqlite.org/optoverview.html,
    * "Disabling index use"). Without it `RunTask_teamId_idx (teamId,
-   * doneAt)` matches two of the subquery's terms (`currentWhere`
-   * starts with `doneAt is null`) against the unique `(runId,
+   * doneAt)` matches two of the subquery's terms (`teamId` and
+   * `doneAt is null`) against the unique `(runId,
    * position)`'s one, and the planner drives from the team's open
    * tasks once per open order: open orders × the team's open tasks.
    * With it `runId` is the only indexable term on `RunTask`, so the
@@ -582,7 +581,8 @@ export const makeOrderRepository = (sql: SqlClient.SqlClient, transaction: Trans
             and wr.state = 'open'
             and wr.blockedAt is null
             and +s.teamId = ${team}
-            and ${sql.literal(currentWhere("s"))}
+            and s.step = wr.currentStep
+            and s.doneAt is null
         )`;
 
   /**
@@ -831,8 +831,8 @@ export const makeOrderRepository = (sql: SqlClient.SqlClient, transaction: Trans
    * walks `ShopOrder_open_idx`; a patch probes the primary key once per id. Every fact is then a
    * probe by the order's id, each the rule the page's own reads restate: `runs` is `listOrders`'
    * `runRows`, through `Run_orderId_state_idx`; `teams` holds the tasks `unassignedRunOf` tests,
-   * and the current ones as `teamFilterOf` finds them, by {@link currentWhere}, reading tasks by
-   * `runId`; `multiMatchItems` is its `multiMatchRows` with the run test first, the same predicate,
+   * and the current ones as {@link teamFilterOf} finds them, by the run's `currentStep`, reading
+   * tasks by `runId`; `multiMatchItems` is its `multiMatchRows` with the run test first, the same predicate,
    * which spares the workflow probe for every item that already has a run.
    *
    * Correlated scalars rather than grouped joins: on the Durable Object a `group by` over every
@@ -867,8 +867,7 @@ export const makeOrderRepository = (sql: SqlClient.SqlClient, transaction: Trans
             select json_array(
               json_group_array(distinct s.teamId),
               json_group_array(distinct s.teamId) filter (
-                where r.blockedAt is null and s.teamId is not null
-                  and ${sql.literal(currentWhere("s"))}
+                where r.blockedAt is null and s.teamId is not null and s.step = r.currentStep
               )
             )
             from Run r

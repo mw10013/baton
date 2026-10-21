@@ -476,7 +476,8 @@ export const makeRunRepository = (
    * ({@link Run}) is recomputed in the same statement, the
    * earliest task start, so the run-level checks see both at once, and so is
    * `currentStep`, the lowest step with an open task (null once every task is
-   * done), which {@link runListItems} reads in place of `currentWhere`. Every
+   * done), which {@link runListItems} and the orders index's team filter and Show counts read
+   * in place of `currentWhere`. Every
    * write that moves a task's `doneAt` calls this; `insertRun` and the close
    * set it themselves.
    *
