@@ -28,8 +28,8 @@ vp run cloud:reset --stage staging --confirm staging   # wipe D1 and Durable Obj
 ### Plans
 
 Two public plans, one per tier, each with two usage meters. Handles must match
-`Domain.PlanHandle`, `Domain.USAGE_METER_ORDER`, and `Domain.USAGE_METER_MEMBER` exactly
-(case-sensitive); tier 1 sizes must match `ENTITLEMENTS` in `src/lib/domain/Billing.ts`.
+`PlanHandle`, `USAGE_METER_ORDER`, and `USAGE_METER_MEMBER` exactly
+(case-sensitive); tier 1 sizes must match `ENTITLEMENTS` in `src/domain/billing.ts`.
 
 | Field                 | Basic                                                | Pro                                                  |
 | --------------------- | ---------------------------------------------------- | ---------------------------------------------------- |
@@ -72,5 +72,5 @@ the dev kit and dev endpoints and seeds `support@mw10013.com` as its administrat
 D1 migrations in `migrations/` or actor migrations in `src/backend/shop-actor.ts`; append migrations
 for subsequent schema changes. Do not destroy production Workers, which own Durable Object data.
 
-Production hosting and its Workers Builds trigger still require initial setup; adding stage support
-does not deploy infrastructure or connect a release branch.
+Production hosting is deployed, and administrator sign-in is verified. The production Workers
+Builds trigger and release branch still require setup.

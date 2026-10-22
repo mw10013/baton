@@ -21,9 +21,9 @@ Status: updated 2026-10-22. The owner successfully deployed the production Shopi
 - Done: Cloudflare production deployed at https://baton.mw10013.com. Chrome verified home, privacy, sign-in, and dev kit disabled.
 - Done: shared usage event handles `production-orders` and `members` created with names Production orders and Members.
 - Done (owner confirmation): both production public plans saved, `baton-basic` and `baton-pro`, with the billing runbook's prices, graduated usage tiers, 14-day trial, and `/app` redirect.
-- Pending: verify saved plans and add localized display names and top-feature descriptions in the English listing; plan billing setup and listing descriptions are separate.
+- Done: owner set display names Baton Basic and Baton Pro; added and saved five English top features for each plan, checked against README, billing runbook, code entitlements, metering rules, and platform limits.
 - Pending: install on `mw10013-production-shop-00`, choose a test subscription, and verify embedded app, order sync, admin order link, entitlements, and plan switching.
-- Pending: confirm sign-in email delivery and complete administrator sign-in.
+- Done (owner confirmation): production sign-in as `support@mw10013.com`, including email delivery and administrator access.
 - Pending: production Workers Builds/GitHub trigger and release-branch policy. Staging's `main` trigger remains unchanged; no production release branch has been created.
 - Pending: remaining App Store listing and review requirements before general merchant distribution.
 
@@ -226,3 +226,5 @@ These source links track upstream `main`, not the installed executable's version
 - 2026-10-22: published the production stage-config record, reviewed an all-create application plan, and successfully deployed the Alchemy production stack (7 resources/actions succeeded). Website: https://baton.mw10013.com; Backend remains private. Chrome verified the home page, updated privacy policy, sign-in page, dev-kit not-found response, and a sign-in request for support@mw10013.com reaching “Check your email.” Inbox delivery and completing admin sign-in are not yet verified. Command-line HTTP probes received 403 responses while Chrome rendered successfully. Shopify pricing plans, development-store install verification, and the production Workers Builds trigger remain outstanding.
 
 - 2026-10-22: prepared both pricing plans in Chrome using the billing runbook and verified meter identifiers against `src/domain/billing.ts`. Saved the shared event identifiers; the owner then confirmed saving both plan drafts. Localized listing descriptions and installation/billing verification remain pending. Shopify dashboard plan changes are external state, not Git changes.
+
+- 2026-10-22: owner confirmed production admin sign-in. Saved five plan features per tier in the English listing; Shopify showed no unsaved changes afterward. Pricing and trial descriptions agree with saved plans; inclusion counts and global limits agree with code. No App Store review submission made.
