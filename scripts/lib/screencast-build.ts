@@ -35,10 +35,26 @@ export interface PlacedClip {
   readonly durationMs: number;
 }
 
-/** Each scene's clip at the scene's start in the take, in scene order. */
+/**
+ * The part of the take the video keeps, in `raw.webm`'s milliseconds: from the first scene's
+ * opening to the last scene's end. A take recorded before scenes marked their opening keeps all of
+ * it.
+ */
+export const takeWindow = (index: SceneIndex) => {
+  const last = index.scenes.at(-1);
+  return index.openMs === undefined || last === undefined
+    ? { startMs: 0, endMs: index.durationMs }
+    : {
+        startMs: Math.round(index.openMs),
+        endMs: Math.round(Math.min(last.endMs, index.durationMs)),
+      };
+};
+
+/** Each scene's clip at the scene's start in the video, which begins `offsetMs` into the take. */
 export const placeClips = (
   marks: ReadonlyArray<SceneMark>,
   clips: ReadonlyArray<VoiceClip>,
+  offsetMs = 0,
 ): ReadonlyArray<PlacedClip> =>
   marks.map((mark) => {
     const clip = clips.find(({ id }) => id === mark.id);
@@ -46,7 +62,7 @@ export const placeClips = (
     return {
       id: mark.id,
       file: voicePath(clip.key),
-      startMs: Math.round(mark.startMs),
+      startMs: Math.round(mark.startMs - offsetMs),
       durationMs: clip.durationMs,
     };
   });
@@ -100,19 +116,22 @@ export const pictureFilter = (crop: Crop | undefined) =>
   ].join(",");
 
 /**
- * The mux's ffmpeg arguments: the take cropped and scaled to 1080p H.264, the narration as AAC.
+ * The mux's ffmpeg arguments: the take's window, cropped and scaled to 1080p H.264, the narration
+ * as AAC.
  * With no narration, as from a rehearsal, the video is silent.
  */
 export const muxArgs = (
   raw: string,
   narration: string | undefined,
   crop: Crop | undefined,
-  videoMs: number,
+  window: { readonly startMs: number; readonly endMs: number },
   output: string,
 ): ReadonlyArray<string> => [
   "-v",
   "error",
   "-y",
+  "-ss",
+  (window.startMs / 1000).toFixed(3),
   "-i",
   raw,
   ...(narration === undefined ? ["-map", "0:v"] : ["-i", narration, "-map", "0:v", "-map", "1:a"]),
@@ -131,7 +150,7 @@ export const muxArgs = (
   "-b:a",
   "192k",
   "-t",
-  (videoMs / 1000).toFixed(3),
+  ((window.endMs - window.startMs) / 1000).toFixed(3),
   "-movflags",
   "+faststart",
   output,
@@ -157,25 +176,25 @@ export const buildVideo = Effect.fn("buildVideo")(function* (spec: TakeSpec) {
     Effect.mapError((error) => new ScreencastError({ message: error.message })),
   );
   const video = index.rehearsal ? files.rehearsalVideo : files.video;
+  const window = takeWindow(index);
+  const videoMs = window.endMs - window.startMs;
   yield* Effect.promise(() => mkdir(files.out, { recursive: true }));
   if (index.rehearsal)
-    yield* runCommand("ffmpeg", [
-      ...muxArgs(files.raw, undefined, index.crop, index.durationMs, video),
-    ]);
+    yield* runCommand("ffmpeg", [...muxArgs(files.raw, undefined, index.crop, window, video)]);
   else {
     const clips = yield* readVoiceIndex(scenes, files);
-    const placed = placeClips(index.scenes, clips);
+    const placed = placeClips(index.scenes, clips, window.startMs);
     const over = overlaps(placed);
     if (over.length > 0) return yield* new ScreencastError({ message: `OVER: ${over.join("; ")}` });
-    yield* runCommand("ffmpeg", [...narrationArgs(placed, index.durationMs, files.narration)]);
+    yield* runCommand("ffmpeg", [...narrationArgs(placed, videoMs, files.narration)]);
     yield* runCommand("ffmpeg", [
-      ...muxArgs(files.raw, files.narration, index.crop, index.durationMs, video),
+      ...muxArgs(files.raw, files.narration, index.crop, window, video),
     ]);
   }
   const built = yield* durationMs(video);
-  if (Math.abs(built - index.durationMs) > FRAME_MS)
+  if (Math.abs(built - videoMs) > FRAME_MS)
     return yield* new ScreencastError({
-      message: `the video runs ${built} ms, the take ${index.durationMs} ms`,
+      message: `the video runs ${built} ms, the take's window ${videoMs} ms`,
     });
 
   const frames = yield* Effect.promise(() => mkdtemp(join(tmpdir(), "baton-screencast-")));

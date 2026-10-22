@@ -6,6 +6,7 @@ import {
   overlaps,
   type PlacedClip,
   placeClips,
+  takeWindow,
 } from "../../../../scripts/lib/screencast-build.ts";
 import { GAP_MS, paneCrop, sceneEnd } from "../../../../scripts/lib/screencast-take.ts";
 
@@ -66,7 +67,13 @@ describe("narrationArgs", () => {
 
 describe("muxArgs", () => {
   it("scales to 1080p and cuts to the take's length", () => {
-    const args = muxArgs("/raw.webm", "/n.wav", undefined, 171600, "/out.mp4");
+    const args = muxArgs(
+      "/raw.webm",
+      "/n.wav",
+      undefined,
+      { startMs: 0, endMs: 171600 },
+      "/out.mp4",
+    );
     assert.include(args, "scale=1920:1080:flags=lanczos");
     assert.include(args, "1:a");
     assert.strictEqual(args[args.indexOf("-t") + 1], "171.600");
@@ -77,14 +84,20 @@ describe("muxArgs", () => {
       "/raw.webm",
       "/n.wav",
       { x: 240, y: 56, width: 1280, height: 720 },
-      1000,
+      { startMs: 0, endMs: 1000 },
       "/out.mp4",
     );
     assert.include(args, "crop=1280:720:240:56,scale=1920:1080:flags=lanczos");
   });
 
   it("makes a silent video from a rehearsal", () => {
-    const args = muxArgs("/raw.webm", undefined, undefined, 1000, "/out.mp4");
+    const args = muxArgs(
+      "/raw.webm",
+      undefined,
+      undefined,
+      { startMs: 0, endMs: 1000 },
+      "/out.mp4",
+    );
     assert.notInclude(args, "1:a");
     assert.strictEqual(args.filter((arg) => arg === "-i").length, 1);
   });
@@ -95,5 +108,38 @@ describe("paneCrop", () => {
     const crop = paneCrop({ x: 240, y: 56, width: 1280, height: 720 });
     assert.deepStrictEqual(crop, { x: 256, y: 65, width: 1248, height: 702 });
     assert.strictEqual(crop.width * 9, crop.height * 16);
+  });
+});
+
+describe("takeWindow", () => {
+  const scenes = [
+    { id: "a", startMs: 2700, voiceMs: 5000, endMs: 10_500 },
+    { id: "b", startMs: 10_500, voiceMs: 4000, endMs: 78_300 },
+  ];
+
+  it("keeps the first scene's opening to the last scene's end", () => {
+    assert.deepStrictEqual(
+      takeWindow({ rehearsal: false, openMs: 2650.4, durationMs: 80_300, scenes }),
+      { startMs: 2650, endMs: 78_300 },
+    );
+  });
+
+  it("keeps the whole take when it has no opening mark", () => {
+    assert.deepStrictEqual(takeWindow({ rehearsal: false, durationMs: 80_300, scenes }), {
+      startMs: 0,
+      endMs: 80_300,
+    });
+  });
+
+  it("starts the video's clips at the window's start", () => {
+    const [placed] = placeClips(
+      scenes,
+      [
+        { id: "a", key: "k", durationMs: 4000 },
+        { id: "b", key: "l", durationMs: 3000 },
+      ],
+      2650,
+    );
+    assert.strictEqual(placed?.startMs, 50);
   });
 });

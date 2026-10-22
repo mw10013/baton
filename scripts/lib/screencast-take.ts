@@ -83,6 +83,11 @@ export type Crop = typeof Crop.Type;
 export const SceneIndex = Schema.Struct({
   rehearsal: Schema.Boolean,
   crop: Schema.optionalKey(Crop),
+  /**
+   * When the first scene opens, its chapter card included, in `raw.webm`. The video starts here
+   * and ends at the last scene's end: before and after is the take settling and tearing down.
+   */
+  openMs: Schema.optionalKey(Schema.Number),
   durationMs: Schema.Number,
   scenes: Schema.Array(SceneMark),
 });
@@ -304,7 +309,11 @@ const film = async (options: {
   readonly frame: TakeSpec["frame"];
   readonly voiceMs: (scene: Scene) => number;
   readonly log: (line: string) => void;
-}): Promise<{ readonly marks: ReadonlyArray<SceneMark>; readonly crop: Crop | undefined }> => {
+}): Promise<{
+  readonly marks: ReadonlyArray<SceneMark>;
+  readonly crop: Crop | undefined;
+  readonly openMs: number;
+}> => {
   const viewport = options.frame === "pane" ? PANE_VIEWPORT : VIEWPORT;
   const context = await options.browser.newContext({
     storageState: storageStatePath,
@@ -343,11 +352,17 @@ const film = async (options: {
           "outline: 2px solid #2c6ecb; border-radius: 8px; background: rgba(44, 110, 203, 0.08)",
       },
     });
+    // A pane take's cursor waits in the admin nav, outside the crop, so the video doesn't open on
+    // it; the review's waits mid-screen.
     await page.locator("body").hover({
-      position: { x: cardArea.x + cardArea.width / 2, y: cardArea.y + cardArea.height / 2 },
+      position:
+        crop === undefined
+          ? { x: cardArea.width / 2, y: cardArea.height / 2 }
+          : { x: cardArea.x / 2, y: viewport.height - 20 },
     });
     await page.waitForTimeout(800);
     const clock = () => Date.now() - (first ?? Date.now());
+    const openMs = clock();
     for (const scene of options.scenes) {
       current = scene.id;
       if (scene.chapter !== undefined) {
@@ -360,9 +375,10 @@ const film = async (options: {
         await page.waitForTimeout(CHAPTER_MS + 200);
       }
       if (scene.card !== undefined) {
-        // Park the cursor in the admin nav, outside a pane take's crop, so it doesn't sit on the card.
-        await page.mouse.move(cardArea.x / 2, viewport.height - 20);
         await drawCard(page, cardHtml(scene.card, cardArea), cardArea);
+        // Then park the cursor in the admin nav, outside a pane take's crop: its glide there is
+        // animated, and drawn first it would show the screen under the card.
+        await page.mouse.move(cardArea.x / 2, viewport.height - 20);
       }
       const startMs = clock();
       const voiceMs = options.voiceMs(scene);
@@ -376,7 +392,7 @@ const film = async (options: {
       );
     }
     await page.waitForTimeout(1000);
-    return { marks, crop };
+    return { marks, crop, openMs };
   } catch (error) {
     await page
       .screenshot({ path: resolve(dirname(options.files.raw), `failed-${current}.png`) })
@@ -428,7 +444,7 @@ export const recordTake = Effect.fn("recordTake")(function* (
 
   yield* Console.log(`Putting the dev store into the ${spec.name} take's starting shop…`);
   yield* applyFixture({ fixture: spec.start, waitForInstall: false });
-  const { marks, crop } = yield* Effect.acquireUseRelease(
+  const { marks, crop, openMs } = yield* Effect.acquireUseRelease(
     Effect.promise(() => chromium.launch({ channel: "chrome", headless: !options.headed })),
     (browser) =>
       Effect.tryPromise({
@@ -460,6 +476,7 @@ export const recordTake = Effect.fn("recordTake")(function* (
   const index: SceneIndex = {
     rehearsal: options.rehearse,
     ...(crop === undefined ? {} : { crop }),
+    openMs,
     durationMs: yield* durationMs(files.raw),
     scenes: marks,
   };
