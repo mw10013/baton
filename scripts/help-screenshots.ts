@@ -33,7 +33,7 @@
  * `--listing` shoots the App Store listing's screenshots instead ({@link LISTING_SHOTS}), into
  * `tmp/listing/` with their alt text, behind the same gates and fixture loads: each desktop shot
  * is the app pane, its title bar included, in a window where the pane is 16:9, at 2x and scaled to
- * 1600 × 900; each mobile shot is a member screen on a 9:16 phone, scaled to 900 × 1600.
+ * 1600 × 900; each mobile shot is a member screen on a 9:16 phone, set on a 1600 × 900 card.
  */
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -69,13 +69,14 @@ import { appFrame, awaitHydration, gotoApp, HIDE_OVERLAYS } from "./lib/embedded
 import { applyFixture } from "./lib/fixture.ts";
 import {
   altText,
-  DESKTOP,
   LISTING_DIR,
   LISTING_SHOTS,
   type ListingShotId,
-  MOBILE,
+  MOBILE_PHONE,
   MOBILE_SCREEN,
+  SHOT,
 } from "./lib/listing-screenshots.ts";
+import { BRAND_BLUE } from "./lib/screencast-cards.ts";
 import { measurePane, PANE_VIEWPORT, paneCrop } from "./lib/screencast-take.ts";
 import {
   adminSessionFresh,
@@ -1363,14 +1364,60 @@ const LISTING_MOBILE: Partial<Record<ListingShotId, (page: Page, shop: string) =
     memberBlocked: memberTake("blocking2"),
   };
 
-/** Scales a shot to the listing form's size; its aspect is already the form's. */
-const fitTo = (file: string, size: { readonly width: number; readonly height: number }) =>
+const px = (size: { readonly width: number; readonly height: number }) =>
+  `${String(size.width)}x${String(size.height)}`;
+
+/** Scales a desktop shot to {@link SHOT}; its aspect is already 16:9. */
+const fitDesktop = (file: string) =>
+  runCommand("magick", [file, "-filter", "Lanczos", "-resize", `${px(SHOT)}!`, file]);
+
+/**
+ * Sets a phone shot on a {@link SHOT} card: the screen scaled to {@link MOBILE_PHONE}, its corners
+ * rounded, with a drop shadow, centred on {@link BRAND_BLUE} as the feature video's cards are.
+ */
+const fitMobile = (file: string) =>
   runCommand("magick", [
     file,
     "-filter",
     "Lanczos",
     "-resize",
-    `${String(size.width)}x${String(size.height)}!`,
+    `${px(MOBILE_PHONE)}!`,
+    "(",
+    "-size",
+    px(MOBILE_PHONE),
+    "xc:black",
+    "-fill",
+    "white",
+    "-draw",
+    `roundrectangle 0,0,${String(MOBILE_PHONE.width - 1)},${String(MOBILE_PHONE.height - 1)},${String(MOBILE_PHONE.radius)},${String(MOBILE_PHONE.radius)}`,
+    ")",
+    "-alpha",
+    "off",
+    "-compose",
+    "CopyOpacity",
+    "-composite",
+    "-compose",
+    "Over",
+    "(",
+    "+clone",
+    "-background",
+    "black",
+    "-shadow",
+    "35x16+0+10",
+    ")",
+    "+swap",
+    "-background",
+    "none",
+    "-layers",
+    "merge",
+    "+repage",
+    "-background",
+    BRAND_BLUE,
+    "-gravity",
+    "center",
+    "-extent",
+    px(SHOT),
+    "-flatten",
     file,
   ]);
 
@@ -1410,7 +1457,7 @@ const shootListing = Effect.fn("shootListing")(function* (options: {
         // Inset as the feature video is, clear of the pane's rounded corners.
         await shoot(admin, file, paneCrop(await measurePane(admin)));
       });
-      yield* fitTo(file, DESKTOP);
+      yield* fitDesktop(file);
       written.push({ file });
       yield* Console.log(`wrote ${file}`);
     }
@@ -1436,7 +1483,7 @@ const shootListing = Effect.fn("shootListing")(function* (options: {
         await settle(member);
         await member.screenshot({ path: file, animations: "disabled" });
       });
-      yield* fitTo(file, MOBILE);
+      yield* fitMobile(file);
       written.push({ file });
       yield* Console.log(`wrote ${file}`);
     }

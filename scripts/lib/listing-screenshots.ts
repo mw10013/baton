@@ -1,8 +1,8 @@
 /**
  * The App Store listing's screenshots: what each shows and its alt text, in upload order.
  * `vp run help:screenshots --listing` shoots them into {@link LISTING_DIR}; the listing form
- * takes them by hand. Desktop shots are the app pane at 1600 × 900, mobile shots the member site
- * at 900 × 1600.
+ * takes them by hand. Every shot is 1600 × 900: desktop shots are the app pane, mobile shots a
+ * member screen on a phone, set on the brand blue.
  *
  * @module
  */
@@ -17,15 +17,20 @@ export const LISTING_DIR = resolve(REPO_ROOT, "tmp/listing");
 /** The listing form's limit on a screenshot's alt text. */
 export const ALT_LIMIT = 64;
 
-/** The listing form's sizes. */
-export const DESKTOP = { width: 1600, height: 900 } as const;
-export const MOBILE = { width: 900, height: 1600 } as const;
+/**
+ * The listing form's size for desktop and mobile shots alike: it refuses a portrait mobile shot
+ * ("Mobile screenshots must be 1600px by 900px").
+ */
+export const SHOT = { width: 1600, height: 900 } as const;
 
 /**
  * The phone a mobile shot is taken on: 9:16, as the form's size is, and a real phone's (an
  * iPhone 8 Plus), at its own 3x.
  */
 export const MOBILE_SCREEN = { width: 414, height: 736, scale: 3 } as const;
+
+/** The phone screen inside a mobile shot: {@link MOBILE_SCREEN} scaled to 800 px high. */
+export const MOBILE_PHONE = { width: 450, height: 800, radius: 36 } as const;
 
 export type ListingShotId =
   | "orders"

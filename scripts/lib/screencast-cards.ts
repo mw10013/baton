@@ -19,7 +19,7 @@ import type { Card } from "./screencast.ts";
 const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 
 /** The icon's own fill, so a card and the icon read as one brand. */
-const BRAND_BLUE = "#1F4FD8";
+export const BRAND_BLUE = "#1F4FD8";
 /** Single-quoted: it goes inside a double-quoted `style` attribute. */
 const FONT = `'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif`;
 /** The listing form's feature-media size, for the thumbnail and its alternative, a feature image. */
