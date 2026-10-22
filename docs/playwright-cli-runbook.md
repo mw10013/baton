@@ -63,6 +63,11 @@ Snapshots and logs can contain login tokens. Do not commit or share them unredac
 - **Stale reference:** run `ready` and use the new snapshot.
 - **Readiness failure:** inspect the page and dev logs. Try `open --headed` or Chrome MCP.
 - **Wrong data:** this drives the dev store. `vp run fixture` restores fixture data.
+- **A Baton window or page spins forever while the Worker logs 200 for its document:** check
+  whether Codex Browser Use is attached to the tab (Chrome shows "is debugging this browser").
+  It holds every page load in that tab until its site approval clears. When that approval fails
+  (for example, at a ChatGPT usage limit), loads never finish, and reloading doesn't help.
+  Retest in a tab Browser Use isn't attached to before treating it as an app bug.
 
 CLI and e2e share their iframe, hydration and console guards in
 `scripts/lib/embedded-app.ts`. The wrapper serializes those functions into `run-code`
