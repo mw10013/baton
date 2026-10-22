@@ -75,4 +75,5 @@ for subsequent schema changes. Do not destroy production Workers, which own Dura
 Production hosting is deployed, and administrator sign-in is verified. Workers Builds deploys
 staging from `main` and production from the `production` release branch. To promote an approved
 revision from main, fast-forward `production` to it and push that branch. Production preview
-builds are disabled.
+builds are disabled. Promotion, rollback and the data-compatibility rule are in the
+[production release runbook](docs/production-release-runbook.md).
