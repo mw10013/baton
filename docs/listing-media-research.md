@@ -149,16 +149,21 @@ Add `--listing` to `vp run help:screenshots` (Q8). It keeps the script's gates, 
 
 Six shots, each a different screen or state (4.4.5). Alt text is the screen's words, 64 characters at most.
 
-| #   | Screen                                                       | Alt text draft                                           | Chars |
-| --- | ------------------------------------------------------------ | -------------------------------------------------------- | ----- |
-| 1   | Orders, Making, with the status strip and two Blocked badges | Orders list with counts for Not started, Making and Made | 56    |
-| 2   | Order page #1235, three items at different steps             | Order page showing each item's step, details and notes   | 54    |
-| 3   | Workflow editor, "Embroider and fold", three steps           | Workflow editor with ordered steps assigned to teams     | 52    |
-| 4   | Workflows list with each workflow's tag and status           | Workflows list with the product tag each one matches     | 52    |
-| 5   | A team's page with its members                               | Team page listing the members who get the team's tasks   | 54    |
-| 6   | Orders, Issues                                               | Orders with blocked tasks listed under Issues            | 45    |
+As shot on 2026-10-22 (plan Step 7). **Changed** marks a change from the first draft. The alt text lives in `scripts/lib/listing-screenshots.ts`, which a unit test holds to 64 characters.
 
-Optional mobile: the member's task list, a task with Start and Done, and Block. These are the help's `member` pictures retaken at 900 × 1600 (Q9).
+| #   | Screen                                                                     | Alt text                                                   |
+| --- | -------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| 1   | Orders, Making, with the status strip                                      | Orders list with counts for Not started, Making and Made   |
+| 2   | Order page #1235, three items at different steps                           | Order page showing each item's step, details and notes     |
+| 3   | **Changed:** the "Cut, engrave and oil" page, tag and steps                | Workflow with its product tag and steps assigned to teams  |
+| 4   | Workflows list with each workflow's tag and status                         | Workflows list with the product tag each one matches       |
+| 5   | **Changed:** order #1242 with Manage open (the team page was mostly empty) | An item's workflow steps with who did each and when        |
+| 6   | Orders, Issues                                                             | Orders with blocked items listed under Issues              |
+| M1  | Member's Workflows list                                                    | A member's tasks on a phone, by order, step and team       |
+| M2  | A task with Start and Done                                                 | A task on a phone with its instructions and Start and Done |
+| M3  | A blocked item with the reason                                             | A blocked item on a phone, with the member's reason        |
+
+The mobile shots (M1–M3) are the help's member screens, shot at 900 × 1600 (Q9).
 
 The fixture's names are fictional ("Sam and Priya" in an engraving, `ana@example.com`). Before uploading, check each shot for anything that looks like a real person's email or address, and for the shop's plan or price on screen.
 

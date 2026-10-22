@@ -247,7 +247,7 @@ const makeTake = (page: Page, store: string): Take => {
  * The app pane: right of the admin nav, below the admin's top bar, to the viewport's edges. It
  * holds the app's title bar and its frame.
  */
-const measurePane = async (page: Page): Promise<Crop> => {
+export const measurePane = async (page: Page): Promise<Crop> => {
   const pane = await page.evaluate(() => {
     const nav = document.querySelector("nav")?.getBoundingClientRect();
     const main = document.querySelector("main")?.getBoundingClientRect();

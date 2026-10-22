@@ -29,6 +29,11 @@
  * section may run alone, the shots for one section are a block that starts from a bare screen
  * ({@link openScreen} gets there from anywhere) and ends with every modal cancelled and the editor
  * window closed, so the next block starts clean.
+ *
+ * `--listing` shoots the App Store listing's screenshots instead ({@link LISTING_SHOTS}), into
+ * `tmp/listing/` with their alt text, behind the same gates and fixture loads: each desktop shot
+ * is the app pane, its title bar included, in a window where the pane is 16:9, at 2x and scaled to
+ * 1600 × 900; each mobile shot is a member screen on a 9:16 phone, scaled to 900 × 1600.
  */
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -37,7 +42,7 @@ import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { readFileSync, statSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import {
@@ -63,6 +68,16 @@ import { runCommand } from "./lib/command.ts";
 import { appFrame, awaitHydration, gotoApp, HIDE_OVERLAYS } from "./lib/embedded-app.ts";
 import { applyFixture } from "./lib/fixture.ts";
 import {
+  altText,
+  DESKTOP,
+  LISTING_DIR,
+  LISTING_SHOTS,
+  type ListingShotId,
+  MOBILE,
+  MOBILE_SCREEN,
+} from "./lib/listing-screenshots.ts";
+import { measurePane, PANE_VIEWPORT, paneCrop } from "./lib/screencast-take.ts";
+import {
   adminSessionFresh,
   CHROME_PROFILE,
   exportShopifyAdminAuth,
@@ -82,6 +97,7 @@ const sectionArgument = (args: readonly string[]): string | undefined => {
 };
 
 const section = sectionArgument(process.argv.slice(2));
+const listing = process.argv.slice(2).includes("--listing");
 
 /** Whether a picture is in this run: in the `--section`, or every one without it. */
 const inSection = (name: HelpPictureName) =>
@@ -1272,16 +1288,7 @@ const shootMember = Effect.fn("shootMember")(function* (
     }),
   );
   const page = yield* attempt("Could not open a page", () => context.newPage());
-  yield* attempt(`Could not sign in as ${MEMBER}`, async () => {
-    await page.goto("/sign-in");
-    await awaitHydration(page);
-    await page.getByLabel("Email").fill(MEMBER);
-    await page.getByRole("button", { name: "Send link" }).click();
-    // The dev stage delivers the link inline, on the page.
-    await page.getByRole("link", { name: "Open link" }).click();
-    await page.waitForURL(/\/shop\//u);
-    await awaitHydration(page);
-  });
+  yield* attempt(`Could not sign in as ${MEMBER}`, () => signInMember(page));
   const written: Written[] = [];
   for (const shot of memberShots) {
     const file = fileOf(shot.name);
@@ -1294,6 +1301,151 @@ const shootMember = Effect.fn("shootMember")(function* (
     written.push({ file });
     yield* Console.log(`wrote ${file}`);
   }
+  return written;
+});
+
+/**
+ * Signs `page` in as {@link MEMBER} through the magic link the dev stage shows inline, landing on
+ * the member's shop.
+ */
+const signInMember = async (page: Page) => {
+  await page.goto("/sign-in");
+  await awaitHydration(page);
+  await page.getByLabel("Email").fill(MEMBER);
+  await page.getByRole("button", { name: "Send link" }).click();
+  await page.getByRole("link", { name: "Open link" }).click();
+  await page.waitForURL(/\/shop\//u);
+  await awaitHydration(page);
+};
+
+/** A member picture's state, from {@link MEMBER_SHOTS}, for a listing shot of the same screen. */
+const memberTake = (name: HelpPictureName) => {
+  const shot = MEMBER_SHOTS.find((each) => each.name === name);
+  if (shot === undefined) throw new Error(`no member picture ${name}`);
+  return shot.take;
+};
+
+/** Each desktop listing shot's state in the admin. */
+const LISTING_DESKTOP: Partial<Record<ListingShotId, (page: Page) => Promise<void>>> = {
+  orders: async (page) => {
+    await openScreen(page, "Orders");
+  },
+  orderPage: async (page) => {
+    await openOrder(page, ORDER_PAGE);
+  },
+  workflowPage: async (page) => {
+    await openScreen(page, "Workflows");
+    await openRow(page, "Cut, engrave and oil");
+  },
+  workflows: async (page) => {
+    await openScreen(page, "Workflows");
+  },
+  orderSteps: async (page) => {
+    await openOrder(page, orderWith("Bon appétit"));
+    const frame = appFrame(page);
+    await frame.getByRole("button", { name: "Manage" }).first().click();
+    await frame.getByRole("button", { name: "Put back", exact: true }).waitFor();
+  },
+  issues: async (page) => {
+    await openScreen(page, "Orders");
+    await appFrame(page)
+      .getByRole("button", { name: /^Issues, \d+/u })
+      .click();
+    await appFrame(page).getByText("Blocked", { exact: true }).first().waitFor();
+  },
+};
+
+/** Each mobile listing shot's state on the member site: the help's member pictures' states. */
+const LISTING_MOBILE: Partial<Record<ListingShotId, (page: Page, shop: string) => Promise<void>>> =
+  {
+    memberList: memberTake("findingYourWork1"),
+    memberTask: memberTake("recordingYourWork1"),
+    memberBlocked: memberTake("blocking2"),
+  };
+
+/** Scales a shot to the listing form's size; its aspect is already the form's. */
+const fitTo = (file: string, size: { readonly width: number; readonly height: number }) =>
+  runCommand("magick", [
+    file,
+    "-filter",
+    "Lanczos",
+    "-resize",
+    `${String(size.width)}x${String(size.height)}!`,
+    file,
+  ]);
+
+const shootListing = Effect.fn("shootListing")(function* (options: {
+  readonly shop: string;
+  readonly appURL: string;
+  readonly siteURL: string;
+}) {
+  yield* Effect.promise(() => mkdir(LISTING_DIR, { recursive: true }));
+  const browser = yield* attempt("Could not launch Chrome", () =>
+    chromium.launch({ channel: "chrome", headless: true }),
+  );
+  const written: Written[] = [];
+  try {
+    const admin = yield* attempt("Could not open Baton in the Shopify admin", async () => {
+      const context = await browser.newContext({
+        storageState: storageStatePath,
+        baseURL: options.appURL,
+        viewport: PANE_VIEWPORT,
+        deviceScaleFactor: 2,
+        colorScheme: "light",
+      });
+      const page = await context.newPage();
+      await gotoApp(page, "app/orders");
+      await page.addStyleTag({ content: HIDE_OVERLAYS });
+      return page;
+    });
+    for (const shot of LISTING_SHOTS.filter(({ kind }) => kind === "desktop")) {
+      const take = LISTING_DESKTOP[shot.id];
+      const file = path.join(LISTING_DIR, shot.file);
+      yield* attempt(`Could not shoot ${shot.id}`, async () => {
+        if (take === undefined) throw new Error("no desktop take");
+        await take(admin);
+        await parkPointer(admin);
+        await settle(admin);
+        // The pane, title bar included: no Shopify top bar or admin nav, so no Shopify mark.
+        // Inset as the feature video is, clear of the pane's rounded corners.
+        await shoot(admin, file, paneCrop(await measurePane(admin)));
+      });
+      yield* fitTo(file, DESKTOP);
+      written.push({ file });
+      yield* Console.log(`wrote ${file}`);
+    }
+    const member = yield* attempt(`Could not sign in as ${MEMBER}`, async () => {
+      const context = await browser.newContext({
+        baseURL: options.siteURL,
+        viewport: { width: MOBILE_SCREEN.width, height: MOBILE_SCREEN.height },
+        deviceScaleFactor: MOBILE_SCREEN.scale,
+        isMobile: true,
+        hasTouch: true,
+        colorScheme: "light",
+      });
+      const page = await context.newPage();
+      await signInMember(page);
+      return page;
+    });
+    for (const shot of LISTING_SHOTS.filter(({ kind }) => kind === "mobile")) {
+      const take = LISTING_MOBILE[shot.id];
+      const file = path.join(LISTING_DIR, shot.file);
+      yield* attempt(`Could not shoot ${shot.id}`, async () => {
+        if (take === undefined) throw new Error("no mobile take");
+        await take(member, options.shop);
+        await settle(member);
+        await member.screenshot({ path: file, animations: "disabled" });
+      });
+      yield* fitTo(file, MOBILE);
+      written.push({ file });
+      yield* Console.log(`wrote ${file}`);
+    }
+  } finally {
+    yield* Effect.promise(() => browser.close());
+  }
+  const alt = path.join(LISTING_DIR, "alt.txt");
+  yield* Effect.promise(() => writeFile(alt, altText(LISTING_SHOTS)));
+  written.push({ file: alt });
   return written;
 });
 
@@ -1357,7 +1509,7 @@ const helpScreenshots = Effect.fn("helpScreenshots")(function* () {
     return yield* new HelpScreenshotsError({
       message: 'shopify.app.toml has no handle = "<app handle>" line',
     });
-  if (merchantShots.length === 0 && memberShots.length === 0)
+  if (!listing && merchantShots.length === 0 && memberShots.length === 0)
     return yield* new HelpScreenshotsError({
       message: `No picture's file starts with "${String(section)}/" (--section takes a folder under ${HELP_PICTURES_PATH}).`,
     });
@@ -1378,10 +1530,13 @@ const helpScreenshots = Effect.fn("helpScreenshots")(function* () {
   }
   yield* Console.log("Loading the dev fixture…");
   yield* loadFixture;
-  const written = yield* shootAll({
+  const urls = {
     shop: `${store}.myshopify.com`,
     appURL: `https://admin.shopify.com/store/${store}/apps/${handle}/`,
     siteURL: `http://localhost:${String(port)}`,
+  };
+  const written = yield* Effect.gen(function* () {
+    return listing ? yield* shootListing(urls) : yield* shootAll(urls);
   }).pipe(
     Effect.ensuring(
       Console.log("Loading the dev fixture again…").pipe(Effect.andThen(loadFixture), Effect.orDie),
