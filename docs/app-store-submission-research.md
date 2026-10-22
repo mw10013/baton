@@ -29,9 +29,9 @@ Claims were checked against README, billing configuration, and the implemented h
 
 Corrected the prior claim that Baton runs only in Shopify admin. Merchant setup and order management are embedded; members also have a separate passwordless email sign-in flow. There is no storefront customer flow.
 
-Saved notes retain the existing fourteen-step merchant workflow and add how to test member access: provision an inbox the reviewer controls in Members, assign it to the test team, sign in at the production site using the emailed link within five minutes, then test tasks on a new paid order if the original tasks are complete.
+Saved notes are the fourteen-step merchant workflow only, generated from the screencast scenes. Their opening line says member access is optional and uses email sign-in. The member-access paragraph was removed 2026-10-22: reviewers follow the screencast and the steps, and anyone who wants the member side adds their own email under Members, as the help pages describe.
 
-The Test account response is still blank. Do not supply owner/admin credentials or incorrectly claim member access requires no account. Before submission, settle how Shopify reviewers will exercise passwordless member access and whether the self-provisioning instructions satisfy the form or additional reviewer access is needed. No shared credentials were created or disclosed.
+Test account: "My app doesn't require an account to use it" is ticked. The merchant flow needs no separate login, and no credentials are supplied.
 
 ## Four remaining listing issues
 

@@ -213,7 +213,7 @@ Unit test the timing math: scene end = start + max(act, voice) + gap, offsets ta
 ### Step 6: `instructions` and `all`
 
 - **`instructions`:**
-  - Write `testing-instructions.txt`: "No credentials are needed", then the numbered `step`s in scene order.
+  - Write `testing-instructions.txt`: the opening line (no merchant login, optional member email sign-in), then the numbered `step`s in scene order.
   - Fail over `INSTRUCTIONS_LIMIT`, printing the length.
 - **`all`:** `voice`, `record`, `build`, `instructions`, stopping at the first failure.
 

@@ -48,7 +48,7 @@ describe("instructionsText", () => {
         scene("c", "Second."),
       ]);
       assert.include(text, "1. First.\n2. Second.");
-      assert.notInclude(text, "3.");
+      assert.notInclude(text, "\n3. ");
     }),
   );
 

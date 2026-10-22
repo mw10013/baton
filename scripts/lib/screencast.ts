@@ -154,13 +154,13 @@ export class ScreencastError extends Schema.TaggedError<ScreencastError>()("Scre
 }) {}
 
 /**
- * The testing instructions: a line saying no credentials are needed, then every scene's `step`,
+ * The testing instructions: an opening line (no merchant login, optional member email sign-in), then every scene's `step`,
  * numbered in scene order. Fails over {@link INSTRUCTIONS_LIMIT}.
  */
 export const instructionsText = (scenes: ReadonlyArray<Scene>) => {
   const steps = scenes.flatMap(({ step }) => (step === undefined ? [] : [step]));
   const text = [
-    "No credentials are needed. Baton runs only in the Shopify admin, with no customer flow.",
+    "Merchant setup and order management run in Shopify admin; no separate merchant login is needed. There is no storefront customer flow. Optional member access uses email sign-in at https://baton.mw10013.com; members have no password.",
     "",
     ...steps.map((step, index) => `${index + 1}. ${step}`),
     "",
