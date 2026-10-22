@@ -1,62 +1,19 @@
-# Production Shopify configuration. Prepare as text only: do not run Shopify CLI against this
-# file to check, validate, link, build, or preview it. The first deployment is deliberate.
-#
-# The production app does not exist yet. Leave client_id empty for now; whether the initial
-# deployment populates it is unverified. Never substitute the local or staging app's client ID.
-#
-# Keep handle = "baton" fixed. It is the App Home's admin URL slug and must match production's
-# SHOPIFY_APP_HANDLE. Do not experiment with temporary handles.
-#
-# web_directories narrows Shopify CLI discovery to the repo root, preventing the legacy
-# checkout under refs/ from contributing a second backend web configuration. Keep this on
-# named configs, not shopify.app.toml, whose active-config discovery behaves differently.
-# See refs/baton-legacy/docs/shopify-web-toml-conflict-research.md.
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
-client_id = ""
+client_id = "5dbed6b0306c3bc52945dd24bd7b0ff9"
 name = "Baton"
-handle = "baton"
-application_url = "https://baton.mw10013.com"
+application_url = "https://shopify.dev/apps/default-app-home"
 embedded = true
-web_directories = ["."]
 
 [access_scopes]
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
 scopes = "read_orders,read_products"
 
 [auth]
-redirect_urls = ["https://baton.mw10013.com/api/auth"]
+redirect_urls = [ "https://shopify.dev/apps/default-app-home/api/auth" ]
 
 [webhooks]
-api_version = "2026-10"
-
-[[webhooks.subscriptions]]
-uri = "/webhooks/compliance"
-compliance_topics = ["customers/data_request", "customers/redact", "shop/redact"]
-
-[[webhooks.subscriptions]]
-uri = "/webhooks/app/scopes_update"
-topics = ["app/scopes_update"]
-
-[[webhooks.subscriptions]]
-uri = "/webhooks/app/uninstalled"
-topics = ["app/uninstalled"]
-
-[[webhooks.subscriptions]]
-uri = "/webhooks/orders"
-# `orders/updated` is not subscribed: it fires on every save of the order, for
-# any reason, and every change Baton acts on already has its own topic here.
-topics = ["orders/create", "orders/paid", "orders/cancelled", "orders/fulfilled"]
-# `updated_at` is load-bearing, not informational: Shopify debounces consecutive
-# identical trimmed payloads, so a subscription whose fields never change would
-# silently drop updates.
-include_fields = ["id", "admin_graphql_api_id", "updated_at"]
-
-[[webhooks.subscriptions]]
-uri = "/webhooks/orders"
-# `orders/edited` carries an `order_edit` object: `order_id`, no `updated_at`,
-# so the stale guard cannot apply and it always fetches. No `include_fields`:
-# the payload differs per edit, so Shopify's identical-payload debounce is not
-# a concern.
-topics = ["orders/edited"]
+api_version = "2027-01"
 
 [build]
-automatically_update_urls_on_dev = false
+automatically_update_urls_on_dev = true
