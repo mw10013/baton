@@ -60,3 +60,17 @@ Two public plans, one per tier, each with two usage meters. Handles must match
 | 3   | `Workflows and teams at no extra charge` | `Workflows and teams at no extra charge` |
 | 4   | `Billed once work starts on an order`    | `Billed once work starts on an order`    |
 | 5   | `Up to 50 members, 2,500 open orders`    | `Up to 50 members, 2,500 open orders`    |
+
+## Production
+
+The `production` stage serves `https://baton.mw10013.com` using the production Shopify app
+(`baton-work`). Its credentials come from the production stage-config record, populated from
+untracked `.env.production`; deploy that record before the application stack. Production disables
+the dev kit and dev endpoints and seeds `support@mw10013.com` as its administrator.
+
+`vp run cloud:reset` accepts staging only. Production data must be preserved: do not edit applied
+D1 migrations in `migrations/` or actor migrations in `src/backend/shop-actor.ts`; append migrations
+for subsequent schema changes. Do not destroy production Workers, which own Durable Object data.
+
+Production hosting and its Workers Builds trigger still require initial setup; adding stage support
+does not deploy infrastructure or connect a release branch.

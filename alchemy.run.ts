@@ -20,7 +20,7 @@ import { environmentOf, workerNameOf } from "./src/backend/stage.ts";
  * `SHOPIFY_APP_URL` is the real app's own URL when it has one and the Website's otherwise.
  *
  * `DEV_KIT` is `on` where the stage's environment is one whose data is disposable (`dev`, `test`,
- * `e2e`, the environments whose Backend mounts the dev procedures), and `off` on staging: the kit
+ * `e2e`, the environments whose Backend mounts the dev procedures), and `off` on deployed stages: the kit
  * page (`/dev/kit`) is not found unless it is on.
  */
 export class Website extends Cloudflare.Website.Vite<Website>()(
@@ -33,6 +33,10 @@ export class Website extends Cloudflare.Website.Vite<Website>()(
     const environment = yield* environmentOf(yield* Alchemy.Stage);
     return {
       name: workerNameOf(yield* Alchemy.Stage, "website"),
+      domain: Match.value(environment).pipe(
+        Match.when("production", () => "baton.mw10013.com"),
+        Match.orElse(() => undefined),
+      ),
       compatibility: { date: "2026-07-01", flags: ["nodejs_compat"] },
       dev,
       env: {
@@ -50,7 +54,7 @@ export class Website extends Cloudflare.Website.Vite<Website>()(
         ),
         DEV_KIT: Match.value(environment).pipe(
           Match.whenOr("dev", "test", "e2e", () => "on"),
-          Match.when("staging", () => "off"),
+          Match.whenOr("staging", "production", () => "off"),
           Match.exhaustive,
         ),
       },

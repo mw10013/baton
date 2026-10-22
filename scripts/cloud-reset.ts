@@ -34,7 +34,7 @@ import { CliError, Command, Flag } from "effect/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { fileURLToPath } from "node:url";
 
-import { Deployed, workerNameOf } from "../src/backend/stage.ts";
+import { ResettableDeployed, workerNameOf } from "../src/backend/stage.ts";
 import { runCommand } from "./lib/command.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/u, "");
@@ -168,7 +168,7 @@ const recreateTrigger = Effect.fn("recreateTrigger")(function* (trigger: Trigger
   );
 });
 
-const reset = Effect.fn("reset")(function* (stage: Deployed) {
+const reset = Effect.fn("reset")(function* (stage: ResettableDeployed) {
   const fs = yield* FileSystem.FileSystem;
   const website = workerNameOf(stage, "website");
   if (website === undefined)
@@ -190,18 +190,20 @@ const reset = Effect.fn("reset")(function* (stage: Deployed) {
 Command.make(
   "cloud-reset",
   {
-    stage: Flag.String("stage").pipe(Flag.withDescription("The deployed stage to reset")),
+    stage: Flag.String("stage").pipe(
+      Flag.withDescription("The disposable deployed stage to reset (staging only)"),
+    ),
     confirm: Flag.String("confirm").pipe(
       Flag.withDescription("The stage name again, to confirm that its data is to be deleted"),
     ),
   },
   ({ stage, confirm }) =>
     Effect.gen(function* () {
-      const deployed = yield* Schema.decodeUnknownEffect(Deployed)(stage).pipe(
+      const deployed = yield* Schema.decodeUnknownEffect(ResettableDeployed)(stage).pipe(
         Effect.mapError(
           () =>
             new ResetError({
-              message: `cloud:reset is for ${Deployed.literals.join(", ")} only, not "${stage}"`,
+              message: `cloud:reset is for ${ResettableDeployed.literals.join(", ")} only, not "${stage}"`,
             }),
         ),
       );
@@ -215,7 +217,7 @@ Command.make(
     ),
 ).pipe(
   Command.withDescription(
-    "Destroy and redeploy a deployed stage, deleting its D1 and Durable Object data, and carry its Workers Builds trigger across.",
+    "Destroy and redeploy staging, deleting its D1 and Durable Object data, and carry its Workers Builds trigger across.",
   ),
   Command.run({ version: "1.0.0" }),
   Effect.provide(NodeServices.layer),

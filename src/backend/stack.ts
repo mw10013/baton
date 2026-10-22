@@ -55,7 +55,7 @@ export class StageConfig extends Alchemy.Stack<StageConfig, StageConfigValues>()
 /**
  * The stack's state store, chosen by the stage's environment. State lives where the resources
  * live: `dev`, `test` and `e2e` run entirely in workerd and its simulators, so their state is
- * local under `.alchemy/` and goes with the checkout's local data; `staging` runs in Cloudflare,
+ * local under `.alchemy/` and goes with the checkout's local data; `staging` and `production` run in Cloudflare,
  * so its state does too. A per-developer environment that gains a resource running live under
  * `alchemy dev` (`Alchemy.remote()`, or a service with no local simulator) moves to
  * `Cloudflare.state()` when that resource lands, or its records outlive or lose the resource.
@@ -68,7 +68,7 @@ export const stageState = Layer.unwrap(
     const environment = yield* environmentOf(yield* Alchemy.Stage).pipe(Effect.orDie);
     return Match.value(environment).pipe(
       Match.whenOr("dev", "test", "e2e", () => Alchemy.localState()),
-      Match.when("staging", () => Cloudflare.state()),
+      Match.whenOr("staging", "production", () => Cloudflare.state()),
       Match.exhaustive,
     );
   }),
@@ -98,7 +98,7 @@ const shopifyCliApp = Config.all({
 
 /**
  * The real Shopify app this stage serves, chosen by the stage's environment; `None` means the
- * fakes in {@link wireBackend} stand in. `staging` reads its app from {@link StageConfig}'s record
+ * fakes in {@link wireBackend} stand in. `staging` and `production` read their apps from {@link StageConfig}'s record
  * and never from `Config`, so a stray variable in the Workers Builds environment cannot override
  * it, and a missing record fails the plan rather than falling back to the fakes; its app URL is
  * the Website's own. `dev` and `e2e` serve Shopify CLI's app under `shopify app dev` and the
@@ -111,7 +111,7 @@ export const ShopifyApp: Effect.Effect<
 > = Effect.gen(function* () {
   const environment = yield* environmentOf(yield* Alchemy.Stage).pipe(Effect.orDie);
   return yield* Match.value(environment).pipe(
-    Match.when("staging", () =>
+    Match.whenOr("staging", "production", () =>
       Effect.map(StageConfig, (record) =>
         Option.some<ShopifyAppConfig>({
           apiKey: record.SHOPIFY_API_KEY,
@@ -135,7 +135,7 @@ type ShopifyPartnerBinding = {
 
 /**
  * The Partner values ({@link ShopifyPartnerConfig}) this stage binds, chosen by its environment as
- * {@link ShopifyApp} chooses the app: `staging` from {@link StageConfig}'s record; `dev` and `e2e`
+ * {@link ShopifyApp} chooses the app: `staging` and `production` from {@link StageConfig}'s record; `dev` and `e2e`
  * from the checkout's `.env` (Alchemy loads it), and the fakes when they are absent (a bare
  * `alchemy destroy`), where a Partner call then fails and the gate answers an error, never a
  * subscription; `test` always the fakes ({@link SHOPIFY_PARTNER_CONFIG_FAKE}), which the test
@@ -152,7 +152,7 @@ const shopifyPartnerBinding: Effect.Effect<
     SHOPIFY_PARTNER_API_TOKEN: Redacted.make(SHOPIFY_PARTNER_CONFIG_FAKE.SHOPIFY_PARTNER_API_TOKEN),
   };
   return yield* Match.value(environment).pipe(
-    Match.when("staging", () =>
+    Match.whenOr("staging", "production", () =>
       Effect.map(StageConfig, (record): ShopifyPartnerBinding => ({
         SHOPIFY_APP_HANDLE: record.SHOPIFY_APP_HANDLE,
         SHOPIFY_PARTNER_ORG_ID: record.SHOPIFY_PARTNER_ORG_ID,
@@ -214,16 +214,16 @@ export const wireBackend = Effect.fn("wireBackend")(function* (
   yield* backend.bind("ShopifyPartner", { env: yield* shopifyPartnerBinding });
   const environment = yield* environmentOf(yield* Alchemy.Stage).pipe(Effect.orDie);
   // The dev procedures replace and age a shop's data, so only the per-developer environments,
-  // whose data is disposable, mount them; staging never does.
+  // whose data is disposable, mount them; deployed stages never do.
   yield* Match.value(environment).pipe(
     Match.whenOr("dev", "test", "e2e", () => backend.bind("Dev", { env: { DEV_ENDPOINT: "on" } })),
-    Match.when("staging", () => Effect.void),
+    Match.whenOr("staging", "production", () => Effect.void),
     Match.exhaustive,
   );
   // Staging alone logs every orders counts read at info, to measure how often one is cold.
   yield* Match.value(environment).pipe(
     Match.when("staging", () => backend.bind("OrderFactsLog", { env: { ORDER_FACTS_LOG: "on" } })),
-    Match.whenOr("dev", "test", "e2e", () => Effect.void),
+    Match.whenOr("dev", "test", "e2e", "production", () => Effect.void),
     Match.exhaustive,
   );
 });

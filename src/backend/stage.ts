@@ -1,5 +1,5 @@
 /**
- * An environment is a role (`dev`, `test`, `e2e`, `staging`); a stage is one copy of the stack in
+ * An environment is a role (`dev`, `test`, `e2e`, `staging`, `production`); a stage is one copy of the stack in
  * an environment. Never shortened to `env`, which already means `.env`, `process.env` and a
  * Worker's bindings.
  *
@@ -12,16 +12,19 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
-/** The environments with one stage per developer and checkout; `staging` is shared. */
+/** The environments with one stage per developer and checkout; deployed stages are shared. */
 export const PerDeveloper = Schema.Literals(["dev", "test", "e2e"]);
 export type PerDeveloper = typeof PerDeveloper.Type;
 
 /**
  * The environments deployed to Cloudflare, each a single stage named after the environment.
- * `production` joins when it is designed.
  */
-export const Deployed = Schema.Literals(["staging"]);
+export const Deployed = Schema.Literals(["staging", "production"]);
 export type Deployed = typeof Deployed.Type;
+
+/** Only disposable deployed data may be destroyed by the reset command. Production is excluded. */
+export const ResettableDeployed = Schema.Literals(["staging"]);
+export type ResettableDeployed = typeof ResettableDeployed.Type;
 
 export const Environment = Schema.Literals([...PerDeveloper.literals, ...Deployed.literals]);
 export type Environment = typeof Environment.Type;
@@ -143,7 +146,6 @@ const isDeployed = Schema.is(Deployed);
  * stage's is its first part, and a {@link TestFileStage} is `test`. Any other stage fails rather
  * than falling back: an environment not listed in {@link Environment} is one nobody has thought
  * through (its seed, its state store, its policy).
- * `live` and `production` are added when they are designed.
  */
 export const environmentOf = (stage: string): Effect.Effect<Environment, UnknownStage> =>
   isDeployed(stage)

@@ -128,9 +128,8 @@ const CLOSE_HANDSHAKE_WAIT = "1 second";
  * (shops, members, teams) lives in D1; this store points into it by id, never the reverse, and no
  * foreign key crosses the two.
  *
- * While prototyping `0001_init` is the only migration and is edited in place; a schema change is
- * applied by resetting (`vp run db:reset`, `vp run cloud:reset`), which deletes every actor's
- * storage, never by a second migration.
+ * Production preserves migration history: leave applied migrations unchanged and append new
+ * migrations for schema changes. Resetting disposable stages cannot migrate production data.
  *
  * One statement per `sql` call: the unit tests run these migrations under
  * `@effect/sql-sqlite-node`, which prepares each call as one statement and silently drops every

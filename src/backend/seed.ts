@@ -17,6 +17,7 @@ export const seedFileFor = Match.type<Environment>().pipe(
   Match.when("test", () => "./seed/test.sql"),
   Match.when("e2e", () => "./seed/e2e.sql"),
   Match.when("staging", () => "./seed/staging.sql"),
+  Match.when("production", () => "./seed/production.sql"),
   Match.exhaustive,
 );
 

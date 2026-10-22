@@ -26,20 +26,20 @@ Status: updated 2026-10-22. The owner successfully deployed the production Shopi
 
 ## Current repository evidence
 
-| Area | Current behavior | Production work needed |
-| --- | --- | --- |
-| Stage model | `src/backend/stage.ts` accepts only `staging` as a deployed stage; unknown stages fail | Add production explicitly and resolve every exhaustive environment match |
-| Infrastructure | `alchemy.run.ts` deploys the Website and Backend together; Backend has no public URL | Keep the service binding architecture; add the domain to production's Website |
-| Names | Deployed Workers use `baton-<worker>-<stage>` | Preserve stable names: `baton-website-production`, `baton-backend-production` |
-| State | `stageState` uses Cloudflare state for staging and local state for disposable environments | Use Cloudflare state for production, isolated by stage |
-| Credentials | Deployed app credentials and Partner settings come from the separate `baton-stage-config` stack | Publish a production record before deploying the application |
-| Runtime policy | Staging disables dev endpoints and the dev kit; enables order-facts diagnostic logging | Disable dev endpoints and kit in production; choose diagnostic logging deliberately |
-| Seed | `seedFileFor` has an explicit file per environment; staging seeds one admin | Choose production admin identity and add its idempotent seed; no fixture shops or orders |
-| Destructive reset | `scripts/cloud-reset.ts` accepts the `Deployed` schema | Restrict reset before extending that schema, so production cannot become resettable by accident |
-| Migrations | D1 and actor schemas are still developed by editing initial migrations and resetting | Freeze initial migrations at launch; use forward migrations for both stores afterward |
-| Shopify config | Local and staging TOMLs exist; staging pins `baton-staging` | Add `shopify.app.production.toml` without changing the other app identities |
-| Extension | `extensions/baton-order-link/shopify.extension.toml` contains the order admin link and a pinned UID | Include it in the initial release; confirm multi-app identity handling before release without production CLI experiments |
-| Billing | Partner API reads subscription handles; App Events API receives usage | Configure production plans and app-specific credentials; reuse existing billing implementation |
+| Area              | Current behavior                                                                                    | Production work needed                                                                                                   |
+| ----------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Stage model       | `src/backend/stage.ts` accepts only `staging` as a deployed stage; unknown stages fail              | Add production explicitly and resolve every exhaustive environment match                                                 |
+| Infrastructure    | `alchemy.run.ts` deploys the Website and Backend together; Backend has no public URL                | Keep the service binding architecture; add the domain to production's Website                                            |
+| Names             | Deployed Workers use `baton-<worker>-<stage>`                                                       | Preserve stable names: `baton-website-production`, `baton-backend-production`                                            |
+| State             | `stageState` uses Cloudflare state for staging and local state for disposable environments          | Use Cloudflare state for production, isolated by stage                                                                   |
+| Credentials       | Deployed app credentials and Partner settings come from the separate `baton-stage-config` stack     | Publish a production record before deploying the application                                                             |
+| Runtime policy    | Staging disables dev endpoints and the dev kit; enables order-facts diagnostic logging              | Disable dev endpoints and kit in production; choose diagnostic logging deliberately                                      |
+| Seed              | `seedFileFor` has an explicit file per environment; staging seeds one admin                         | Choose production admin identity and add its idempotent seed; no fixture shops or orders                                 |
+| Destructive reset | `scripts/cloud-reset.ts` accepts the `Deployed` schema                                              | Restrict reset before extending that schema, so production cannot become resettable by accident                          |
+| Migrations        | D1 and actor schemas are still developed by editing initial migrations and resetting                | Freeze initial migrations at launch; use forward migrations for both stores afterward                                    |
+| Shopify config    | Local and staging TOMLs exist; staging pins `baton-staging`                                         | Add `shopify.app.production.toml` without changing the other app identities                                              |
+| Extension         | `extensions/baton-order-link/shopify.extension.toml` contains the order admin link and a pinned UID | Include it in the initial release; confirm multi-app identity handling before release without production CLI experiments |
+| Billing           | Partner API reads subscription handles; App Events API receives usage                               | Configure production plans and app-specific credentials; reuse existing billing implementation                           |
 
 ### Bang reference
 
@@ -101,15 +101,15 @@ Once the creation behavior is understood and the owner agrees to the concrete pr
 
 Current pricing, for orientation:
 
-| Setting | Basic | Pro |
-| --- | --- | --- |
-| Plan handle | `baton-basic` | `baton-pro` |
-| Base price | $29 monthly | $79 monthly |
-| Trial | 14 days | 14 days |
+| Setting             | Basic                           | Pro                               |
+| ------------------- | ------------------------------- | --------------------------------- |
+| Plan handle         | `baton-basic`                   | `baton-pro`                       |
+| Base price          | $29 monthly                     | $79 monthly                       |
+| Trial               | 14 days                         | 14 days                           |
 | `production-orders` | First 200 free; then $0.12 each | First 1,500 free; then $0.05 each |
-| `members` | First 3 free; then $12 each | First 10 free; then $7 each |
-| Meter pricing | Graduated tiers, cost per unit | Graduated tiers, cost per unit |
-| Welcome link | `/app` | `/app` |
+| `members`           | First 3 free; then $12 each     | First 10 free; then $7 each       |
+| Meter pricing       | Graduated tiers, cost per unit  | Graduated tiers, cost per unit    |
+| Welcome link        | `/app`                          | `/app`                            |
 
 Use monthly billing, both meters on each plan, and the exact handles expected by `src/domain/billing.ts`. Add descriptions for every published locale so plans appear. Leave Shopify's built-in private test plan untouched. Do not add or re-handle meters after subscriptions exist without a migration.
 
@@ -207,3 +207,5 @@ Additional primary sources:
 These source links track upstream `main`, not the installed executable's version. Match the implementation to the installed package by reading package metadata/source before relying on a final command procedure; do not run the executable to investigate production.
 
 - 2026-10-22: owner confirmed successful production Shopify deployment using `baton-work`. Next: production hosting implementation, credentials, and Shopify pricing plans. Cloudflare production is not yet deployed.
+
+- 2026-10-22: implemented local production stage support, custom domain, Cloudflare state and credentials wiring, admin seed, disabled dev tooling and diagnostic order-facts logging, and staging-only reset validation. Applied migrations must now be preserved. No infrastructure deployed; production credentials, plans, and build trigger remain outstanding.
