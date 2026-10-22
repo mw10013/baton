@@ -72,5 +72,7 @@ the dev kit and dev endpoints and seeds `support@mw10013.com` as its administrat
 D1 migrations in `migrations/` or actor migrations in `src/backend/shop-actor.ts`; append migrations
 for subsequent schema changes. Do not destroy production Workers, which own Durable Object data.
 
-Production hosting is deployed, and administrator sign-in is verified. The production Workers
-Builds trigger and release branch still require setup.
+Production hosting is deployed, and administrator sign-in is verified. Workers Builds deploys
+staging from `main` and production from the `production` release branch. To promote an approved
+revision from main, fast-forward `production` to it and push that branch. Production preview
+builds are disabled.

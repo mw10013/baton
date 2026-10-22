@@ -24,7 +24,7 @@ Status: updated 2026-10-22. The owner successfully deployed the production Shopi
 - Done: owner set display names Baton Basic and Baton Pro; added and saved five English top features for each plan, checked against README, billing runbook, code entitlements, metering rules, and platform limits.
 - Pending: install on `mw10013-production-shop-00`, choose a test subscription, and verify embedded app, order sync, admin order link, entitlements, and plan switching.
 - Done (owner confirmation): production sign-in as `support@mw10013.com`, including email delivery and administrator access.
-- Pending: production Workers Builds/GitHub trigger and release-branch policy. Staging's `main` trigger remains unchanged; no production release branch has been created.
+- Configured: owner explicitly authorized branch `production` as an exception to AGENTS.md. Production Website now watches `mw10013/baton` branch `production`; staging continues watching `main`. Production preview builds are disabled. First push-triggered production build verification is in progress.
 - Pending: remaining App Store listing and review requirements before general merchant distribution.
 
 ## Confirmed decisions and constraints
@@ -228,3 +228,5 @@ These source links track upstream `main`, not the installed executable's version
 - 2026-10-22: prepared both pricing plans in Chrome using the billing runbook and verified meter identifiers against `src/domain/billing.ts`. Saved the shared event identifiers; the owner then confirmed saving both plan drafts. Localized listing descriptions and installation/billing verification remain pending. Shopify dashboard plan changes are external state, not Git changes.
 
 - 2026-10-22: owner confirmed production admin sign-in. Saved five plan features per tier in the English listing; Shopify showed no unsaved changes afterward. Pricing and trial descriptions agree with saved plans; inclusion counts and global limits agree with code. No App Store review submission made.
+
+- 2026-10-22: pushed main at `4d0c276` and observed its staging build start. CF CLI Builds API returned 401 Invalid token, so configured production through Chrome. Created/pushed release branch `production` with explicit owner authorization; connected production Website to it using deploy command `pnpm exec vp exec alchemy deploy --stage production --yes`, no separate build command, repo root `/`, existing Workers Builds token, and previews disabled. Testing with a subsequent documentation commit push.
