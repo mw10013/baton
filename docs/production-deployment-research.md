@@ -1,6 +1,6 @@
 # Production deployment research
 
-Status: updated 2026-10-22. The owner successfully deployed the production Shopify configuration with handle `baton-work` after Shopify rejected `baton` as non-unique. Cloudflare production has not been deployed. Earlier sequencing below is retained as research history, not current execution instructions.
+Status: updated 2026-10-22. The owner successfully deployed the production Shopify configuration with handle `baton-work` after Shopify rejected `baton` as non-unique. Cloudflare production was deployed successfully on 2026-10-22. Earlier sequencing below is retained as research history, not current execution instructions.
 
 ## Production app identity and current status
 
@@ -10,9 +10,22 @@ Status: updated 2026-10-22. The owner successfully deployed the production Shopi
 - Dev Dashboard organization ID: `130059740`; this is distinct from the Partner organization ID used by Baton's Partner API configuration.
 - [Partner overview](https://partners.shopify.com/2798461/apps/438449864705/overview).
 - [Dev Dashboard](https://dev.shopify.com/dashboard/130059740/apps/438449864705).
-- These public IDs are recorded in untracked `.env.production`. The runtime handle is `baton-work`. Production secrets are still outstanding; the file is not a complete deployable stage configuration.
+- These public IDs are recorded in untracked `.env.production`. The runtime handle is `baton-work`. Production credentials are configured privately and the stage-config record has been published. Secrets remain untracked and must never be copied into this document.
 - `baton` was rejected as non-unique. Treat it as unavailable for this release. Dashboard inspection did not expose this app's current App Home handle; there is no evidence that it owns `baton`. No automatic handle substitutions or app recreation.
 - Local display name is now `Baton Dev`; the owner deployed that rename. Production display name remains `Baton`.
+
+## Current launch checklist (2026-10-22)
+
+- Done: production Shopify configuration deployed with handle `baton-work`; local app renamed `Baton Dev`.
+- Done: production code committed as `3505dc1`; production credentials published to the stage-config stack.
+- Done: Cloudflare production deployed at https://baton.mw10013.com. Chrome verified home, privacy, sign-in, and dev kit disabled.
+- Done: shared usage event handles `production-orders` and `members` created with names Production orders and Members.
+- Done (owner confirmation): both production public plans saved, `baton-basic` and `baton-pro`, with the billing runbook's prices, graduated usage tiers, 14-day trial, and `/app` redirect.
+- Pending: verify saved plans and add localized display names and top-feature descriptions in the English listing; plan billing setup and listing descriptions are separate.
+- Pending: install on `mw10013-production-shop-00`, choose a test subscription, and verify embedded app, order sync, admin order link, entitlements, and plan switching.
+- Pending: confirm sign-in email delivery and complete administrator sign-in.
+- Pending: production Workers Builds/GitHub trigger and release-branch policy. Staging's `main` trigger remains unchanged; no production release branch has been created.
+- Pending: remaining App Store listing and review requirements before general merchant distribution.
 
 ## Confirmed decisions and constraints
 
@@ -209,3 +222,7 @@ These source links track upstream `main`, not the installed executable's version
 - 2026-10-22: owner confirmed successful production Shopify deployment using `baton-work`. Next: production hosting implementation, credentials, and Shopify pricing plans. Cloudflare production is not yet deployed.
 
 - 2026-10-22: implemented local production stage support, custom domain, Cloudflare state and credentials wiring, admin seed, disabled dev tooling and diagnostic order-facts logging, and staging-only reset validation. Applied migrations must now be preserved. No infrastructure deployed; production credentials, plans, and build trigger remain outstanding.
+
+- 2026-10-22: published the production stage-config record, reviewed an all-create application plan, and successfully deployed the Alchemy production stack (7 resources/actions succeeded). Website: https://baton.mw10013.com; Backend remains private. Chrome verified the home page, updated privacy policy, sign-in page, dev-kit not-found response, and a sign-in request for support@mw10013.com reaching “Check your email.” Inbox delivery and completing admin sign-in are not yet verified. Command-line HTTP probes received 403 responses while Chrome rendered successfully. Shopify pricing plans, development-store install verification, and the production Workers Builds trigger remain outstanding.
+
+- 2026-10-22: prepared both pricing plans in Chrome using the billing runbook and verified meter identifiers against `src/domain/billing.ts`. Saved the shared event identifiers; the owner then confirmed saving both plan drafts. Localized listing descriptions and installation/billing verification remain pending. Shopify dashboard plan changes are external state, not Git changes.
