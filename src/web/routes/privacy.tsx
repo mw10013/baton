@@ -6,7 +6,7 @@ import { Things } from "../components/screen/Things.tsx";
 const collectItems = [
   "Shopify shop domain and Shopify shop identifier.",
   "Shopify authentication details that keep the app securely connected to your store, including the permissions you granted.",
-  "Orders and their line items, to the extent Baton needs them to run production: order number, order dates, payment and fulfilment status, order tags, the order note, custom attributes, line-item title, variant, SKU, quantities, product identifier, and product tags.",
+  "Orders and their line items needed to manage production: order identifiers and number, order dates, payment, cancellation and fulfilment status, order notes, line-item titles, variants, SKUs, quantities, customization fields, and product tags.",
   "Team member accounts a merchant creates in Baton: name, email address, and sign-in details.",
   "Technical information generated when the app is used, such as request metadata, error logs, and security/debugging information.",
   "Information merchants provide when contacting support, such as email address and message contents.",
@@ -55,7 +55,7 @@ function RouteComponent() {
         Baton
       </s-link>
       <Things>
-        <s-text tone="neutral">Last updated: October 19, 2026</s-text>
+        <s-text tone="neutral">Last updated: October 22, 2026</s-text>
         <s-paragraph>
           Baton is a Shopify admin app. This Privacy Policy explains what information Baton
           collects, how we use it, and how merchants can contact us about privacy requests.
@@ -108,8 +108,9 @@ function RouteComponent() {
       </PolicySection>
       <PolicySection heading="Data Retention And Deletion">
         <s-paragraph>
-          We keep app data for as long as needed to provide Baton and for legitimate operational,
-          security, legal, or compliance purposes.
+          Baton retains orders and their production runs for up to 365 days from the order’s
+          processed date. Older orders and their runs are removed in batches during order syncs and
+          webhook processing. Other app data is retained as needed to provide the service.
         </s-paragraph>
         <s-paragraph>
           When you uninstall Baton, we delete your store's app session and related app data.
