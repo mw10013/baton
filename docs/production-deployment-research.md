@@ -1,12 +1,24 @@
 # Production deployment research
 
-Status: research, 2026-10-21. Production has not been created or deployed. This document records decisions, evidence, proposed sequencing, and unresolved questions; it is not authorization to deploy.
+Status: updated 2026-10-22. The owner successfully deployed the production Shopify configuration with handle `baton-work` after Shopify rejected `baton` as non-unique. Cloudflare production has not been deployed. Earlier sequencing below is retained as research history, not current execution instructions.
+
+## Production app identity and current status
+
+- Partner organization ID: `2798461` (shared with the other apps).
+- Partner app ID: `438449864705`.
+- Client ID: `5dbed6b0306c3bc52945dd24bd7b0ff9`.
+- Dev Dashboard organization ID: `130059740`; this is distinct from the Partner organization ID used by Baton's Partner API configuration.
+- [Partner overview](https://partners.shopify.com/2798461/apps/438449864705/overview).
+- [Dev Dashboard](https://dev.shopify.com/dashboard/130059740/apps/438449864705).
+- These public IDs are recorded in untracked `.env.production`. The runtime handle is `baton-work`. Production secrets are still outstanding; the file is not a complete deployable stage configuration.
+- `baton` was rejected as non-unique. Treat it as unavailable for this release. Dashboard inspection did not expose this app's current App Home handle; there is no evidence that it owns `baton`. No automatic handle substitutions or app recreation.
+- Local display name is now `Baton Dev`; the owner deployed that rename. Production display name remains `Baton`.
 
 ## Confirmed decisions and constraints
 
 - Production URL: **https://baton.mw10013.com**. The owner controls `mw10013.com`.
-- Production Shopify app name: **Baton**. The app does **not** exist yet.
-- Required Shopify App Home handle: **`baton`**. The owner reports that handle mistakes have previously caused the desired global handle to be lost.
+- Production Shopify app name: **Baton**. The app now exists; see the identity record above.
+- Production Shopify App Home handle: **`baton-work`**, successfully deployed by the owner. The original preference `baton` was rejected as non-unique; preserve the new handle.
 - **Do not run Shopify CLI to test or validate the production configuration.** Do not run production `app dev`, link, pull, info, validation, build, or exploratory deployment commands. Prepare and review the file as text. The initial production Shopify deployment is to happen once, deliberately, after preparation is complete.
 - Do not experiment with temporary handle changes or assign `baton` to another app. Do not promise that the handle is available: availability and Shopify's reservation behavior have not been established.
 - `main` already deploys staging through Cloudflare Workers Builds; preserve that connection.
@@ -107,7 +119,7 @@ Prepare untracked `.env.production` privately with all fields required by `Stage
 
 - `SHOPIFY_API_KEY` (the production client ID)
 - `SHOPIFY_API_SECRET`
-- `SHOPIFY_APP_HANDLE=baton`
+- `SHOPIFY_APP_HANDLE=baton-work`
 - `SHOPIFY_PARTNER_ORG_ID`
 - `SHOPIFY_PARTNER_APP_ID`
 - `SHOPIFY_PARTNER_API_TOKEN` (Partner API client with Manage apps permission)
@@ -127,14 +139,14 @@ After code and configuration review, publish the production stage-config record,
 
 ### 6. Review and perform the initial Shopify release
 
-The final `shopify.app.production.toml` must contain the actual production client ID, `name = "Baton"`, `handle = "baton"`, `application_url = "https://baton.mw10013.com"`, and `embedded = true`.
+The final `shopify.app.production.toml` must contain the actual production client ID, `name = "Baton"`, `handle = "baton-work"`, `application_url = "https://baton.mw10013.com"`, and `embedded = true`.
 
 - Redirect URL: `https://baton.mw10013.com/api/auth`.
 - Mirror staging's scopes, webhook topics, API version, payload fields, and compliance subscriptions at implementation time.
 - Keep `[build].automatically_update_urls_on_dev = false`.
 - Preserve the staging config's documented `web_directories = ["."]` discovery workaround; review its cross-config behavior before adding the file.
 - Include the order-link extension with its correct identity; do not regenerate its UID speculatively.
-- Confirm the app's client ID and dashboard identity match the production stage-config record; confirm the runtime handle and TOML handle both equal `baton`.
+- Confirm the app's client ID and dashboard identity match the production stage-config record; confirm the runtime handle and TOML handle both equal `baton-work`.
 - Review the complete file as text. No production CLI validation, linking, dev session, or trial deploy.
 - Perform the single initial Shopify deployment only when the reviewed release is ready and the owner authorizes it. If Shopify reports an unavailable handle or another unexpected identity issue, stop and inspect; do not automatically change handles or create replacement apps.
 
@@ -193,3 +205,5 @@ Additional primary sources:
 - [CLI creation mutation](https://github.com/Shopify/cli/blob/main/packages/app/src/cli/api/graphql/app-management/generated/create-app.ts) — `initialVersion` input.
 
 These source links track upstream `main`, not the installed executable's version. Match the implementation to the installed package by reading package metadata/source before relying on a final command procedure; do not run the executable to investigate production.
+
+- 2026-10-22: owner confirmed successful production Shopify deployment using `baton-work`. Next: production hosting implementation, credentials, and Shopify pricing plans. Cloudflare production is not yet deployed.

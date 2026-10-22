@@ -4,7 +4,7 @@
 # The client_id identifies the production app created on Shopify. Preserve it across deployments;
 # never substitute the local or staging app's client ID.
 #
-# Keep handle = "baton" fixed. It is the App Home's admin URL slug and must match production's
+# Keep handle = "baton-work" fixed. It is the App Home's admin URL slug and must match production's
 # SHOPIFY_APP_HANDLE. Do not experiment with temporary handles.
 #
 # web_directories narrows Shopify CLI discovery to the repo root, preventing the legacy
@@ -14,7 +14,7 @@
 
 client_id = "5dbed6b0306c3bc52945dd24bd7b0ff9"
 name = "Baton"
-handle = "baton"
+handle = "baton-work"
 application_url = "https://baton.mw10013.com"
 embedded = true
 web_directories = ["."]
