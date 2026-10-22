@@ -5,10 +5,14 @@ import {
   INSTRUCTIONS_LIMIT,
   instructionsText,
   type Scene,
+  takeFiles,
   voiceKey,
 } from "../../../../scripts/lib/screencast.ts";
 import { SpeechText } from "../../../../scripts/lib/tts.ts";
 import { SCENES } from "../../../../scripts/screencast-scenes.ts";
+import { BRAND_CARD, FEATURE_SCENES } from "../../../../scripts/feature-video-scenes.ts";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 
@@ -80,4 +84,40 @@ describe("SCENES", () => {
       yield* instructionsText(SCENES);
     }),
   );
+});
+
+describe("FEATURE_SCENES", () => {
+  it("has unique ids", () => {
+    assert.strictEqual(new Set(FEATURE_SCENES.map(({ id }) => id)).size, FEATURE_SCENES.length);
+  });
+
+  it("has lines the voice accepts, with no semicolons", () => {
+    for (const { id, say } of FEATURE_SCENES) {
+      assert.isTrue(Option.isSome(Schema.decodeUnknownOption(SpeechText)(say)), id);
+      assert.notInclude(say, ";", id);
+    }
+  });
+
+  it("shows only help pictures that exist", () => {
+    for (const { id, card } of FEATURE_SCENES)
+      if (card?._tag === "Phones")
+        for (const file of card.files)
+          assert.isTrue(existsSync(resolve("public/assets/help", file)), `${id}: ${file}`);
+  });
+
+  it("says the brand line word for word at the end", () => {
+    assert.include(
+      FEATURE_SCENES.at(-1)?.say ?? "",
+      BRAND_CARD._tag === "Title" ? BRAND_CARD.line : "",
+    );
+  });
+});
+
+describe("takeFiles", () => {
+  it("keeps the review's files where they were", () => {
+    const files = takeFiles("/tmp/screencast", "baton-review");
+    assert.strictEqual(files.raw, "/tmp/screencast/raw.webm");
+    assert.strictEqual(files.video, "/tmp/screencast/out/baton-review.mp4");
+    assert.strictEqual(files.rehearsalVideo, "/tmp/screencast/out/baton-review-rehearsal.mp4");
+  });
 });

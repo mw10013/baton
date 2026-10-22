@@ -78,6 +78,7 @@ Write the checked narration into research §3.2, mark every word that changed, a
 - `recordTake`: the fixture before the take becomes a parameter. The review take keeps `screencastFixture`. The feature take loads the dev fixture. Both load the dev fixture after.
 - `Scene` gains an optional `card`: `{ title, line }` for a title card, or `{ phones: [file, file, file] }` for the member card. While the scene plays, the take draws the card over the whole top document, then removes it. Build the HTML from Baton's icon and Polaris type on a solid background, with no Shopify marks.
 - Start by checking A3 with a one-scene take. If the screencast doesn't film the overlay, open the card in a second page and record it separately, then join the two in `build`. Record which in §7.
+- The feature take crops to the app pane, title bar included: size the window so the pane is 16:9, and crop in `build` before scaling to 1080p. Cards still cover the whole frame. The review take is unchanged.
 - The voice cache is shared by both takes. Keyed by text, a line can't collide.
 - Unit tests: the flag picks the right table and folder, and a scene with a card validates.
 
@@ -128,6 +129,12 @@ Show the user the video, thumbnail, screenshots and alt text. Fill §7.
 The video, thumbnail, screenshots and alt text are in `tmp/`, the user has seen them, and §7 is filled in.
 
 ## 7. Deviations and issues
+
+- **Step 1, 2026-10-22.** The dev server had run 40 hours and its quick tunnel had expired. Restarted with `vp run dev:stop` and `vp run dev`, then checked every scene live (`.logs/verify/feature-script-2`). Results are in research §3.2.
+- **Crop the feature take to the app pane.** Found in Step 1: the full admin shows the Shopify wordmark and the dev app's name, Baton Dev. Step 2 adds it.
+- **Step 2, 2026-10-22.** A3 held: a card drawn on the admin's top document is filmed like any paint, so the take stays one recording. The pane measured 1280 × 720 at a 1520 × 776 viewport (nav 240, top bar 56). The admin draws the pane's corners rounded and dark against its top bar, so the crop is inset to 1248 × 702 (`paneCrop`). The cursor is parked in the admin nav while a card shows, outside the crop. Workflow scenes use the workflow's own page, not the editor (Step 1). `build` makes a silent `-rehearsal.mp4` from a rehearsal. The voice cache is shared, so pruning keeps every take's lines.
+- **Step 3 skipped, 2026-10-22.** The member pictures (taken 2026-10-19) were checked against the live member screens in Step 1 and match, so they weren't retaken.
+- **Step 5, first rehearsal, 2026-10-22.** All nine scenes pass at 92.8 s with estimated lines. #1242 moved to Made (Making 24 → 23, Made 4 → 5) and the fixture reload put it back. Output: `tmp/screencast/feature/out/baton-feature-rehearsal.mp4` and `contact-sheet.png`.
 
 ## 8. Out of scope
 

@@ -1,5 +1,5 @@
 /**
- * Recording the review screencast's take: the dev store put into `screencastFixture`, real Chrome
+ * Recording a screencast's take: the dev store put into the take's starting shop, real Chrome
  * driving the embedded admin, and Playwright's page screencast filming it, one scene at a time,
  * each held for its narration. The dev fixture is loaded again afterwards, also on failure.
  *
@@ -12,12 +12,12 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { readFileSync, statSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { type Browser, chromium, type FrameLocator, type Locator, type Page } from "playwright";
 
 import { fixture } from "../../fixture.ts";
 import { storageStatePath } from "../../playwright.config.ts";
-import { SCREENCAST_ORDER, screencastFixture } from "../../screencast-fixture.ts";
+import { SCREENCAST_ORDER } from "../../screencast-fixture.ts";
 import { runCommand } from "./command.ts";
 import { appFrame, awaitHydration, gotoApp, HIDE_OVERLAYS } from "./embedded-app.ts";
 
@@ -28,16 +28,23 @@ import {
   durationMs,
   readVoiceIndex,
   type Scene,
-  SCREENCAST_DIR,
   ScreencastError,
   type Take,
+  type TakeFiles,
+  type TakeSpec,
 } from "./screencast.ts";
+import { cardHtml } from "./screencast-cards.ts";
 import { adminSessionFresh, CHROME_PROFILE, exportShopifyAdminAuth } from "./shopify-admin-auth.ts";
 import { createStoreOrder } from "./stores.ts";
 import { countCharacters } from "./tts.ts";
 
 /** The browser viewport. The page screencast records CSS pixels, so `build` scales it to 1080p. */
 export const VIEWPORT = { width: 1600, height: 900 } as const;
+/**
+ * The viewport of a `pane` take: the admin's nav (240 px) and top bar (56 px) around a 1280 × 720
+ * app pane. The take measures the pane and fails unless it is 16:9, since Shopify can move both.
+ */
+export const PANE_VIEWPORT = { width: 1520, height: 776 } as const;
 export const FPS = 30;
 /** The pause after a scene's line and action, before the next scene. */
 export const GAP_MS = 600;
@@ -55,9 +62,6 @@ const FIND_MS = 20_000;
  */
 const REHEARSAL_MS_PER_CHARACTER = 77;
 
-export const RAW_VIDEO = resolve(SCREENCAST_DIR, "raw.webm");
-export const SCENE_INDEX = resolve(SCREENCAST_DIR, "scenes.json");
-
 /** Where a scene started and ended in `raw.webm`, and how long its line runs. */
 export const SceneMark = Schema.Struct({
   id: Schema.String,
@@ -67,8 +71,18 @@ export const SceneMark = Schema.Struct({
 });
 export type SceneMark = typeof SceneMark.Type;
 
+/** The part of the recording a `pane` take keeps, in CSS px. */
+export const Crop = Schema.Struct({
+  x: Schema.Number,
+  y: Schema.Number,
+  width: Schema.Number,
+  height: Schema.Number,
+});
+export type Crop = typeof Crop.Type;
+
 export const SceneIndex = Schema.Struct({
   rehearsal: Schema.Boolean,
+  crop: Schema.optionalKey(Crop),
   durationMs: Schema.Number,
   scenes: Schema.Array(SceneMark),
 });
@@ -180,6 +194,13 @@ const makeTake = (page: Page, store: string): Take => {
       await box.check();
       await beat();
     },
+    point: async (text) => {
+      const target = await firstVisible(`the text ${text}`, () =>
+        [page, editorFrame(page), app()].map((scope) => scope.getByText(text)),
+      );
+      await target.hover();
+      await beat();
+    },
     see: async (text) => {
       await firstVisible(`the text ${text}`, () =>
         [page, editorFrame(page), app()].map((scope) => scope.getByText(text)),
@@ -218,21 +239,76 @@ const makeTake = (page: Page, store: string): Take => {
 };
 
 /**
- * Films `scenes` in one take into {@link RAW_VIDEO} and writes {@link SCENE_INDEX}. With
- * `rehearse` a line's length is estimated from its characters, so a take can be checked before
- * any narration is paid for. A failed scene leaves a screenshot beside the video.
+ * The app pane: right of the admin nav, below the admin's top bar, to the viewport's edges. It
+ * holds the app's title bar and its frame.
+ */
+const measurePane = async (page: Page): Promise<Crop> => {
+  const pane = await page.evaluate(() => {
+    const nav = document.querySelector("nav")?.getBoundingClientRect();
+    const main = document.querySelector("main")?.getBoundingClientRect();
+    if (nav === undefined || main === undefined) return undefined;
+    const x = Math.round(nav.right);
+    const y = Math.round(main.top);
+    return { x, y, width: window.innerWidth - x, height: window.innerHeight - y };
+  });
+  if (pane === undefined) throw new Error("the admin has no nav or main to crop to");
+  if (Math.abs(pane.width * 9 - pane.height * 16) > 16)
+    throw new Error(
+      `the app pane is ${pane.width} × ${pane.height}, not 16:9: the admin's nav or top bar moved`,
+    );
+  return pane;
+};
+
+/**
+ * The crop inside the pane: in by 16 px from each side and 9 px from the top and bottom, still
+ * 16:9, which clears the admin's rounded corners, drawn dark against its top bar.
+ */
+export const paneCrop = (pane: Crop): Crop => ({
+  x: pane.x + 16,
+  y: pane.y + 9,
+  width: pane.width - 32,
+  height: pane.height - 18,
+});
+
+/** The id of the element a card is drawn in, on the admin's top document. */
+const CARD_ID = "screencast-card";
+
+/** Draws `html` over `area` of the admin's top document, above everything the admin draws. */
+const drawCard = (page: Page, html: string, area: Crop) =>
+  page.evaluate(
+    ({ id, html, area }) => {
+      const card = document.createElement("div");
+      card.id = id;
+      card.style.cssText = `position:fixed;left:${area.x}px;top:${area.y}px;width:${area.width}px;height:${area.height}px;z-index:2147483647`;
+      card.innerHTML = html;
+      document.body.appendChild(card);
+    },
+    { id: CARD_ID, html, area },
+  );
+
+const removeCard = (page: Page) =>
+  page.evaluate((id) => document.getElementById(id)?.remove(), CARD_ID);
+
+/**
+ * Films `scenes` in one take into the take's raw video, and answers each scene's marks and, for a
+ * `pane` take, the crop. With `rehearse` a line's length is estimated from its characters, so a
+ * take can be checked before any narration is paid for. A failed scene leaves a screenshot beside
+ * the video.
  */
 const film = async (options: {
   readonly browser: Browser;
   readonly appURL: string;
   readonly store: string;
   readonly scenes: ReadonlyArray<Scene>;
+  readonly files: TakeFiles;
+  readonly frame: TakeSpec["frame"];
   readonly voiceMs: (scene: Scene) => number;
   readonly log: (line: string) => void;
-}): Promise<ReadonlyArray<SceneMark>> => {
+}): Promise<{ readonly marks: ReadonlyArray<SceneMark>; readonly crop: Crop | undefined }> => {
+  const viewport = options.frame === "pane" ? PANE_VIEWPORT : VIEWPORT;
   const context = await options.browser.newContext({
     storageState: storageStatePath,
-    viewport: VIEWPORT,
+    viewport,
     baseURL: options.appURL,
   });
   const page = await context.newPage();
@@ -242,11 +318,14 @@ const film = async (options: {
   });
   await gotoApp(page, "app");
   await page.addStyleTag({ content: HIDE_OVERLAYS });
+  const pane = options.frame === "pane" ? await measurePane(page) : undefined;
+  const crop = pane === undefined ? undefined : paneCrop(pane);
+  const cardArea = pane ?? { x: 0, y: 0, ...viewport };
   const take = makeTake(page, options.store);
   let first: number | undefined;
   await page.screencast.start({
-    path: RAW_VIDEO,
-    size: VIEWPORT,
+    path: options.files.raw,
+    size: viewport,
     fps: FPS,
     onFrame: ({ timestamp }) => {
       first ??= timestamp;
@@ -264,9 +343,9 @@ const film = async (options: {
           "outline: 2px solid #2c6ecb; border-radius: 8px; background: rgba(44, 110, 203, 0.08)",
       },
     });
-    await page
-      .locator("body")
-      .hover({ position: { x: VIEWPORT.width / 2, y: VIEWPORT.height / 2 } });
+    await page.locator("body").hover({
+      position: { x: cardArea.x + cardArea.width / 2, y: cardArea.y + cardArea.height / 2 },
+    });
     await page.waitForTimeout(800);
     const clock = () => Date.now() - (first ?? Date.now());
     for (const scene of options.scenes) {
@@ -280,21 +359,27 @@ const film = async (options: {
         });
         await page.waitForTimeout(CHAPTER_MS + 200);
       }
+      if (scene.card !== undefined) {
+        // Park the cursor in the admin nav, outside a pane take's crop, so it doesn't sit on the card.
+        await page.mouse.move(cardArea.x / 2, viewport.height - 20);
+        await drawCard(page, cardHtml(scene.card, cardArea), cardArea);
+      }
       const startMs = clock();
       const voiceMs = options.voiceMs(scene);
       await scene.act(take);
       const endMs = sceneEnd(startMs, clock(), voiceMs);
       await page.waitForTimeout(Math.max(0, endMs - clock()));
+      if (scene.card !== undefined) await removeCard(page);
       marks.push({ id: scene.id, startMs, voiceMs, endMs });
       options.log(
         `scene  ${scene.id}: ${(startMs / 1000).toFixed(1)}–${(endMs / 1000).toFixed(1)} s`,
       );
     }
     await page.waitForTimeout(1000);
-    return marks;
+    return { marks, crop };
   } catch (error) {
     await page
-      .screenshot({ path: resolve(SCREENCAST_DIR, `failed-${current}.png`) })
+      .screenshot({ path: resolve(dirname(options.files.raw), `failed-${current}.png`) })
       .catch(() => null);
     throw new Error(
       `scene ${current} failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -310,13 +395,13 @@ const film = async (options: {
 
 /**
  * `vp run screencast record`: gates (dev server healthy, admin session fresh, a current clip for
- * every scene unless rehearsing), then the take between the screencast fixture and the dev
- * fixture.
+ * every scene unless rehearsing), then the take between its starting shop and the dev fixture.
  */
 export const recordTake = Effect.fn("recordTake")(function* (
-  scenes: ReadonlyArray<Scene>,
+  spec: TakeSpec,
   options: { readonly rehearse: boolean; readonly headed: boolean },
 ) {
+  const { scenes, files } = spec;
   const store = yield* Config.NonEmptyString("SHOPIFY_DEV_STORE");
   const handle = yield* Config.NonEmptyString("SHOPIFY_APP_HANDLE");
   yield* runCommand("node", ["--env-file=.env", "scripts/dev.ts", "status"]).pipe(
@@ -335,25 +420,27 @@ export const recordTake = Effect.fn("recordTake")(function* (
   }
   const voiceMs: (scene: Scene) => number = options.rehearse
     ? (scene) => countCharacters(scene.say) * REHEARSAL_MS_PER_CHARACTER
-    : yield* readVoiceIndex(scenes).pipe(
+    : yield* readVoiceIndex(scenes, files).pipe(
         Effect.map(
           (clips) => (scene: Scene) => clips.find(({ id }) => id === scene.id)?.durationMs ?? 0,
         ),
       );
 
-  yield* Console.log("Putting the dev store into the screencast's starting state…");
-  yield* applyFixture({ fixture: screencastFixture, waitForInstall: false });
-  const marks = yield* Effect.acquireUseRelease(
+  yield* Console.log(`Putting the dev store into the ${spec.name} take's starting shop…`);
+  yield* applyFixture({ fixture: spec.start, waitForInstall: false });
+  const { marks, crop } = yield* Effect.acquireUseRelease(
     Effect.promise(() => chromium.launch({ channel: "chrome", headless: !options.headed })),
     (browser) =>
       Effect.tryPromise({
         try: async () => {
-          await mkdir(SCREENCAST_DIR, { recursive: true });
+          await mkdir(dirname(files.raw), { recursive: true });
           return film({
             browser,
             appURL: `https://admin.shopify.com/store/${store}/apps/${handle}/`,
             store,
             scenes,
+            files,
+            frame: spec.frame,
             voiceMs,
             log: (line) => console.log(line),
           });
@@ -372,12 +459,13 @@ export const recordTake = Effect.fn("recordTake")(function* (
   );
   const index: SceneIndex = {
     rehearsal: options.rehearse,
-    durationMs: yield* durationMs(RAW_VIDEO),
+    ...(crop === undefined ? {} : { crop }),
+    durationMs: yield* durationMs(files.raw),
     scenes: marks,
   };
-  yield* Effect.promise(() => writeFile(SCENE_INDEX, `${JSON.stringify(index, null, 2)}\n`));
+  yield* Effect.promise(() => writeFile(files.sceneIndex, `${JSON.stringify(index, null, 2)}\n`));
   yield* Console.log(
-    `record ok: ${marks.length} scenes, ${(index.durationMs / 1000).toFixed(1)} s${options.rehearse ? " (rehearsal, estimated lines)" : ""}, ${RAW_VIDEO}`,
+    `record ok: ${marks.length} scenes, ${(index.durationMs / 1000).toFixed(1)} s${options.rehearse ? " (rehearsal, estimated lines)" : ""}, ${files.raw}`,
   );
   return index;
 });

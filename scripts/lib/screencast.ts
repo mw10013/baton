@@ -1,6 +1,7 @@
 /**
- * The review screencast's parts: the scene table's shape, the narration's voice and cache, and
- * the testing instructions built from the same scenes. `vp run screencast` drives them.
+ * The screencasts' parts: the scene table's shape, a take's files, the narration's voice and
+ * cache, and the review's testing instructions built from its scenes. `vp run screencast` drives
+ * them.
  *
  * @module
  */
@@ -10,9 +11,11 @@ import * as Schema from "effect/Schema";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { FrameLocator, Page } from "playwright";
+
+import type { ShopFixture } from "../../src/contract/fixture.ts";
 
 import { runCommand } from "./command.ts";
 import {
@@ -28,8 +31,49 @@ const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 
 /** Everything the screencast writes; ignored by git with the rest of `tmp/`. */
 export const SCREENCAST_DIR = resolve(REPO_ROOT, "tmp/screencast");
+/**
+ * The narration clips of every take, in one cache: a clip is keyed by its words, so a line two
+ * takes both say is rendered once.
+ */
 export const VOICE_DIR = resolve(SCREENCAST_DIR, "voice");
-export const VOICE_INDEX = resolve(SCREENCAST_DIR, "voice.json");
+
+/** Where one take's files go. */
+export interface TakeFiles {
+  readonly voiceIndex: string;
+  readonly raw: string;
+  readonly sceneIndex: string;
+  readonly narration: string;
+  readonly out: string;
+  readonly video: string;
+  /** The silent video `build` makes from a rehearsal. */
+  readonly rehearsalVideo: string;
+  readonly contactSheet: string;
+}
+
+export const takeFiles = (dir: string, video: string): TakeFiles => ({
+  voiceIndex: resolve(dir, "voice.json"),
+  raw: resolve(dir, "raw.webm"),
+  sceneIndex: resolve(dir, "scenes.json"),
+  narration: resolve(dir, "narration.wav"),
+  out: resolve(dir, "out"),
+  video: resolve(dir, "out", `${video}.mp4`),
+  rehearsalVideo: resolve(dir, "out", `${video}-rehearsal.mp4`),
+  contactSheet: resolve(dir, "out", "contact-sheet.png"),
+});
+
+/**
+ * One video made from a scene table. `start` is the shop the take films, loaded before it; the
+ * dev fixture is loaded again after either way. `frame` is what the video shows: the whole
+ * `admin`, or only the app's `pane`, its title bar included, which leaves out the Shopify top bar
+ * and the admin nav, and with them the Shopify mark and the dev app's name.
+ */
+export interface TakeSpec {
+  readonly name: string;
+  readonly scenes: ReadonlyArray<Scene>;
+  readonly files: TakeFiles;
+  readonly start: ShopFixture;
+  readonly frame: "admin" | "pane";
+}
 
 /** The narration's voice for every scene. */
 export const VOICE: { readonly model: ModelName; readonly speaker: string } = {
@@ -60,6 +104,8 @@ export interface Take {
   readonly tick: (label: string) => Promise<void>;
   /** Wait until `text` shows anywhere on screen, as a whole text or inside one. */
   readonly see: (text: string) => Promise<void>;
+  /** Rest the cursor on the first visible `text`, without pressing it. */
+  readonly point: (text: string) => Promise<void>;
   /** Place the take's paid order in Shopify, off camera, and answer its name. */
   readonly placeOrder: () => Promise<string>;
   /** The name of the order {@link Take.placeOrder} placed. */
@@ -79,10 +125,21 @@ export interface Scene {
   readonly id: string;
   /** A card shown before the scene: the start of a chapter. */
   readonly chapter?: { readonly title: string; readonly description?: string };
+  /** A card covering the frame for the whole scene, in place of the screen. */
+  readonly card?: Card;
   readonly say: string;
   readonly step?: string;
   readonly act: (take: Take) => Promise<void>;
 }
+
+/**
+ * A frame-filling card: a `Title` with the brand line, or `Phones`, member screens side by side.
+ * A phone's `file` is a help picture under `public/assets/help/`, so the card shows the screens
+ * the help shows.
+ */
+export type Card =
+  | { readonly _tag: "Title"; readonly title: string; readonly line: string }
+  | { readonly _tag: "Phones"; readonly files: ReadonlyArray<string> };
 
 /** A clip's cache key: a change to the model, the speaker or the words is a new clip. */
 export const voiceKey = (model: ModelName, speaker: string, text: string): string =>
@@ -155,10 +212,15 @@ export const voicePlan = (scenes: ReadonlyArray<Scene>) => {
 
 /**
  * Renders every scene's narration that has no clip yet, one metered request each and never a
- * retry, then writes {@link VOICE_INDEX} with every clip's duration and deletes the clips no
- * scene uses. A second run with no copy change sends no request.
+ * retry, then writes the take's voice index with every clip's duration and deletes the clips no
+ * scene in `keep` uses: `keep` is every take's scenes, since the clips are shared. A second run
+ * with no copy change sends no request.
  */
-export const renderVoices = Effect.fn("renderVoices")(function* (scenes: ReadonlyArray<Scene>) {
+export const renderVoices = Effect.fn("renderVoices")(function* (
+  scenes: ReadonlyArray<Scene>,
+  files: TakeFiles,
+  keep: ReadonlyArray<Scene>,
+) {
   const plan = voicePlan(scenes);
   if (plan.missing.length > 0) {
     const token = yield* speechToken;
@@ -182,10 +244,10 @@ export const renderVoices = Effect.fn("renderVoices")(function* (scenes: Readonl
     );
   });
   yield* Effect.promise(async () => {
-    await mkdir(SCREENCAST_DIR, { recursive: true });
-    await writeFile(VOICE_INDEX, `${JSON.stringify(clips, null, 2)}\n`);
+    await mkdir(dirname(files.voiceIndex), { recursive: true });
+    await writeFile(files.voiceIndex, `${JSON.stringify(clips, null, 2)}\n`);
   });
-  const used = new Set(clips.map(({ key }) => key));
+  const used = new Set(keep.map(({ say }) => voiceKey(VOICE.model, VOICE.speaker, say)));
   const pruned = yield* Effect.promise(async () => {
     const files = await readdir(VOICE_DIR).catch(() => []);
     const stale = files.filter((file) => !used.has(file.replace(/\.(mp3|metadata\.json)$/u, "")));
@@ -196,10 +258,13 @@ export const renderVoices = Effect.fn("renderVoices")(function* (scenes: Readonl
   return { rendered: plan.missing.length, characters: plan.characters, clips };
 });
 
-/** The clips {@link renderVoices} last wrote, failing if any scene has none. */
-export const readVoiceIndex = Effect.fn("readVoiceIndex")(function* (scenes: ReadonlyArray<Scene>) {
+/** The clips {@link renderVoices} last wrote for a take, failing if any scene has none. */
+export const readVoiceIndex = Effect.fn("readVoiceIndex")(function* (
+  scenes: ReadonlyArray<Scene>,
+  files: TakeFiles,
+) {
   const text = yield* Effect.tryPromise({
-    try: () => readFile(VOICE_INDEX, "utf8"),
+    try: () => readFile(files.voiceIndex, "utf8"),
     catch: () => new ScreencastError({ message: "no voice.json: run vp run screencast voice" }),
   });
   const clips = yield* Schema.decodeUnknownEffect(VoiceIndex)(text).pipe(

@@ -1,6 +1,7 @@
 /**
- * Building the review screencast from a take: the narration laid on the recording at each scene's
- * start, the picture scaled to 1080p, and a contact sheet to check before watching.
+ * Building a screencast from its take: the narration laid on the recording at each scene's start,
+ * the picture cropped to the take's frame and scaled to 1080p, and a contact sheet to check before
+ * watching. A rehearsal builds a silent video, to check the picture before narration is paid for.
  *
  * @module
  */
@@ -9,24 +10,18 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { mkdir, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 
 import { runCommand } from "./command.ts";
 import {
   durationMs,
   readVoiceIndex,
-  type Scene,
-  SCREENCAST_DIR,
   ScreencastError,
+  type TakeSpec,
   type VoiceClip,
   voicePath,
 } from "./screencast.ts";
-import { RAW_VIDEO, SCENE_INDEX, SceneIndex, type SceneMark, VIEWPORT } from "./screencast-take.ts";
-
-export const OUT_DIR = resolve(SCREENCAST_DIR, "out");
-export const NARRATION = resolve(SCREENCAST_DIR, "narration.wav");
-export const VIDEO = resolve(OUT_DIR, "baton-review.mp4");
-export const CONTACT_SHEET = resolve(OUT_DIR, "contact-sheet.png");
+import { type Crop, SceneIndex, type SceneMark } from "./screencast-take.ts";
 
 /** One frame at 30 fps, rounded up: how far the built video may run from the raw one. */
 const FRAME_MS = 34;
@@ -97,10 +92,21 @@ export const narrationArgs = (
   ];
 };
 
-/** The mux's ffmpeg arguments: the take scaled to 1080p H.264, the narration as AAC. */
+/** The picture's filter: the take's crop, if it has one, then 1080p. */
+export const pictureFilter = (crop: Crop | undefined) =>
+  [
+    ...(crop === undefined ? [] : [`crop=${crop.width}:${crop.height}:${crop.x}:${crop.y}`]),
+    "scale=1920:1080:flags=lanczos",
+  ].join(",");
+
+/**
+ * The mux's ffmpeg arguments: the take cropped and scaled to 1080p H.264, the narration as AAC.
+ * With no narration, as from a rehearsal, the video is silent.
+ */
 export const muxArgs = (
   raw: string,
-  narration: string,
+  narration: string | undefined,
+  crop: Crop | undefined,
   videoMs: number,
   output: string,
 ): ReadonlyArray<string> => [
@@ -109,14 +115,9 @@ export const muxArgs = (
   "-y",
   "-i",
   raw,
-  "-i",
-  narration,
-  "-map",
-  "0:v",
-  "-map",
-  "1:a",
+  ...(narration === undefined ? ["-map", "0:v"] : ["-i", narration, "-map", "0:v", "-map", "1:a"]),
   "-vf",
-  "scale=1920:1080:flags=lanczos",
+  pictureFilter(crop),
   "-c:v",
   "libx264",
   "-crf",
@@ -139,30 +140,39 @@ export const muxArgs = (
 const decodeSceneIndex = Schema.decodeUnknownEffect(Schema.fromJsonString(SceneIndex));
 
 /**
- * `vp run screencast build`: refuses a rehearsal or a take whose clips are stale or overlap, then
- * writes {@link NARRATION}, {@link VIDEO} and {@link CONTACT_SHEET}.
+ * `vp run screencast build`: refuses a take whose clips are stale or overlap, then writes the
+ * narration, the video and the contact sheet. A rehearsal gets a silent video instead, with no
+ * narration read.
  */
-export const buildVideo = Effect.fn("buildVideo")(function* (scenes: ReadonlyArray<Scene>) {
+export const buildVideo = Effect.fn("buildVideo")(function* (spec: TakeSpec) {
+  const { scenes, files } = spec;
   const text = yield* Effect.tryPromise({
-    try: () => readFile(SCENE_INDEX, "utf8"),
-    catch: () => new ScreencastError({ message: "no scenes.json: run vp run screencast record" }),
+    try: () => readFile(files.sceneIndex, "utf8"),
+    catch: () =>
+      new ScreencastError({
+        message: `no scenes.json for the ${spec.name} take: run vp run screencast record`,
+      }),
   });
   const index = yield* decodeSceneIndex(text).pipe(
     Effect.mapError((error) => new ScreencastError({ message: error.message })),
   );
+  const video = index.rehearsal ? files.rehearsalVideo : files.video;
+  yield* Effect.promise(() => mkdir(files.out, { recursive: true }));
   if (index.rehearsal)
-    return yield* new ScreencastError({
-      message: "the last take was a rehearsal: run vp run screencast record",
-    });
-  const clips = yield* readVoiceIndex(scenes);
-  const placed = placeClips(index.scenes, clips);
-  const over = overlaps(placed);
-  if (over.length > 0) return yield* new ScreencastError({ message: `OVER: ${over.join("; ")}` });
-
-  yield* Effect.promise(() => mkdir(OUT_DIR, { recursive: true }));
-  yield* runCommand("ffmpeg", [...narrationArgs(placed, index.durationMs, NARRATION)]);
-  yield* runCommand("ffmpeg", [...muxArgs(RAW_VIDEO, NARRATION, index.durationMs, VIDEO)]);
-  const built = yield* durationMs(VIDEO);
+    yield* runCommand("ffmpeg", [
+      ...muxArgs(files.raw, undefined, index.crop, index.durationMs, video),
+    ]);
+  else {
+    const clips = yield* readVoiceIndex(scenes, files);
+    const placed = placeClips(index.scenes, clips);
+    const over = overlaps(placed);
+    if (over.length > 0) return yield* new ScreencastError({ message: `OVER: ${over.join("; ")}` });
+    yield* runCommand("ffmpeg", [...narrationArgs(placed, index.durationMs, files.narration)]);
+    yield* runCommand("ffmpeg", [
+      ...muxArgs(files.raw, files.narration, index.crop, index.durationMs, video),
+    ]);
+  }
+  const built = yield* durationMs(video);
   if (Math.abs(built - index.durationMs) > FRAME_MS)
     return yield* new ScreencastError({
       message: `the video runs ${built} ms, the take ${index.durationMs} ms`,
@@ -177,11 +187,11 @@ export const buildVideo = Effect.fn("buildVideo")(function* (scenes: ReadonlyArr
       "-ss",
       ((mark.startMs + mark.endMs) / 2000).toFixed(3),
       "-i",
-      RAW_VIDEO,
+      files.raw,
       "-frames:v",
       "1",
       "-vf",
-      `scale=${VIEWPORT.width / 2}:-1`,
+      `${pictureFilter(index.crop)},scale=800:-1`,
       join(frames, `${String(position + 1).padStart(2, "0")}-${mark.id}.png`),
     ]),
   );
@@ -191,9 +201,9 @@ export const buildVideo = Effect.fn("buildVideo")(function* (scenes: ReadonlyArr
     "montage",
     frames,
     LABEL_FONT,
-    CONTACT_SHEET,
+    files.contactSheet,
   ]);
   yield* Console.log(
-    `build  ok: ${VIDEO} (${(built / 1000).toFixed(1)} s, 1920×1080), contact sheet ${CONTACT_SHEET}`,
+    `build  ok: ${video} (${(built / 1000).toFixed(1)} s, 1920×1080${index.rehearsal ? ", silent rehearsal" : ""}), contact sheet ${files.contactSheet}`,
   );
 });
