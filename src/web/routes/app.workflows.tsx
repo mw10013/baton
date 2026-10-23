@@ -7,9 +7,9 @@ import { lenientSearchKey, ListSearchParam } from "./-search-params.ts";
  * **The merchant's filter on the workflows index, and it travels.** `state`, `q` and `after` are
  * on the layout, so the workflows pages read them; the index's links to a workflow and the
  * workflow page's breadcrumb carry them (`appHref`), so the breadcrumb lands on the filtered
- * list. A nav click drops them (`PAGE_KEYS`), where legacy's `retainSearchParams` kept them: this
- * repo navigates by `appHref` strings, which drop a key set to `null`, and a retained key would
- * come back after Clear search.
+ * list. A nav click drops them (`PAGE_KEYS`) rather than retaining them: this repo navigates by
+ * `appHref` strings, which drop a key set to `null`, and a retained key would come back after
+ * Clear search.
  *
  * The key is `state`, the list's main filter keyed by its axis (`WorkflowsIndexState`): Active and
  * Inactive are workflow states. All is the default and is written by leaving the key out.

@@ -66,10 +66,9 @@ export const clickHoisted = async (locator: Locator) => {
 /**
  * The editor's Close: the X in the header the admin draws around an `s-app-window`, scoped to
  * the element that holds the window's iframe and that header, because the CLI's Dev Console and
- * Sidekick answer to "Close" too (the admin no longer marks the window a `dialog`, as legacy's
- * locator assumed). Returns
- * once the window's iframe is gone: an Edit pressed while the admin animates the window out opens
- * nothing.
+ * Sidekick answer to "Close" too (the admin does not mark the window a `dialog`, so no dialog
+ * role scopes it). Returns once the window's iframe is gone: an Edit pressed while the admin
+ * animates the window out opens nothing.
  */
 export const closeEditor = async (page: Page) => {
   await page
@@ -84,8 +83,7 @@ export const closeEditor = async (page: Page) => {
  * The workflow page's Edit, which opens the editor window, returning once the window's document
  * is hydrated. The click is retried until the window's iframe appears: after `closeEditor` the
  * admin rebuilds the page's hoisted title bar, and the Edit proxy reads enabled before App
- * Bridge has rewired it to the in-frame `s-button`, so a click in that window is a silent no-op
- * (seen in legacy, one run in six).
+ * Bridge has rewired it to the in-frame `s-button`, so a click in that window is a silent no-op.
  */
 export const openEditor = async (page: Page) => {
   const edit = page.getByRole("button", { name: "Edit", exact: true });

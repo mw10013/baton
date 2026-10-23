@@ -7,10 +7,10 @@
 # Keep handle = "baton-work" fixed. It is the App Home's admin URL slug and must match production's
 # SHOPIFY_APP_HANDLE. Do not experiment with temporary handles.
 #
-# web_directories narrows Shopify CLI discovery to the repo root, preventing the legacy
-# checkout under refs/ from contributing a second backend web configuration. Keep this on
-# named configs, not shopify.app.toml, whose active-config discovery behaves differently.
-# See refs/baton-legacy/docs/shopify-web-toml-conflict-research.md.
+# web_directories narrows Shopify CLI discovery to the repo root, preventing
+# refs/baton-legacy, which has its own shopify.web.toml, from contributing a second backend web
+# configuration. Keep this on named configs, not shopify.app.toml, whose active-config
+# discovery behaves differently.
 
 client_id = "5dbed6b0306c3bc52945dd24bd7b0ff9"
 name = "Baton"

@@ -346,8 +346,8 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * The home page's **Your plan**, its first render: the plan resolved again (legacy's
-   * `resolveEntitlements`, a separate request from `/app`'s gate), the actor's usage and the D1
+   * The home page's **Your plan**, its first render: the plan resolved again
+   * ({@link resolveEntitlements}, a separate request from `/app`'s gate), the actor's usage and the D1
    * member count. The plan is compared on the screen through its included numbers and never
    * named. A plan that could not be read is a defect.
    */
@@ -440,8 +440,7 @@ const make = Effect.gen(function* () {
 
   /**
    * The members index's first render: one page of the shop's members, read from D1 here
-   * without waking the actor, as legacy's loader read it in the Worker. The request is
-   * ignored; the session token is the credential ({@link installedShop}).
+   * without waking the actor. The request is ignored; the session token is the credential ({@link installedShop}).
    */
   const membersPage = Effect.fn("BackendApi.membersPage")(function* (
     _request: RequestInfo,
@@ -535,7 +534,7 @@ const make = Effect.gen(function* () {
 
   /**
    * The App Home's setup guide: D1's half (a team with a member) and the actor's (an active
-   * workflow, a run) read together, as legacy's loader did in one `Effect.all`. Never live: the
+   * workflow, a run) read together in one `Effect.all`. Never live: the
    * guide is loader data. The request is ignored, as on {@link workflowsPage}.
    */
   const setupFacts = Effect.fn("BackendApi.setupFacts")(function* (

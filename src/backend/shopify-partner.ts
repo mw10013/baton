@@ -91,8 +91,8 @@ export class ShopifyPartnerError extends Schema.TaggedError<ShopifyPartnerError>
 /**
  * Partner API version for the `activeSubscription` query, pinned in code.
  *
- * Legacy pinned `2026-07`, the release candidate, because `activeSubscription` existed in no
- * stable version. It is on the stable `2026-10` (measured 2026-10-18: both stores answered at
+ * `activeSubscription` is in no stable version before `2026-10`, only in the `2026-07` release
+ * candidate. It is on the stable `2026-10` (measured 2026-10-18: both stores answered at
  * `2026-10` and at `2026-07`). Revisit when `2026-10` leaves the support window.
  */
 export const PARTNER_API_VERSION = "2026-10";
@@ -245,7 +245,7 @@ const make = Effect.fn("ShopifyPartner.make")(function* ({
 });
 
 /**
- * The Backend's Partner API client, legacy's `ShopifyPartner`: one query, and the plan selection
+ * The Backend's Partner API client: one query, and the plan selection
  * page's URL. Over {@link ShopifyPartnerConfig}, the stage's `ShopifyPartner` binding.
  */
 export class ShopifyPartner extends Context.Service<

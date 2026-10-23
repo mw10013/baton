@@ -34,11 +34,11 @@ import { type ReconcileCounts, reconcileCountsChanged } from "../../../../src/do
 import { ActorSqliteTest } from "../layers.ts";
 
 /**
- * The actor's run repository over a fresh in-memory SQLite migrated by the actor's own schema:
- * legacy `run-repository.test.ts`'s cases, titles and describe names unchanged. The meter is the
- * `countOrder` argument: `RunRepository countOrder` pins its calls through a recording stub, and
- * `RunRepository metering` runs legacy's cases over the real meter (`makeUsageRepository`). Each
- * repository is a test-local service so the cases read as legacy's.
+ * The actor's run repository over a fresh in-memory SQLite migrated by the actor's own schema.
+ * The meter is the `countOrder` argument: `RunRepository countOrder` pins its calls through a
+ * recording stub, and `RunRepository metering` runs the metering cases over the real meter
+ * (`makeUsageRepository`). Each repository is a test-local service, so a case yields it by its
+ * tag.
  */
 class OrderRepository extends Context.Service<OrderRepository, OrderRepositoryShape>()(
   "test/OrderRepository",
@@ -309,8 +309,8 @@ const seed = Effect.gen(function* () {
 });
 /**
  * One workflow, tag `s`, steps `1 1 2 3` owned by A, B, C, A — the parallel
- * fixture: two teams current at once, a third waiting on both. Written straight to SQL, as
- * legacy's `replaceWorkflows` seeded it: active, every task on a team.
+ * fixture: two teams current at once, a third waiting on both. Written straight to SQL: active,
+ * every task on a team.
  */
 const seedStepped = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

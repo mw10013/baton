@@ -49,8 +49,7 @@ function usePaymentRequired() {
 }
 
 /**
- * The shop socket's holder: one socket per tab, held by the layout, as legacy's
- * `ShopAgentSocketProvider` is: the `/app` layout for the merchant, the member shop layout for a
+ * The shop socket's holder: one socket per tab, held by the layout: the `/app` layout for the merchant, the member shop layout for a
  * member. It names the socket once per shop and credential (`nameSocket`), and keeps
  * `noticesAtom` mounted for as long as the layout is, which keeps the client's runtime and so the
  * socket alive across the pages under it; a page seeds and reads the socket's atoms and never
@@ -58,7 +57,7 @@ function usePaymentRequired() {
  * children alone, so no socket is built on the server; the children keep their place in the tree
  * when it hydrates.
  *
- * Legacy's keepalive ping and stale-socket watchdog are absent on purpose: Effect's RPC client
+ * There is no keepalive ping or stale-socket watchdog here, on purpose: Effect's RPC client
  * pings every five seconds and drops and reconnects a socket that misses a pong, and Alchemy's
  * `RpcWebSocket` answers that ping at the edge with the WebSocket auto-response, without waking
  * the actor, and owns that auto-response.

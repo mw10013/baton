@@ -67,7 +67,7 @@ export const Route = createFileRoute("/app")({
 });
 
 /**
- * The App nav in the Shopify admin's chrome. Its links keep bare paths, as legacy's: App Bridge
+ * The App nav in the Shopify admin's chrome. Its links keep bare paths: App Bridge
  * hoists `s-app-nav` out of the frame, and a click dispatches `shopify:navigate` on the link here,
  * which this turns into a router navigation to the link's path with the current raw search
  * ({@link appHref}), which the `/app` guards need.

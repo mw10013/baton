@@ -19,7 +19,7 @@ import ShopActor, { ABORT_EVICTED, ABORT_UNINSTALLED, type RevokeInput } from ".
 import type { BillingCycleInput } from "../domain/billing.ts";
 
 /**
- * `ShopActors.destroy`'s reading of the stub call (legacy's `destroyShopAgent`). The actor's abort
+ * `ShopActors.destroy`'s reading of the stub call. The actor's abort
  * lands mid-call, so a successful destroy rejects: the stub fails with an `RpcCallError` whose
  * cause is workerd's reset, an `Error` with message {@link ABORT_UNINSTALLED} (and
  * `durableObjectReset: true`). That rejection, and only that, is success: the abort comes after

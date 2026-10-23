@@ -302,7 +302,7 @@ test(
 /**
  * An edit carries no version, so each delivery fetches and Shopify answers the same version
  * both times: the second write rewrites the row and moves nothing a screen reads, so it
- * publishes nothing. Legacy also compared the order's runs; runs are not ported.
+ * publishes nothing.
  */
 test(
   "a redelivered webhook rewrites the same version and changes nothing a screen shows",

@@ -8,8 +8,7 @@ import type * as SqlError from "effect/sql/SqlError";
  * body on its sync scheduler, so a repository never opens a transaction of its own.
  *
  * Never nest one: a repository method that takes `transaction` is called outside any other. The
- * SQL clients here would nest (a savepoint), so nothing refuses it; the rule is a convention, as
- * legacy's repositories kept it.
+ * SQL clients here would nest (a savepoint), so nothing refuses it; the rule is a convention.
  */
 export type Transaction = <A, E, R>(
   body: Effect.Effect<A, E, R>,

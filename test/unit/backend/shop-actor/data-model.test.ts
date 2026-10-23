@@ -29,10 +29,9 @@ import { ActorSqliteTest } from "../layers.ts";
 
 /**
  * The run rows of the actor's data model, over a fresh in-memory SQLite migrated by the actor's
- * own schema: legacy `data-model.test.ts`'s run titles, unchanged. Each test writes the
- * forbidden row with raw SQL where it can, bypassing the repositories, so it proves the
- * database refuses it and not merely that the write paths tried so far avoid it. Each
- * repository is a test-local service so the cases read as legacy's.
+ * own schema. Each test writes the forbidden row with raw SQL where it can, bypassing the
+ * repositories, so it proves the database refuses it and not merely that the write paths tried
+ * so far avoid it. Each repository is a test-local service, so a case yields it by its tag.
  */
 class OrderRepository extends Context.Service<OrderRepository, OrderRepositoryShape>()(
   "test/OrderRepository",

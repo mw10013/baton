@@ -744,8 +744,6 @@ export const memberUnblockRunAtom = Atom.family((_key: string) =>
  * then costs two reads of each shown page, not one per notice, and the last state is still read.
  * The first refresh is also what lets every tab of a shop join one memo entry in the actor: each
  * arrives one round trip after the notice that cleared it.
- *
- * @see refs/baton-legacy/src/lib/useLiveQuery.ts (`INVALIDATION_THROTTLE_MS`)
  */
 export const NOTICE_THROTTLE = Duration.seconds(2);
 
@@ -785,15 +783,13 @@ const refreshLiveAfterReads = (
 };
 
 /**
- * Notices, per registry, as legacy's `useLiveQuery` takes invalidations: each key is throttled
- * over {@link NOTICE_THROTTLE}, leading and trailing; while the tab is hidden its keys are held,
- * and released through the throttle on the next `visibilitychange` to visible, so a background
- * tab reads nothing for a screen nobody is looking at. `Connected` is neither throttled nor held:
- * it is rare, and whatever is shown may be stale by however long the socket was down. Every
- * refresh goes through {@link refreshLiveAfterReads}. Windows that end together refresh together,
- * so a node under two keys is refreshed once.
- *
- * @see refs/baton-legacy/src/lib/useLiveQuery.ts (`useLiveQuery`)
+ * Notices, per registry: each key is throttled over {@link NOTICE_THROTTLE}, leading and
+ * trailing; while the tab is hidden its keys are held, and released through the throttle on the
+ * next `visibilitychange` to visible, so a background tab reads nothing for a screen nobody is
+ * looking at. `Connected` is neither throttled nor held: it is rare, and whatever is shown may be
+ * stale by however long the socket was down. Every refresh goes through
+ * {@link refreshLiveAfterReads}. Windows that end together refresh together, so a node under two
+ * keys is refreshed once.
  */
 const makeNoticeDispatch = (registry: AtomRegistry.AtomRegistry) => {
   const pending = new Set<Atom.Atom<any>>();

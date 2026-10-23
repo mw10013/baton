@@ -31,7 +31,7 @@ import { fileStage } from "./file-stage.ts";
 import Stack from "./stack.ts";
 
 /**
- * The run procedures over forged sockets, against the action sets: every `callables:` row of
+ * The run procedures over forged sockets, against the action sets: every `procedures:` row of
  * `runActions` and `taskActions`, driven into each state the row names, as the merchant ("M")
  * and as a member on the run's team ("m"), answers as its cells say; and the workflows list's
  * socket reads and the notices the run writes send. Each case gets an order of its own, added by
@@ -57,9 +57,9 @@ const attachInput = Schema.decodeUnknownSync(ShopWork.AttachWorkflowInput);
 const assignInput = Schema.decodeUnknownSync(ShopWork.AssignRunTaskTeamInput);
 const runQuery = Schema.decodeUnknownSync(ShopWork.RunQuery);
 
-const ALICE = "alice@run-callables.test";
-const BOB = "bob@run-callables.test";
-const CAROL = "carol@run-callables.test";
+const ALICE = "alice@run-procedures.test";
+const BOB = "bob@run-procedures.test";
+const CAROL = "carol@run-procedures.test";
 
 /** A slow case: every one adds and arranges orders over the wire. */
 const SLOW = { timeout: 600_000 };
@@ -329,11 +329,11 @@ interface RunRow {
   readonly cells: Readonly<Record<keyof ShopWork.RunActions, string>>;
 }
 
-/** The `runActions` table, each row's title rendered back with the `callables:` prefix. */
+/** The `runActions` table, each row's title rendered back with the `procedures:` prefix. */
 const RUN_ROWS: ReadonlyArray<RunRow> = [
   {
     title:
-      "callables: order open, run open, blocked no, units some → note M m v, block M m, cancel M, changeWorkflow M",
+      "procedures: order open, run open, blocked no, units some → note M m v, block M m, cancel M, changeWorkflow M",
     order: "open",
     run: "open",
     blocked: "no",
@@ -342,7 +342,7 @@ const RUN_ROWS: ReadonlyArray<RunRow> = [
   },
   {
     title:
-      "callables: order open, run open, blocked yes, units some → note M m v, unblock M m, cancel M, changeWorkflow M",
+      "procedures: order open, run open, blocked yes, units some → note M m v, unblock M m, cancel M, changeWorkflow M",
     order: "open",
     run: "open",
     blocked: "yes",
@@ -351,7 +351,7 @@ const RUN_ROWS: ReadonlyArray<RunRow> = [
   },
   {
     title:
-      "callables: order open, run open, blocked no, units none → note M m v, block M m, cancel M",
+      "procedures: order open, run open, blocked no, units none → note M m v, block M m, cancel M",
     order: "open",
     run: "open",
     blocked: "no",
@@ -360,7 +360,7 @@ const RUN_ROWS: ReadonlyArray<RunRow> = [
   },
   {
     title:
-      "callables: order open, run open, blocked yes, units none → note M m v, unblock M m, cancel M",
+      "procedures: order open, run open, blocked yes, units none → note M m v, unblock M m, cancel M",
     order: "open",
     run: "open",
     blocked: "yes",
@@ -368,7 +368,8 @@ const RUN_ROWS: ReadonlyArray<RunRow> = [
     cells: { note: "M m v", block: "", unblock: "M m", cancel: "M", changeWorkflow: "" },
   },
   {
-    title: "callables: order open, run done, blocked no, units some → note M m v, changeWorkflow M",
+    title:
+      "procedures: order open, run done, blocked no, units some → note M m v, changeWorkflow M",
     order: "open",
     run: "done",
     blocked: "no",
@@ -376,7 +377,7 @@ const RUN_ROWS: ReadonlyArray<RunRow> = [
     cells: { note: "M m v", block: "", unblock: "", cancel: "", changeWorkflow: "M" },
   },
   {
-    title: "callables: order open, run done, blocked no, units none → note M m v",
+    title: "procedures: order open, run done, blocked no, units none → note M m v",
     order: "open",
     run: "done",
     blocked: "no",
@@ -385,7 +386,7 @@ const RUN_ROWS: ReadonlyArray<RunRow> = [
   },
   {
     title:
-      "callables: order open, run closed, blocked no, units some → note M m v, changeWorkflow M",
+      "procedures: order open, run closed, blocked no, units some → note M m v, changeWorkflow M",
     order: "open",
     run: "closed",
     blocked: "no",
@@ -393,7 +394,7 @@ const RUN_ROWS: ReadonlyArray<RunRow> = [
     cells: { note: "M m v", block: "", unblock: "", cancel: "", changeWorkflow: "M" },
   },
   {
-    title: "callables: order open, run closed, blocked no, units none → note M m v",
+    title: "procedures: order open, run closed, blocked no, units none → note M m v",
     order: "open",
     run: "closed",
     blocked: "no",
@@ -401,7 +402,7 @@ const RUN_ROWS: ReadonlyArray<RunRow> = [
     cells: { note: "M m v", block: "", unblock: "", cancel: "", changeWorkflow: "" },
   },
   {
-    title: "callables: order closed, run open or done, blocked any, units any → note M m v",
+    title: "procedures: order closed, run open or done, blocked any, units any → note M m v",
     order: "closed",
     run: "open or done",
     blocked: "any",
@@ -409,7 +410,7 @@ const RUN_ROWS: ReadonlyArray<RunRow> = [
     cells: { note: "M m v", block: "", unblock: "", cancel: "", changeWorkflow: "" },
   },
   {
-    title: "callables: order closed, run closed, blocked no, units any → note M m v",
+    title: "procedures: order closed, run closed, blocked no, units any → note M m v",
     order: "closed",
     run: "closed",
     blocked: "no",
@@ -428,11 +429,11 @@ interface TaskRow {
   readonly cells: Readonly<Record<keyof ShopWork.TaskActions, string>>;
 }
 
-/** The `taskActions` table, each row's title rendered back with the `callables:` prefix. */
+/** The `taskActions` table, each row's title rendered back with the `procedures:` prefix. */
 const TASK_ROWS: ReadonlyArray<TaskRow> = [
   {
     title:
-      "callables: order open, run open, blocked no, task ready, downstream - → start m, done M m, assign M",
+      "procedures: order open, run open, blocked no, task ready, downstream - → start m, done M m, assign M",
     order: "open",
     run: "open",
     blocked: "no",
@@ -442,7 +443,7 @@ const TASK_ROWS: ReadonlyArray<TaskRow> = [
   },
   {
     title:
-      "callables: order open, run open, blocked no, task started, downstream - → done M m, putBack M m, assign M",
+      "procedures: order open, run open, blocked no, task started, downstream - → done M m, putBack M m, assign M",
     order: "open",
     run: "open",
     blocked: "no",
@@ -451,7 +452,7 @@ const TASK_ROWS: ReadonlyArray<TaskRow> = [
     cells: { start: "", done: "M m", putBack: "M m", reopen: "", assign: "M" },
   },
   {
-    title: "callables: order open, run open, blocked no, task waiting, downstream - → assign M",
+    title: "procedures: order open, run open, blocked no, task waiting, downstream - → assign M",
     order: "open",
     run: "open",
     blocked: "no",
@@ -460,7 +461,7 @@ const TASK_ROWS: ReadonlyArray<TaskRow> = [
     cells: { start: "", done: "", putBack: "", reopen: "", assign: "M" },
   },
   {
-    title: "callables: order open, run open, blocked yes, task any open, downstream - → assign M",
+    title: "procedures: order open, run open, blocked yes, task any open, downstream - → assign M",
     order: "open",
     run: "open",
     blocked: "yes",
@@ -470,7 +471,7 @@ const TASK_ROWS: ReadonlyArray<TaskRow> = [
   },
   {
     title:
-      "callables: order open, run open or done, blocked any, task done, downstream none → reopen M m",
+      "procedures: order open, run open or done, blocked any, task done, downstream none → reopen M m",
     order: "open",
     run: "open or done",
     blocked: "any",
@@ -480,7 +481,7 @@ const TASK_ROWS: ReadonlyArray<TaskRow> = [
   },
   {
     title:
-      "callables: order open, run open or done, blocked any, task done, downstream started → nothing",
+      "procedures: order open, run open or done, blocked any, task done, downstream started → nothing",
     order: "open",
     run: "open or done",
     blocked: "any",
@@ -489,7 +490,7 @@ const TASK_ROWS: ReadonlyArray<TaskRow> = [
     cells: { start: "", done: "", putBack: "", reopen: "", assign: "" },
   },
   {
-    title: "callables: order open, run closed, blocked no, task any, downstream - → nothing",
+    title: "procedures: order open, run closed, blocked no, task any, downstream - → nothing",
     order: "open",
     run: "closed",
     blocked: "no",
@@ -499,7 +500,7 @@ const TASK_ROWS: ReadonlyArray<TaskRow> = [
   },
   {
     title:
-      "callables: order closed, run open or done, blocked any, task any, downstream - → nothing",
+      "procedures: order closed, run open or done, blocked any, task any, downstream - → nothing",
     order: "closed",
     run: "open or done",
     blocked: "any",
@@ -508,7 +509,7 @@ const TASK_ROWS: ReadonlyArray<TaskRow> = [
     cells: { start: "", done: "", putBack: "", reopen: "", assign: "" },
   },
   {
-    title: "callables: order closed, run closed, blocked no, task any, downstream - → nothing",
+    title: "procedures: order closed, run closed, blocked no, task any, downstream - → nothing",
     order: "closed",
     run: "closed",
     blocked: "no",
@@ -814,7 +815,7 @@ const T = Schema.decodeUnknownSync(ShopWork.TeamId)("t");
 const OUTSIDER: ShopWork.Actor = {
   role: "member",
   memberId: Schema.decodeUnknownSync(ShopWork.MemberId)("outsider"),
-  email: Schema.decodeUnknownSync(Email)("outsider@run-callables.test"),
+  email: Schema.decodeUnknownSync(Email)("outsider@run-procedures.test"),
   teamIds: [],
 };
 const OPEN_ORDER: Orders.OrderState = { cancelledAt: null, fulfillmentStatus: "UNFULFILLED" };
@@ -848,7 +849,7 @@ test(
       const nobody = yield* openAs(
         w.backendUrl,
         SEED_SHOP,
-        memberOf("nobody@run-callables.test", []),
+        memberOf("nobody@run-procedures.test", []),
       );
       assert.isNull(yield* nobody.client.MemberGetRun(runIdInput({ runId: run.id })));
       const unseen = yield* nobody.client.MemberSetRunNote(noteInput({ runId: run.id, note: "x" }));
@@ -863,7 +864,7 @@ test(
  * run and task write refuses her, Polish's included while it waits.
  */
 test(
-  "callables: a member whose teams hold a task of the run but no current one writes the note and nothing else",
+  "procedures: a member whose teams hold a task of the run but no current one writes the note and nothing else",
   Effect.gen(function* () {
     yield* Effect.gen(function* () {
       const w = yield* world;
@@ -889,7 +890,7 @@ test(
 );
 
 test(
-  "callables: a task on no team refuses the member's Done and takes the merchant's",
+  "procedures: a task on no team refuses the member's Done and takes the merchant's",
   Effect.gen(function* () {
     yield* Effect.gen(function* () {
       const w = yield* world;
@@ -1094,7 +1095,7 @@ test(
 );
 
 /**
- * Legacy's e2e title, here because the member's browser project has no merchant socket: the
+ * An integ test, not an e2e spec, because the member's browser project has no merchant socket: the
  * merchant takes Alice off Bench while her socket is open, the actor closes it with 3401, it
  * reconnects through the gate with her new teams, and her open list is empty.
  */
@@ -1127,7 +1128,7 @@ test(
   }),
 );
 
-/** The two screens of legacy's `openTwoScreens`: the orders index, and Carol, on a team with no work. */
+/** Two open screens, drained of notices: the merchant's orders index, and Carol, on a team with no work. */
 const twoScreens = (w: World) =>
   Effect.gen(function* () {
     yield* w.merchant.client.MerchantListOrders({
@@ -1192,7 +1193,7 @@ test(
 );
 
 /**
- * The run half of legacy's refusals: a member's and the merchant's Done on a task already done.
+ * The run verbs' refusals: a member's and the merchant's Done on a task already done.
  * The positive half first, so a notice that never ran cannot pass; a later write's notice is then
  * the first one queued, because the refusals sent none.
  */

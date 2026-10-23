@@ -19,7 +19,7 @@ import { QuietLogs } from "./layers.ts";
 
 /**
  * The Partner API client against a recorded transport: the decode of `activeSubscription`'s
- * answer and `matchPlanHandle`'s rule (legacy has no tests for either; these titles are new).
+ * answer and `matchPlanHandle`'s rule.
  */
 const config = Schema.decodeUnknownSync(ShopifyPartnerConfig)({
   SHOPIFY_APP_HANDLE: "baton-local",

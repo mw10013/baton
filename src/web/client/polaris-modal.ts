@@ -61,7 +61,7 @@ export const useModalBackdropDismissGuard = (modalId: string): void => {
  * the dialog open, which blocks the backdrop click, Escape, and the header
  * close button in one place — including the synthesized cross-boundary click
  * that `useModalBackdropDismissGuard` exists for. Verified against the CDN
- * runtime in legacy: all three dismissals are refused while `dirty` is
+ * runtime: all three dismissals are refused while `dirty` is
  * truthy and work again once it is cleared. Base `s-modal` wires no shake
  * animation, so a refused dismissal is invisible unless the caller listens
  * for `shake-attempt` and surfaces its own feedback.
@@ -90,7 +90,7 @@ export const useModalBackdropDismissGuard = (modalId: string): void => {
  * a bare click there, or a drag that starts inside the iframe and releases
  * past its edge — makes the host send a dismiss over App Bridge's
  * MessagePort; Polaris's `onDismiss` then closes the `<dialog>` directly
- * even when this check refuses (stack-traced live in legacy). The host page
+ * even when this check refuses (stack-traced live). The host page
  * never saw the press, so it cannot apply the started-inside test the
  * backdrop guard uses. Unreachable from app code without fighting App Bridge
  * across the postMessage boundary — deliberately not fought. And `dirty` is
@@ -111,7 +111,7 @@ export const setModalDirty = (modalId: string, dirty: boolean): void => {
  * App Bridge's `shopify.modal.hide(id)` resolves the id in the host's modal
  * registry. Inside an `s-app-window` that registry does not see the window
  * document's modals, so the call rejects with "Modal with ID … not found"
- * even while the dialog is open (observed live in legacy). The element's own
+ * even while the dialog is open (observed live). The element's own
  * `hideOverlay` closes the dialog in every context and still runs the `dirty`
  * check documented on {@link setModalDirty}.
  */

@@ -211,9 +211,8 @@ function YourPlan({
 
 /**
  * The App Home: the quota banner when a limit stopped something ({@link QuotaBanners}), the setup
- * guide while any of its facts does not hold (legacy's "is Baton set up"), the Orders strip
- * ({@link OrdersStrip}), the plan ({@link YourPlan}), then the ways to Orders, Teams and Members. The
- * guide is derived and stores nothing, it comes back when a fact stops holding, and it is read by
+ * guide while any of its facts does not hold, the Orders strip ({@link OrdersStrip}), the plan
+ * ({@link YourPlan}), then the ways to Orders, Teams and Members. The guide is derived and stores nothing, it comes back when a fact stops holding, and it is read by
  * the loader only: the first two facts change by the merchant's own writes on other screens, and
  * the loader runs again when they come back here. The links keep the raw search Shopify sent,
  * because the `/app` guards read it on every navigation ({@link appHref}). The strip is live, so

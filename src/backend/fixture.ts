@@ -74,7 +74,7 @@ export interface LineItemRow {
 }
 
 /**
- * A fixture member as the actor records a seeded step: legacy's seed member list, in the
+ * A fixture member as the actor records a seeded step: the fixture's members, in the
  * fixture's order, with the D1 ids minted for it. The actor reads it, never D1, to name who
  * started, did or blocked a seeded step.
  */

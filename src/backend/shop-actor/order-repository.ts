@@ -1,6 +1,6 @@
 /**
- * The shop actor's orders over its SQLite: legacy's `OrderRepository` but billing (the cycle,
- * the usage outbox and `countOrder`'s body). Legacy's SQL, verbatim.
+ * The shop actor's orders over its SQLite. Billing (the cycle, the usage outbox and
+ * `countOrder`'s body) is `makeUsageRepository`'s.
  *
  * @module
  */
@@ -903,7 +903,7 @@ export const makeOrderRepository = (sql: SqlClient.SqlClient, transaction: Trans
   });
 
   /**
-   * The start of an open-orders sync, legacy's `syncOpenOrders` without the Workflow, in one
+   * The start of an open-orders sync, short of creating the Workflow, in one
    * transaction, so two presses can never both start: rule 3 on `syncOrder`, one sync at a
    * time.
    *

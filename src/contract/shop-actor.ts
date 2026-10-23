@@ -238,7 +238,7 @@ export const MemberRpcs = RpcGroup.make(
 
 /**
  * A merchant's procedures; see {@link MemberRpcs} for the role rule. The workflow writes answer
- * legacy's result unions as their success and declare no error: the screens switch on the
+ * result unions as their success and declare no error: the screens switch on the
  * union's `_tag`, and a fault is a defect.
  */
 export const MerchantRpcs = RpcGroup.make(

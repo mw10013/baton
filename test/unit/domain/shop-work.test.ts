@@ -1196,8 +1196,8 @@ describe("Domain workflow schemas", () => {
   });
 });
 
-describe("workflow callable inputs", () => {
-  it("callable inputs reject excess properties", () => {
+describe("workflow procedure inputs", () => {
+  it("procedure inputs reject excess properties", () => {
     strictEqual(
       Option.isNone(
         Schema.decodeUnknownOption(ShopWork.CreateWorkflowInput)(

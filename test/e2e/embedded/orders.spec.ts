@@ -33,8 +33,7 @@ import { cancelTestOrder, createTestOrder, type TestOrder } from "./test-orders.
  * fixture orders placed later, which would push it off the first page. The order is open and
  * recent until the cancel, so the open-orders sync's 30-day query includes it.
  *
- * The rest are legacy `e2e/orders.spec.ts`'s index cases, titles unchanged, each over orders,
- * teams and workflows it adds with `AddToFixture` under names, tags and order numbers of its own;
+ * The rest each run over orders, teams and workflows they add with `AddToFixture` under names, tags and order numbers of its own;
  * a case that reads a count reads it under its own team, or searches for its own orders.
  */
 test.describe.configure({ mode: "serial" });

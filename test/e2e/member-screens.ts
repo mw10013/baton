@@ -5,8 +5,7 @@ import { dev, expect, own, type Run, signInMember, test, testEmail } from "./fix
 import { E2E_SHOP } from "./shop-fixture.ts";
 
 /**
- * The member's two screens in the e2e specs: legacy `e2e/member-runs.member.spec.ts`'s helpers,
- * over data each test adds with `AddToFixture` under names, tags, addresses and order numbers of
+ * Helpers for the member's two screens in the e2e specs, over data each test adds with `AddToFixture` under names, tags, addresses and order numbers of
  * its own, so no spec reads another's data and the counts on the strip are the test's alone.
  *
  * @module
@@ -29,7 +28,7 @@ export const CUT_TASK = "Cut";
 export const DEFAULT_STATE = "started_by_you";
 
 /**
- * One test's world, legacy's names with the test's own tail: the maker on Cut, the mate on Cut
+ * One test's world, every name ending in the test's own id: the maker on Cut, the mate on Cut
  * and Pack, the ring (Cut) and box (Pack) workflows and orders, and the order numbers the rest
  * take.
  */
@@ -88,7 +87,7 @@ export const add = (backend: Run, parts: Record<string, unknown>) =>
 export const BULK_COUNT = 25;
 const BULK_FIRST = 10;
 
-/** Legacy's `seedRuns`: the test's two members, two teams, workflows and orders. */
+/** Adds the test's two members, two teams, workflows and orders. */
 export const seedRuns = (
   backend: Run,
   w: World,

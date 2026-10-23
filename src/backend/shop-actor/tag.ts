@@ -97,7 +97,7 @@ export interface ShopActorShape {
  * Workflow call {@link ShopActorShape}'s schemaless methods on its stub, which no browser can
  * reach.
  *
- * It owns its shop, as legacy's `ShopAgent` does: it fetches an order from the Admin API itself
+ * It owns its shop: it fetches an order from the Admin API itself
  * (`Orders`, over the Backend's own `ShopifyAdmin`, which refreshes the offline token when a
  * call needs it), reads the shop's `ShopSession`, and creates the orders sync Workflow's instance
  * itself; the Workflow makes the bulk calls and calls the actor back.

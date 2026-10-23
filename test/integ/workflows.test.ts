@@ -20,10 +20,9 @@ import Stack from "./stack.ts";
 /**
  * The merchant's workflow writes end to end on the test stack: each `Merchant…` workflow
  * procedure on a forged merchant socket and the union it answers, the `ORDERS_KEY` notices a
- * second merchant socket receives, and a member refused every one. Legacy
- * `shop-agent-workflows.test.ts` and `member-runs-socket.test.ts` titles, unchanged; their run
- * halves, and the setup facts' titles, are in `runs.test.ts`. Every case writes `SEED_SHOP` under names and tags of its own, but the
- * loader cases, which run in file order on `OTHER_SHOP` (no team, no workflow until they add
+ * second merchant socket receives, and a member refused every one. The run writes and the setup
+ * facts are in `runs.test.ts`. Every case writes `SEED_SHOP` under names and tags of its own, but
+ * the loader cases, which run in file order on `OTHER_SHOP` (no team, no workflow until they add
  * them). The loaders are reached as the Website's server functions reach them, with a signed
  * merchant token (`ApiWorkflowsPage`, `ApiWorkflowDetail`, `ApiSetupFacts`). The repository's and
  * the application service's rules are unit tests.
@@ -407,9 +406,9 @@ test(
 );
 
 /**
- * Legacy's refusals of the workflow verbs: Edit tag on a workflow that is not there, Apply with no
- * draft, the switch on a workflow that is not there. The positive half first, so a notice that
- * never ran cannot pass; legacy's was a run write, which waits for runs, so it is Edit tag here.
+ * The workflow verbs' refusals: Edit tag on a workflow that is not there, Apply with no draft,
+ * the switch on a workflow that is not there. The positive half first, so a notice that never ran
+ * cannot pass. It is Edit tag, a write that needs no run.
  */
 test(
   "a refused call publishes nothing",
@@ -579,7 +578,7 @@ const decodeCreateExit = Schema.decodeUnknownEffect(
 );
 
 test(
-  "callable inputs reject excess properties",
+  "procedure inputs reject excess properties",
   Effect.gen(function* () {
     const { backendUrl } = yield* stack;
     yield* integ(backendUrl, (c) => c.ShopIdentityNames({ shop: SEED_SHOP }));

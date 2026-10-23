@@ -30,7 +30,7 @@ export const strictCodecJson: RpcSerialization.CodecFor = (schema) => {
 
 /**
  * {@link RpcSerialization.json} with {@link strictCodecJson}: a procedure refuses a payload
- * carrying a key its schema does not declare, as legacy's callables did, rather than running
+ * carrying a key its schema does not declare rather than running
  * with the key stripped. The refusal is a defect on that request's exit. Server side only:
  * clients encode from the payload's type, so they keep `RpcSerialization.layerJson`.
  */

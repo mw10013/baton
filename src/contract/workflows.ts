@@ -7,7 +7,7 @@ import {
 } from "../domain/shop-work.ts";
 
 /**
- * Rows per page of the workflows index, legacy's: against the controls table's 25 for an index,
+ * Rows per page of the workflows index, against the controls table's 25 for an index,
  * because a shop holds at most `WorkflowLimits.maxWorkflows` (200), four pages.
  */
 export const WORKFLOWS_PAGE_SIZE = 50;

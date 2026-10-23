@@ -7,8 +7,7 @@ import { E2E_SHOP as shop } from "../shop-fixture.ts";
 import { appFrame } from "./app.ts";
 
 /**
- * The orders index and the order page in the e2e specs: legacy `e2e/orders.spec.ts`'s helpers,
- * over data each test adds with `AddToFixture` under names, tags and order numbers of its own, so
+ * Helpers for the orders index and the order page in the e2e specs, over data each test adds with `AddToFixture` under names, tags and order numbers of its own, so
  * no spec reads another's data.
  *
  * @module

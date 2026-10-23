@@ -42,7 +42,7 @@ export interface OrdersSyncWorkflows {
 export type OrderWebhookStatus = "stale" | "refused" | "gone" | "stored";
 
 /**
- * Legacy's `OrdersAgent` (`agent/Orders.ts`): what the shop's actor does with an order as
+ * What the shop's actor does with an order as
  * Shopify's thing, fetching one from the Admin API itself and storing it, and starting the
  * open-orders sync. Built once per activation over the actor's repository and transaction, the
  * Backend's `ShopifyAdmin` (which ensures, and so refreshes, the offline session on every call),
@@ -52,7 +52,7 @@ export type OrderWebhookStatus = "stale" | "refused" | "gone" | "stored";
  *
  * No Admin call runs inside the repository's transaction: the transaction closes the object's
  * input gate, behind which a timer never fires, and the refresh's retries and lease poll are
- * timers. Every method fetches first and writes after, as legacy did. The input gate opens
+ * timers. Every method fetches first and writes after. The input gate opens
  * during the fetch, so a webhook may interleave with a bulk stream or another webhook; the
  * per-order transactions and the version guard keep that harmless.
  */
@@ -84,7 +84,7 @@ export const makeOrders = <R>({
   readonly shop: ShopKey;
 }) => {
   /**
-   * Legacy's `fetchAndUpsertOrder`: one `OrderSync` query for `orderId`, then the upsert. A
+   * One `OrderSync` query for `orderId`, then the upsert. A
    * `null` order is not a failure: by the time a delivery is handled the order may already be
    * deleted, and Shopify answers `null` rather than an error, so it is logged and answered as
    * `gone`, storing nothing. A page cut short by `hasNextPage` is stored as is and logged at
@@ -153,7 +153,7 @@ export const makeOrders = <R>({
   });
 
   /**
-   * Legacy's `ShopAgent.syncOrderWebhook`, one round trip for one delivery: the version probe
+   * One round trip for one delivery: the version probe
    * and, for an order not stored, the ceiling (`OrderRepository.orderVersion`), then, only for
    * `Fetch`, {@link fetchAndUpsertOrder}. The topic decides nothing (rule 1 on `syncOrder`); a
    * payload no newer than the row spends no Admin call (rule 2). The upsert's own version guard
@@ -161,7 +161,7 @@ export const makeOrders = <R>({
    * it stored no order.
    *
    * Every refusal is a business answer and succeeds. An `EnsureShopSessionError` fails, so the
-   * delivery is non-2xx and Shopify retries, as legacy did: the Backend read the shop's
+   * delivery is non-2xx and Shopify retries: the Backend read the shop's
    * `ShopSession` before calling, so `OfflineSessionMissing` here means the row was deleted since
    * (an uninstall racing this delivery), and the retry finds no row and answers 200.
    *
@@ -221,14 +221,13 @@ export const makeOrders = <R>({
   });
 
   /**
-   * Sync from Shopify on one order, legacy's `syncOrder`: {@link fetchAndUpsertOrder} without
+   * Sync from Shopify on one order: {@link fetchAndUpsertOrder} without
    * the version probe, since a merchant pressing the button is asking for the fetch and the
    * upsert's own version guard still protects the row.
    *
    * `Gone` when Shopify answers null for the order (the stored row stays, the rule on
-   * `SyncOrderResult`); otherwise `Stored`, a ceiling refusal of an order not stored included,
-   * as legacy answered: its result knew only gone or not, and the refusal is the ceiling banner's
-   * to show, not this button's.
+   * `SyncOrderResult`); otherwise `Stored`, a ceiling refusal of an order not stored included:
+   * the refusal is the ceiling banner's to show, not this button's.
    *
    * Sends the usage queue afterwards (`flushUsage`), whether or not the fetch succeeded (rule 13
    * on `syncOrder`): the reconcile may have started the order's first run, which counts it.
@@ -253,11 +252,11 @@ export const makeOrders = <R>({
   }, Effect.ensuring(flushUsage));
 
   /**
-   * Sync open orders, legacy's `ShopAgent.syncOpenOrders`: the start's rules are
+   * Sync open orders: the start's rules are
    * `OrderRepository.beginSync`, in its own transaction, under a fresh instance id; this logs
    * them and, only on `Started`, notifies {@link SYNC_KEY} and creates the `OrdersSyncWorkflow`
    * instance of that id, outside the transaction. The record is written before the instance
-   * exists, which is what legacy's `syncStarting` did: a second press in between answers
+   * exists, so a second press in between answers
    * `InFlight`.
    *
    * A create that fails ends the sync it recorded with the same repository calls the Workflow's

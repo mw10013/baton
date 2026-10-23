@@ -145,7 +145,7 @@ export const makeMembership = <R>({
   });
 
   /**
-   * Legacy's `deleteTeam` callable: `NotFound` is an answer, not a failure, and closes
+   * `NotFound` is an answer, not a failure, and closes
    * nobody; `MembershipRepository.deleteTeam` reads the team's members before the edges cascade.
    *
    * Delete a team and its tasks become unassigned. Two stores, two writes, D1 first: the two

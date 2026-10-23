@@ -107,10 +107,7 @@ describe("ShopSessionRepository refresh writes", () => {
   );
 });
 
-/**
- * The plan cache columns over the real SQL on an in-memory D1: legacy `repository.test.ts`'s two
- * plan titles, unchanged. "updateShopSessionPlan" is legacy's name for `updatePlan`.
- */
+/** The plan cache columns over the real SQL on an in-memory D1. */
 describe("ShopSessionRepository plan cache", () => {
   const inD1 = <A, E>(body: Effect.Effect<A, E, ShopSessionRepository>) =>
     Effect.gen(function* () {
@@ -150,7 +147,7 @@ describe("ShopSessionRepository plan cache", () => {
     ),
   );
 
-  it.effect("updateShopSessionPlan rewrites only the plan cache fields", () =>
+  it.effect("updatePlan rewrites only the plan cache fields", () =>
     inD1(
       Effect.gen(function* () {
         const sessions = yield* ShopSessionRepository;
@@ -173,9 +170,8 @@ describe("ShopSessionRepository plan cache", () => {
 });
 
 /**
- * The admin console's redacted reads over the real SQL on an in-memory D1: legacy
- * `repository.test.ts`'s six `getShopSessionRedactedPage` titles, unchanged, and one for
- * `findRedacted`.
+ * The admin console's redacted reads over the real SQL on an in-memory D1: `getRedactedPage`
+ * and `findRedacted`.
  */
 describe("getRedactedPage", () => {
   const shopKey = Schema.decodeUnknownSync(ShopKey);

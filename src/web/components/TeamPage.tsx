@@ -435,8 +435,7 @@ function LiveRemoveButton({
  * The screen once hydrated: each write a mutation over its procedure on the layout's socket, its
  * answer read as an `Exit`; written, the route re-reads the loader. Delete team is
  * `MerchantDeleteTeam`: `Deleted` hides the modal, toasts "Team deleted" and goes back to the
- * index (toast first: the admin's toast outlives the page); `NotFound` is legacy's banner
- * sentence.
+ * index (toast first: the admin's toast outlives the page); `NotFound` is a warning banner.
  */
 function LiveTeam(props: TeamPageProps & { readonly detail: TeamDetail }) {
   const { team } = props.detail;

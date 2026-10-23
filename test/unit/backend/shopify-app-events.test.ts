@@ -11,8 +11,7 @@ import { USAGE_METER_ORDER, type UsageEvent } from "../../../src/domain/billing.
 import { ShopGid } from "../../../src/domain/platform.ts";
 
 /**
- * The App Events client against a recorded transport: legacy `shopify-app-events.test.ts`'s
- * cases, titles unchanged.
+ * The App Events client against a recorded transport.
  *
  * Two of these titles are facts about Shopify's live API that its own documentation
  * contradicts (the `User-Agent` and the token body without `expires_in`), measured 2026-09-19

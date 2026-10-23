@@ -57,7 +57,7 @@ const isMemberTeamFailure = Schema.is(MemberTeamFailure);
 
 /**
  * A member or team press that failed, as the page says it: a refusal the procedure declares in
- * merchant copy (legacy's `failWith`), anything else (a lost socket, a defect) in
+ * merchant copy, anything else (a lost socket, a defect) in
  * {@link thrownCopy}'s, with `fallback`.
  */
 export const pressFailureCopy = (cause: Cause.Cause<unknown>, fallback: string) => {

@@ -1,6 +1,6 @@
 /**
- * The runs application service: legacy `ShopWorkAgent`'s run half (`agent/ShopWork.ts`), the
- * orders index's and the order page's reads included. Built once per activation.
+ * The runs application service: the actor's runs and their tasks, the orders index's and the
+ * order page's reads included. Built once per activation.
  *
  * @module
  */
@@ -184,9 +184,9 @@ const runResult = <E extends { readonly _tag: string }, R>(
   );
 
 /**
- * Legacy `ShopWorkAgent`'s run half over the actor's repositories, its D1 membership, its
- * `notify` and its shop. `flushUsage` is the billing seam (the usage outbox's send), called where
- * legacy flushes: after reconcile all, even when it fails, and after Attach.
+ * The runs application service over the actor's repositories, its D1 membership, its
+ * `notify` and its shop. `flushUsage` is the billing seam (the usage outbox's send), called after
+ * reconcile all, even when it fails, and after Attach.
  *
  * Never inside a `transaction(…)`: no D1 read (`MembershipRepository`) and no `flushUsage`. The
  * teams are read first ({@link eligibleContext}), and each repository write opens its own
@@ -883,7 +883,6 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
       }),
     ).pipe(Effect.withSpan("Runs.memberBlockRun"));
 
-  /** No log line, as legacy had none. */
   const memberUnblockRun = ({ runId }: RunIdInput, member: RunMember) =>
     runResult(
       Effect.gen(function* () {
@@ -894,7 +893,7 @@ export const makeRuns = Effect.fnUntraced(function* <R>({
     ).pipe(Effect.withSpan("Runs.memberUnblockRun"));
 
   /**
-   * The fixture's work on its runs, legacy's `seedOrders` after its upserts: per order, in the
+   * The fixture's work on its runs, after its order upserts: per order, in the
    * fixture's order, reconcile in its own transaction; each item's chosen workflow through
    * `setRun`, the merchant's own Choose; each open run's progress through the run repository's
    * writes, each in its own transaction; then the order's `after` through an upsert whose

@@ -51,7 +51,7 @@ import { ActorSqliteTest, testOrderRepository } from "../layers.ts";
 
 /**
  * The actor's orders repository over a fresh in-memory SQLite migrated by the actor's own
- * schema: legacy `order-repository.test.ts`'s cases, titles and describe names unchanged.
+ * schema.
  */
 
 /** `body` with the repository and its client, on a fresh database. */
@@ -367,10 +367,9 @@ describe("openOrdersAtCeiling", () => {
 
 describe("OrderRepository usage", () => {
   /**
-   * Legacy lowered `ShopLimits.maxOpenOrders` to 2 for this case; here the ceiling keeps its value
-   * and all but two of it are stored as open orders first, so the case's own two orders reach it.
-   * Legacy's `ordersThisCycle` assert is left out: this case never counts, and the meter's own
-   * cases below pin that storing an order is not counting it.
+   * The ceiling keeps its value: all but two of it are stored as open orders first, so the case's
+   * own two orders reach it. This case never counts, and the meter's own cases below pin that
+   * storing an order is not counting it.
    */
   it.effect(
     "the ceiling counts open orders, not counted ones: a new order is refused at it, a stored one still updates, and a closed order makes no claim on it",
@@ -2167,8 +2166,7 @@ describe("OrderRepository.getOrderByLegacyId and getLineItem", () => {
 
 /**
  * The start of an open-orders sync and the tracking record it leaves (`SyncState.workflowId`
- * and `startedAt`), which stands in for the Agents SDK's tracking row: legacy's
- * `orders-sync-workflow.test.ts` rules, over the repository.
+ * and `startedAt`), over the repository.
  */
 describe("OrderRepository.beginSync", () => {
   const NOW = Date.UTC(2026, 9, 17);
@@ -2208,7 +2206,10 @@ describe("OrderRepository.beginSync", () => {
     ),
   );
 
-  /** Legacy's integration case, pinned here with an explicit `now`: no Workflow is behind it. */
+  /**
+   * The record names a Workflow that never ran, so the case gives `now` explicitly: an hour-old
+   * record reads as idle and the next start replaces it.
+   */
   it.effect("a tracking row older than ten minutes is deleted on the next press", () =>
     runInRepository((repository) =>
       Effect.gen(function* () {
@@ -2297,10 +2298,9 @@ describe("OrderRepository.beginSync", () => {
   );
 
   /**
-   * Legacy compared the whole `SyncState` row before and after, because the tracking row was the
-   * Agents SDK's own table. Here the tracking record is `SyncState.workflowId` and `startedAt`,
-   * so the completion clears exactly those two columns and every other column, of `SyncState`
-   * and `ShopUsage`, is as the start left it. Both completions, `ShopActor.onOrdersStream` and
+   * The tracking record is `SyncState.workflowId` and `startedAt`, so the completion clears
+   * exactly those two columns and every other column, of `SyncState` and `ShopUsage`, is as the
+   * start left it. Both completions, `ShopActor.onOrdersStream` and
    * `onOrdersSyncEmpty`, end in this `clearSyncTracking`; the orders a stream writes are its rows.
    */
   it.effect("a completed sync deletes the tracking row and writes nothing else", () =>
@@ -2334,9 +2334,8 @@ describe("OrderRepository.beginSync", () => {
 });
 
 /**
- * The webhook path's probe before the Backend's fetch. Legacy lowered `ShopLimits.maxOpenOrders`
- * to 2 and delivered a webhook to the object; here the ceiling keeps its value, is filled with open
- * rows, and the probe is the repository's: that `Refused` makes no Admin call is the Backend's
+ * The webhook path's probe before the Backend's fetch. The ceiling keeps its value, is filled
+ * with open rows, and the probe is the repository's: that `Refused` makes no Admin call is the Backend's
  * half, pinned by `webhooks.test.ts`' "a refused version answers 200 with no Admin call and
  * nothing stored".
  */
@@ -2365,8 +2364,7 @@ describe("OrderRepository.orderVersion", () => {
   );
 
   /**
-   * Legacy's case ran on webhooks to the object and on Sync open orders through its Workflow; here
-   * each read is the repository's: the webhook's probe (`orderVersion`), the write
+   * Each read is the repository's: the webhook's probe (`orderVersion`), the write
    * (`upsertOrder`) and the start (`beginSync`). The orders a fulfilment frees are read at each,
    * with no counter to fall out of step.
    */

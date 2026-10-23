@@ -426,7 +426,6 @@ describe("orders webhooks", () => {
 
   /**
    * The topic decides nothing in the actor: the order stored is the one Shopify answered.
-   * Legacy also asserted the order's run stayed open; runs are not ported.
    */
   it.effect(
     "a webhook's topic decides nothing: a cancelled topic on an open order stores it open",

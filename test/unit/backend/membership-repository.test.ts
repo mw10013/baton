@@ -30,11 +30,8 @@ import { ShopSessionRepository } from "../../../src/backend/shop-session-reposit
 import { makeD1Test, seedD1 } from "./layers.ts";
 
 /**
- * Legacy `repository.test.ts`'s `Member` and `Team` blocks, titles unchanged, over the real
- * {@link MembershipRepository} on a fresh in-memory D1 per test. Legacy's `listMembers` and
- * `countTeams` are not ported (no production caller); `countMembers` is, for
- * `SubscriptionPlan`'s billing cycle push. The tests read back through `listMembersPage`,
- * `listTeams` or raw SQL. Legacy's `deleteShopSession` is
+ * Members and teams over the real {@link MembershipRepository} on a fresh in-memory D1 per test.
+ * The tests read back through `listMembersPage`, `listTeams` or raw SQL. Removing a shop is
  * `ShopSessionRepository.remove` over the same database.
  */
 const run = <A, E>(
@@ -796,9 +793,8 @@ describe("MembershipRepository session cap and auth sweep", () => {
 });
 
 /**
- * Legacy `setup-facts.test.ts`'s D1 cases, titles unchanged: the teams half of `SetupFacts`,
- * read by {@link MembershipRepository}'s `teamWithMemberExists` alone (the object's half is the
- * workflow repository's).
+ * The teams half of `SetupFacts`, read by {@link MembershipRepository}'s `teamWithMemberExists`
+ * alone (the object's half is the workflow repository's).
  */
 describe("the setup facts", () => {
   const seedTeam = (repo: MembershipRepository["Service"], shop: ShopKey, withMember: boolean) =>

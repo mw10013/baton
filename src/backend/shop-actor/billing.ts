@@ -1,6 +1,5 @@
 /**
- * The billing application service: legacy `BillingAgent` (`agent/Billing.ts`), the actor's
- * usage, billing cycle and usage-event flush over `makeUsageRepository`. Built once per
+ * The billing application service: the actor's usage, billing cycle and usage-event flush over `makeUsageRepository`. Built once per
  * activation.
  *
  * @module
@@ -116,7 +115,7 @@ export const makeBilling = Effect.fnUntraced(function* <R>({
    * notifies {@link ORDERS_KEY} when the count or the cycle changed, so an open home page's
    * meter re-reads, then sends the queue: a new cycle's first seat event, a rise in the seat
    * mark, and anything queued before the shop had a `shopGid` go out now rather than at the
-   * next order. The notice is Baton's, not legacy's, which only wrote and flushed.
+   * next order.
    */
   const setBillingCycle = Effect.fn("Billing.setBillingCycle")(function* (
     cycle: BillingCycleInput,

@@ -233,7 +233,7 @@ test(
  * The ceiling is reached with real rows: `LoadFixture` stores {@link ShopLimits.maxOpenOrders}
  * open orders, so no limit is lowered for the test. "Before the fetch" is a webhook for a new
  * order, which asks Shopify nothing; "by the write" is Sync from Shopify on a new order, which
- * has no probe, so the upsert refuses it (and answers `Stored`, as legacy did).
+ * has no probe, so the upsert refuses it (and still answers `Stored`).
  */
 test(
   "at the order ceiling a new order is refused before the fetch and by the write, and a stored one still updates",
@@ -487,9 +487,8 @@ test(
 );
 
 /**
- * Legacy wrote the expired row behind the actor's back; here {@link age} writes it through the
- * actor's one-order fetch on a fresh `ShopUsage` (`lastSweepAt` null), so that very write's sweep
- * deletes it.
+ * {@link age} writes the expired row through the actor's one-order fetch, not behind the actor's
+ * back, on a fresh `ShopUsage` (`lastSweepAt` null), so that very write's sweep deletes it.
  */
 test(
   "a webhook whose sweep deletes an order publishes and the orders index stops showing it",
@@ -620,15 +619,13 @@ test(
 );
 
 /**
- * Legacy's `onOrdersStream`, `onOrdersSyncEmpty` and `onOrdersSyncError` were object methods a
- * socket could name; here they are stub methods of the same names, which only the Backend's
- * Workflow holds, so no browser procedure carries them. Legacy's two sync buttons were
- * merchant-only callables; here they are the merchant procedures `MerchantSyncOpenOrders` and
- * `MerchantSyncOrder`, which a member's socket is `Forbidden`, as it is the sync's status, and no
- * Shopify call is made.
+ * `onOrdersStream`, `onOrdersSyncEmpty` and `onOrdersSyncError` are stub methods, which only the
+ * Backend's Workflow holds, so no browser procedure carries them. The two sync buttons are the
+ * merchant procedures `MerchantSyncOpenOrders` and `MerchantSyncOrder`, which a member's socket
+ * is `Forbidden`, as it is the sync's status, and no Shopify call is made.
  */
 test(
-  "the stream's callbacks are not callable from a socket, and the two sync buttons refuse a member",
+  "the stream's callbacks are no socket procedure, and the two sync buttons refuse a member",
   Effect.gen(function* () {
     const { backendUrl } = yield* stack;
     const procedures = [...ShopActorRpcs.requests.keys()];

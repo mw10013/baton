@@ -163,7 +163,8 @@ export type FixtureWorkflow = typeof FixtureWorkflow.Type;
 
 /**
  * Progress on a run, shared by an order and an item; see {@link FixtureProgress}. The actor
- * applies it after the fixture's rows and teams are in (`applyFixture`), in legacy's seed order.
+ * applies it after the fixture's rows and teams are in (`applyFixture`), one step at a time in
+ * the order its fields are listed.
  */
 const progressFields = {
   /** Every task done. Exclusive with `advance`. */

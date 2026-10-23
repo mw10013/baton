@@ -137,8 +137,7 @@ const make = Effect.gen(function* () {
 });
 
 /**
- * Baton's gate (`authorizeShopAgentRequest` and `authorizeShopAgentMember` in one): who may
- * open a shop's actor, decided from the credential the caller presents.
+ * Baton's gate: who may open a shop's actor, decided from the credential the caller presents.
  *
  * - A Shopify session token selects the merchant branch: a bad token is 401, a token for
  *   another shop 403, a shop with no `ShopSession` row 404, a shop with no app subscription

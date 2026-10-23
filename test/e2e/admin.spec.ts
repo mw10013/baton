@@ -27,7 +27,7 @@ test("the dashboard names the consoles and links to each", async ({ goto, page }
 
 /**
  * The e2e store is always installed (the `install` setup project), so its row is always there.
- * The filter is driven by URL, as legacy's was: the field writes the same search param.
+ * The filter is driven by URL: the field writes the same search param.
  */
 test("shops lists installed shops, filters by domain, and drills into one", async ({
   goto,

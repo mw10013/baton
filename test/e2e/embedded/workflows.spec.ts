@@ -21,9 +21,8 @@ import {
 } from "./app.ts";
 
 /**
- * The workflows index, the workflow page and the editor on the e2e store: legacy
- * `workflows.spec.ts`'s cases but the run one, titles unchanged. The specs run in parallel on one store, so each test
- * names its workflows, tags and teams from its test id, adds them with `AddToFixture`, and
+ * The workflows index, the workflow page and the editor on the e2e store. The specs run in
+ * parallel on one store, so each test names its workflows, tags and teams from its test id, adds them with `AddToFixture`, and
  * asserts on nothing it did not add.
  */
 test.describe.configure({ mode: "serial" });

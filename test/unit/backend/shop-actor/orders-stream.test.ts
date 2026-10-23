@@ -11,10 +11,9 @@ import { ShopLimits } from "../../../../src/domain/platform.ts";
 import { ActorSqliteTest, QuietLogs, testOrderRepository } from "../layers.ts";
 
 /**
- * The bulk stream's fold over the actor's real repository on an in-memory SQLite: legacy
- * `shop-agent-orders-stream.test.ts`'s `runShopAgentOrdersStream` cases, titles unchanged, under
- * the function's new name. What these tests are actually about is the fold meeting the guarded
- * upsert, which a fake repository would define away.
+ * The bulk stream's fold over the actor's real repository on an in-memory SQLite. What these
+ * tests are actually about is the fold meeting the guarded upsert, which a fake repository would
+ * define away.
  */
 
 const BULK_URL = "https://storage.googleapis.test/bulk-orders.jsonl";

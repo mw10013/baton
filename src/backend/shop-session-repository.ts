@@ -175,7 +175,7 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
     }, Effect.orDie);
 
     /**
-     * Legacy's `updateShopSessionPlan`: writes the three plan cache columns, and only them.
+     * Writes the three plan cache columns, and only them.
      *
      * Deliberately its own statement rather than columns folded into
      * `upsert`: D1 bills index B-tree writes as `rows_written`, and
@@ -197,7 +197,7 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
     }, Effect.orDie);
 
     /**
-     * Legacy's `shortenShopSessionPlanExpiry`: pulls the plan cache deadline forward to at most
+     * Pulls the plan cache deadline forward to at most
      * `notAfter`, never backward, and never on a never-fetched row.
      *
      * The `min` is what makes it safe to call speculatively: a shop whose app

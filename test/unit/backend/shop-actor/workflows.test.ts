@@ -18,8 +18,7 @@ import { ActorSqliteTest, makeD1Test, QuietLogs, seedD1 } from "../layers.ts";
 /**
  * The workflows application service over the actor's repository on a fresh in-memory SQLite,
  * the real `MembershipRepository` on a fresh in-memory D1 holding {@link shop}, and a recording
- * reconcile seam and `notify`: legacy `shop-agent-workflows.test.ts`'s result-mapping cases,
- * titles unchanged (their run halves wait for runs), and the reconcile and notice sites.
+ * reconcile seam and `notify`: result mapping, and the reconcile and notice sites.
  */
 const shop = Schema.decodeUnknownSync(ShopKey)("workflows.myshopify.com");
 
@@ -229,7 +228,7 @@ describe("Workflows", () => {
   );
 
   it.effect(
-    "reconcile runs where legacy reconciles: Apply and Edit tag only when active; the switch, Turn on and delete always; nothing else",
+    "reconcile runs on Apply and Edit tag only when active; on the switch, Turn on and delete always; nothing else",
     () =>
       harness(({ workflows, membership, reconciled }) =>
         Effect.gen(function* () {

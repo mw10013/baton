@@ -29,10 +29,8 @@ import Stack from "./stack.ts";
 /**
  * The runs service against a real Backend and actor, over forged sockets: reconcile on the
  * order write paths and after the definition writes, the run procedures and the gate in front
- * of them, the fixture's work on its runs, and the setup facts a run completes. Legacy
- * `shop-agent-workflows.test.ts`, `shop-agent-sync-order.test.ts`, `setup-facts.test.ts` and
- * `shop-agent-callables.test.ts` titles, unchanged. Every case starts from an empty
- * `SEED_SHOP` (this file's own stage); orders arrive as production gets them, by webhook or
+ * of them, the fixture's work on its runs, and the setup facts a run completes. Every case starts
+ * from an empty `SEED_SHOP` (this file's own stage); orders arrive as production gets them, by webhook or
  * Sync from Shopify with the fake answering, and each one is reconciled as it is stored, so an
  * order meant to be stored before a workflow matches it arrives before the workflow is on.
  */
@@ -1127,7 +1125,7 @@ const oneRun = (client: Client) =>
   });
 
 test(
-  "refuses every merchant callable on a member connection",
+  "refuses every merchant procedure on a member connection",
   Effect.gen(function* () {
     yield* reset(SEED_SHOP);
     yield* storeOrder(1);
@@ -1159,7 +1157,7 @@ test(
 );
 
 test(
-  "refuses every member callable on a merchant connection",
+  "refuses every member procedure on a merchant connection",
   Effect.gen(function* () {
     yield* reset(SEED_SHOP);
     yield* storeOrder(1);

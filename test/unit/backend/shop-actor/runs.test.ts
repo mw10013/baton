@@ -61,9 +61,8 @@ import {
  * The runs application service over the actor's real repositories on a fresh in-memory SQLite
  * and the real `MembershipRepository` on a fresh in-memory D1, with a recording `notify` and
  * `flushUsage`: result mapping, the gate before the write, notices on success only, the teams
- * read before any transaction, the billing seam's call sites, the memos (legacy
- * `list-memo.test.ts`) and the fixture's work on its runs (legacy's seed titles). Data is
- * arranged as the fixture arranges it: `fixtureRows`, the actor's insert, then `applyFixture`.
+ * read before any transaction, the billing seam's call sites, the memos and the fixture's work on
+ * its runs. Data is arranged as the fixture arranges it: `fixtureRows`, the actor's insert, then `applyFixture`.
  */
 const shop = Schema.decodeUnknownSync(ShopKey)("runs.myshopify.com");
 const fixtureData = Schema.decodeUnknownSync(ShopFixtureData);
@@ -1534,8 +1533,8 @@ describe("runOrdersStream with afterWrite", () => {
 const ordersPage = (runs: Effect.Success<ReturnType<typeof makeRuns<never>>>) =>
   runs.listOrders(EVERY_ORDER).pipe(Effect.map(({ page }) => page.orders));
 
-describe("ShopAgent seed callables", () => {
-  it.effect("seedOrders runs each item on its own progress and leaves its siblings alone", () =>
+describe("fixture runs", () => {
+  it.effect("a fixture runs each item on its own progress and leaves its siblings alone", () =>
     harness(({ load, runRepository }) =>
       Effect.gen(function* () {
         yield* load({
@@ -1571,7 +1570,7 @@ describe("ShopAgent seed callables", () => {
     ),
   );
 
-  it.effect("seedOrders chooses a workflow for an item two claim, and the order stops asking", () =>
+  it.effect("a fixture chooses a workflow for an item two claim, and the order stops asking", () =>
     harness(({ runs, load, runRepository }) =>
       Effect.gen(function* () {
         const multiMatchItem = { title: "Board", quantity: 1, tags: ["board", "rush"] };

@@ -239,7 +239,7 @@ describe("Orders.syncOrder", () => {
     ),
   );
 
-  /** Legacy's answer knew only gone or not: the ceiling is the banner's to show. */
+  /** The answer says only gone or not: the ceiling is the banner's to show. */
   it.effect("a new order refused at the ceiling answers Stored", () =>
     withOrders([Effect.succeed(recorded.data)], (orders, { sql, repository }) =>
       Effect.gen(function* () {
@@ -264,7 +264,7 @@ describe("Orders.syncOrder", () => {
 });
 
 /**
- * The billing seam's call sites, legacy's: the webhook sends the usage queue after its fetch
+ * The billing seam's call sites: the webhook sends the usage queue after its fetch
  * path only, and Sync from Shopify sends it whatever became of the fetch (rule 13 on
  * `syncOrder`). The actor's `flushUsage` is `makeBilling`'s flush; here it is counted.
  */

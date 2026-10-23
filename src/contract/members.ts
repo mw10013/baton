@@ -51,8 +51,8 @@ export const AddMemberInput = Schema.Struct({ email: Email });
 export type AddMemberInput = typeof AddMemberInput.Type;
 
 /**
- * `MerchantDeleteMember`'s payload: by email, as legacy's `deleteMember` is keyed, because the
- * delete answers the id the revoke closes.
+ * `MerchantDeleteMember`'s payload: by email, because the delete answers the id the revoke
+ * closes.
  */
 export const DeleteMemberInput = Schema.Struct({ email: Email });
 export type DeleteMemberInput = typeof DeleteMemberInput.Type;
@@ -93,8 +93,7 @@ export type DeleteTeamInput = typeof DeleteTeamInput.Type;
 
 /**
  * Rows per page of a merchant table, the controls table's "a merchant table
- * with more rows than its page" row (`Control` in legacy's `Screen.ts`): 25 on an
- * index, 10 on a details page. The Backend's page reads use them, and the screens'
+ * with more rows than its page" row: 25 on an index, 10 on a details page. The Backend's page reads use them, and the screens'
  * paging reads the page they answer.
  */
 export const INDEX_PAGE_SIZE = 25;

@@ -80,7 +80,7 @@ describe("PlanCache", () => {
       [{ _tag: "Unsubscribed" }, "Unsubscribed"],
       [{ _tag: "Stale", handle: "baton-basic" }, "Stalebaton-basic"],
       [{ _tag: "NeverFetched" }, "Never fetched"],
-      [{ _tag: "Unrecognized", handle: "baton-legacy" }, "Unrecognizedbaton-legacy"],
+      [{ _tag: "Unrecognized", handle: "baton-retired" }, "Unrecognizedbaton-retired"],
     ];
     const screen = await renderInApp(
       <ul>

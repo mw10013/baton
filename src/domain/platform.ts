@@ -55,15 +55,15 @@
  * | ------- | ------------------------------------------------------------------------------------------------------ | --------------------- | ------------------------------------------------------- |
  * | shop    | one Shopify store, the tenant                                                                          | `ShopSession`, `ShopKey` | store (Shopify's merchant word); its domain as the name |
  * | ceiling | a per-shop limit the object enforces: `maxOpenOrders`, `maxMembers` on `ShopLimits` | `ShopLimits`          | the banner that names what stopped                      |
- * | memo    | a list read's last answer, kept in the object's memory until the next publish | the Cache values in ShopWorkAgent | (none)                                                  |
- * | socket       | a tab's one WebSocket to its shop's object, for the life of the tab; a series of connections                                                | `ShopAgentSocket`, `ShopAgentSocketProvider`       | (none): Connecting |
- * | connection   | the object's end of one socket, from identify to close; carries who is on it                                                                | `ConnectionState` in ShopWork, `ConnectionRole`    | (none)             |
- * | identify     | the object learns who is on a connection from the gate's headers, once, at connect; the tab learns the handshake landed                     | `ShopAgent.onConnect`, `identified`                | (none): Connecting |
- * | publish      | a write that succeeded telling every connection to re-read; the sites table on `ShopAgent.publish` lists the writes                         | `ShopAgent.publish`, `ShopAgentHost.publish`       | (none)             |
- * | invalidation | the one message the object sends: re-read; never the data                                                                                   | `InvalidatedMessage`, `INVALIDATION_THROTTLE_MS`   | (none)             |
- * | live         | a screen whose rows other actors change and the object re-reads on every publish: the orders index, the order page, the workflows list, the member's workflow page | `useLiveQuery`                                     | (none)             |
- * | revoke       | the object closing a connection whose identity no longer holds (membership, team, app subscription), so the tab reconnects through the gate | `CONNECTION_CLOSE_REVOKED`, `revokeAllConnections` | (none): Connecting |
- * | displace     | the object closing a member's oldest connection because a newer one took the last of `maxConnectionsPerMember`; the screen stays closed      | `CONNECTION_CLOSE_DISPLACED`, `displaceConnections` | (none): Signed in elsewhere |
+ * | memo    | a list read's last answer, kept in the object's memory until the next publish | `makeRuns`' memos | (none)                                                  |
+ * | socket       | a tab's one WebSocket to its shop's object, for the life of the tab; a series of connections                                                | `ShopSocket`, `ShopActorClient`                    | (none): Connecting |
+ * | connection   | the object's end of one socket, from identify to close; carries who is on it                                                                | `ConnectionState`, `ConnectionRole`                | (none)             |
+ * | identify     | the object learns who is on a connection from the gate's headers, once, at connect; the tab learns the handshake landed                     | the gate header, `ActorSocket`'s accept; `connectionStateAtom` `open` | (none): Connecting |
+ * | publish      | a write that succeeded telling every connection to re-read                                                                                    | `Runs.notify`, `Runs.notifyRuns`                   | (none)             |
+ * | invalidation | the one message the object sends: re-read; never the data                                                                                   | `Notice`, `NOTICE_THROTTLE`                        | (none)             |
+ * | live         | a screen whose rows other actors change and the object re-reads on every publish: the orders index, the order page, the workflows list, the member's workflow page | `liveQuery`, `useLiveRead`                         | (none)             |
+ * | revoke       | the object closing a connection whose identity no longer holds (membership, team, app subscription), so the tab reconnects through the gate | `CONNECTION_CLOSE_REVOKED`, `ShopActor.revoke`     | (none): Connecting |
+ * | displace     | the object closing a member's oldest connection because a newer one took the last of `maxConnectionsPerMember`; the screen stays closed      | `CONNECTION_CLOSE_DISPLACED`, `ShopActor.displace` | (none): Signed in elsewhere |
  *
  * @module
  */
@@ -124,7 +124,7 @@ export const ShopSession = Schema.Struct({
   shopGid: ShopGid,
   /**
    * Names the shop's actor. It is the shop domain, because the actor is addressed by name
-   * (`ShopActors.getByName(shop)`), where legacy stored the Agents SDK's id. Set once, at insert.
+   * (`ShopActors.getByName(shop)`). Set once, at insert.
    */
   shopActorId: Schema.String,
   scope: Schema.NullOr(Schema.String),
@@ -317,7 +317,7 @@ export const ShopLimits = {
   maxMembers: 50,
   /**
    * Live connections one member may hold on the shop at once; a member's
-   * connect past it displaces the oldest (`ShopAgent.displaceConnections`,
+   * connect past it displaces the oldest (`ShopActor.displace`,
    * the connection table on {@link ConnectionRole}). A member is a person
    * with at most a bench computer and a phone: each is one connection, and
    * each connection is one live screen re-read on every publish. A sign-in
@@ -341,10 +341,10 @@ export const ShopLimits = {
    * one-person rule on {@link ShopLimits.maxConnectionsPerMember}. A
    * magic-link sign-in creates a better-auth session per device it is opened
    * on; `Auth`'s `session.create.after` hook keeps the newest two
-   * (`Repository.keepNewestSessions`) and deletes the rest, so a sign-in
+   * (`MembershipRepository.keepNewestSessions`) and deletes the rest, so a sign-in
    * shared across a floor signs the others out. The deleted device's open
    * sockets are revoked on every shop the email is a member of
-   * (`ShopAgent.revokeMemberConnections`, 3401): each device reconnects
+   * (`ShopActor.revoke` by member, 3401): each device reconnects
    * through the gate, where the deleted session's cookie no longer resolves
    * and is refused, and the kept devices come back. Without the revoke the
    * signed-out device would keep a live socket under its old identity until
@@ -447,43 +447,43 @@ export const EpochMillis = Schema.DateFromString.pipe(
 );
 
 /**
- * Who is on a `ShopAgent` WebSocket connection. Two populations reach the
- * object over the same socket (`ShopAgentSocket`, mounted by
- * `ShopAgentSocketProvider` on both sides) and must not reach the same methods:
+ * Who is on a `ShopActor` WebSocket connection. Two populations reach the
+ * object over the same socket (`ShopSocket`, held by the merchant's and the
+ * member's layouts) and must not reach the same procedures:
  * **merchants** (Shopify staff inside the embedded admin, proved by an App
  * Bridge session token) and **members** (a Baton login with no Shopify
- * account, proved by a better-auth cookie). Only the Worker can tell them
- * apart — the object never sees a cookie or a token — so the Worker's connect
- * gate resolves identity once and forwards it as `x-baton-*` headers on the
- * rewritten upgrade request; `ShopAgent.onConnect` decodes those headers into
- * this value and stores it with the connection.
+ * account, proved by a better-auth cookie). Only the Backend can tell them
+ * apart — the object never sees a cookie or a token — so the Backend's gate
+ * (`ShopAccess`) resolves identity once and forwards it in the gate header
+ * (`x-actor-connection`) on the upgrade it rebuilds; `ShopActor.fetch`
+ * decodes that header into the caller and stores it with the socket.
  *
- * Read from the connection, never from a message: a callable's arguments are
+ * Read from the connection, never from a message: a procedure's payload is
  * browser-supplied, and `memberId` / `teamIds` are exactly the privileged
- * inputs a member must not be able to name for themselves. Every `@callable()`
- * checks the role here first (see `callableEffect` on `ShopAgent`).
+ * inputs a member must not be able to name for themselves. Every procedure
+ * checks the role first (the contract's `RequireMerchant` and `RequireMember`).
  *
- * From connect to close. `side` is where the answer is given: the Worker's
- * gate (`authorizeShopAgentRequest`), the object, or the tab.
+ * From connect to close. `side` is where the answer is given: the Backend's
+ * gate (`ShopAccess.resolve`), the object, or the tab.
  *
- * | event                                          | side   | answer                                                                           | pinned by                                                                                                |
- * | ---------------------------------------------- | ------ | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
- * | upgrade with a valid App Bridge token          | Worker | forwards `merchant`                                                              | forwards a merchant role for a valid session token                                                       |
- * | upgrade with a member cookie for this shop     | Worker | forwards `member`, the id, the email, the team ids                               | forwards the member identity resolved from the cookie                                                    |
- * | a member past the plan's included seats        | Worker | forwards `member`; the seat rule is the triggers table on `ShopUsage`            | forwards a member past the plan's included seats                                                         |
- * | upgrade carrying a forged `x-baton-*` header   | Worker | the header is dropped; the gate's own answer is forwarded                        | strips a forged role header from a member upgrade                                                        |
- * | cookie of a signed-in non-member of the shop   | Worker | 404                                                                              | 404s a signed-in non-member of that shop                                                                 |
- * | cookie of an operator                          | Worker | 403                                                                              | 403s an operator cookie                                                                                  |
- * | member of a shop whose app subscription lapsed | Worker | 402                                                                              | 402s a member of a shop whose app subscription lapsed                                                    |
- * | neither token nor cookie                       | Worker | 401                                                                              | 401s an upgrade with neither a token nor a session                                                       |
- * | connect with decodable headers                 | object | identity stored on the connection, tagged by role and member id                  | stores a merchant identity and tags the connection; stores a member identity, its teams, and the revocation tag |
- * | connect with undecodable headers               | object | closed 4403                                                                      | closes a connection with undecodable headers with 4403                                                   |
- * | a member's teams or membership change          | object | that member's connections closed 3401                                            | revokes only the named member's connections                                                              |
- * | a team is deleted                              | object | its members' connections closed 3401                                             | closes the sockets of everyone who was on the deleted team                                               |
- * | the shop's app subscription lapses             | object | every connection closed 3401                                                     | revokes every connection on the shop for a lapse                                                         |
- * | close 3401 (revoked)                           | tab    | reconnects through the gate on its own; close 4403 (forbidden) stays closed      | the tab reconnects on 3401 and not on 4403                                                               |
- * | a member's connect past `maxConnectionsPerMember` | object | the member's oldest connections closed 4409 until the cap holds; the new one stays | displaces the oldest connection past the member's cap |
- * | close 4409 (displaced)                         | tab    | stays closed; the screen says Signed in elsewhere and offers Reconnect             | the tab stays closed on 4409 and shows signed in elsewhere |
+ * | event                                          | side   | answer                                                                           |
+ * | ---------------------------------------------- | ------ | -------------------------------------------------------------------------------- |
+ * | upgrade with a valid App Bridge token          | Backend | forwards `merchant`                                                              |
+ * | upgrade with a member cookie for this shop     | Backend | forwards `member`, the id, the email, the team ids                               |
+ * | a member past the plan's included seats        | Backend | forwards `member`; the seat rule is the triggers table on `ShopUsage`            |
+ * | upgrade carrying a forged `x-actor-connection` header | Backend | the header is dropped; the gate's own answer is forwarded                        |
+ * | cookie of a signed-in non-member of the shop   | Backend | 404                                                                              |
+ * | cookie of an operator                          | Backend | 403                                                                              |
+ * | member of a shop whose app subscription lapsed | Backend | 402                                                                              |
+ * | neither token nor cookie                       | Backend | 401                                                                              |
+ * | connect with decodable headers                 | object | identity stored on the connection, tagged by role and member id                  |
+ * | connect with undecodable headers               | object | closed 4403                                                                      |
+ * | a member's teams or membership change          | object | that member's connections closed 3401                                            |
+ * | a team is deleted                              | object | its members' connections closed 3401                                             |
+ * | the shop's app subscription lapses             | object | every connection closed 3401                                                     |
+ * | close 3401 (revoked)                           | tab    | reconnects through the gate on its own; close 4403 (forbidden) stays closed      |
+ * | a member's connect past `maxConnectionsPerMember` | object | the member's oldest connections closed 4409 until the cap holds; the new one stays |
+ * | close 4409 (displaced)                         | tab    | stays closed; the screen says Signed in elsewhere and offers Reconnect             |
  *
  * Identity is a connect-time snapshot, persisted with the hibernatable socket
  * (`serializeAttachment`), so it survives the object hibernating but does not
@@ -501,19 +501,18 @@ export type ConnectionRole = typeof ConnectionRole.Type;
 /**
  * Close codes the object sends on a connection it will not serve. `4403`
  * is a gate failure: the forwarded request carried no decodable identity,
- * which can only mean the Worker forwarded something malformed (a browser
+ * which can only mean the Backend forwarded something malformed (a browser
  * cannot set these headers on an upgrade). `3401` is revocation, sent by
- * `closeMemberConnections` and `revokeAllConnections`. When each is sent and
+ * `ShopActor.revoke`. When each is sent and
  * what the tab does with it is the table on {@link ConnectionRole}.
  *
  * The ranges carry the tab's answer. RFC 6455 §7.4.2 gives 3000-3999 to
  * libraries, frameworks and applications and 4000-4999 to private use, and
- * the browser sees both verbatim. The `agents` client treats 1008 and every
- * 4000-4999 close as terminal and stops reconnecting
- * (`isTerminalCloseEvent` in `refs/agents/packages/agents/src/client.ts`),
- * so `4403` stays closed, which is right: a reconnect cannot fix a malformed
- * forward. A 3xxx close is not terminal to it, so after a revocation
- * partysocket reconnects through the gate on its own backoff.
+ * the browser sees both verbatim. The tab's retry policy treats these 4xxx
+ * closes as terminal and stops reconnecting (`TERMINAL_CODES` in the web
+ * client's actor connection), so `4403` stays closed, which is right: a
+ * reconnect cannot fix a malformed forward. A 3xxx close is not terminal, so
+ * after a revocation the tab reconnects through the gate on its own backoff.
  *
  * The contract's `CONNECTION_CLOSE_FORBIDDEN` and `CONNECTION_CLOSE_REVOKED` duplicate these, same
  * names and values, until this one's callers move.
@@ -524,7 +523,7 @@ export const CONNECTION_CLOSE_REVOKED = 3401;
 /**
  * The close code for a displaced connection: a member's connect took the last
  * of {@link ShopLimits.maxConnectionsPerMember}, and the object closed the
- * member's oldest connection to keep the cap (`ShopAgent.displaceConnections`).
+ * member's oldest connection to keep the cap (`ShopActor.displace`).
  *
  * A 4xxx code on purpose, terminal to the socket like
  * {@link CONNECTION_CLOSE_FORBIDDEN}: a displaced screen that reconnected on

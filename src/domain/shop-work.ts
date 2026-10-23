@@ -3615,7 +3615,7 @@ export const runActions = (
     readonly teamId: string | null;
     readonly current: boolean;
   }[],
-  /** Read for `changeWorkflow` alone, by the attach callable; absent, that field is false (the `changeWorkflow` bullet). */
+  /** Read for `changeWorkflow` alone, by the attach procedure (`MerchantAttachWorkflow`); absent, that field is false (the `changeWorkflow` bullet). */
   item?: Pick<OrderLineItem, "currentQuantity">,
 ): RunActions => {
   const merchant = actor.role === "merchant";

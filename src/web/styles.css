@@ -129,7 +129,7 @@
   }
 }
 
-/* `MeterTile`'s bar: Polaris has no meter, so a native `progress`, legacy's styling. */
+/* `MeterTile`'s bar: Polaris has no meter, so a native `progress`, styled here. */
 .capacity-meter {
   display: block;
   inline-size: 100%;

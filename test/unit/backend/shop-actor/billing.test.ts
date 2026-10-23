@@ -33,9 +33,8 @@ import {
 
 /**
  * Every path that creates a run sends the queue after its write commits: the rule on
- * `makeBilling`'s `flushUsageEvents`, which names these tests (legacy
- * `shop-agent-usage-flush.test.ts`, titles unchanged; the describe renamed by role). The actor's services are wired as the actor
- * wires them: the real meter in the run repository, the billing service's flush as the runs and
+ * `makeBilling`'s `flushUsageEvents`, which names these tests. The actor's services are wired as
+ * the actor wires them: the real meter in the run repository, the billing service's flush as the runs and
  * orders services' `flushUsage`, over a fresh in-memory SQLite and D1, with App Events recorded
  * instead of sent.
  */

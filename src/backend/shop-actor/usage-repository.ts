@@ -1,7 +1,6 @@
 /**
- * The shop actor's billing meter over its SQLite: legacy `OrderRepository`'s usage half (the
- * counted order, the billing cycle, the seat mark and the usage-event outbox). Legacy's SQL and
- * rules, verbatim; `transaction` stands for legacy's `sql.withTransaction`.
+ * The shop actor's billing meter over its SQLite: the counted order, the billing cycle, the seat
+ * mark and the usage-event outbox.
  *
  * @module
  */

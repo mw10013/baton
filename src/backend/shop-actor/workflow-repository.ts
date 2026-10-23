@@ -1,6 +1,5 @@
 /**
- * The shop actor's workflow definitions over its SQLite: legacy's `WorkflowRepository` but
- * `replaceWorkflows` (the fixture does its job). Legacy's SQL and rules, verbatim.
+ * The shop actor's workflow definitions over its SQLite.
  *
  * @module
  */

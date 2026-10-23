@@ -10,7 +10,6 @@ import {
 } from "../../../../src/web/components/workflow-shared.ts";
 import type { TaskWithTeamName } from "../../../../src/domain/shop-work.ts";
 
-/** Legacy `workflow-repository.test.ts`'s `copyName` case, title unchanged, and the screens' other helpers. */
 describe("copyName", () => {
   it("suffixes the name and trims the base to fit the 64-character limit", () => {
     strictEqual(copyName("Engraved ring"), "Engraved ring copy");

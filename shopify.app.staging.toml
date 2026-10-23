@@ -10,7 +10,6 @@
 # have one web configuration file with the backend role". It must NOT be copied into
 # shopify.app.toml: the ACTIVE config's web_directories are re-matched with minimatch against
 # "shopify.web.toml", "./shopify.web.toml" does not match, and the app silently loads zero webs.
-# See refs/baton-legacy/docs/shopify-web-toml-conflict-research.md.
 #
 # Everything else mirrors shopify.app.toml (scopes, webhooks); keep the two in step. `handle` is the
 # one Shopify assigned (read off the staging store's installed apps, 2026-10-18), pinned because

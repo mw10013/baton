@@ -532,8 +532,8 @@ const makeShopActor = Effect.gen(function* () {
       databaseSize: Effect.sync(() => state.raw.storage.sql.databaseSize),
     }).pipe(Effect.provideService(ShopifyAppEvents, appEvents));
     /**
-     * The usage outbox's send, called where legacy flushes (after a webhook, Sync from
-     * Shopify, the stream, reconcile all and Attach), never inside a transaction.
+     * The usage outbox's send, called after a webhook, Sync from Shopify, the stream, reconcile
+     * all and Attach, never inside a transaction.
      */
     const flushUsage: Effect.Effect<void> = Effect.asVoid(billing.flushUsageEvents);
     /** The billing meter, called by the run repository once per created run, inside its caller's transaction. */
@@ -648,7 +648,7 @@ const makeShopActor = Effect.gen(function* () {
         );
 
     /**
-     * Baton's `displaceConnections`: after a member's socket is accepted, keeps the member at
+     * Displace: after a member's socket is accepted, keeps the member at
      * {@link MAX_CONNECTIONS_PER_MEMBER} by closing the oldest of the others, by
      * `connectedAt`. Best effort: a failure is logged and the new socket is served either way.
      */
@@ -816,13 +816,13 @@ const makeShopActor = Effect.gen(function* () {
     });
 
     /**
-     * Closes every socket of one member (`by: "member"`, Baton's `revokeMemberConnections`), of
+     * Closes every socket of one member (`by: "member"`), of
      * one Better Auth session (`by: "session"`), or of the whole shop, merchant and members
-     * alike (`by: "all"`, legacy's `revokeAllConnections`), with {@link CONNECTION_CLOSE_REVOKED}.
+     * alike (`by: "all"`), with {@link CONNECTION_CLOSE_REVOKED}.
      *
      * `"all"` is `SubscriptionPlan`'s, at the moment a revalidation learns the shop's app
      * subscription changed, a tier switch as much as a lapse, so its close reason names neither
-     * ("plan changed"; legacy's said "app subscription lapsed"). The keepalive means a healthy
+     * ("plan changed"). The keepalive means a healthy
      * socket never reconnects on its own, so the connect-time plan check would otherwise hold for
      * as long as the tab lives. Closing is what makes the gate's `402` reach an open tab: each
      * reconnect asks the gate again, and the gate now refuses.
@@ -996,8 +996,8 @@ const makeShopActor = Effect.gen(function* () {
     );
 
     /**
-     * Legacy's `ShopAgent.syncOrderWebhook`, the Backend's one call for an `orders/*` delivery
-     * whose shop it found installed: `Orders.syncOrderWebhook`. Any failure dies, which the
+     * The Backend's one call for an `orders/*` delivery whose shop it found installed:
+     * `Orders.syncOrderWebhook`. Any failure dies, which the
      * Backend answers non-2xx, so Shopify retries.
      */
     const syncOrderWebhook = Effect.fn("ShopActor.syncOrderWebhook")(
@@ -1062,7 +1062,7 @@ const makeShopActor = Effect.gen(function* () {
     }, Effect.provide(runtime));
 
     /**
-     * One page of the workflows index, legacy's loader read (plain RPC: workflow definitions are
+     * One page of the workflows index (plain RPC: workflow definitions are
      * configuration, never live); `Workflows.listWorkflows`.
      */
     const listWorkflows = Effect.fn("ShopActor.listWorkflows")(function* (
@@ -1084,7 +1084,7 @@ const makeShopActor = Effect.gen(function* () {
     }, Effect.provide(runtime));
 
     /**
-     * Legacy's `onOrdersStream`: the Workflow's last step for a completed export, never a
+     * The Workflow's last step for a completed export, never a
      * browser's (rule 16 on `syncOrder`: the URL must only ever come from a bulk operation this
      * shop started). The stream merges ({@link runOrdersStream}), then the retention pass rides
      * it (rule 9), then the tracking record is cleared and both keys are notified, whatever the
@@ -1151,7 +1151,7 @@ const makeShopActor = Effect.gen(function* () {
     );
 
     /**
-     * Legacy's `onOrdersSyncEmpty`: the last 30 days held no open orders. Deliberately does not
+     * The last 30 days held no open orders. Deliberately does not
      * touch stored rows: unlike a catalog scan, an empty result means "nothing changed", never
      * "the shop has no orders" (rule 9 on `syncOrder`). Clears the tracking record.
      */
@@ -1167,9 +1167,8 @@ const makeShopActor = Effect.gen(function* () {
     );
 
     /**
-     * A sync that will not finish: the Workflow's error sink. Legacy's `onOrdersSyncError` and
-     * `onWorkflowError` in one, since no
-     * platform callback follows here: the record is cleared, which re-enables the button, and
+     * A sync that will not finish: the Workflow's error sink. No other callback follows it, so it
+     * does both jobs: the record is cleared, which re-enables the button, and
      * `message` becomes the banner unless one is already written (rule 15 on `syncOrder`).
      * Both only when the record is `workflowId`'s: a sync whose stale record a newer press
      * replaced has nothing left to report, and the newer sync owns the banner.

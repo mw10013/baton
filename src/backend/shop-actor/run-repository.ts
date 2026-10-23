@@ -1,7 +1,6 @@
 /**
- * The shop actor's runs and their tasks over its SQLite: legacy's `RunRepository`, its eighteen
- * methods and nine errors. Legacy's SQL and rules, verbatim; `transaction` stands for legacy's
- * `sql.withTransaction`, and the billing meter is the `countOrder` argument.
+ * The shop actor's runs and their tasks over its SQLite. The billing meter is the `countOrder`
+ * argument.
  *
  * @module
  */

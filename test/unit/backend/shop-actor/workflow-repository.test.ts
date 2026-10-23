@@ -19,10 +19,7 @@ import { ActorSqliteTest } from "../layers.ts";
 
 /**
  * The actor's workflow repository over a fresh in-memory SQLite migrated by the actor's own
- * schema: legacy `workflow-repository.test.ts`'s cases, titles and describe names unchanged, but
- * the `replaceWorkflows` and seed cases (not ported; the fixture's own tests pin what they did)
- * and `copyName` (with the web helper). The cases that arranged rows through `replaceWorkflows`
- * write them with {@link insertWorkflows}.
+ * schema. The cases write their rows with {@link insertWorkflows}.
  */
 class WorkflowRepository extends Context.Service<WorkflowRepository, Repository>()(
   "test/WorkflowRepository",
@@ -41,8 +38,7 @@ const runInRepository = <A, E>(
 ) => program.pipe(Effect.provide(WorkflowRepositoryTest));
 
 /**
- * `Workflow` rows written straight to SQL, as legacy's `replaceWorkflows` seeded them: a task
- * with no `step` follows the previous one, every task gets a new id, and a workflow is active
+ * `Workflow` rows written straight to SQL: a task with no `step` follows the previous one, every task gets a new id, and a workflow is active
  * when it has tasks and every one has a team.
  */
 const insertWorkflows = (
@@ -1565,7 +1561,7 @@ describe("WorkflowRepository workflow and draft", () => {
   );
 });
 
-/** Legacy `data-model.test.ts`'s workflow row, title unchanged: the `unique`s under the repository. */
+/** The workflow row's `unique`s, under the repository. */
 describe("data model", () => {
   it.effect(
     "a workflow is identified by its tag and by its name; no two workflows share either; the name is compared exactly",

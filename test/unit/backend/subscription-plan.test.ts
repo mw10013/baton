@@ -26,8 +26,7 @@ import { makeD1Test, QuietLogs } from "./layers.ts";
 
 /**
  * `SubscriptionPlan` over the real `ShopSessionRepository` and `MembershipRepository` on a fresh
- * in-memory D1, a stub `ShopifyPartner` and a recording `ShopActors`, under `TestClock`: legacy
- * `subscription-plan.test.ts`'s cases, titles unchanged. What this file owns is *when* the plan
+ * in-memory D1, a stub `ShopifyPartner` and a recording `ShopActors`, under `TestClock`. What this file owns is *when* the plan
  * revokes or pushes a cycle; the actor's tests own what a revoke or a push does.
  */
 const shop = Schema.decodeUnknownSync(ShopKey)("plan.myshopify.com");

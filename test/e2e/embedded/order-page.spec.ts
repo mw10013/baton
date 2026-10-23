@@ -16,10 +16,10 @@ import {
 } from "./orders-screens.ts";
 
 /**
- * The order page inside the Shopify admin: legacy `e2e/orders.spec.ts`'s order page cases, titles
- * unchanged. Each test adds its own team, members, workflows and orders with `AddToFixture`, under
- * names, tags and order numbers of its own, opens its order from the orders index's search, and
- * asserts on nothing it did not add. The item titles are legacy's: a page shows one order.
+ * The order page inside the Shopify admin. Each test adds its own team, members, workflows and
+ * orders with `AddToFixture`, under names, tags and order numbers of its own, opens its order from
+ * the orders index's search, and asserts on nothing it did not add. Item titles repeat across
+ * tests. A page shows one order, so no other test's item is on it.
  */
 test.describe.configure({ mode: "serial" });
 

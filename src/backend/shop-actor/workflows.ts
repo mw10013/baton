@@ -55,7 +55,7 @@ type Fault = SqlError.SqlError | WorkflowRepositoryError;
 
 /**
  * Maps the repository's expected failures onto the tagged result union the
- * page decodes. Expected failures are *values* here, legacy's shape: the screens switch on the
+ * page decodes. Expected failures are *values* here: the screens switch on the
  * union's `_tag` and tell "name taken" or "tag taken" (field errors) from "limit reached" (a
  * banner). A fault (`SqlError`, a decode) is a defect, which the browser reads as `thrownCopy`.
  */
@@ -170,24 +170,22 @@ const notifyIfOk =
     result._tag === "Ok" ? notify([ORDERS_KEY]) : Effect.void;
 
 /**
- * The merchant's workflow definitions as the shop's actor runs them, legacy `agent/ShopWork.ts`'s
- * workflow handlers: one method per `Merchant…` workflow procedure, each answering legacy's
- * result union, plus the three stub reads. Built once per activation over the actor's
- * {@link WorkflowRepository}, the Backend's `MembershipRepository` (the shop's live teams), the
- * reconcile seam, the actor's `notify` and its shop.
+ * The merchant's workflow definitions as the shop's actor runs them: one method per `Merchant…`
+ * workflow procedure, each answering its result union, plus the three stub reads. Built once per
+ * activation over the actor's {@link WorkflowRepository}, the Backend's `MembershipRepository`
+ * (the shop's live teams), the reconcile seam, the actor's `notify` and its shop.
  *
  * The live teams are read from D1 before the repository call, never inside its transaction: a
  * storage transaction holds the input gate and runs on a sync scheduler, and a binding call has
- * no place inside it. Legacy read them first for its own reason (D1 cannot join a Durable Object
- * transaction); the order is kept. A D1 read opens the input gate, so a second press or a team
- * delete can run between the team check and the write; `Membership.deleteTeam`'s order (D1
- * first, then null every pointer) closes that window, as legacy's did.
+ * no place inside it, and D1 cannot join a Durable Object transaction anyway. A D1 read opens
+ * the input gate, so a second press or a team delete can run between the team check and the
+ * write; `Membership.deleteTeam`'s order (D1 first, then null every pointer) closes that window.
  *
- * `reconcileAll` is legacy's `reconcileAllNow`, called where legacy calls it and through
- * {@link reconcileAllIfActive} where legacy does; the actor passes the runs service's, which
- * reads the teams and opens one transaction per order after the definition write. A write that changes which workflows an order page's Workflow select lists notifies
- * `ORDERS_KEY` on `Ok` (Edit tag, Apply, the switch, Turn on; delete on `Deleted`); nothing reads
- * workflows live, so there is no workflows key.
+ * `reconcileAll` is the runs service's, which the actor passes, called directly or through
+ * {@link reconcileAllIfActive}; it reads the teams and opens one transaction per order after the
+ * definition write. A write that changes which workflows an order page's Workflow select lists
+ * notifies `ORDERS_KEY` on `Ok` (Edit tag, Apply, the switch, Turn on; delete on `Deleted`);
+ * nothing reads workflows live, so there is no workflows key.
  */
 export const makeWorkflows = <R>({
   repository,
@@ -417,7 +415,7 @@ export const makeWorkflows = <R>({
     ).pipe(Effect.tap(notifyIfOk(notify)));
 
   /**
-   * Legacy's `removeWorkflow`: delete a workflow and its runs stay on their orders (the rule is
+   * Delete a workflow and its runs stay on their orders (the rule is
    * the data model on the actor's `migrations`). Notifies because any order page's Workflow
    * select, which lists workflows, must repaint.
    *

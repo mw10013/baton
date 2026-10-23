@@ -4,7 +4,7 @@ import { Things } from "./screen/Things.tsx";
 /**
  * Subscription inactive: what a member of a shop whose app subscription lapsed reads, headed by
  * the shop, with the way back to the shops they still have when `yourStores`. A member of this
- * shop alone gets no link: Your stores would send them straight back here. Legacy's copy.
+ * shop alone gets no link: Your stores would send them straight back here.
  */
 export function LapsedPage({
   shop,

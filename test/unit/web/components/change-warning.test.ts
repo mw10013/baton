@@ -17,7 +17,6 @@ import {
   changeWarning,
 } from "../../../../src/web/components/change-warning.ts";
 
-/** Legacy `change-warning.test.ts`, titles unchanged. */
 const task = (position: number, state: "open" | "started" | "done"): RunTask => ({
   id: Schema.decodeUnknownSync(RunTaskId)(`t${String(position)}`),
   runId: Schema.decodeUnknownSync(RunId)("r"),

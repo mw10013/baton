@@ -120,7 +120,7 @@ describe("MembersIndexPage", () => {
     await expect.element(screen.getByText("Up to 254 characters")).toBeVisible();
   });
 
-  it("the ceiling's refusal is the banner, in legacy's words", async () => {
+  it("the ceiling's refusal is a banner stating the shop's member limit", async () => {
     // The empty state's twin: outside the admin, the title bar's copy is in `s-page`'s actions,
     // which a narrow test page folds away; in the admin App Bridge hoists it.
     const screen = await render(pageOf([]), {

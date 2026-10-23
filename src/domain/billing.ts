@@ -321,10 +321,9 @@ export const provisionalCycleStart = (now: number) => {
  *
  * `idempotencyKey` is capped at 64 characters, and it is derived from the
  * order id or the cycle and mark rather than from a clock: replaying a flush
- * must not bill twice. Legacy called the key permanent at Shopify; at
- * `2026-10` Shopify documents a 24-hour idempotency window (not measured
- * 2026-10-18). The window changes nothing: a row is deleted as soon as
- * Shopify accepts it, so a replay is the same flush.
+ * must not bill twice. At `2026-10` Shopify documents a 24-hour idempotency
+ * window (not measured 2026-10-18), which is enough: a row is deleted as soon
+ * as Shopify accepts it, so a replay is the same flush.
  */
 export const UsageEvent = Schema.Struct({
   shopGid: ShopGid,

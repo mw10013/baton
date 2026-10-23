@@ -76,8 +76,8 @@ export const useWorkflowEditorWindow = ({
   /**
    * The standing `src` must be a real app URL with a query string even when
    * there is no workflow yet: with `about:blank` App Bridge rewrote a later
-   * `src` assignment to `…/edit&chrome=window`, dropping the `?` (seen live in
-   * legacy), and the editor then loaded without the window flag.
+   * `src` assignment to `…/edit&chrome=window`, dropping the `?` (seen live),
+   * and the editor then loaded without the window flag.
    */
   const src = editorSrc(workflowId ?? "new");
   const callbacks = useRef({ onHide, onDeleted });

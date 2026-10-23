@@ -7,16 +7,16 @@ import {
   uninstalledAtom,
 } from "../client/actor-connection.ts";
 
-/** Legacy's copy for a socket a newer window displaced. */
+/** The copy for a socket a newer window displaced. */
 const DISPLACED = "Signed in elsewhere. Reconnect to keep working here.";
-/** Legacy's copy for a socket down past the grace (`lostAtom`). */
+/** The copy for a socket down past the grace (`lostAtom`). */
 const LOST =
   "Baton lost its connection. This page won't update, and you can't make changes until it reconnects.";
 const UNINSTALLED = "Baton was uninstalled from this shop.";
 const EXPIRED = "Your Shopify session expired.";
 
 /**
- * Legacy's `SocketBanner`: the one place the shop socket's health shows, rendered by the socket
+ * The one place the shop socket's health shows, rendered by the socket
  * holder above every page it holds the socket for. Nothing while the socket is healthy, because
  * connected is the expected state and a permanent badge trains people to ignore the one moment
  * it matters. Displaced (a newer window took a member's last socket) at once, with Reconnect,
