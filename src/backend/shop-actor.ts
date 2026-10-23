@@ -511,7 +511,7 @@ const makeShopActor = Effect.gen(function* () {
     // Every actor is reached by name (`getByName`), so a nameless id is a broken invariant.
     const shop = yield* Effect.fromOption(decodeShopKey(state.id.name)).pipe(Effect.orDie);
     const runtime = yield* Effect.context<RuntimeContext>();
-    // An empty store is a new shop or a destroyed one; only an installed shop may write to it.
+    // The guard on the actor's first activation; the rule is on `ShopActor`.
     if (isEmptyStore(state.raw.storage) && Option.isNone(yield* shopSessions.find(shop)))
       return yield* Effect.die(new Error(`ShopActor: shop=${shop}: no ShopSession, not created`));
     const storage = (yield* rowCountsOn) ? countActorStorage(state.raw.storage) : state.raw.storage;

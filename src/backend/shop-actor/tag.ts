@@ -102,6 +102,12 @@ export interface ShopActorShape {
  * call needs it), reads the shop's `ShopSession`, and creates the orders sync Workflow's instance
  * itself; the Workflow makes the bulk calls and calls the actor back.
  *
+ * An uninstalled shop's actor never comes back. Any call creates the object it names, so the
+ * actor guards its own first activation: with empty storage (a new shop, or one `destroy` wiped)
+ * and no `ShopSession` row it refuses to start and writes nothing. Every path is covered, the
+ * orders sync Workflow's late callbacks included. A caller may still read the row first, to
+ * answer without paying for a refused activation.
+ *
  * This module is the actor's identity only, with no implementation import: the actor yields the
  * Workflow and the Workflow binds the actor, and only this class may cross that cycle. The
  * implementation is `ShopActorLive`.

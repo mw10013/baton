@@ -208,8 +208,8 @@ const make = Effect.gen(function* () {
    * one shop over.
    *
    * A missing row is the honest answer for an uninstalled shop, since uninstall deletes it, and
-   * it is answered *before* the usage read, so viewing an arbitrary path cannot create an empty
-   * actor (`getByName` creates the object it names).
+   * it is answered *before* the usage read, which an actor with no row refuses (the rule is on
+   * `ShopActor`).
    *
    * The plan is decoded from the row, never resolved: `SubscriptionPlan.resolve` calls the
    * Partner API and rewrites D1 on a miss, which would make viewing the page mutate the shop it
@@ -427,7 +427,8 @@ const make = Effect.gen(function* () {
    * exchanged: the App Home's guard exchanged it when the page loaded, and a call per screen
    * read must not cost a token exchange. The request is ignored, as on
    * {@link authenticateAdmin}. A shop with no `ShopSession` is {@link ShopNotInstalled} and its
-   * actor is not touched, so a token outliving an uninstall never recreates it.
+   * actor is not touched, so a token outliving an uninstall gets that answer, not the actor's
+   * refusal (the rule is on `ShopActor`).
    */
   const listOrders = Effect.fn("BackendApi.listOrders")(function* (
     _request: RequestInfo,

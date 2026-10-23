@@ -80,8 +80,8 @@ const make = <R>(namespace: Effect.Effect<Effect.Success<typeof ShopActor>, neve
     });
 
     /**
-     * The shop's usage; see `getUsage` on {@link ShopActor}. Call it only for an installed shop:
-     * any stub call recreates an uninstalled shop's actor.
+     * The shop's usage; see `getUsage` on {@link ShopActor}. An uninstalled shop's actor refuses
+     * it, as every call.
      */
     const getUsage = Effect.fn("ShopActors.getUsage")(function* (key: ShopKey) {
       return yield* actors.getByName(key).getUsage();
@@ -147,8 +147,7 @@ const make = <R>(namespace: Effect.Effect<Effect.Success<typeof ShopActor>, neve
 
     /**
      * One `orders/*` delivery for an installed shop; see `syncOrderWebhook` on {@link ShopActor}.
-     * Call it only after reading the shop's `ShopSession`: any stub call recreates an uninstalled
-     * shop's actor.
+     * An uninstalled shop's actor refuses it, as every call.
      */
     const syncOrderWebhook = Effect.fn("ShopActors.syncOrderWebhook")(function* (
       key: ShopKey,

@@ -97,9 +97,9 @@ const ok = HttpServerResponse.empty({ status: 200 });
  * verified no-ops: a bad HMAC is 401 (`Shopify.validateWebhook`), which is what the compliance
  * requirement asks of an invalid signature, and anything valid is 200.
  *
- * Teardown is `app/uninstalled`'s, run as soon as the tokens are revoked; doing it from the
- * delayed `shop/redact` would risk resurrecting an already-destroyed `ShopActor` just to delete
- * it again.
+ * Teardown is `app/uninstalled`'s, run as soon as the tokens are revoked. By the delayed
+ * `shop/redact` there is nothing left to tear down: the row is gone, so the shop's actor refuses
+ * to start (the rule is on `ShopActor`).
  *
  * `customers/redact` and `customers/data_request` are no-ops because Baton stores no customer
  * identity fields: no name, email, phone or address, and no `customer` selection in any order
@@ -119,13 +119,14 @@ const ok = HttpServerResponse.empty({ status: 200 });
  * `handle` logs every failure at Error with shop and topic, and {@link ShopActors}' `destroy`
  * logs `status=failed`, so a burned budget is visible and can be cleaned up by hand.
  *
- * Acting on `shop/redact` as a backstop was considered and rejected. Doing it unconditionally is
- * the resurrection bug above. Guarding on a surviving `ShopSession` row avoids that but trades
- * the cost leak for a correctness risk: Shopify does not document whether `shop/redact` still
- * fires when a merchant reinstalls inside the 48-hour delay, the payload carries no timestamp
- * (`{ shop_id, shop_domain }`), and reinstall is a normal merchant flow, so a reinstalled shop
- * can read as a missed uninstall. Its session would recover on the next OAuth; its actor's
- * storage would not. Keep all three no-ops unless the suppression behavior is confirmed.
+ * Acting on `shop/redact` as a backstop was considered and rejected. After a completed uninstall
+ * it has nothing to do, as above. Acting on a surviving `ShopSession` row, a stranded shop's,
+ * trades the cost leak for a correctness risk: Shopify does not document whether `shop/redact`
+ * still fires when a merchant reinstalls inside the 48-hour delay, the payload carries no
+ * timestamp (`{ shop_id, shop_domain }`), and reinstall is a normal merchant flow, so a
+ * reinstalled shop can read as a missed uninstall. Its session would recover on the next OAuth;
+ * its actor's storage would not. Keep all three no-ops unless the suppression behavior is
+ * confirmed.
  *
  * @see https://shopify.dev/docs/apps/build/webhooks/troubleshoot
  */
@@ -183,10 +184,10 @@ const make = Effect.gen(function* () {
    * arrived. The work is awaited inside Shopify's five-second budget. One line per delivery
    * records what it came to ({@link OrderWebhookOutcome}).
    *
-   * The `ShopSession` read comes first, and no row means nothing is touched: an uninstalled
-   * shop's actor must never be recreated, and any stub call would recreate it, so an order
-   * webhook that arrives after `app/uninstalled` (Shopify does not order deliveries) answers
-   * 200 with no actor call. Baton had no such guard.
+   * The `ShopSession` read comes first, and no row means nothing is touched: an order webhook
+   * that arrives after `app/uninstalled` (Shopify does not order deliveries) answers 200 with no
+   * actor call. The actor would refuse it anyway (the rule is on `ShopActor`); reading first
+   * answers it without a refused activation and its error.
    *
    * A payload that decodes as neither shape fails as a 400 {@link WebhookRejected}, the answer a
    * malformed delivery gets, rather than a 500: the fault is the payload, not Baton. Any other
