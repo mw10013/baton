@@ -239,7 +239,7 @@ test("the workflows index keeps its filter across the workflow page", async ({ b
   await expect.poll(state).toBe("active");
 
   // The hoisted breadcrumb's back arrow.
-  await page.getByRole("button", { name: "Workflows", exact: true }).click();
+  await page.locator('button[aria-label="Workflows"]').click();
   await expect(frame.getByRole("link", { name: existing })).toBeVisible();
   await expect.poll(state).toBe("active");
   await expect(frame.getByRole("link", { name: off })).toHaveCount(0);

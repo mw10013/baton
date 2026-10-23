@@ -1,15 +1,15 @@
 /**
  * The Polaris web components bundle every page loads, and the only place its URL is written.
  *
- * Pinned to the 2.0 release candidate, with `@shopify/polaris-types` pinned to the matching
- * `2.0.0-rc.*` exactly: Shopify publishes the stable release at a new URL rather than updating
- * this one, so moving to stable 2.x changes this constant and the types package together. Outside
+ * Pinned to the 2.0 line, with `@shopify/polaris-types` pinned to the matching `2.0.*` exactly:
+ * Shopify publishes each minor line at its own URL, so moving to another one changes this
+ * constant and the types package together. Outside
  * the embedded App Home no App Bridge loads beside it, so Polaris renders its standalone "Admin
  * Next" look, light only. The `polaris` ref snapshots the bundle from this same URL.
  *
- * @see https://shopify.dev/docs/api/app-home/v2.0-rc/web-components
+ * @see https://shopify.dev/docs/api/app-home/v2.0/web-components
  */
-export const POLARIS_URL = "https://cdn.shopify.com/shopifycloud/polaris-2.0-rc.js";
+export const POLARIS_URL = "https://cdn.shopify.com/shopifycloud/polaris-2.0.js";
 
 /** Shopify's CDN, which both bundles load from; the App Home preconnects to it. */
 export const CDN_URL = "https://cdn.shopify.com";

@@ -90,7 +90,7 @@ test("the orders index links each order to Shopify", async () => {
   await frame.getByRole("link", { name, exact: true }).click();
   await expect(frame.locator(`s-page[heading="${name}"]`)).toBeVisible();
   // The hoisted breadcrumb's back arrow, to the list as it was.
-  await page.getByRole("button", { name: "Orders", exact: true }).click();
+  await page.locator('button[aria-label="Orders"]').click();
   await expect(row()).toBeVisible();
   expect(listContext(page).show).toBe("all");
 });
@@ -123,7 +123,7 @@ test("orders screen syncs open orders and lists them", async () => {
   await clickHoisted(syncOne);
   await expect.poll(() => hoistedEnabled(syncOne), { timeout: 30_000 }).toBe(true);
   // The breadcrumb, to the list the order was opened from.
-  await page.getByRole("button", { name: "Orders", exact: true }).click();
+  await page.locator('button[aria-label="Orders"]').click();
   await expect(row()).toBeVisible();
 });
 
@@ -460,7 +460,7 @@ test("the orders index keeps its filters and page across the order page", async 
 
   // The breadcrumb is hoisted into the admin title bar, where its back arrow is named for the
   // page it returns to.
-  await page.getByRole("button", { name: "Orders", exact: true }).click();
+  await page.locator('button[aria-label="Orders"]').click();
   await expect(rows).toHaveCount(5);
   await expect.poll(() => listContext(page)).toEqual(expected);
 

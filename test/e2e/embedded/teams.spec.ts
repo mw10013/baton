@@ -127,7 +127,9 @@ test("teams screen creates, adds members to, renames, and deletes a team", async
   await expect(deleteDialog.getByText("This can't be undone.")).toBeVisible();
   await deleteDialog.getByRole("button", { name: "Delete", exact: true }).click();
   await expect(frame.locator('s-page[heading="Teams"]')).toBeVisible();
-  await expect(page.getByText("Team deleted", { exact: true })).toBeVisible();
+  await expect(
+    page.locator("#admin-next-toast-viewport").getByText("Team deleted", { exact: true }),
+  ).toBeVisible();
   await searchTeams(renamed);
   await expect(frame.getByText("No teams match.")).toBeVisible();
 });

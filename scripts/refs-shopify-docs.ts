@@ -148,16 +148,6 @@ const SECTION_SOURCES: Record<DocSection, readonly SectionSource[]> = {
 
 const DEFAULT_SECTIONS = Object.keys(SECTION_SOURCES) as DocSection[];
 
-/**
- * Versions of a docs tree that Shopify serves but leaves out of `sitemap_standard.xml.gz`, so
- * the sitemap crawl never finds them: every discovered page under `from` is also requested under
- * `to`. A page with no copy there answers 404 and is skipped rather than failing the snapshot.
- */
-const UNLISTED_VERSIONS = [
-  // The Polaris 2.0 release candidate's App Home reference.
-  { from: `${ORIGIN}/docs/api/app-home/latest`, to: `${ORIGIN}/docs/api/app-home/v2.0-rc` },
-] as const;
-
 const WebhookTopic = Schema.Struct({
   name: Schema.NonEmptyString.check(Schema.isPattern(/^[A-Za-z0-9_]+(?:[/.][A-Za-z0-9_]+)*$/u)),
   description: Schema.optional(Schema.String),
@@ -228,12 +218,6 @@ type DocTask =
       readonly section: DocSection;
       readonly docUrl: string;
       readonly content: string;
-    }
-  | {
-      /** A page from {@link UNLISTED_VERSIONS}, which may not exist. */
-      readonly _tag: "Unlisted";
-      readonly section: DocSection;
-      readonly docUrl: string;
     };
 
 function canonicalizeDocUrl(raw: string): string | null {
@@ -409,26 +393,6 @@ const request = Effect.fn("requestShopifyDoc")((url: string) =>
   ),
 );
 
-/** {@link requestText}, but a 404 is no page rather than a failure. */
-const requestTextIfFound = Effect.fn("requestShopifyDocTextIfFound")((url: string) =>
-  HttpClient.HttpClient.pipe(
-    Effect.flatMap((client) =>
-      client.execute(
-        HttpClientRequest.get(url).pipe(HttpClientRequest.setHeader("user-agent", USER_AGENT)),
-      ),
-    ),
-    Effect.flatMap((response) =>
-      response.status === 404
-        ? Effect.succeedNone
-        : HttpClientResponse.filterStatusOk(response).pipe(
-            Effect.flatMap((ok) => ok.text),
-            Effect.map(Option.some),
-          ),
-    ),
-    Effect.mapError((cause) => new ShopifyDocsError({ message: `Failed ${url}`, cause })),
-  ),
-);
-
 const requestText = Effect.fn("requestShopifyDocText")((url: string) =>
   request(url).pipe(
     Effect.flatMap((response) => response.text),
@@ -557,20 +521,15 @@ const buildWebhookTasks = Effect.fn("buildWebhookTasks")(function* (
   ] satisfies readonly DocTask[];
 });
 
-/** A task's outcome: its page written, or no such page. A failure is `null`. */
-type TaskOutcome = "saved" | "missing";
-
 const runTask = Effect.fn("runShopifyDocTask")(
   function* (staging: string, task: DocTask) {
     const path = yield* Path.Path;
     const content = yield* Match.valueTags(task, {
-      Markdown: ({ docUrl }) => requestText(`${docUrl}.md`).pipe(Effect.map(Option.some)),
-      Webhook: ({ content }) => Effect.succeed(Option.some(content)),
-      Unlisted: ({ docUrl }) => requestTextIfFound(`${docUrl}.md`),
+      Markdown: ({ docUrl }) => requestText(`${docUrl}.md`),
+      Webhook: ({ content }) => Effect.succeed(content),
     });
-    if (Option.isNone(content)) return "missing" satisfies TaskOutcome;
-    yield* persist(toLocalPath(staging, task.docUrl, path), content.value);
-    return "saved" satisfies TaskOutcome;
+    yield* persist(toLocalPath(staging, task.docUrl, path), content);
+    return "saved" as const;
   },
   (effect, _staging, task) =>
     effect.pipe(
@@ -713,35 +672,12 @@ export const downloadInto = Effect.fn("downloadShopifyDocs")(function* (staging:
     }
   }
 
-  for (const { from, to } of UNLISTED_VERSIONS) {
-    const unlisted = tasks.flatMap((task): DocTask[] =>
-      task._tag === "Markdown" && isUnderPrefix(task.docUrl, from)
-        ? [
-            {
-              _tag: "Unlisted",
-              section: task.section,
-              docUrl: `${to}${task.docUrl.slice(from.length)}`,
-            },
-          ]
-        : [],
-    );
-    yield* Console.log(`collecting unlisted ${to} urls=${String(unlisted.length)}`);
-    for (const task of unlisted)
-      if (!seen.has(task.docUrl)) {
-        seen.add(task.docUrl);
-        tasks.push(task);
-      }
-  }
-
   const results = yield* Effect.forEach(tasks, (task) => runTask(staging, task), {
     concurrency: CONCURRENCY,
   });
   const saved = results.filter((r) => r === "saved").length;
-  const missing = results.filter((r) => r === "missing").length;
   const failed = results.filter((r) => r === null).length;
-  yield* Console.log(
-    `pages: ${String(saved)}/${String(results.length)} saved, ${String(missing)} unlisted not found`,
-  );
+  yield* Console.log(`pages: ${String(saved)}/${String(results.length)} saved`);
   if (failed > 0) {
     yield* Effect.fail(
       new ShopifyDocsError({

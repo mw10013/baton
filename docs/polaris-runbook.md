@@ -4,7 +4,7 @@ How Polaris web components reach the site, what must stay in sync, and how to mo
 
 ## How it works
 
-- **Polaris is a CDN script, not an npm package.** The root document (`src/web/routes/__root.tsx`) loads it in `<head>` from the one URL in `src/web/components/polaris.ts` (`POLARIS_URL`). Today that is the 2.0 release candidate, `https://cdn.shopify.com/shopifycloud/polaris-2.0-rc.js`.
+- **Polaris is a CDN script, not an npm package.** The root document (`src/web/routes/__root.tsx`) loads it in `<head>` from the one URL in `src/web/components/polaris.ts` (`POLARIS_URL`). Today that is `https://cdn.shopify.com/shopifycloud/polaris-2.0.js`.
 - **Only its types are installed:** `@shopify/polaris-types`, a dev dependency listed in `compilerOptions.types` in `tsconfig.json`. They type the `s-*` JSX elements.
 - **It must load in `<head>`, before the body is parsed,** so every `s-*` element upgrades parent-first. Loaded at body end, a server-rendered `s-table-row` upgrades before its `s-table` and renders empty.
 - **Standalone look:** with no App Bridge, Polaris 2.0 defaults to the "Admin Next" theme and adds `p-partial-theme-admin-next` to `<html>` before React hydrates; `<html suppressHydrationWarning>` covers that one mismatch. The site is light only: the bundle ships a dark palette but never applies it.
@@ -15,19 +15,18 @@ How Polaris web components reach the site, what must stay in sync, and how to mo
 
 The bundle and the types are matched by hand; nothing checks them against each other.
 
-| What                     | Where                                                                      |
-| ------------------------ | -------------------------------------------------------------------------- |
-| Script URL               | `POLARIS_URL` in `src/web/components/polaris.ts`                           |
-| Types package, exact pin | `@shopify/polaris-types` in `package.json`                                 |
-| Reference docs version   | `UNLISTED_VERSIONS` in `scripts/refs-shopify-docs.ts` (`app-home/v2.0-rc`) |
+| What                     | Where                                            |
+| ------------------------ | ------------------------------------------------ |
+| Script URL               | `POLARIS_URL` in `src/web/components/polaris.ts` |
+| Types package, exact pin | `@shopify/polaris-types` in `package.json`       |
 
-Shopify's rule: the types' major and pre-release line follow the script, e.g. `polaris-2.0-rc.js` with `@shopify/polaris-types@2.0.0-rc.*`. Change the script URL and the types package in the same commit.
+Shopify's rule: the types' major and minor line follow the script, e.g. `polaris-2.0.js` with `@shopify/polaris-types@2.0.*`. Change the script URL and the types package in the same commit.
 
 ## Reference copies in `refs/`
 
 - `vp run refs fetch polaris` snapshots the bundle from `POLARIS_URL` into `refs/polaris/`: raw (`*.min.js`) and formatted (`*.js`, about 32k lines) for reading. The CDN sends no version header; the only version marker is the build hash comment on the bundle's first line, which the stamp records. Shopify can change the bundle behind the same URL, so a refetch is the way to see what is live.
 - The formatted bundle answers questions the docs do not, such as theme selection and dark mode.
-- `vp run refs fetch shopify-docs` mirrors the docs, including the `app-home/v2.0-rc` reference that Shopify leaves out of its sitemap. The Polaris pages of interest: `refs/shopify-docs/docs/api/app-home/v2.0-rc/` and `refs/shopify-docs/docs/apps/build/app-home/polaris2.md`.
+- `vp run refs fetch shopify-docs` mirrors the docs. The Polaris pages of interest: `refs/shopify-docs/docs/api/app-home/latest/` (Polaris 2.0 since its stable release) and `refs/shopify-docs/docs/apps/build/app-home/polaris2.md`.
 - The types are read from `node_modules/@shopify/polaris-types`.
 
 ## App Bridge
@@ -47,9 +46,8 @@ Release candidates can change during their soak period, and Shopify publishes a 
 1. Find the new script URL and the matching `@shopify/polaris-types` version in Shopify's versioning docs (`refs/shopify-docs`, after a refetch).
 2. Change `POLARIS_URL` in `src/web/components/polaris.ts`.
 3. `vp add -D -E @shopify/polaris-types@<version>`.
-4. Point `UNLISTED_VERSIONS` in `scripts/refs-shopify-docs.ts` at the new reference version, if it changed.
-5. `vp run refs fetch polaris shopify-docs`, then read the migration guide for changed or removed components and props.
-6. Verify:
+4. `vp run refs fetch polaris shopify-docs`, then read the migration guide for changed or removed components and props.
+5. Verify:
 
    ```sh
    vp check                 # catches props the new types reject

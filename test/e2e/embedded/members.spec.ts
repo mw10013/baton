@@ -32,8 +32,12 @@ test.afterAll(async () => {
 const openScreen = (name: "Members" | "Teams") =>
   page.getByRole("link", { name, exact: true }).click();
 
-/** A toast App Bridge shows in the admin's own document, outside the app's frame. */
-const toast = (text: string) => page.getByText(text, { exact: true });
+/**
+ * A toast App Bridge shows in the admin's own document, outside the app's frame. Scoped to the
+ * toast viewport because the admin also repeats the text in a hidden live-region announcer.
+ */
+const toast = (text: string) =>
+  page.locator("#admin-next-toast-viewport").getByText(text, { exact: true });
 
 /** Searches the members index for `email`, so the row is on the page whatever else the store has. */
 const searchMembers = async (email: string) => {
