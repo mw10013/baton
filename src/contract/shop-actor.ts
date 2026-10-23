@@ -106,7 +106,7 @@ export const ORDERS_KEY = "orders";
 export const SYNC_KEY = "sync";
 
 /**
- * A member on a socket: Baton's `ConnectionState` for the `member` role (`memberId`,
+ * A member on a socket: the `member` role's identity (`memberId`,
  * `memberEmail`, `teamIds`), plus the Better Auth session it was resolved from. `sessionId`
  * scopes a revoke to one session; `sessionExpiresAt` (epoch ms, the session's `expiresAt`) is
  * the backstop for a missed revoke, checked on every message. `teamIds` gates the member's run
@@ -167,20 +167,20 @@ export class RequireMember extends RpcMiddleware.Service<
   { requires: CurrentCaller }
 >()("RequireMember", { error: Forbidden }) {}
 
-/** Close code for a socket whose identity was revoked (Baton's): the browser asks again. */
+/** Close code for a socket whose identity was revoked: the browser asks again. */
 export const CONNECTION_CLOSE_REVOKED = 3401;
 
 /**
- * Close code for a socket that may not open this shop (Baton's): sent by the gate for a 403 (an
+ * Close code for a socket that may not open this shop: sent by the gate for a 403 (an
  * admin, or a Shopify token for another shop), and by the actor for a socket whose
  * {@link CONNECTION_HEADER} does not decode. Terminal to the browser.
  */
 export const CONNECTION_CLOSE_FORBIDDEN = 4403;
 
-/** Close code the gate sends for a 401 (Baton's): no session, or a Shopify token it rejects. */
+/** Close code the gate sends for a 401: no session, or a Shopify token it rejects. */
 export const CONNECTION_CLOSE_UNAUTHENTICATED = 4401;
 
-/** Close code the gate sends for a 404 (Baton's): no `Member` row for this shop. */
+/** Close code the gate sends for a 404: no `Member` row for this shop. */
 export const CONNECTION_CLOSE_NOT_A_MEMBER = 4404;
 
 /**
@@ -199,7 +199,7 @@ export const CONNECTION_CLOSE_TRY_AGAIN = 1013;
 
 /**
  * Close code for a member's oldest socket when a newer one takes the last of
- * {@link MAX_CONNECTIONS_PER_MEMBER} (Baton's). Terminal to the browser, so two windows never
+ * {@link MAX_CONNECTIONS_PER_MEMBER}. Terminal to the browser, so two windows never
  * displace each other in turn; only the person's Reconnect opens a new socket.
  */
 export const CONNECTION_CLOSE_DISPLACED = 4409;
@@ -211,7 +211,7 @@ export const CONNECTION_CLOSE_DISPLACED = 4409;
  */
 export const CONNECTION_CLOSE_UNINSTALLED = 4410;
 
-/** At most this many sockets per member (Baton's `maxConnectionsPerMember`); merchants are not capped. */
+/** At most this many sockets per member; merchants are not capped. */
 export const MAX_CONNECTIONS_PER_MEMBER = 2;
 
 /**

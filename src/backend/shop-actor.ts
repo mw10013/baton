@@ -108,7 +108,7 @@ const decodeOrderIds = Schema.decodeUnknownEffect(
   Schema.Array(Schema.Struct({ id: Schema.String })),
 );
 
-/** The close reasons, Baton's. A reason must stay under 123 bytes. */
+/** The close reasons. A reason must stay under 123 bytes. */
 const REVOKED_REASON = "membership changed";
 const DISPLACED_REASON = "signed in elsewhere";
 const EXPIRED_REASON = "session expired";
@@ -477,8 +477,7 @@ const ConnectionMiddlewareLive = Layer.succeed(ConnectionMiddleware)(
 );
 
 /**
- * The tags a socket is accepted with: only what a fan-out selects sockets by, as Baton's
- * `getConnectionTags`. Cloudflare allows 10 tags of up to 256 characters per socket, and
+ * The tags a socket is accepted with: only what a fan-out selects sockets by. Cloudflare allows 10 tags of up to 256 characters per socket, and
  * Alchemy's transport adds one of its own.
  */
 const tagsOf = (caller: ConnectionCaller) =>

@@ -30,7 +30,7 @@ const isServerFnCall = () => getRequestHeader("x-tsr-serverFn") === "true";
 /**
  * What an embedded request gets when its session token is missing or refused: with a bearer,
  * `401` and {@link RETRY_INVALID_SESSION_HEADER}, so App Bridge retries with a fresh token; a
- * browser's server-function call without one, a bare `401` (Baton's guard: there is no document
+ * browser's server-function call without one, a bare `401` (there is no document
  * to bounce); a document, the session-token bounce, which reloads the page with a new
  * `id_token`.
  */
@@ -68,7 +68,7 @@ export const embeddedSessionToken = createMiddleware({ type: "function" }).serve
 );
 
 /**
- * Baton's `ShopifyServerFnMiddleware`: authenticates the embedded admin before a server function
+ * Authenticates the embedded admin before a server function
  * runs and puts its shop and plan answer in context (`AdminAuthenticated`: `Subscribed` with the
  * shop and the Manage plan URL, or `Unsubscribed` with where to go). The token comes from
  * {@link embeddedSessionToken}; the Backend verifies and exchanges it, and a refusal is

@@ -137,7 +137,7 @@ const make = Effect.gen(function* () {
   const actors = yield* ShopActors;
 
   /**
-   * Baton's `handleWebhook`: validates `request` (a rejection fails as `WebhookRejected` and
+   * Validates `request` (a rejection fails as `WebhookRejected` and
    * `handler` never runs), then runs `handler` under `annotateLogs({ shop, topic })`. The
    * receipt logs at Info before the handler, so a delivery is recorded even if it fails; any
    * failure or defect logs at Error and is re-raised (a tap, not a catch), so the answer is

@@ -44,8 +44,7 @@ export const SHOPIFY_API_SECRET_FAKE = "fake-api-secret";
 
 /**
  * How close to its expiry a stored access token may be and still be reused by
- * `authenticateAdmin`; nearer than this, the session token is exchanged again (Baton's
- * `EMBEDDED_SESSION_REEXCHANGE_BUFFER_MS`).
+ * `authenticateAdmin`; nearer than this, the session token is exchanged again.
  */
 const EMBEDDED_SESSION_REEXCHANGE_BUFFER_MS = 30 * 1000;
 
@@ -231,8 +230,7 @@ const decodeShopGidResponse = Schema.decodeUnknownEffect(ShopGidResponse);
 const decodeUpsert = Schema.decodeUnknownEffect(ShopSessionUpsert);
 
 /**
- * Shopify refused the session token in a token exchange: Baton's `isInvalidSubjectTokenError`,
- * an HTTP 400 whose body names `invalid_subject_token`.
+ * Shopify refused the session token in a token exchange: an HTTP 400 whose body names `invalid_subject_token`.
  */
 const InvalidSubjectToken = Schema.Struct({
   code: Schema.Literal(400),
@@ -497,7 +495,7 @@ const make = (options: {
     );
 
     /**
-     * Baton's `ensureShopSession`: a usable offline `Session` for `shop`, with no merchant
+     * A usable offline `Session` for `shop`, with no merchant
      * present. A stored access token with more than five minutes left is returned as it is;
      * otherwise it is refreshed through the `refresh_token` grant. At most one refresh per shop
      * runs at a time, serialized by the row's lease (Shopify asks for one store at a time, and
@@ -510,7 +508,7 @@ const make = (options: {
      */
     const ensureShopSession = (shop: ShopKey) => ensureWith(shop, 1);
 
-    /** Baton's `fetchShopGid`: the shop's Admin API id, asked for once, on first install. */
+    /** The shop's Admin API id, asked for once, on first install. */
     const fetchShopGid = Effect.fn("Shopify.fetchShopGid")(function* (session: Session) {
       const shopify = yield* api;
       const client = new shopify.clients.Graphql({ session });
@@ -580,7 +578,7 @@ const make = (options: {
     });
 
     /**
-     * Baton's `decodeAdminToken` and `exchangeAndStore`, without the HTTP responses: the
+     * Resolves a session token to a stored session, without the HTTP responses: the
      * Website turns `InvalidSessionToken` into App Bridge's retry or the session-token bounce.
      * A stored access token that is still fresh is reused and Shopify is not called; otherwise the
      * session token is exchanged for an expiring offline access token and the row upserted. Scope
@@ -651,7 +649,7 @@ const make = (options: {
     );
 
     /**
-     * Baton's `validateWebhook`: verifies a webhook by HMAC over its raw body and parses it, or
+     * Verifies a webhook by HMAC over its raw body and parses it, or
      * fails with {@link WebhookRejected}. It reads no session: authenticity is the HMAC alone, and
      * a handler that needs the Admin API calls `ensureShopSession` itself, since a webhook is a
      * trigger to re-query Shopify, not a data feed. `request`'s body is read here, once.

@@ -337,7 +337,7 @@ export type SyncAction = typeof SyncAction.Type;
  * | ending                              | tracking row | lastError | pinned by                                                                                     |
  * | ----------------------------------- | ------------ | --------- | --------------------------------------------------------------------------------------------- |
  * | started                             | inserted     | cleared   | clears the error the next sync is about to supersede                                          |
- * | the start failed                    | none         | cleared   | a start that fails leaves no tracking row and no banner                                       |
+ * | the start failed                    | deleted      | set       | a create that fails ends the recorded sync with its message, and fails on                     |
  * | file streamed, complete             | deleted      | —         | completes: ensure-session -> bulk COMPLETED -> on-orders-stream                               |
  * | a partial file streamed, complete   | deleted      | —         | a partial file is streamed and the sync completes                                             |
  * | no orders in the 30 days            | deleted      | —         | completes: 30 days with no orders reaches on-orders-sync-empty                                |
@@ -348,9 +348,8 @@ export type SyncAction = typeof SyncAction.Type;
  * | refused at the order ceiling        | none         | —         | a sync refused at the order ceiling flags the refusal, writes no error and tracks nothing     |
  * | a second press while one runs       | —            | —         | refuses a second sync while one is tracked as running                                         |
  *
- * Row notes. _The start failed_: the error reaches the merchant as the RPC's
- * toast and nothing else; `lastError` was already cleared, so the banner is
- * empty, which is honest (nothing ran). _A partial file_: Shopify's
+ * Row notes. _The start failed_: the failure is both the RPC's toast
+ * and the banner. _A partial file_: Shopify's
  * `partialDataUrl` is streamed and the sync counts as complete, because its
  * rows are as valid as any under the version check; the merchant is not told
  * the file was partial, since the rows that arrived are correct, the ones

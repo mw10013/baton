@@ -77,7 +77,7 @@ const isActorPath = (pathname: string) =>
 
 /**
  * The headers a WebSocket handshake itself needs: the only ones an upgrade forwarded to the
- * actor keeps (Baton's list, without its PartyKit namespace header, which nothing here uses).
+ * actor keeps.
  */
 const FORWARDED_HANDSHAKE_HEADERS = [
   "upgrade",
@@ -240,8 +240,8 @@ export const backendBody = Effect.gen(function* () {
 
   /**
    * The actor branch: the gate on the upgrade, then the upgrade forwarded as the caller it
-   * resolved. A merchant's Shopify session token arrives as `?token=`, Baton's form for a
-   * socket; a member is resolved from the cookie.
+   * resolved. A merchant's Shopify session token arrives as `?token=` on the socket's URL;
+   * a member is resolved from the cookie.
    */
   const forwardToActor = Effect.fn("Backend.forwardToActor")(function* (
     key: ShopKey,

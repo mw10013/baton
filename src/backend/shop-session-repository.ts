@@ -74,7 +74,7 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
     }, Effect.orDie);
 
     /**
-     * Baton's `upsertShopSession`. The conflict branch leaves `shopActorId` out of the `SET` list:
+     * The conflict branch leaves `shopActorId` out of the `SET` list:
      * it never changes after insert, and SQLite rewrites an index for every column named in `SET`,
      * whether its value changed or not, so naming it would rewrite its unique index on every
      * re-exchange, which D1 bills as a written row.
@@ -330,7 +330,7 @@ const redact = ({
 });
 
 /**
- * Baton's `ShopSession` repository: one offline Admin API session per installed shop, written by
+ * The `ShopSession` repository: one offline Admin API session per installed shop, written by
  * token exchange. The layer is built once at Worker init, as `MembershipRepository`' is.
  */
 export class ShopSessionRepository extends Context.Service<

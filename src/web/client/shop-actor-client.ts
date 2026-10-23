@@ -124,7 +124,7 @@ type ProtocolInput = {
 /**
  * One hibernating WebSocket per browser, retried on `retryPolicy`, which stops on a terminal
  * close. The gate names the socket on its upgrade, from the cookie or, for a merchant, the
- * Shopify token on the URL (Baton's form), minted for each connect, so no call carries a
+ * Shopify token on the URL, minted for each connect, so no call carries a
  * credential. Every close goes
  * through `closeOutcome` to the page's atoms.
  */

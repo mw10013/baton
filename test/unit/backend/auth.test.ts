@@ -43,7 +43,7 @@ const admin = email("a@a.com");
 const member = email("m1@m.com");
 const stranger = email("nobody@example.com");
 const member2 = email("m2@m.com");
-/** Baton's `Member` rows. The admin has none: it is a user row with the role `admin`. */
+/** The `Member` rows. The admin has none: it is a user row with the role `admin`. */
 const members: ReadonlyArray<MemberRow> = [
   { id: "mem-1", shop: SEED_SHOP, email: member, createdAt: 1 },
   { id: "mem-2", shop: SEED_SHOP, email: member2, createdAt: 2 },

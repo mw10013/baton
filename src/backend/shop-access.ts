@@ -16,7 +16,7 @@ import { Shopify } from "./shopify.ts";
 import { SubscriptionPlan } from "./subscription-plan.ts";
 
 /**
- * The gate's refusal, as the HTTP status Baton's gate answers with. Internal to the Backend:
+ * The gate's refusal, as the HTTP status the gate answers with. Internal to the Backend:
  * the upgrade route turns it into a close code, `BackendApi.shopAccess` into a typed failure.
  */
 export class ShopAccessDenied extends Schema.TaggedError<ShopAccessDenied>()("ShopAccessDenied", {
@@ -137,7 +137,7 @@ const make = Effect.gen(function* () {
 });
 
 /**
- * Baton's gate: who may open a shop's actor, decided from the credential the caller presents.
+ * The gate: who may open a shop's actor, decided from the credential the caller presents.
  *
  * - A Shopify session token selects the merchant branch: a bad token is 401, a token for
  *   another shop 403, a shop with no `ShopSession` row 404, a shop with no app subscription

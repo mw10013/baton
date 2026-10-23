@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { ShopKey, type ShopSession, type ShopSessionUpsert } from "../../../src/domain/platform.ts";
 import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import { SEED_SHOP, SEED_SHOP_GID } from "../../seed-shops.ts";
 import { ShopSessionRepository } from "../../../src/backend/shop-session-repository.ts";
@@ -143,6 +144,30 @@ describe("ShopSessionRepository plan cache", () => {
         assert.strictEqual(yield* deadline(), 3000);
         yield* sessions.shortenPlanExpiry({ shop: SEED_SHOP, notAfter: 2000 });
         assert.strictEqual(yield* deadline(), 2000);
+      }),
+    ),
+  );
+
+  it.effect("a shop is identified by its domain and has exactly one object", () =>
+    inD1(
+      Effect.gen(function* () {
+        const sessions = yield* ShopSessionRepository;
+        yield* sessions.upsert(upsert);
+        yield* sessions.upsert({
+          ...upsert,
+          shopActorId: "another-object",
+          accessToken: "shpat_c",
+        });
+        const session = yield* stored;
+        assert.strictEqual(session.shopActorId, SEED_SHOP);
+        assert.strictEqual(session.accessToken, "shpat_c");
+        const second = yield* Effect.exit(
+          sessions.upsert({
+            ...upsert,
+            shop: Schema.decodeUnknownSync(ShopKey)("other.myshopify.com"),
+          }),
+        );
+        assert.isTrue(Exit.isFailure(second));
       }),
     ),
   );

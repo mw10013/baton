@@ -953,7 +953,7 @@ const make = <R>(database: SQL.D1DatabaseSource<never, R>) =>
  * Backend's own instance); `SQL.D1` defers the actual client to the first query of each request
  * and tears it down with the request.
  *
- * Baton's rule: a membership edit is followed by closing the sockets of the members it changed,
+ * The rule: a membership edit is followed by closing the sockets of the members it changed,
  * so a socket opened under the old membership does not outlive it. `MembershipRepository` holds no socket:
  * the shop's actor makes the merchant's edits and closes the sockets itself, and the fixture's
  * edits revoke through `ShopActors.revoke`.

@@ -16,7 +16,7 @@ import * as RpcWebSocket from "alchemy/Cloudflare/RpcWebSocket";
 
 /**
  * Who is on a socket, written into its attachment when the socket is accepted: the caller the
- * Backend's gate resolved, and when the socket was accepted (Baton's `connectedAt`), which
+ * Backend's gate resolved, and when the socket was accepted, which
  * orders a member's sockets for displacement.
  */
 export const SocketIdentity = Schema.Struct({

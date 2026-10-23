@@ -48,7 +48,7 @@ export const embeddedAppUrl = (host: string, apiKey: string): Option.Option<stri
   Option.map(decodeAdminHost(host), (admin) => `https://${admin}/apps/${apiKey}`);
 
 /**
- * The session-token bounce, Baton's `respondToInvalidSessionToken` for a document:
+ * The session-token bounce for a document:
  * `/auth/session-token` with the request's search minus `id_token`, plus `shopify-reload`, the
  * page to reload with a fresh token. App Bridge on the bounce page reads `shopify-reload` and
  * loads it with a new `id_token`. `appUrl` is the app's public URL from the binding, because
@@ -101,14 +101,14 @@ const ExitIframeDestination = (appUrl: string) =>
     ),
   );
 
-/** Baton's `parseExitIframeDestination`; see {@link ExitIframeDestination}. */
+/** See {@link ExitIframeDestination}. */
 export const exitIframeDestination = (appUrl: string, candidate: string): Option.Option<URL> =>
   Schema.decodeUnknownOption(ExitIframeDestination(appUrl))(candidate);
 
 const decodeShop = Schema.decodeUnknownOption(ShopKey);
 
 /**
- * The CSP that lets the Shopify admin frame a page: Baton's `frame-ancestors`, the shop's own
+ * The CSP that lets the Shopify admin frame a page: `frame-ancestors`, the shop's own
  * Shopify admin and the Shopify admin hosts. None unless `shop` is a {@link ShopKey}, so a page
  * without one cannot be framed by the Shopify admin.
  */
