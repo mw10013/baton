@@ -15,11 +15,14 @@ import { Mailer } from "./mailer.ts";
 export const DeliveryMode = Config.Literals(["inline", "mailed"], "MAGIC_LINK_DELIVERY");
 export type DeliveryMode = Config.Success<typeof DeliveryMode>;
 
-const mail = (url: string) => ({
-  subject: "Your sign-in link",
-  text: `Sign in: ${url}\n\nThis link expires in 5 minutes. If you did not ask for it, ignore this email.`,
-  html: `<p><a href="${url}">Sign in</a></p><p>This link expires in 5 minutes. If you did not ask for it, ignore this email.</p>`,
-});
+const mail = (url: string) => {
+  const href = url.replaceAll("&", "&amp;").replaceAll('"', "&quot;");
+  return {
+    subject: "Sign in to Baton",
+    text: `Sign in to Baton: ${url}\n\nThis link expires in 5 minutes. If you did not ask for it, ignore this email.`,
+    html: `<p>Sign in to Baton.</p><p><a href="${href}" style="display:inline-block;padding:10px 18px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px">Sign in to Baton</a></p><p>If the button does not work, copy this link into your browser:<br>${href}</p><p>This link expires in 5 minutes. If you did not ask for it, ignore this email.</p>`,
+  };
+};
 
 /**
  * Delivers the magic links Better Auth makes, in the stage's {@link DeliveryMode}. `take`
