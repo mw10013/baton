@@ -488,6 +488,18 @@ const tagsOf = (caller: ConnectionCaller) =>
     }),
   );
 
+/**
+ * Whether the object has never been migrated: a shop's first activation, or the first after
+ * `destroy`, whose `deleteAll` removes the whole database. It looks for the migrator's own
+ * table, not for any table, because Cloudflare lists hidden tables of its own (`__cf_kv`).
+ *
+ * @see refs/cloudflare-docs/src/content/partials/durable-objects/api-storage-introduction.mdx (footnote 2)
+ */
+const isEmptyStore = (storage: DurableObjectStorage) =>
+  storage.sql
+    .exec("select 1 from sqlite_master where type = 'table' and name = 'effect_sql_migrations'")
+    .toArray().length === 0;
+
 const makeShopActor = Effect.gen(function* () {
   const state = yield* Cloudflare.DurableObjectState;
   const admin = yield* ShopifyAdmin;
@@ -499,6 +511,9 @@ const makeShopActor = Effect.gen(function* () {
     // Every actor is reached by name (`getByName`), so a nameless id is a broken invariant.
     const shop = yield* Effect.fromOption(decodeShopKey(state.id.name)).pipe(Effect.orDie);
     const runtime = yield* Effect.context<RuntimeContext>();
+    // An empty store is a new shop or a destroyed one; only an installed shop may write to it.
+    if (isEmptyStore(state.raw.storage) && Option.isNone(yield* shopSessions.find(shop)))
+      return yield* Effect.die(new Error(`ShopActor: shop=${shop}: no ShopSession, not created`));
     const storage = (yield* rowCountsOn) ? countActorStorage(state.raw.storage) : state.raw.storage;
     const sql = yield* Layer.build(SqliteClient.layer({ storage })).pipe(
       Effect.map((context) => Context.get(context, SqlClient.SqlClient)),

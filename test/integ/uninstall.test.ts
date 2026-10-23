@@ -4,11 +4,13 @@ import { assert } from "@effect/vitest";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Test from "alchemy/Test/Vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { CONNECTION_CLOSE_UNINSTALLED } from "../../src/contract/shop-actor.ts";
-import { SEED_SHOP } from "../seed-shops.ts";
+import type { ShopKey } from "../../src/domain/platform.ts";
+import { OTHER_SHOP, SEED_SHOP } from "../seed-shops.ts";
 import { signWebhook } from "../shopify-webhook.ts";
 import { dev, email, integ, nextCloseCode, openAs, storeByWebhook } from "./actor-clients.ts";
 import { fileStage } from "./file-stage.ts";
@@ -29,13 +31,19 @@ const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
 const stack = beforeAll(deploy(Stack));
 afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack));
 
-/** POSTs a signed `topic` delivery of `payload` for {@link SEED_SHOP}; the status. */
-const deliver = (backendUrl: string, path: string, topic: string, payload: unknown) =>
+/** POSTs a signed `topic` delivery of `payload` for `shop`; the status. */
+const deliver = (
+  backendUrl: string,
+  path: string,
+  topic: string,
+  payload: unknown,
+  shop: ShopKey = SEED_SHOP,
+) =>
   Effect.gen(function* () {
     const body = JSON.stringify(payload);
     const response = yield* HttpClient.execute(
       HttpClientRequest.post(`${backendUrl}${path}`).pipe(
-        HttpClientRequest.setHeaders(yield* signWebhook(topic, SEED_SHOP, body)),
+        HttpClientRequest.setHeaders(yield* signWebhook(topic, shop, body)),
         HttpClientRequest.bodyText(body, "application/json"),
       ),
     );
@@ -61,10 +69,9 @@ const actorStorage = (backendName: string) => {
 const ORDER_ID = "gid://shopify/Order/1";
 
 /**
- * `GetOrder` goes last: it reaches the actor by name, which creates it again, so it shows only
- * that the storage went (the recreated actor is empty). Before it, the late `orders/create`
- * leaves the storage files untouched and calls no Shopify, so it created nothing; that
- * `GetOrder` then does change them is the control that the files would show a recreation.
+ * The late `orders/create` leaves the storage files untouched and calls no Shopify, so it
+ * created nothing. `GetOrder` goes last: it reaches the actor by name with no guard of its own,
+ * so it is refused by the actor itself, and the files stay untouched again.
  */
 test(
   "uninstall deletes the shop row, its members and teams, and destroys the object",
@@ -133,9 +140,79 @@ test(
     assert.deepStrictEqual(yield* integ(backendUrl, (c) => c.ShopifyCalls({})), []);
     assert.deepStrictEqual(actorStorage(backendName), afterUninstall);
 
-    assert.isNull(
-      yield* integ(backendUrl, (c) => c.GetOrder({ shop: SEED_SHOP, orderId: ORDER_ID })),
+    const read = yield* integ(backendUrl, (c) =>
+      c.GetOrder({ shop: SEED_SHOP, orderId: ORDER_ID }),
+    ).pipe(Effect.exit);
+    assert.isTrue(Exit.isFailure(read), "a read after uninstall is refused");
+    assert.deepStrictEqual(actorStorage(backendName), afterUninstall);
+  }),
+);
+
+/**
+ * The orders sync Workflow's last step, replayed after the shop's uninstall: a step the destroy
+ * aborted is retried, and its bulk file's URL still answers. The shop's object must not come
+ * back holding the orders.
+ */
+test(
+  "an orders stream after uninstall stores nothing",
+  Effect.gen(function* () {
+    const { backendUrl, backendName } = yield* stack;
+    yield* storeByWebhook(
+      backendUrl,
+      OTHER_SHOP,
+      {
+        id: "gid://shopify/Order/10",
+        legacyResourceId: "10",
+        name: "#1010",
+        processedAt: Date.now() - 60_000,
+        updatedAt: Date.now() - 60_000,
+        cancelledAt: null,
+        displayFulfillmentStatus: "UNFULFILLED",
+        fullyPaid: true,
+        note: null,
+      },
+      [],
     );
-    assert.notDeepEqual(actorStorage(backendName), afterUninstall);
+    assert.strictEqual(
+      yield* deliver(
+        backendUrl,
+        "/webhooks/app/uninstalled",
+        "app/uninstalled",
+        { id: 2, domain: OTHER_SHOP },
+        OTHER_SHOP,
+      ),
+      200,
+    );
+    assert.isNull(yield* dev(backendUrl, (c) => c.GetShopSession({ shop: OTHER_SHOP })));
+    const afterUninstall = actorStorage(backendName);
+
+    const order = {
+      __typename: "Order",
+      id: "gid://shopify/Order/11",
+      legacyResourceId: "11",
+      name: "#1011",
+      processedAt: new Date(Date.now() - 60_000).toISOString(),
+      updatedAt: new Date(Date.now() - 60_000).toISOString(),
+      cancelledAt: null,
+      displayFulfillmentStatus: "UNFULFILLED",
+      fullyPaid: true,
+      note: null,
+    };
+    yield* integ(backendUrl, (c) =>
+      c.ScriptShopify({ replies: [{ route: "bulk", status: 200, body: JSON.stringify(order) }] }),
+    );
+    const stream = yield* integ(backendUrl, (c) =>
+      c.OrdersStream({
+        shop: OTHER_SHOP,
+        workflowId: "after-uninstall",
+        url: `${backendUrl}/api/integ/bulk/1`,
+      }),
+    ).pipe(Effect.exit);
+    assert.isTrue(Exit.isFailure(stream), "the orders stream after uninstall is refused");
+    assert.deepStrictEqual(
+      actorStorage(backendName),
+      afterUninstall,
+      "the orders stream after uninstall left the object's storage untouched",
+    );
   }),
 );

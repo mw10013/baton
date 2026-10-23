@@ -473,13 +473,17 @@ test(
 
 /**
  * The gate refuses a socket to a shop with no `ShopSession`, so this is the row deleted while a
- * socket stays open: the forged-caller route opens one anyway.
+ * socket stays open: the forged-caller route opens one anyway. The shop is installed first, so
+ * its actor holds storage when the row goes, as an uninstall leaves it before its destroy.
  */
 test(
   "Sync from Shopify on a shop whose ShopSession is gone is OfflineSessionMissing and asks Shopify nothing",
   Effect.gen(function* () {
     const { backendUrl } = yield* stack;
     yield* script([]);
+    yield* integ(backendUrl, (c) => c.SetShopSession({ shop: UNINSTALLED_SHOP, present: true }));
+    assert.isNull(yield* read(UNINSTALLED_SHOP, orderId(23)));
+    yield* integ(backendUrl, (c) => c.SetShopSession({ shop: UNINSTALLED_SHOP, present: false }));
     const error = yield* Effect.flip(syncOrder(UNINSTALLED_SHOP, orderId(23)));
     assert.strictEqual(error._tag, "OfflineSessionMissing");
     assert.deepStrictEqual(yield* integ(backendUrl, (c) => c.ShopifyCalls({})), []);

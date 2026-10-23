@@ -14,7 +14,7 @@ import { Auth } from "../../src/backend/auth.ts";
 import { MagicLinkDelivery } from "../../src/backend/magic-link-delivery.ts";
 import { MembershipRepository } from "../../src/backend/membership-repository.ts";
 import { InvalidSessionToken, NotAShopMember } from "../../src/contract/shop.ts";
-import { ShopKey } from "../../src/domain/platform.ts";
+import { ShopGid, ShopKey } from "../../src/domain/platform.ts";
 import {
   MemberWorkflowPageData,
   MemberWorkflowPageRequest,
@@ -50,6 +50,7 @@ import { HomePlan, PaymentRequired, PlanRequest } from "../../src/contract/billi
 import { ShopSessionRepository } from "../../src/backend/shop-session-repository.ts";
 import { revalidateStalePlans, SubscriptionPlan } from "../../src/backend/subscription-plan.ts";
 import { ShopifyFake } from "./shopify-fake.ts";
+import { SEED_SHOP } from "../seed-shops.ts";
 
 /**
  * One scripted answer of the fake Shopify HTTP layer: which endpoint it answers, and how. A
@@ -135,6 +136,9 @@ export type RowCounts = typeof RowCounts.Type;
  *   and `SweepExpiredAuth` (the daily cron's sweep) the {@link MembershipRepository} methods.
  *   `EvictActor` ends `shop`'s actor's activation and keeps its storage (`ShopActors.evict`), so
  *   the probe's next call runs in a fresh activation, as after a hibernation.
+ * - `SetShopSession` gives `shop` a `ShopSession` row, a copy of the seed shop's, or deletes it
+ *   (`present: false`) and leaves the shop's actor alone, as an uninstall does in between its
+ *   delete and its destroy.
  */
 export const IntegRpcs = RpcGroup.make(
   Rpc.make("IssueMagicLink", {
@@ -242,6 +246,10 @@ export const IntegRpcs = RpcGroup.make(
   Rpc.make("ListShopsOf", { payload: { email: Email }, success: Schema.Array(ShopKey) }),
   Rpc.make("SweepExpiredAuth", { payload: {}, success: Schema.Struct({}) }),
   Rpc.make("EvictActor", { payload: { shop: ShopKey }, success: Schema.Struct({}) }),
+  Rpc.make("SetShopSession", {
+    payload: { shop: ShopKey, present: Schema.Boolean },
+    success: Schema.Struct({}),
+  }),
 );
 
 const decodeHomePlan = Schema.decodeUnknownSync(HomePlan);
@@ -324,6 +332,19 @@ export const IntegHandlers = IntegRpcs.toLayer(
       ListShopsOf: ({ email }) => members.listShopsOf(email),
       SweepExpiredAuth: () => members.sweepExpiredAuth().pipe(Effect.as({})),
       EvictActor: ({ shop }) => actors.evict(shop).pipe(Effect.as({})),
+      SetShopSession: ({ shop, present }) =>
+        Effect.gen(function* () {
+          if (!present) return yield* shopSessions.remove(shop).pipe(Effect.as({}));
+          const seed = yield* shopSessions.find(SEED_SHOP);
+          if (Option.isNone(seed)) return yield* Effect.die(new Error("no seeded ShopSession"));
+          yield* shopSessions.upsert({
+            ...seed.value,
+            shop,
+            shopGid: Schema.decodeUnknownSync(ShopGid)(`gid://shopify/Shop/${shop}`),
+            shopActorId: shop,
+          });
+          return {};
+        }),
     });
   }),
 );

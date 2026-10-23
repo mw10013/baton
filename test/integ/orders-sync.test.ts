@@ -143,13 +143,17 @@ const timed = <A, E, R>(label: string, effect: Effect.Effect<A, E, R>) =>
 
 /**
  * The gate refuses a socket to a shop with no `ShopSession`, so this is the row deleted while a
- * socket stays open: the forged-caller route opens one anyway.
+ * socket stays open: the forged-caller route opens one anyway. The shop is installed first, so
+ * its actor holds storage when the row goes, as an uninstall leaves it before its destroy.
  */
 test(
   "a shop whose ShopSession is gone is refused OfflineSessionMissing, with nothing recorded and no instance",
   Effect.gen(function* () {
     const { backendUrl } = yield* stack;
     yield* script(backendUrl, []);
+    yield* integ(backendUrl, (c) => c.SetShopSession({ shop: UNINSTALLED_SHOP, present: true }));
+    assert.isFalse((yield* syncStatus(backendUrl, UNINSTALLED_SHOP)).inFlight);
+    yield* integ(backendUrl, (c) => c.SetShopSession({ shop: UNINSTALLED_SHOP, present: false }));
     const refused = yield* Effect.flip(syncOpenOrders(backendUrl, UNINSTALLED_SHOP));
     assert.strictEqual(refused._tag, "OfflineSessionMissing");
     assert.isFalse((yield* syncStatus(backendUrl, UNINSTALLED_SHOP)).inFlight);
