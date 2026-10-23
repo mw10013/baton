@@ -67,6 +67,15 @@ import { currentWhere as currentWhereSql } from "./current-where.ts";
 import type { Transaction } from "./transaction.ts";
 
 /**
+ * How many orders {@link makeRunRepository}'s `reconcileAll` reconciles between yields. Each
+ * order's transaction closes the object's input gate, and between them the loop continues on
+ * microtasks, so without a yield the whole pass is one block: at the open-order ceiling, about
+ * 400 ms in which no other caller of the shop is answered. Fifty orders is a few milliseconds
+ * of work, so a caller waits tens of milliseconds at most, for about a tenth more on the pass.
+ */
+const RECONCILE_ALL_YIELD_EVERY = 50;
+
+/**
  * Failure to map stored rows into domain types — a `Schema` decode error, the
  * repository's own invariant, kept distinct from `SqlError.SqlError`.
  */
@@ -709,12 +718,14 @@ export const makeRunRepository = (
    * reconcile treats fulfilled as terminal and there is nothing left to
    * make or pack — and unpaid ones because they reconcile when they pay.
    *
-   * **Unbounded**: every open paid order the actor holds, with no limit
-   * and no batching, one transaction each. What bounds it in practice is
-   * the shop's open working set and retention
-   * (`ShopLimits.orderRetentionDays`), not this code — a shop
-   * with an unusual number of open orders pays for all of them on the
-   * request that changed the definition.
+   * **Unbounded**: every open paid order the actor holds, with no limit,
+   * one transaction each. What bounds it in practice is the shop's open
+   * working set and retention (`ShopLimits.orderRetentionDays`), not this
+   * code — a shop with an unusual number of open orders pays for all of
+   * them on the request that changed the definition. It yields every
+   * {@link RECONCILE_ALL_YIELD_EVERY} orders, so other callers are answered
+   * between orders; a write that lands mid-pass is safe because each order
+   * reads the workflows afresh in its own transaction.
    */
   const reconcileAll = Effect.fn("RunRepository.reconcileAll")(function* (
     context: ReconcileContext,
@@ -722,7 +733,13 @@ export const makeRunRepository = (
     const ids = yield* openOrders.pipe(Effect.map((rows) => rows.map((row) => String(row.id))));
     const counts = yield* Effect.forEach(
       ids,
-      (orderId) => transaction(reconcileOrder({ ...context, orderId })),
+      (orderId, i) =>
+        transaction(reconcileOrder({ ...context, orderId })).pipe(
+          // Outside the transaction: a yield inside one waits on a timer the closed gate holds.
+          Effect.tap(() =>
+            (i + 1) % RECONCILE_ALL_YIELD_EVERY === 0 ? Effect.yieldNow : Effect.void,
+          ),
+        ),
       { concurrency: 1 },
     );
     return {

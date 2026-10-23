@@ -217,6 +217,7 @@ export default defineConfig(({ command, mode, isPreview }) => {
             include: [
               "test/integ/**/*.test.ts",
               ...(process.env.ROWS_READ_PROBE ? ["test/integ/rows-read.probe.ts"] : []),
+              ...(process.env.RECONCILE_PROBE ? ["test/integ/reconcile-latency.probe.ts"] : []),
             ],
             env:
               mode === "test"
