@@ -1,61 +1,20 @@
+import type { SAppNavAttributes, SAppWindowAttributes } from "@shopify/app-bridge-types";
 import * as Effect from "effect/Effect";
+import type { Ref } from "react";
 
 /**
- * The part of App Bridge's `shopify` global the embedded pages call. App Bridge defines it in
- * the embedded App Home only (its script is the `/app` document's first), and in the browser
- * only, so nothing reads it during SSR.
- *
- * @see https://shopify.dev/docs/api/app-home/apis
- */
-export interface AppBridge {
-  /** A fresh session token for this shop, valid for about a minute. */
-  readonly idToken: () => Promise<string>;
-  readonly modal: {
-    /** Hides the `s-modal` of that id. */
-    readonly hide: (id: string) => Promise<void>;
-  };
-  readonly toast: {
-    readonly show: (
-      message: string,
-      options?: { readonly isError?: boolean; readonly duration?: number },
-    ) => void;
-  };
-}
-
-declare global {
-  var shopify: AppBridge;
-
-  /**
-   * App Bridge's `s-app-window`: a full-screen iframe the admin opens over the page that
-   * launched it, loading `src` (an app path) with the admin's own chrome around it. `show` and
-   * `hide` open and close it; it fires `hide` however it closes (its X, Escape, a `hide` call).
-   * `@shopify/app-bridge-types` is not a dependency, so the part this repo uses is declared here.
-   *
-   * @see https://shopify.dev/docs/api/app-home/app-bridge-web-components/app-window
-   */
-  interface SAppWindowElement extends HTMLElement {
-    src: string;
-    show: () => Promise<void>;
-    hide: () => Promise<void>;
-  }
-}
-
-/**
- * App Bridge's own elements, which Polaris' types do not carry. `s-app-nav` is the App nav: App
+ * App Bridge's own elements for React 19's JSX, which `@shopify/app-bridge-types` declares only
+ * on the global `JSX` namespace that React 19 no longer reads. `s-app-nav` is the App nav: App
  * Bridge hoists it into the admin's chrome and its `s-link` children are the nav's items.
- * `s-app-window` is the workflow editor's window ({@link SAppWindowElement}).
+ * `s-app-window` is the workflow editor's window.
  *
  * @see https://shopify.dev/docs/api/app-home/app-bridge-web-components/app-nav
  */
 declare module "react" {
   namespace JSX {
     interface IntrinsicElements {
-      "s-app-nav": { readonly children?: ReactNode };
-      "s-app-window": {
-        readonly ref?: Ref<SAppWindowElement | null>;
-        readonly id?: string;
-        readonly src?: string;
-      };
+      "s-app-nav": SAppNavAttributes & { readonly children?: ReactNode };
+      "s-app-window": SAppWindowAttributes & { readonly ref?: Ref<SAppWindowElement | null> };
     }
   }
 }

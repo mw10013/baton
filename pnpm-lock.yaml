@@ -247,6 +247,9 @@ importers:
       '@effect/vitest':
         specifier: 4.0.1
         version: 4.0.1(effect@4.0.1)(vitest@5.0.3)
+      '@shopify/app-bridge-types':
+        specifier: 0.7.3
+        version: 0.7.3
       '@shopify/polaris-types':
         specifier: 2.0.0
         version: 2.0.0
@@ -1730,6 +1733,9 @@ packages:
 
   '@shopify/admin-api-client@2.0.1':
     resolution: {integrity: sha512-s9Ysgq5we9QI5XYFkOxLX2Sj6F1I/S+f/PDC7WolaELzDhyjvFgR5d68JQDpgrGc8a8uvwzS/OuiXvybUU6sXw==}
+
+  '@shopify/app-bridge-types@0.7.3':
+    resolution: {integrity: sha512-zhLsMVRNNjwwLmvHPLWfKr5tRtAsr+rN7J4b6DCFMwVku2Q+zbo2DnSLnmouLBcGZrb3r6+d9vmQ4IbdXZ/Hkg==}
 
   '@shopify/graphql-client@2.0.1':
     resolution: {integrity: sha512-rMWnql45haEQdVnz62azY6yKt67W2jNgyuYLb6cJc6GuQzEp3LNgIUuQRuroGrF0rklt/ZxqPWS2g013ci3lWQ==}
@@ -4727,6 +4733,10 @@ snapshots:
   '@shopify/admin-api-client@2.0.1':
     dependencies:
       '@shopify/graphql-client': 2.0.1
+
+  '@shopify/app-bridge-types@0.7.3':
+    dependencies:
+      '@standard-schema/spec': 1.1.0
 
   '@shopify/graphql-client@2.0.1': {}
 

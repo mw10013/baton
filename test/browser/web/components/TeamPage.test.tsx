@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import { installAppBridge } from "../../app-bridge.ts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
@@ -31,15 +32,7 @@ const link = (href: string): PageLink => ({ href, onClick: (event) => event.prev
 let toasts: Array<string> = [];
 beforeEach(() => {
   toasts = [];
-  globalThis.shopify = {
-    idToken: () => Promise.resolve("token"),
-    modal: { hide: () => Promise.resolve() },
-    toast: {
-      show: (message) => {
-        toasts.push(message);
-      },
-    },
-  };
+  installAppBridge({ toast: (message) => toasts.push(message) });
 });
 afterEach(() => {
   Reflect.deleteProperty(globalThis, "shopify");

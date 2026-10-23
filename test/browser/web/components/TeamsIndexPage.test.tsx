@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import { installAppBridge } from "../../app-bridge.ts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
@@ -27,11 +28,7 @@ const pageOf = (rows: ReadonlyArray<TeamSummary>): Page<TeamSummary, TeamName> =
 });
 
 beforeEach(() => {
-  globalThis.shopify = {
-    idToken: () => Promise.resolve("token"),
-    modal: { hide: () => Promise.resolve() },
-    toast: { show: () => {} },
-  };
+  installAppBridge();
 });
 afterEach(() => {
   Reflect.deleteProperty(globalThis, "shopify");

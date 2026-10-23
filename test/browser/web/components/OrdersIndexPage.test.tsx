@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import { installAppBridge } from "../../app-bridge.ts";
 import * as Option from "effect/Option";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
@@ -15,7 +16,6 @@ import {
   TeamId,
   TeamName,
 } from "../../../../src/domain/shop-work.ts";
-import type { AppBridge } from "../../../../src/web/client/app-bridge.ts";
 import OrdersIndexPage, {
   type OrdersFilterPatch,
 } from "../../../../src/web/components/OrdersIndexPage.tsx";
@@ -75,20 +75,8 @@ interface Presses {
   readonly syncOpenOrders?: OrdersSyncResult;
 }
 
-/**
- * App Bridge's `shopify` global, which the embedded document defines and a test page does not:
- * a stub whose toasts are recorded in {@link toasts}.
- */
+/** Toasts the page raised, recorded by the {@link installAppBridge} stub. */
 let toasts: Array<{ message: string; isError: boolean }> = [];
-const appBridge: AppBridge = {
-  idToken: () => Promise.resolve("token"),
-  modal: { hide: () => Promise.resolve() },
-  toast: {
-    show: (message, options) => {
-      toasts.push({ message, isError: options?.isError === true });
-    },
-  },
-};
 
 /** What the route was asked to do: filters, pages and the order links' clicks. */
 let filters: Array<OrdersFilterPatch> = [];
@@ -100,7 +88,9 @@ beforeEach(() => {
   filters = [];
   pages = [];
   opened = [];
-  globalThis.shopify = appBridge;
+  installAppBridge({
+    toast: (message, options) => toasts.push({ message, isError: options?.isError === true }),
+  });
 });
 afterEach(() => {
   Reflect.deleteProperty(globalThis, "shopify");

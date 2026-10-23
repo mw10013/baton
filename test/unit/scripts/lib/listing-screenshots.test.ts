@@ -5,7 +5,7 @@ import { ALT_LIMIT, LISTING_SHOTS } from "../../../../scripts/lib/listing-screen
 describe("LISTING_SHOTS", () => {
   it("keeps every alt text within the listing form's limit", () => {
     for (const { id, alt } of LISTING_SHOTS) {
-      assert.isAtMost([...alt].length, ALT_LIMIT, id);
+      assert.isAtMost(alt.length, ALT_LIMIT, id);
       assert.isAbove(alt.length, 0, id);
     }
   });

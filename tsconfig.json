@@ -3,7 +3,13 @@
     "target": "es2023",
     "module": "esnext",
     "lib": ["ES2023", "DOM"],
-    "types": ["vite/client", "node", "@cloudflare/workers-types", "@shopify/polaris-types"],
+    "types": [
+      "vite/client",
+      "node",
+      "@cloudflare/workers-types",
+      "@shopify/polaris-types",
+      "@shopify/app-bridge-types"
+    ],
     "jsx": "react-jsx",
     "strict": true,
     "allowArbitraryExtensions": true,
