@@ -116,8 +116,13 @@ export const retryPolicy = (onError: (error: Socket.SocketError) => Effect.Effec
 
 const decodeReturnPath = Schema.decodeUnknownOption(ReturnPath);
 
-/** A full page load to sign-in, back here afterwards; the same shape as the `/shop` route guard. */
+/**
+ * A full page load to sign-in, back here afterwards; the same shape as the `/shop` route guard.
+ * Nothing when the page is already on sign-in: a route guard can move it there first (a revoke
+ * re-reads the page before the retry's 4401), and its `redirect` is already the page to go back to.
+ */
 export const goToSignIn = Effect.sync(() => {
+  if (window.location.pathname === "/sign-in") return;
   const url = new URL("/sign-in", window.location.origin);
   const back = decodeReturnPath(window.location.pathname + window.location.search);
   if (Option.isSome(back)) url.searchParams.set("redirect", back.value);

@@ -7,6 +7,7 @@ import {
   tagCommaError,
   turnOnBlocker,
   unassignedLine,
+  workflowTitle,
 } from "../../../../src/web/components/workflow-shared.ts";
 import type { TaskWithTeamName } from "../../../../src/domain/shop-work.ts";
 
@@ -53,5 +54,14 @@ describe("workflow screen helpers", () => {
       "No team on Stamp. Assign one before you apply.",
     );
     strictEqual(unassignedLine([task("Cut", "Bench")]), null);
+  });
+});
+
+describe("workflowTitle", () => {
+  it("adds the word workflow unless the name already ends in it", () => {
+    strictEqual(workflowTitle("Engraved ring"), "Engraved ring workflow");
+    strictEqual(workflowTitle("XS Cross workflow"), "XS Cross workflow");
+    strictEqual(workflowTitle("Ring Workflow"), "Ring Workflow");
+    strictEqual(workflowTitle("Subworkflow"), "Subworkflow workflow");
   });
 });

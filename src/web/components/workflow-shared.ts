@@ -17,6 +17,13 @@ export const tagCommaError = (tag: string): string | null =>
   tag.includes(",") ? "A tag can't have a comma." : null;
 
 /**
+ * A run's workflow as a title: `<name> workflow`, unless the name already ends in the word, so
+ * "Ring workflow" never reads "Ring workflow workflow".
+ */
+export const workflowTitle = (name: string): string =>
+  /\bworkflow$/iu.test(name.trimEnd()) ? name : `${name} workflow`;
+
+/**
  * The Duplicate dialog's prefilled name: `<name> copy`, with the base trimmed
  * so the result still fits `WorkflowName`. There is no search for a
  * free one; if a second copy collides, `NameTaken` lands under the name field

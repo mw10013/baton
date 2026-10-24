@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useForm } from "@tanstack/react-form";
 import * as Match from "effect/Match";
 import * as Schema from "effect/Schema";
@@ -41,12 +41,16 @@ export default function SignInPage({
   }) => Promise<MagicLinkResult>;
 }) {
   const [outcome, setOutcome] = useState<Outcome>({ _tag: "Idle" });
+  /** Set before the first await: a double click submits twice before `loading` renders. */
+  const sending = useRef(false);
   const navigate = useNavigateOnClick();
 
   const form = useForm({
     defaultValues: { email: "" },
     ...SignInForm.options,
     onSubmit: async ({ value }) => {
+      if (sending.current) return;
+      sending.current = true;
       setOutcome({ _tag: "Sending" });
       const next = await requestMagicLink({ email: SignInForm.decode(value).email, returnTo }).then(
         (result): Outcome =>
@@ -56,6 +60,7 @@ export default function SignInPage({
           }),
         (): Outcome => ({ _tag: "Failed", message: SOMETHING_WENT_WRONG }),
       );
+      sending.current = false;
       setOutcome(next);
     },
   });

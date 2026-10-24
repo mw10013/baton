@@ -17,6 +17,22 @@ import { MembershipRepository } from "./membership-repository.ts";
 const MAGIC_LINK_TTL_SECONDS = 300;
 
 const decodeEmail = Schema.decodeUnknownOption(Email);
+
+/** Better Auth's log levels as Effect's, so its lines carry the Backend's log format. */
+const BETTER_AUTH_SEVERITY = {
+  debug: "Debug",
+  info: "Info",
+  warn: "Warn",
+  error: "Error",
+} as const;
+
+/**
+ * Better Auth's line for a refused origin or redirect target, which it logs at error. Anyone can
+ * send one (a verify link with `callbackURL` on another host is enough), and the refusal is the
+ * right answer, so it is a warning here, not a fault.
+ */
+const REFUSED_TARGET =
+  /^Invalid (?:origin|callbackURL|redirectURL|errorCallbackURL|newUserCallbackURL): /u;
 const decodeMe = Schema.decodeUnknownEffect(Me);
 
 export interface AuthOptions {
@@ -193,6 +209,14 @@ export const makeAuth = (options: AuthOptions = {}) =>
         admin(),
       ],
       advanced: { ipAddress: { ipAddressHeaders: ["cf-connecting-ip"] } },
+      logger: {
+        log: (level, message, ...args) =>
+          void runPromise(
+            Effect.logWithLevel(
+              REFUSED_TARGET.test(message) ? "Warn" : BETTER_AUTH_SEVERITY[level],
+            )(`[Better Auth] ${message}`, ...args),
+          ),
+      },
       // Sign-in requests are limited per IP by the SignInLimit binding instead.
       rateLimit: { enabled: false },
     });

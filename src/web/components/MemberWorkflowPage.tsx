@@ -19,6 +19,7 @@ import { Inline } from "./screen/Inline.tsx";
 import { Lines } from "./screen/Lines.tsx";
 import { PageBody } from "./screen/PageBody.tsx";
 import { Prose } from "./screen/Prose.tsx";
+import { workflowTitle } from "./workflow-shared.ts";
 
 const NOTE_MODAL = "run-note";
 const BLOCK_MODAL = "run-block";
@@ -135,7 +136,7 @@ export default function MemberWorkflowPage({
       <PageBody>
         <Lines>
           <s-heading>{run.lineItemTitle}</s-heading>
-          <s-text color="subdued">{`${run.workflowName} workflow`}</s-text>
+          <s-text color="subdued">{workflowTitle(run.workflowName)}</s-text>
         </Lines>
         {actions.banner !== null && <s-banner tone="critical">{actions.banner}</s-banner>}
         <BlockBanner run={run} viewer="member" actions={blockActions} />

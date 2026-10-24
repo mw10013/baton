@@ -1,7 +1,7 @@
 import * as Cause from "effect/Cause";
 import * as Exit from "effect/Exit";
 import * as Match from "effect/Match";
-import { Fragment, type ReactNode, useState } from "react";
+import { Fragment, type ReactNode, useRef, useState } from "react";
 import { isFixtureOrder } from "../../contract/fixture.ts";
 import { ORDER_SYNC_WINDOW_DAYS } from "../../contract/orders.ts";
 import { type OrderLineItem, orderIsOpen } from "../../domain/orders.ts";
@@ -76,6 +76,7 @@ import { Prose } from "./screen/Prose.tsx";
 import { SelectRow } from "./screen/SelectRow.tsx";
 import { Things } from "./screen/Things.tsx";
 import { Token } from "./screen/Token.tsx";
+import { workflowTitle } from "./workflow-shared.ts";
 
 /** Attach's refusals, as the page banner says them; `Ok` says nothing there (a toast does). */
 export const attachResultMessage = Match.typeTags<AttachResult, string | null>()({
@@ -302,6 +303,8 @@ export default function OrderPage(props: OrderPageProps) {
   /** The run the Note and Block modals are about; each modal is one element at page level. */
   const [modalRunId, setModalRunId] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
+  /** Set before the first await: a double click lands both clicks before `disabled` renders. */
+  const syncInFlight = useRef(false);
 
   const detail = read.value;
   if (read.failed)
@@ -404,8 +407,11 @@ export default function OrderPage(props: OrderPageProps) {
   };
 
   const syncOrder = async () => {
+    if (syncInFlight.current) return;
+    syncInFlight.current = true;
     setSyncing(true);
     const exit = await presses.press(syncOrderAtom(order.id), undefined);
+    syncInFlight.current = false;
     setSyncing(false);
     Exit.match(exit, {
       // `Gone` is Sync from Shopify doing nothing; the page would otherwise say nothing about why.
@@ -511,7 +517,7 @@ export default function OrderPage(props: OrderPageProps) {
     return (
       <Panel kind="drawer">
         <Lines>
-          <s-heading>{`${run.workflowName} workflow`}</s-heading>
+          <s-heading>{workflowTitle(run.workflowName)}</s-heading>
           <RunSteps
             tasks={tasks}
             viewer="merchant"

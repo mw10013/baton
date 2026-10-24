@@ -32,6 +32,27 @@ describe("SignInPage", () => {
     expect(requested).toEqual(["m1@m.com"]);
   });
 
+  it("sends one request for a double click", async () => {
+    const requested: Array<string> = [];
+    let answer = () => {};
+    const screen = await render(async ({ email }) => {
+      requested.push(email);
+      await new Promise<void>((resolve) => {
+        answer = resolve;
+      });
+      return { _tag: "Sent", link: undefined };
+    });
+
+    await screen.getByLabelText("Email").fill("m1@m.com");
+    const send = screen.getByRole("button", { name: "Send link" }).element() as HTMLElement;
+    send.click();
+    send.click();
+    await expect.poll(() => requested).toEqual(["m1@m.com"]);
+    answer();
+    await expect.element(screen.getByRole("heading", { name: "Check your email" })).toBeVisible();
+    expect(requested).toEqual(["m1@m.com"]);
+  });
+
   it("says when the rate limit is hit", async () => {
     const screen = await render(async () => ({ _tag: "TooManyRequests" }));
 

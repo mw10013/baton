@@ -1705,13 +1705,17 @@ export const OrdersCursor = Schema.String.check(
   Schema.isPattern(/^\d+:.+$/u),
 );
 
+/** The longest search, in characters ({@link ListSearch}). */
+export const LIST_SEARCH_MAX_LENGTH = 64;
+
 /**
  * What a person types into a list's search field, on both sides. Trimmed and capped at
  * 64 characters because it reaches SQL as a `like` pattern. `#` alone (or `##`) is
  * refused: {@link searchTerm} would read it as the order number `#`, a prefix every
  * order shares.
  */
-export const ListSearch = trimmedText(Schema.brand("ListSearch"), 64).check(
+
+export const ListSearch = trimmedText(Schema.brand("ListSearch"), LIST_SEARCH_MAX_LENGTH).check(
   Schema.makeFilter(
     (q) => q.replace(/^#+/u, "").length > 0 || "an order number or a word, not just #",
   ),

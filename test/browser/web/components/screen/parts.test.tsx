@@ -31,6 +31,23 @@ describe("ListSearchField", () => {
     await expect.poll(() => submitted).toStrictEqual(["ana"]);
   });
 
+  it("a search past the cap searches its first 64 characters rather than nothing", async () => {
+    const submitted: Array<ListSearch | null> = [];
+    const screen = await render(
+      <ListSearchField
+        value={null}
+        placeholder="Search by email"
+        onSubmit={(q) => submitted.push(q)}
+      />,
+    );
+    const field = screen.getByRole("searchbox", { name: "Search" });
+    await field.fill(` ${"a".repeat(64)}bcd`);
+    field
+      .element()
+      .dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, composed: true }));
+    await expect.poll(() => submitted).toStrictEqual(["a".repeat(64)]);
+  });
+
   it("a submit of the search already in the URL is dropped", async () => {
     const submitted: Array<ListSearch | null> = [];
     const screen = await render(
@@ -77,6 +94,12 @@ describe("TextLimit", () => {
     expect(textLimitProps("a".repeat(10), 1000)).toStrictEqual({});
     expect(textLimitProps("a".repeat(900), 1000)).toStrictEqual({
       details: "100 characters left",
+    });
+    expect(textLimitProps("a".repeat(1000), 1000)).toStrictEqual({
+      details: "0 characters left",
+    });
+    expect(textLimitProps("a".repeat(1100), 1000)).toStrictEqual({
+      details: "100 characters over",
     });
   });
 });

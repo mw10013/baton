@@ -1,16 +1,29 @@
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 import { useEffect, useRef, useState } from "react";
-import { ListSearch } from "../../../domain/shop-work.ts";
+import { LIST_SEARCH_MAX_LENGTH, ListSearch } from "../../../domain/shop-work.ts";
 
 /**
- * Raw field text to the branded search, or `None` for anything the schema refuses: empty,
- * blank, or past its 64 characters. `None` is "no search", which is what an emptied field means,
- * so the caller needs no second test. The field sets no `maxLength` (the text-limit rule on
- * `TextLimit`): Polaris would draw a character counter, and no search comes near the limit, so
- * the field neither counts down nor errs.
+ * Raw field text to the branded search, or `None` for anything the schema refuses: empty, blank,
+ * or `#` alone. `None` is "no search", which is what an emptied field means, so the caller needs
+ * no second test; `#` alone matches every order anyway. Text past {@link LIST_SEARCH_MAX_LENGTH}
+ * searches its first characters: the field sets no `maxLength` (the text-limit rule on
+ * `TextLimit`: Polaris would draw a character counter) and has no error slot, so the cut is
+ * shown by the field re-seeding with what was searched, never by dropping the search.
  */
-const decodeListSearch = Schema.decodeUnknownOption(ListSearch);
+const decodeFieldText = Schema.decodeUnknownOption(
+  Schema.String.pipe(
+    Schema.decode(SchemaTransformation.trim()),
+    Schema.decode(
+      SchemaTransformation.transform({
+        decode: (text: string) => text.slice(0, LIST_SEARCH_MAX_LENGTH),
+        encode: (text: string) => text,
+      }),
+    ),
+    Schema.decodeTo(ListSearch),
+  ),
+);
 
 /**
  * The search field of every list. Label "Search" (hidden, the placeholder says it), the
@@ -50,7 +63,7 @@ export function ListSearchField({
     setDraft(value ?? "");
   }
   const submit = (text: string = draft) => {
-    const next = Option.getOrNull(decodeListSearch(text));
+    const next = Option.getOrNull(decodeFieldText(text));
     if (next === value) return;
     onSubmit(next);
   };
