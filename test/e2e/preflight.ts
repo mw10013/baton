@@ -21,8 +21,8 @@ class PreflightError extends Schema.TaggedError<PreflightError>()("PreflightErro
  * otherwise cache "not found" for a hostname a moment too new; {@link tunnelReady} holds that rule.
  *
  * It is a `globalSetup` and not a setup project because every project needs the server, and a
- * setup project they depend on would sit behind `shopify-admin`, whose cookie refresh can raise a
- * Keychain prompt that `chromium` has no reason to wait for.
+ * setup project they depend on would sit behind `shopify-admin`, whose login export needs the agent
+ * Chrome that `chromium` has no reason to wait for.
  */
 export default async function preflight(): Promise<void> {
   const port = e2ePortOf(Number(process.env.WEBSITE_PORT));

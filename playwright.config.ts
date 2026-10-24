@@ -18,7 +18,7 @@ const port = e2ePortOf(websitePort);
  * project, because the `embedded` and `install` projects' `baseURL` is the Shopify admin.
  */
 export const e2eServerURL = `http://localhost:${port}`;
-/** Where the Shopify admin cookie export lives; it holds a login, so it stays under `playwright/.auth/`. */
+/** Where the agent Chrome's exported Shopify login lives; it holds a login, so it stays under `playwright/.auth/`. */
 export const storageStatePath = "playwright/.auth/shopify-admin.json";
 
 const AppHandleLine = Schema.TemplateLiteralParser(['handle = "', Schema.String, '"']);

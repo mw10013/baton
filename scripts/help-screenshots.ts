@@ -2,9 +2,9 @@
 /**
  * `vp run help:screenshots`: retakes the help's pictures against the dev fixture on this
  * checkout's dev server, the spec in `HELP_PICTURES` for what each one shows. In order: refuses to
- * start unless the dev server is healthy (`vp run dev:status`); checks the Shopify admin session
- * the `shopify-admin` e2e setup exports (`storageStatePath`) and exports it again from Chrome
- * when it is older than a day, stopping before the store is touched if that fails; loads the dev
+ * start unless the dev server is healthy (`vp run dev:status`); exports the agent Chrome's Shopify
+ * login to `storageStatePath`, as the `shopify-admin` e2e setup does, stopping before the store is
+ * touched if that fails; loads the dev
  * fixture; shoots every merchant picture in the Shopify admin, 1280 × 800 at 2x; signs in as the
  * fixture's member `ana@example.com` on a 390 × 844 phone at 2x and shoots every member picture;
  * loads the dev fixture again, also when a shot failed; prints what it wrote, and each merchant
@@ -41,7 +41,7 @@ import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
@@ -78,11 +78,7 @@ import {
 } from "./lib/listing-screenshots.ts";
 import { BRAND_BLUE } from "./lib/screencast-cards.ts";
 import { measurePane, PANE_VIEWPORT, paneCrop } from "./lib/screencast-take.ts";
-import {
-  adminSessionFresh,
-  CHROME_PROFILE,
-  exportShopifyAdminAuth,
-} from "./lib/shopify-admin-auth.ts";
+import { exportShopifyAdminAuth } from "./lib/agent-chrome.ts";
 
 class HelpScreenshotsError extends Schema.TaggedError<HelpScreenshotsError>()(
   "HelpScreenshotsError",
@@ -1249,7 +1245,7 @@ const shootMerchant = Effect.fn("shootMerchant")(function* (browser: Browser, ap
     await gotoApp(page, "app/orders").catch((error: unknown) => {
       if (page.url().includes("accounts.shopify.com"))
         throw new Error(
-          `the Shopify admin asked for a sign-in: the session in ${storageStatePath} is not accepted. Delete it and rerun to export it again from Chrome.`,
+          `the Shopify admin asked for a sign-in: the session in ${storageStatePath} is not accepted. Check the agent Chrome's login: vp run browser agent.`,
           { cause: error },
         );
       throw error;
@@ -1518,28 +1514,6 @@ const shootAll = (options: {
     (browser) => Effect.promise(() => browser.close()),
   );
 
-const StorageState = Schema.fromJsonString(
-  Schema.Struct({
-    cookies: Schema.Array(
-      Schema.Struct({ name: Schema.String, domain: Schema.String, expires: Schema.Number }),
-    ),
-  }),
-);
-const decodeStorageState = Schema.decodeUnknownSync(StorageState);
-
-/**
- * Whether the admin session on disk is still worth using ({@link adminSessionFresh}), read as
- * the `shopify-admin` e2e setup reads it.
- */
-const adminSessionValid = (): boolean => {
-  try {
-    const { cookies } = decodeStorageState(readFileSync(storageStatePath, "utf8"));
-    return adminSessionFresh(cookies, statSync(storageStatePath).mtimeMs);
-  } catch {
-    return false;
-  }
-};
-
 /** The app's handle, from the `handle = "…"` line of `shopify.app.toml`. */
 const appHandle = () => {
   const line = readFileSync("shopify.app.toml", "utf8")
@@ -1569,12 +1543,7 @@ const helpScreenshots = Effect.fn("helpScreenshots")(function* () {
         }),
     ),
   );
-  if (!adminSessionValid()) {
-    yield* Console.log(
-      `The Shopify admin session in ${storageStatePath} is stale; exporting it again from Chrome (this may ask for the Keychain)…`,
-    );
-    yield* exportShopifyAdminAuth({ output: storageStatePath, profile: CHROME_PROFILE });
-  }
+  yield* exportShopifyAdminAuth({ output: storageStatePath, store });
   yield* Console.log("Loading the dev fixture…");
   yield* loadFixture;
   const urls = {

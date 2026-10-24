@@ -35,7 +35,7 @@
     "test:e2e": "vp exec playwright test",
     "test:e2e:headed": "vp exec playwright test --headed",
     "test:e2e:billing": "bash -c 'E2E_BILLING=1 exec vp exec playwright test --project=billing --headed'",
-    "e2e:auth": "node scripts/shopify-admin-auth.ts",
+    "e2e:auth": "node --env-file=.env scripts/shopify-admin-auth.ts",
     "test:e2e:ui": "vp exec playwright test --ui",
     "help:screenshots": "node --env-file=.env scripts/help-screenshots.ts",
     "tts": "node scripts/tts.ts",

@@ -10,7 +10,6 @@ import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { readFileSync, statSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { type Browser, chromium, type FrameLocator, type Locator, type Page } from "playwright";
@@ -18,6 +17,7 @@ import { type Browser, chromium, type FrameLocator, type Locator, type Page } fr
 import { fixture } from "../../fixture.ts";
 import { storageStatePath } from "../../playwright.config.ts";
 import { SCREENCAST_ORDER } from "../../screencast-fixture.ts";
+import { exportShopifyAdminAuth } from "./agent-chrome.ts";
 import { runCommand } from "./command.ts";
 import { appFrame, awaitHydration, gotoApp, HIDE_OVERLAYS } from "./embedded-app.ts";
 
@@ -34,7 +34,6 @@ import {
   type TakeSpec,
 } from "./screencast.ts";
 import { cardHtml } from "./screencast-cards.ts";
-import { adminSessionFresh, CHROME_PROFILE, exportShopifyAdminAuth } from "./shopify-admin-auth.ts";
 import { createStoreOrder } from "./stores.ts";
 import { countCharacters } from "./tts.ts";
 
@@ -96,25 +95,6 @@ export type SceneIndex = typeof SceneIndex.Type;
 /** When a scene may end: after its action and its line, whichever is later, plus {@link GAP_MS}. */
 export const sceneEnd = (startMs: number, actEndMs: number, voiceMs: number) =>
   Math.max(actEndMs, startMs + voiceMs) + GAP_MS;
-
-const StorageState = Schema.fromJsonString(
-  Schema.Struct({
-    cookies: Schema.Array(
-      Schema.Struct({ name: Schema.String, domain: Schema.String, expires: Schema.Number }),
-    ),
-  }),
-);
-
-const adminSessionValid = (): boolean => {
-  try {
-    const { cookies } = Schema.decodeUnknownSync(StorageState)(
-      readFileSync(storageStatePath, "utf8"),
-    );
-    return adminSessionFresh(cookies, statSync(storageStatePath).mtimeMs);
-  } catch {
-    return false;
-  }
-};
 
 /** The first visible match of each locator, in order, waiting up to {@link FIND_MS}. */
 const firstVisible = async (
@@ -428,12 +408,7 @@ export const recordTake = Effect.fn("recordTake")(function* (
         }),
     ),
   );
-  if (!adminSessionValid()) {
-    yield* Console.log(
-      `The Shopify admin session in ${storageStatePath} is stale; exporting it again from Chrome (this may ask for the Keychain)…`,
-    );
-    yield* exportShopifyAdminAuth({ output: storageStatePath, profile: CHROME_PROFILE });
-  }
+  yield* exportShopifyAdminAuth({ output: storageStatePath, store });
   const voiceMs: (scene: Scene) => number = options.rehearse
     ? (scene) => countCharacters(scene.say) * REHEARSAL_MS_PER_CHARACTER
     : yield* readVoiceIndex(scenes, files).pipe(

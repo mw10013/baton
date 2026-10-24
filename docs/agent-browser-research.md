@@ -165,7 +165,7 @@ Answer: the verify-baton skill, in its sections on the agent Chrome and on inspe
 Answer: as recommended. The command opens the dev store's admin in a new tab and fails with "not logged in to Shopify" when it lands on accounts.shopify.com. The skill tells the agent to stop and send a push notification with its own tool. The script sends nothing.
 
 **Q6. Should `vp run browser open` (Playwright) attach to the agent Chrome too?**
-Answer: yes. Tested first: `playwright cli attach --cdp=http://127.0.0.1:9333` saw the logged-in admin and the app frame, and `detach` left Chrome running. `open` now attaches in a new tab of its own, and `close` closes only that tab and detaches. verify-baton keeps its Playwright harness and no longer needs the Keychain export. The e2e suite still uses the export.
+Answer: yes. Tested first: `playwright cli attach --cdp=http://127.0.0.1:9333` saw the logged-in admin and the app frame, and `detach` left Chrome running. `open` now attaches in a new tab of its own, and `close` closes only that tab and detaches. verify-baton keeps its Playwright harness and no longer needs the Keychain export. The e2e suite moved off it the same day (§10).
 
 ## 8. Spikes
 
@@ -191,4 +191,5 @@ Written 2026-10-23: `../notes/systems/chrome-devtools-cli-runbook.md`. It holds 
 - `scripts/browser.ts`: new `agent` subcommand. `open` attaches to the agent Chrome in its own tab instead of launching Playwright's Chrome with the Keychain export, and lost its `--headed` flag. `close` closes that tab and detaches.
 - The login check waits for a page that decides it: the admin's own title (`<store> · Home · Shopify`) or accounts.shopify.com. A first version that stopped at the first non-empty title passed a logged-out Chrome: Chrome titles a loading tab with its URL, and a lapsed login passes through `admin.shopify.com/login` first. Tested both ways, the logged-out case against a throwaway Chrome with an empty profile.
 - verify-baton (`SKILL.md`, `verify.sh`), the Playwright CLI runbook and AGENTS.md now describe the agent Chrome. `V doctor` runs `vp run browser agent` instead of checking the export file.
-- Not changed: the e2e suite and `vp run e2e:auth`, which keep the Keychain export, and `.mcp.json`.
+- e2e, 2026-10-23: the `shopify-admin` setup project, `vp run e2e:auth`, `help:screenshots` and the screencast take now export the login from the agent Chrome (`scripts/lib/agent-chrome.ts`: launch if needed, login check, `connectOverCDP` and the Shopify cookies, written atomically at mode 0600) on every run. The Keychain export (`scripts/lib/shopify-admin-auth.ts`, its unit test and the one-day freshness rule) is gone. `browser.ts` imports the agent Chrome pieces from the same module. The e2e workers keep their own isolated Playwright contexts. Verified: full `vp run test:e2e` 84 passed (3.0 min), headed `vp run test:e2e:billing` 6 passed (1.4 min), with no Keychain prompt.
+- Not changed: `.mcp.json`.

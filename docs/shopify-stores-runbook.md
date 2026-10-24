@@ -58,10 +58,10 @@ Staging uses `mw10013-staging-shop-00`. Its app, Baton Staging, is installed thr
 
 The embedded specs open the real admin, so they need a logged-in Shopify session.
 
-- `vp run e2e:auth` reads the Shopify cookies from Chrome's `Default` profile (`--profile` for another; see chrome://version) and saves them to `playwright/.auth/shopify-admin.json`, mode 0600. That file is a live Shopify login: never share or commit it (`playwright/` is ignored).
-- macOS asks whether `security` may access **Chrome Safe Storage**: click **Allow**. That is the key Chrome encrypts its cookies with.
-- The `shopify-admin` setup project does the same before the embedded specs, but only when the saved login is stale (older than a day, or the admin session near expiry). Expect the prompt about once a day. The other e2e projects never ask.
-- macOS only.
+- The login comes from the agent Chrome (profile `~/.chrome-agent`, port 9333), which a person logs in to Shopify once. Setup and recovery: [the Playwright CLI runbook](./playwright-cli-runbook.md) and `vp run browser agent`.
+- The `shopify-admin` setup project starts the agent Chrome if needed, checks it is logged in, and saves its Shopify cookies to `playwright/.auth/shopify-admin.json`, mode 0600, on every run. That file is a live Shopify login: never share or commit it (`playwright/` is ignored).
+- `vp run e2e:auth` does the same export alone, for a script run outside the e2e suite.
+- Nothing asks for the Keychain, and your own Chrome is never read.
 
 ## Add a store
 
@@ -82,6 +82,5 @@ Needed for an index past `09`, or a store on another plan (a feature that needs 
 - **"`<store>` does not exist in the organization the CLI is signed in to":** check `.env`, then `shopify store list`. If the list is someone else's, the CLI is on another account: `shopify auth logout`, then `shopify auth login`.
 - **"`<store>` has no store auth with the scopes the fixture needs":** run the `shopify store auth` command it prints (step 3 above).
 - **A store step fails once with no message:** the CLI occasionally fails a call; run it again. If it repeats, run one query by hand with `shopify store execute --store <domain> --query '{ shop { name } }'`.
-- **`e2e:auth` finds no Shopify cookies:** Chrome may not have written them to disk yet. Quit Chrome with Cmd-Q (not just close the window), reopen it, check the admin is logged in, run it again.
-- **`e2e:auth` says Keychain access failed:** unlock the login keychain, run it again, and click **Allow**.
+- **The `shopify-admin` setup says the agent Chrome is not logged in to Shopify:** log in at the agent Chrome's window by hand, then run the suite again.
 - **The Shopify admin opens the app on the wrong server:** another `shopify app dev` is running on the same store. `pgrep -fl "app dev"` shows each session's `--store`.

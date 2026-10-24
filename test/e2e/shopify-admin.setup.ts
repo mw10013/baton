@@ -1,52 +1,22 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
-import { chmodSync, readFileSync, statSync } from "node:fs";
+import process from "node:process";
 import { test as setup } from "playwright/test";
 
 import { storageStatePath } from "../../playwright.config.ts";
-import {
-  adminSessionFresh,
-  CHROME_PROFILE,
-  exportShopifyAdminAuth,
-} from "../../scripts/lib/shopify-admin-auth.ts";
-
-const StorageState = Schema.fromJsonString(
-  Schema.Struct({
-    cookies: Schema.Array(
-      Schema.Struct({ name: Schema.String, domain: Schema.String, expires: Schema.Number }),
-    ),
-  }),
-);
-const decodeStorageState = Schema.decodeUnknownSync(StorageState);
+import { exportShopifyAdminAuth } from "../../scripts/lib/agent-chrome.ts";
 
 /**
- * Whether the export on disk is still worth using, by the cookies it holds and the file's own
- * age ({@link adminSessionFresh}): a fresh export avoids a Keychain prompt. It does not know
- * whether Shopify revoked the session; the embedded specs exercise the real one.
- */
-const exportFresh = (): boolean => {
-  try {
-    const { cookies } = decodeStorageState(readFileSync(storageStatePath, "utf8"));
-    return adminSessionFresh(cookies, statSync(storageStatePath).mtimeMs);
-  } catch {
-    return false;
-  }
-};
-
-/**
- * Runs the export effect directly, so cancellation reaches the Keychain process and the scoped
- * files. The export's 150 s deadline fits inside this timeout.
+ * Exports the agent Chrome's Shopify login for the embedded projects on every run: it is a live
+ * read of about a second, so no copy on disk is ever trusted stale.
  */
 setup("shopify admin auth", async () => {
-  setup.setTimeout(180_000);
-  if (exportFresh()) {
-    chmodSync(storageStatePath, 0o600);
-    return;
-  }
+  setup.setTimeout(60_000);
+  const store = process.env.SHOPIFY_E2E_STORE;
+  if (!store) throw new Error("SHOPIFY_E2E_STORE is not set; see .env.example");
   await Effect.runPromise(
-    exportShopifyAdminAuth({ output: storageStatePath, profile: CHROME_PROFILE }).pipe(
+    exportShopifyAdminAuth({ output: storageStatePath, store }).pipe(
       Effect.tap((count) => Console.log(`Wrote ${String(count)} cookies to ${storageStatePath}`)),
       Effect.provide(NodeServices.layer),
     ),
