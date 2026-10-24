@@ -1,6 +1,6 @@
 # Workflow editor in two tabs: research
 
-Status: research, 2026-10-24. Written from the code on `main` at `03fe6b7` and the production reproduction of 2026-10-24. No code has changed. The questions are in §7. All ten were answered on 2026-10-24: every recommendation accepted, Q5 with changed copy.
+Status: implemented, 2026-10-24. Written from the code on `main` at `03fe6b7` and the production reproduction of 2026-10-24. The questions are in §7. All ten were answered on 2026-10-24: every recommendation accepted, Q5 with changed copy. Built as Fix 0 (`9a78d5e`), B (`f49f1f1`) and A (`c14af38`), verified on staging, and released to production after a reset.
 
 ## 0. Summary
 
