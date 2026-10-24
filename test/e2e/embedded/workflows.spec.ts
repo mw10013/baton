@@ -474,6 +474,58 @@ test("a fresh workflow turns on from the editor, then edits go through the draft
   await expect(page.getByRole("button", { name: "Turn on workflow", exact: true })).toBeVisible();
 });
 
+test("another tab's edits and Discard reach an open editor without a press", async ({
+  backend,
+}) => {
+  const id = own();
+  const team = `E2E Live Bench ${id}`;
+  const name = `E2E Live ${id}`;
+  await add(backend, {
+    ...benchOf(team),
+    workflows: [{ name, tag: `e2e-live-${id}`, tasks: [{ name: "Cut", team }] }],
+  });
+
+  const editor = editorFrame(page);
+  frame = await gotoApp(page, "app/workflows");
+  await openWorkflow(name, id);
+  const workflowPath = /app\/workflows\/[^/?#]+/u.exec(page.url())?.[0];
+  if (workflowPath === undefined) throw new Error(`no workflow in ${page.url()}`);
+
+  // The second tab: the same workflow's editor, as a page of the app's frame.
+  const other = await context.newPage();
+  try {
+    const watching = await gotoApp(other, `${workflowPath}/edit`);
+    await awaitHydration(watching);
+    await expect(watching.getByRole("button", { name: "Edit Cut" })).toBeVisible();
+    await expect(other.getByRole("button", { name: "Discard changes" })).toHaveCount(0);
+
+    // A step added in the first tab shows in the second, with the draft's controls.
+    await openEditor(page);
+    await editor.getByRole("button", { name: "Add step" }).click();
+    await editor.getByRole("textbox", { name: "Name", exact: true }).fill("Pack");
+    await editor.getByRole("combobox", { name: "Team", exact: true }).selectOption({ label: team });
+    await editor.getByRole("button", { name: "Add step" }).click();
+    await expect(editor.getByRole("button", { name: "Edit Pack" })).toBeVisible();
+    await expect(watching.getByRole("button", { name: "Edit Pack" })).toBeVisible();
+    await expect(other.getByRole("button", { name: "Discard changes" })).toBeVisible();
+
+    // Discard in the first tab takes the step and the draft out of the second.
+    await expect(async () => {
+      await clickHoisted(page.getByRole("button", { name: "Discard changes" }));
+      await expect(
+        editor.getByText("Your unsaved changes will be lost.", { exact: true }),
+      ).toBeVisible({ timeout: 2000 });
+    }).toPass({ timeout: 20_000 });
+    await editor.getByRole("button", { name: "Discard", exact: true }).click();
+    await expect(watching.getByRole("button", { name: "Edit Pack" })).toHaveCount(0);
+    await expect(other.getByRole("button", { name: "Discard changes" })).toHaveCount(0);
+    await expect(watching.getByRole("button", { name: "Edit Cut" })).toBeVisible();
+  } finally {
+    await other.close();
+    await closeEditor(page);
+  }
+});
+
 /**
  * A task's instructions are capped at `TASK_INSTRUCTIONS_MAX_LENGTH` the way the run note is (the
  * text-limit control): no help line, a countdown from `noteCountFrom`, and Save refuses past the

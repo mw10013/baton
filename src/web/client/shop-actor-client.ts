@@ -35,6 +35,7 @@ import {
   ORDERS_KEY,
   SYNC_KEY,
   ShopActorRpcs,
+  WORKFLOWS_KEY,
 } from "../../contract/shop-actor.ts";
 import type {
   AssignRunTaskTeamInput,
@@ -159,7 +160,7 @@ const browserProtocol = (input: ProtocolInput) => {
             Effect.andThen(
               PubSub.publish(input.notices, {
                 _tag: "Connected",
-                invalidated: [ORDERS_KEY, SYNC_KEY],
+                invalidated: [ORDERS_KEY, SYNC_KEY, WORKFLOWS_KEY],
               }),
             ),
           ),
@@ -299,6 +300,35 @@ const sharedWithPrevious = <A, E>(
  */
 export const refreshLive = (registry: AtomRegistry.AtomRegistry, keys: ReadonlyArray<string>) => {
   for (const node of liveNodes(registry, keys)) registry.refresh(node.atom);
+};
+
+/** Resolves once `query`'s value is not `waiting`: at once, or when its read in flight settles. */
+const settled = <A, E>(
+  registry: AtomRegistry.AtomRegistry,
+  query: Atom.Atom<AsyncResult.AsyncResult<A, E>>,
+) =>
+  new Promise<void>((resolve) => {
+    if (!AsyncResult.isWaiting(registry.get(query))) return resolve();
+    const stop = registry.subscribe(query, (result) => {
+      if (AsyncResult.isWaiting(result)) return;
+      stop();
+      resolve();
+    });
+  });
+
+/**
+ * A live read re-read by the tab that just wrote, resolving once the new value is in: a tab's own
+ * write cannot wait for its notice, which is throttled ({@link NOTICE_THROTTLE}). A read already in
+ * flight is let finish first, because a refresh would interrupt it; it may predate the write, so
+ * the re-read follows it. A notice's refresh replayed after that read costs one more read.
+ */
+export const rereadLive = async <A, E>(
+  registry: AtomRegistry.AtomRegistry,
+  query: Atom.Atom<AsyncResult.AsyncResult<A, E>>,
+) => {
+  await settled(registry, query);
+  registry.refresh(query);
+  await settled(registry, query);
 };
 
 /** The kept live queries' nodes whose keys meet `keys` ({@link liveQuery}). */
@@ -542,6 +572,23 @@ export const merchantOrderDetailQuery = Atom.family((legacyId: string) =>
  */
 export const merchantOrderDetailAtom = Atom.family((legacyId: string) =>
   liveQuery(merchantOrderDetailQuery(legacyId), [ORDERS_KEY]),
+);
+
+/** The workflow page's and the editor's read, by workflow id; the node their loaders seed. */
+export const merchantWorkflowDetailQuery = Atom.family((workflowId: string) =>
+  ShopActorClient.query(
+    "MerchantGetWorkflowDetail",
+    { workflowId },
+    { serializationKey: `merchant-workflow:${workflowId}`, timeToLive: LIVE_RETENTION },
+  ),
+);
+
+/**
+ * The workflow page and the editor, live on {@link WORKFLOWS_KEY}: the workflow, its tasks or its
+ * draft changed, in this tab or another; see {@link merchantWorkflowDetailQuery}.
+ */
+export const merchantWorkflowDetailAtom = Atom.family((workflowId: string) =>
+  liveQuery(merchantWorkflowDetailQuery(workflowId), [WORKFLOWS_KEY]),
 );
 
 /**

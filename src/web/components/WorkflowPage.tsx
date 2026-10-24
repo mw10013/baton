@@ -459,7 +459,7 @@ function LiveWorkflow(props: WorkflowPageProps & { readonly detail: ShopWork.Wor
  * turn on; the editor's Turn on applies and turns on in one step) and while an inactive workflow
  * has a draft (what would be turned on is not what the editor is holding). The title-bar state
  * badge carries no tone: the primary button beside it already carries the state's colour. Its
- * data is the loader's (no live read); until React has hydrated nothing presses.
+ * data is the route's live read; until React has hydrated nothing presses.
  */
 export default function WorkflowPage(props: WorkflowPageProps) {
   const hydrated = useHydrated();

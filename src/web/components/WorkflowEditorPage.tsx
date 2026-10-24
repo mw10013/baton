@@ -981,8 +981,8 @@ function Editor(props: WorkflowEditorProps & { readonly detail: ShopWork.Workflo
  * - applied with a draft: `Draft`, **Discard changes** and **Apply changes**, and no switch: the
  *   switch is about what is in force, and what is in force is not what is on the canvas.
  *
- * Close leaves the draft alone; only Apply and Discard end it. Its data is the loader's (no live
- * read); until React has hydrated nothing presses.
+ * Close leaves the draft alone; only Apply and Discard end it. Its data is the route's live read,
+ * so `detail` can change under it (the `seeded` block); until React has hydrated nothing presses.
  */
 export default function WorkflowEditorPage(props: WorkflowEditorProps) {
   if (props.detail === null)

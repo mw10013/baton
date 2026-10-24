@@ -6,7 +6,7 @@ import * as Exit from "effect/Exit";
 import * as PubSub from "effect/PubSub";
 import { Rpc, RpcSerialization } from "effect/rpc";
 import * as Schema from "effect/Schema";
-import { MerchantRpcs, ORDERS_KEY } from "../../src/contract/shop-actor.ts";
+import { MerchantRpcs, ORDERS_KEY, WORKFLOWS_KEY } from "../../src/contract/shop-actor.ts";
 import { TeamName } from "../../src/domain/shop-work.ts";
 import * as ShopWork from "../../src/domain/shop-work.ts";
 import { ShopKey } from "../../src/domain/platform.ts";
@@ -95,11 +95,12 @@ const editing = (backendUrl: string, workflowId: string) =>
 const noticed = (
   received: Effect.Success<ReturnType<typeof merchant>>["received"],
   count: number,
+  keys: ReadonlyArray<string> = [ORDERS_KEY, WORKFLOWS_KEY],
 ) =>
   Effect.gen(function* () {
     for (let n = 0; n < count; n += 1) {
       const notice = yield* PubSub.take(received).pipe(Effect.timeout("5 seconds"));
-      assert.deepStrictEqual<unknown>(notice.invalidated, [ORDERS_KEY]);
+      assert.deepStrictEqual<unknown>(notice.invalidated, keys);
     }
   });
 
@@ -345,6 +346,12 @@ test(
         (yield* client.MerchantRemoveTask(yield* onTask(b.task.id)))._tag,
         "NotFound",
       );
+      // The editor's live read over the socket answers what its loader reads over HTTP.
+      assert.deepStrictEqual<unknown>(
+        yield* client.MerchantGetWorkflowDetail(id),
+        yield* detail(backendUrl, workflow.id),
+      );
+      assert.isNull(yield* client.MerchantGetWorkflowDetail(workflowId({ workflowId: "nope" })));
       const renamed = yield* client.MerchantUpdateWorkflow(
         rename({ ...id, name: "W2 wf-task-writes" }),
       );
@@ -409,10 +416,12 @@ test(
       // Neither write moves a run: no runs exist yet, and the draft is applied unchanged.
       yield* client.MerchantUpdateWorkflowTag(retag({ ...id, tag: "sites-edit-tag-apply-2" }));
       yield* noticed(screen.received, 1);
-      // A task write starts the draft; there is no createDraft procedure.
+      // A task write starts the draft; there is no createDraft procedure. It changes no order
+      // page's Workflow select, so it names the workflows key alone.
       yield* client.MerchantAddStep(
         addStep({ ...(yield* editing(backendUrl, workflow.id)), name: "T", teamId: t.id }),
       );
+      yield* noticed(screen.received, 1, [WORKFLOWS_KEY]);
       const applied = yield* client.MerchantApplyDraft(yield* editing(backendUrl, workflow.id));
       assert.strictEqual(applied._tag, "Ok");
       yield* noticed(screen.received, 1);
@@ -446,6 +455,7 @@ test(
       yield* client.MerchantAddStep(
         addStep({ ...(yield* editing(backendUrl, box.id)), name: "Box", teamId: working.id }),
       );
+      yield* noticed(screen.received, 1, [WORKFLOWS_KEY]);
       const turnedOn = yield* client.MerchantApplyAndTurnOn(yield* editing(backendUrl, box.id));
       assert.strictEqual(turnedOn._tag, "Ok");
       yield* noticed(screen.received, 1);
@@ -519,6 +529,7 @@ test(
       const editorId = { ...id, tasksRevision: 0 };
       const task = taskWrite({ taskId: "any", tasksRevision: 0 });
       const calls = [
+        client.MerchantGetWorkflowDetail(id),
         client.MerchantCreateWorkflow(create({ name: "X", tag: "x" })),
         client.MerchantDuplicateWorkflow(duplicate({ ...id, name: "X", tag: "x" })),
         client.MerchantUpdateWorkflow(rename({ ...id, name: "X" })),
@@ -538,7 +549,7 @@ test(
         client.MerchantJoinTask(task),
         client.MerchantRemoveTask(task),
       ];
-      assert.strictEqual(calls.length, 16);
+      assert.strictEqual(calls.length, 17);
       for (const call of calls as ReadonlyArray<Effect.Effect<unknown, unknown>>) {
         const exit = yield* Effect.exit(call);
         assert.isTrue(Exit.isFailure(exit));

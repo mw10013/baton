@@ -1,6 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { ORDERS_KEY } from "../../contract/shop-actor.ts";
+import { ORDERS_KEY, WORKFLOWS_KEY } from "../../contract/shop-actor.ts";
 import type { ShopKey } from "../../domain/platform.ts";
 import {
   type AddStepInput,
@@ -181,12 +181,15 @@ const taskResult = <R>(
 /**
  * A write notifies only after it succeeded: a refused call wrote nothing a screen shows, so a
  * notice would cost every live screen a refetch for no change. The refused tab is not left stale
- * by this: it invalidates its own loader on every answer.
+ * by this: it re-reads on every answer.
  */
 const notifyIfOk =
-  <R>(notify: (invalidated: ReadonlyArray<string>) => Effect.Effect<void, never, R>) =>
+  <R>(
+    notify: (invalidated: ReadonlyArray<string>) => Effect.Effect<void, never, R>,
+    invalidated: ReadonlyArray<string>,
+  ) =>
   (result: { readonly _tag: string }) =>
-    result._tag === "Ok" ? notify([ORDERS_KEY]) : Effect.void;
+    result._tag === "Ok" ? notify(invalidated) : Effect.void;
 
 /**
  * The merchant's workflow definitions as the shop's actor runs them: one method per `Merchant…`
@@ -202,9 +205,11 @@ const notifyIfOk =
  *
  * `reconcileAll` is the runs service's, which the actor passes, called directly or through
  * {@link reconcileAllIfActive}; it reads the teams and opens one transaction per order after the
- * definition write. A write that changes which workflows an order page's Workflow select lists
- * notifies `ORDERS_KEY` on `Ok` (Edit tag, Apply, the switch, Turn on; delete on `Deleted`);
- * nothing reads workflows live, so there is no workflows key.
+ * definition write. Every write to an existing workflow notifies `WORKFLOWS_KEY` on `Ok` (delete
+ * on `Deleted`), which the workflow page and the editor read live. A write that changes which
+ * workflows an order page's Workflow select lists also notifies `ORDERS_KEY` (Edit tag, Apply, the
+ * switch, Turn on, delete). Create and Duplicate notify nothing: no screen is showing a workflow
+ * that did not exist.
  */
 export const makeWorkflows = <R>({
   repository,
@@ -325,7 +330,9 @@ export const makeWorkflows = <R>({
     );
 
   const updateWorkflow = ({ workflowId, name }: UpdateWorkflowInput) =>
-    workflowResult(repository.updateWorkflow({ workflowId, name }));
+    workflowResult(repository.updateWorkflow({ workflowId, name })).pipe(
+      Effect.tap(notifyIfOk(notify, [WORKFLOWS_KEY])),
+    );
 
   /**
    * Immediate, like `updateWorkflow`: lands on the workflow row, never the
@@ -353,7 +360,7 @@ export const makeWorkflows = <R>({
         yield* reconcileAllIfActive("updateWorkflowTag", workflow);
         return workflow;
       }),
-    ).pipe(Effect.tap(notifyIfOk(notify)));
+    ).pipe(Effect.tap(notifyIfOk(notify, [ORDERS_KEY, WORKFLOWS_KEY])));
 
   /**
    * Apply changes. On an active workflow, reconciles every stored order once
@@ -377,7 +384,7 @@ export const makeWorkflows = <R>({
         yield* reconcileAllIfActive("applyDraft", workflow);
         return workflow;
       }),
-    ).pipe(Effect.tap(notifyIfOk(notify)));
+    ).pipe(Effect.tap(notifyIfOk(notify, [ORDERS_KEY, WORKFLOWS_KEY])));
 
   const discardDraft = ({ workflowId, tasksRevision }: DiscardDraftInput) =>
     discardResult(
@@ -386,7 +393,7 @@ export const makeWorkflows = <R>({
         yield* log(`Workflows.discardDraft: shop=${shop} workflowId=${workflowId}`, { workflowId });
         return workflow;
       }),
-    );
+    ).pipe(Effect.tap(notifyIfOk(notify, [WORKFLOWS_KEY])));
 
   /**
    * The switch: writes `state`. Either way every stored order is reconciled
@@ -411,7 +418,7 @@ export const makeWorkflows = <R>({
         yield* reconcileAll("setWorkflowState", workflow.id);
         return workflow;
       }),
-    ).pipe(Effect.tap(notifyIfOk(notify)));
+    ).pipe(Effect.tap(notifyIfOk(notify, [ORDERS_KEY, WORKFLOWS_KEY])));
 
   /**
    * The editor's Turn on for a workflow that has never been applied: applies
@@ -434,7 +441,7 @@ export const makeWorkflows = <R>({
         yield* reconcileAll("applyAndTurnOn", workflow.id);
         return workflow;
       }),
-    ).pipe(Effect.tap(notifyIfOk(notify)));
+    ).pipe(Effect.tap(notifyIfOk(notify, [ORDERS_KEY, WORKFLOWS_KEY])));
 
   /**
    * Delete a workflow and its runs stay on their orders (the rule is
@@ -452,7 +459,7 @@ export const makeWorkflows = <R>({
         workflowId,
       });
       yield* reconcileAll("deleteWorkflow", workflowId);
-      yield* notify([ORDERS_KEY]);
+      yield* notify([ORDERS_KEY, WORKFLOWS_KEY]);
       const result: DeleteWorkflowResult = { _tag: "Deleted" };
       return result;
     }).pipe(
@@ -462,8 +469,12 @@ export const makeWorkflows = <R>({
       Effect.orDie,
     );
 
+  /** A task write's answer, notifying `WORKFLOWS_KEY` on `Ok`. */
+  const taskWrite = (effect: Parameters<typeof taskResult<never>>[0]) =>
+    taskResult(effect).pipe(Effect.tap(notifyIfOk(notify, [WORKFLOWS_KEY])));
+
   const addStep = ({ workflowId, tasksRevision, name, teamId, instructions }: AddStepInput) =>
-    taskResult(
+    taskWrite(
       Effect.gen(function* () {
         const team = yield* teamExists(teamId);
         if (team === null) return { _tag: "TeamNotFound" } as const;
@@ -480,7 +491,7 @@ export const makeWorkflows = <R>({
 
   /** `StepNotFoundError` surfaces as `NotFound`: the step the editor showed was closed by a concurrent edit. */
   const addTask = ({ workflowId, tasksRevision, step, name, teamId, instructions }: AddTaskInput) =>
-    taskResult(
+    taskWrite(
       Effect.gen(function* () {
         const team = yield* teamExists(teamId);
         if (team === null) return { _tag: "TeamNotFound" } as const;
@@ -501,7 +512,7 @@ export const makeWorkflows = <R>({
     );
 
   const updateTask = ({ taskId, tasksRevision, name, teamId, instructions }: UpdateTaskInput) =>
-    taskResult(
+    taskWrite(
       Effect.gen(function* () {
         const team = yield* teamExists(teamId);
         if (team === null) return { _tag: "TeamNotFound" } as const;
@@ -517,7 +528,7 @@ export const makeWorkflows = <R>({
     );
 
   const moveTask = ({ taskId, tasksRevision, direction }: MoveTaskInput) =>
-    taskResult(
+    taskWrite(
       Effect.gen(function* () {
         yield* repository.moveTask({ taskId, tasksRevision, direction });
         return { _tag: "Ok", task: null } as const;
@@ -525,7 +536,7 @@ export const makeWorkflows = <R>({
     );
 
   const separateTask = ({ taskId, tasksRevision }: SeparateTaskInput) =>
-    taskResult(
+    taskWrite(
       Effect.gen(function* () {
         const existing = yield* repository.getTask({ taskId });
         if (Option.isNone(existing)) return { _tag: "NotFound" } as const;
@@ -541,7 +552,7 @@ export const makeWorkflows = <R>({
     );
 
   const joinTask = ({ taskId, tasksRevision }: JoinTaskInput) =>
-    taskResult(
+    taskWrite(
       Effect.gen(function* () {
         const existing = yield* repository.getTask({ taskId });
         if (Option.isNone(existing)) return { _tag: "NotFound" } as const;
@@ -557,7 +568,7 @@ export const makeWorkflows = <R>({
     );
 
   const removeTask = ({ taskId, tasksRevision }: RemoveTaskInput) =>
-    taskResult(
+    taskWrite(
       Effect.gen(function* () {
         yield* repository.removeTask({ taskId, tasksRevision });
         return { _tag: "Ok", task: null } as const;

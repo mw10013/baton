@@ -10,7 +10,7 @@ import { makeMembership } from "../../../../src/backend/shop-actor/membership.ts
 import { syncTransaction } from "../../../../src/backend/shop-actor/transaction.ts";
 import { makeWorkflowRepository } from "../../../../src/backend/shop-actor/workflow-repository.ts";
 import { makeWorkflows } from "../../../../src/backend/shop-actor/workflows.ts";
-import { ORDERS_KEY } from "../../../../src/contract/shop-actor.ts";
+import { ORDERS_KEY, WORKFLOWS_KEY } from "../../../../src/contract/shop-actor.ts";
 import * as ShopWork from "../../../../src/domain/shop-work.ts";
 import { ActorSqliteTest, makeD1Test, QuietLogs, seedD1 } from "../layers.ts";
 import { type AtCurrentRevision, atCurrentRevision } from "./current-revision.ts";
@@ -336,7 +336,10 @@ describe("Membership", () => {
           ["deleteTeam", b.id],
           ["deleteTeam", "nope"],
         ]);
-        assert.deepStrictEqual<unknown>(notices, [[ORDERS_KEY], [ORDERS_KEY], [ORDERS_KEY]]);
+        assert.deepStrictEqual<unknown>(
+          notices,
+          Array.from({ length: 3 }, () => [ORDERS_KEY, WORKFLOWS_KEY]),
+        );
       }).pipe(Effect.provide(QuietLogs), Effect.provide(ActorSqliteTest)),
   );
 });

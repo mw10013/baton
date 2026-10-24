@@ -738,6 +738,7 @@ const makeShopActor = Effect.gen(function* () {
       MerchantRenameTeam: membership.renameTeam,
       MerchantAddTeamMembers: membership.addTeamMembers,
       MerchantDeleteTeam: membership.deleteTeam,
+      MerchantGetWorkflowDetail: workflows.getWorkflowDetail,
       MerchantCreateWorkflow: workflows.createWorkflow,
       MerchantDuplicateWorkflow: workflows.duplicateWorkflow,
       MerchantUpdateWorkflow: workflows.updateWorkflow,

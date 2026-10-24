@@ -11,7 +11,7 @@ import type {
   SetTeamMemberInput,
 } from "../../contract/members.ts";
 import type { ShopKey } from "../../domain/platform.ts";
-import { ORDERS_KEY } from "../../contract/shop-actor.ts";
+import { ORDERS_KEY, WORKFLOWS_KEY } from "../../contract/shop-actor.ts";
 import type { DeleteTeamResult, MemberId } from "../../domain/shop-work.ts";
 import type { MembershipRepository } from "../membership-repository.ts";
 import type { WorkflowRepository } from "./workflow-repository.ts";
@@ -195,7 +195,7 @@ export const makeMembership = <R>({
         unassigned: gone.size,
       },
     );
-    yield* notify([ORDERS_KEY]);
+    yield* notify([ORDERS_KEY, WORKFLOWS_KEY]);
     const result: DeleteTeamResult = Option.isSome(deleted)
       ? { _tag: "Deleted" }
       : { _tag: "NotFound" };

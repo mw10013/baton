@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
 import * as SqlClient from "effect/sql/SqlClient";
-import { ORDERS_KEY } from "../../../../src/contract/shop-actor.ts";
+import { ORDERS_KEY, WORKFLOWS_KEY } from "../../../../src/contract/shop-actor.ts";
 import { ShopKey } from "../../../../src/domain/platform.ts";
 import { MembershipRepository } from "../../../../src/backend/membership-repository.ts";
 import { syncTransaction } from "../../../../src/backend/shop-actor/transaction.ts";
@@ -323,38 +323,50 @@ describe("Workflows", () => {
       ),
   );
 
-  it.effect("a workflow write notifies the orders key only when it answers Ok, or Deleted", () =>
-    harness(({ workflows, membership, notices }) =>
-      Effect.gen(function* () {
-        const team = yield* membership.createTeam({ shop, name: teamName("T") });
-        const workflow = yield* created(workflows, "W", "w");
-        const other = yield* created(workflows, "Other", "other");
-        const id = workflowId({ workflowId: workflow.id });
-        // Refused: nothing written, nothing notified.
-        yield* workflows.applyDraft(id);
-        yield* workflows.setWorkflowState(setState({ ...id, state: "active" }));
-        yield* workflows.applyAndTurnOn(id);
-        yield* workflows.updateWorkflowTag(retag({ ...id, tag: "other" }));
-        yield* workflows.deleteWorkflow(workflowId({ workflowId: "nope" }));
-        // Writes that change no order page's Workflow select notify nothing either.
-        yield* workflows.addStep(addStep({ ...id, name: "S", teamId: team.id }));
-        yield* workflows.discardDraft(id);
-        yield* workflows.addStep(addStep({ ...id, name: "S", teamId: team.id }));
-        deepStrictEqual<unknown>(notices, []);
+  it.effect(
+    "a workflow write notifies only when it answers Ok, or Deleted: the workflows key always, the orders key when the Workflow select changes",
+    () =>
+      harness(({ workflows, membership, notices }) =>
+        Effect.gen(function* () {
+          const team = yield* membership.createTeam({ shop, name: teamName("T") });
+          const workflow = yield* created(workflows, "W", "w");
+          const other = yield* created(workflows, "Other", "other");
+          const id = workflowId({ workflowId: workflow.id });
+          // Refused: nothing written, nothing notified. Create notifies nothing: no screen shows
+          // a workflow that did not exist.
+          yield* workflows.applyDraft(id);
+          yield* workflows.setWorkflowState(setState({ ...id, state: "active" }));
+          yield* workflows.applyAndTurnOn(id);
+          yield* workflows.updateWorkflowTag(retag({ ...id, tag: "other" }));
+          yield* workflows.deleteWorkflow(workflowId({ workflowId: "nope" }));
+          yield* workflows.addTask(addTask({ ...id, step: 9, name: "S", teamId: team.id }));
+          deepStrictEqual<unknown>(notices, []);
 
-        yield* workflows.updateWorkflowTag(retag({ ...id, tag: "w2" }));
-        yield* workflows.applyDraft(id);
-        yield* workflows.setWorkflowState(setState({ ...id, state: "active" }));
-        yield* workflows.applyAndTurnOn(id);
-        yield* workflows.deleteWorkflow(workflowId({ workflowId: other.id }));
-        deepStrictEqual<unknown>(notices, [
-          [ORDERS_KEY],
-          [ORDERS_KEY],
-          [ORDERS_KEY],
-          [ORDERS_KEY],
-          [ORDERS_KEY],
-        ]);
-      }),
-    ),
+          // Writes that change no order page's Workflow select notify the workflows key alone.
+          yield* workflows.addStep(addStep({ ...id, name: "S", teamId: team.id }));
+          yield* workflows.discardDraft(id);
+          yield* workflows.updateWorkflow(
+            Schema.decodeUnknownSync(ShopWork.UpdateWorkflowInput)({ ...id, name: "W2" }),
+          );
+          yield* workflows.addStep(addStep({ ...id, name: "S", teamId: team.id }));
+          deepStrictEqual<unknown>(notices, [
+            [WORKFLOWS_KEY],
+            [WORKFLOWS_KEY],
+            [WORKFLOWS_KEY],
+            [WORKFLOWS_KEY],
+          ]);
+          notices.length = 0;
+
+          yield* workflows.updateWorkflowTag(retag({ ...id, tag: "w2" }));
+          yield* workflows.applyDraft(id);
+          yield* workflows.setWorkflowState(setState({ ...id, state: "active" }));
+          yield* workflows.applyAndTurnOn(id);
+          yield* workflows.deleteWorkflow(workflowId({ workflowId: other.id }));
+          deepStrictEqual<unknown>(
+            notices,
+            Array.from({ length: 5 }, () => [ORDERS_KEY, WORKFLOWS_KEY]),
+          );
+        }),
+      ),
   );
 });
