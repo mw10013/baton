@@ -124,6 +124,18 @@ const fieldOf = (modal: Modal) =>
 
 const isOpen = (modal: Modal) => modal.shadowRoot?.querySelector("dialog")?.open === true;
 
+/**
+ * Opens the modal and waits for `aftershow`, which places the caret: typing before it lands lets
+ * the caret move between a `fill`'s select and its insert, and the text is appended.
+ */
+const open = async (modal: Modal) => {
+  const shown = new Promise((resolve) => {
+    modal.addEventListener("aftershow", resolve, { once: true });
+  });
+  modal.showOverlay();
+  await shown;
+};
+
 describe("RunNoteModal", () => {
   it("opens on the saved note, is dirty and saveable only once changed, and saves the trimmed note", async () => {
     const saved: Array<RunNote | null> = [];
@@ -139,15 +151,12 @@ describe("RunNoteModal", () => {
       />,
     );
     const modal = modalOf(screen.container, "note");
-    modal.showOverlay();
+    await open(modal);
     await expect.poll(() => isOpen(modal)).toBe(true);
     const field = screen.getByRole("textbox", { name: "Note" });
     await expect.element(field).toHaveValue("Rush");
     expect(primaryOf(modal).disabled).toBe(true);
     expect(modal.dirty).toBeUndefined();
-    // Under the full run's load a lone `fill` has appended to the saved note instead of replacing it.
-    await field.clear();
-    await expect.element(field).toHaveValue("");
     await field.fill("  Rush, gift wrap  ");
     await expect.element(field).toHaveValue("  Rush, gift wrap  ");
     await expect.poll(() => modal.dirty).toBe(true);
@@ -172,7 +181,7 @@ describe("RunNoteModal", () => {
       />,
     );
     const modal = modalOf(screen.container, "note");
-    modal.showOverlay();
+    await open(modal);
     await screen.getByRole("textbox", { name: "Note" }).fill("   ");
     primaryOf(modal).click();
     await expect.poll(() => saved).toStrictEqual([null]);
@@ -192,7 +201,7 @@ describe("RunNoteModal", () => {
       />,
     );
     const modal = modalOf(screen.container, "note");
-    modal.showOverlay();
+    await open(modal);
     const field = screen.getByRole("textbox", { name: "Note" });
     await field.fill("x".repeat(1900));
     await expect.poll(() => fieldOf(modal).details).toBe("100 characters left");
@@ -213,7 +222,7 @@ describe("RunNoteModal", () => {
       />,
     );
     const modal = modalOf(screen.container, "note");
-    modal.showOverlay();
+    await open(modal);
     const field = screen.getByRole("textbox", { name: "Note" });
     await field.fill("Rush");
     primaryOf(modal).click();
@@ -248,7 +257,7 @@ describe("BlockModal", () => {
     );
     const modal = modalOf(screen.container, "block");
     expect(modal.getAttribute("heading")).toBe("Block #1008?");
-    modal.showOverlay();
+    await open(modal);
     await expect.element(screen.getByText("Signet ring · Gold ×2")).toBeVisible();
     expect(primaryOf(modal).disabled).toBe(false);
     expect(primaryOf(modal).textContent).toBe("Block");
@@ -271,7 +280,7 @@ describe("BlockModal", () => {
       />,
     );
     const modal = modalOf(screen.container, "block");
-    modal.showOverlay();
+    await open(modal);
     const field = screen.getByRole("textbox", { name: "Reason" });
     await field.fill("y".repeat(1001));
     await expect.poll(() => modal.dirty).toBe(true);

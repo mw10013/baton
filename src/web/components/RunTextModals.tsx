@@ -106,10 +106,13 @@ function TextModal<A>({
       }}
       onAfterShow={() => {
         // Polaris focuses the first control but leaves the caret at the start; the native
-        // textarea is inside the element's shadow root.
+        // textarea is inside the element's shadow root. `aftershow` waits out the open
+        // animation, so under load it can land after the person has typed or selected: the caret
+        // moves only while it is still at the start.
         const textarea = field.current?.shadowRoot?.querySelector("textarea") ?? null;
         textarea?.focus();
-        textarea?.setSelectionRange(textarea.value.length, textarea.value.length);
+        if (textarea !== null && textarea.selectionEnd === 0)
+          textarea.setSelectionRange(textarea.value.length, textarea.value.length);
       }}
       onAfterHide={() => {
         if (showing.current) return;
