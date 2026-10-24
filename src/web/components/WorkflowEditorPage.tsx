@@ -849,12 +849,14 @@ function useEditorPresses(
     remove: async (taskId) => taskAnswer(await remove({ payload: { taskId } })),
     apply: async () =>
       Exit.match(await apply({ payload: { workflowId } }), {
+        // A refusal closes the dialog and re-reads too: the banner it sets is under the dialog,
+        // and a refusal such as `NoDraft` means the draft this tab shows is not the actor's.
         onSuccess: async (result) => {
+          hideModal(APPLY_MODAL);
           if (result._tag === "Ok") {
-            hideModal(APPLY_MODAL);
             toast("Changes applied");
             await props.onApplied();
-          }
+          } else await props.onChanged();
           return result;
         },
         onFailure: thrown("Couldn't apply the changes."),
@@ -862,11 +864,9 @@ function useEditorPresses(
     discard: async () =>
       Exit.match(await discard({ payload: { workflowId } }), {
         onSuccess: async (result) => {
-          if (result._tag === "Ok") {
-            hideModal(DISCARD_MODAL);
-            toast("Draft discarded");
-            await props.onChanged();
-          }
+          hideModal(DISCARD_MODAL);
+          if (result._tag === "Ok") toast("Draft discarded");
+          await props.onChanged();
           return result;
         },
         onFailure: thrown("Couldn't discard the changes."),
