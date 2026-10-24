@@ -4,7 +4,6 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import * as Output from "alchemy/Output";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
-import * as HttpBody from "effect/http/HttpBody";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
@@ -34,6 +33,7 @@ import { OrdersSyncWorkflow } from "./orders-sync-workflow.ts";
 import { Mailer } from "./mailer.ts";
 import { MembershipRepository } from "./membership-repository.ts";
 import { AuthDb } from "./resources.ts";
+import { refusedUpgrade } from "./actor-socket.ts";
 import { ShopAccess, type ShopAccessDenied } from "./shop-access.ts";
 import { Shopify } from "./shopify.ts";
 import { ShopifyAdmin } from "./shopify-admin.ts";
@@ -104,22 +104,11 @@ const refusalClose = (status: ShopAccessDenied["status"]) =>
     Match.exhaustive,
   );
 
-/**
- * Accepts an upgrade the gate refused and closes it at once with {@link refusalClose}'s code. A
- * refused handshake reaches a browser's `WebSocket` only as a bare 1006 with no status, and the
- * Website's dev server drops it altogether, so the answer travels as a close code instead.
- */
-const refuseUpgrade = (status: ShopAccessDenied["status"]) =>
-  Effect.sync(() => {
-    const { code, reason } = refusalClose(status);
-    const pair = new WebSocketPair();
-    pair[1].accept();
-    pair[1].close(code, reason);
-    return HttpServerResponse.setBody(
-      HttpServerResponse.empty({ status: 101 }),
-      HttpBody.raw(new Response(null, { status: 101, webSocket: pair[0] })),
-    );
-  });
+/** An upgrade the gate refused, answered with {@link refusalClose}'s code. */
+const refuseUpgrade = (status: ShopAccessDenied["status"]) => {
+  const { code, reason } = refusalClose(status);
+  return refusedUpgrade(code, reason);
+};
 
 /**
  * The upgrade the actor sees: rebuilt from nothing but {@link FORWARDED_HANDSHAKE_HEADERS} and

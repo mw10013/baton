@@ -4,6 +4,8 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as HttpBody from "effect/http/HttpBody";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { type Rpc, type RpcGroup, RpcMiddleware, RpcServer } from "effect/rpc";
@@ -190,3 +192,28 @@ export const make = Effect.fn("ActorSocket.make")(function* <Rpcs extends Rpc.An
       Exit.isFailure(exit) ? Scope.close(instanceScope, exit) : Effect.void,
   );
 });
+
+/**
+ * A `101` whose socket closes at once with `code`: how an upgrade is refused, because a refused
+ * handshake reaches a browser's `WebSocket` only as a bare 1006 with no status, and the Website's
+ * dev server drops it altogether.
+ *
+ * The server end is accepted and closed a turn after the `101` is returned, never before. Accepted
+ * before, its read loop is already waiting when the runtime starts pumping the returned end, the
+ * pump takes a path that fails once the close handshake ends, and the runtime logs the request
+ * as an uncaught `Network connection lost.` that no code here can catch. The order is workerd's
+ * behaviour, not its API.
+ * @see https://github.com/iterate/iterate/pull/3174
+ */
+export const refusedUpgrade = (code: number, reason: string) =>
+  Effect.sync(() => {
+    const pair = new WebSocketPair();
+    setTimeout(() => {
+      pair[1].accept();
+      pair[1].close(code, reason);
+    }, 0);
+    return HttpServerResponse.setBody(
+      HttpServerResponse.empty({ status: 101 }),
+      HttpBody.raw(new Response(null, { status: 101, webSocket: pair[0] })),
+    );
+  });

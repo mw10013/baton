@@ -5,7 +5,6 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as HttpBody from "effect/http/HttpBody";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
@@ -773,21 +772,6 @@ const makeShopActor = Effect.gen(function* () {
         }),
     });
 
-    /**
-     * Accepts a socket and closes it at once with a code the browser reads; how the actor
-     * refuses an upgrade whose identity it cannot read.
-     */
-    const refuse = (code: number, reason: string) =>
-      Effect.sync(() => {
-        const pair = new WebSocketPair();
-        pair[1].accept();
-        pair[1].close(code, reason);
-        return HttpServerResponse.setBody(
-          HttpServerResponse.empty({ status: 101 }),
-          HttpBody.raw(new Response(null, { status: 101, webSocket: pair[0] })),
-        );
-      });
-
     const fetch = Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
       if (request.headers.upgrade?.toLowerCase() !== "websocket")
@@ -795,7 +779,7 @@ const makeShopActor = Effect.gen(function* () {
       const caller = decodeConnectionHeader(request.headers[CONNECTION_HEADER]);
       if (Option.isNone(caller)) {
         yield* Effect.logWarning(`ShopActor.fetch: shop=${shop} unidentified connection`);
-        return yield* refuse(CONNECTION_CLOSE_FORBIDDEN, UNIDENTIFIED_REASON);
+        return yield* ActorSocket.refusedUpgrade(CONNECTION_CLOSE_FORBIDDEN, UNIDENTIFIED_REASON);
       }
       const connectedAt = yield* Clock.currentTimeMillis;
       const accepted = yield* socket.fetch({ caller: caller.value, connectedAt });
