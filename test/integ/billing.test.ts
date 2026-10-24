@@ -20,6 +20,7 @@ import {
   connectAs,
   type Credential,
   dev,
+  editingAt,
   email,
   integ,
   nextCloseCode,
@@ -230,14 +231,12 @@ test(
       const workflowId = created.workflow.id;
       yield* client.MerchantAddStep(
         Schema.decodeUnknownSync(ShopWork.AddStepInput)({
-          workflowId,
+          ...(yield* editingAt(backendUrl, SEED_SHOP, workflowId)),
           name: "Do it",
           teamId: team.id,
         }),
       );
-      yield* client.MerchantApplyDraft(
-        Schema.decodeUnknownSync(ShopWork.WorkflowIdInput)({ workflowId }),
-      );
+      yield* client.MerchantApplyDraft(yield* editingAt(backendUrl, SEED_SHOP, workflowId));
       yield* client.MerchantSetWorkflowState(
         Schema.decodeUnknownSync(ShopWork.SetWorkflowStateInput)({ workflowId, state: "active" }),
       );

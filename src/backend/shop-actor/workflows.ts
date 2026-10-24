@@ -17,10 +17,10 @@ import {
   type JoinTaskInput,
   type ListWorkflowsInput,
   type MoveTaskInput,
+  type RemoveTaskInput,
   type SeparateTaskInput,
   type SetWorkflowStateInput,
   type SwitchResult,
-  type TaskIdInput,
   type TaskResult,
   type TaskWithTeamName,
   type TeamWithMemberCount,
@@ -41,6 +41,7 @@ import type {
   NoTasksError,
   StepNotFoundError,
   TaskNotFoundError,
+  TasksChangedError,
   TaskUnassignedError,
   WorkflowLimitError,
   WorkflowNameTakenError,
@@ -90,13 +91,19 @@ const workflowResult = <R>(
 const applyResult = <R>(
   effect: Effect.Effect<
     Workflow,
-    WorkflowNotFoundError | NoDraftError | NoTasksError | TaskUnassignedError | Fault,
+    | WorkflowNotFoundError
+    | TasksChangedError
+    | NoDraftError
+    | NoTasksError
+    | TaskUnassignedError
+    | Fault,
     R
   >,
 ): Effect.Effect<ApplyResult, never, R> =>
   effect.pipe(
     Effect.map((workflow): ApplyResult => ({ _tag: "Ok", workflow })),
     Effect.catchTags({
+      TasksChangedError: () => Effect.succeed<ApplyResult>({ _tag: "Changed" }),
       WorkflowNotFoundError: () => Effect.succeed<ApplyResult>({ _tag: "NotFound" }),
       NoDraftError: () => Effect.succeed<ApplyResult>({ _tag: "NoDraft" }),
       NoTasksError: () => Effect.succeed<ApplyResult>({ _tag: "NoTasks" }),
@@ -110,11 +117,16 @@ const applyResult = <R>(
   );
 
 const discardResult = <R>(
-  effect: Effect.Effect<Workflow, WorkflowNotFoundError | NoDraftError | Fault, R>,
+  effect: Effect.Effect<
+    Workflow,
+    WorkflowNotFoundError | TasksChangedError | NoDraftError | Fault,
+    R
+  >,
 ): Effect.Effect<DiscardResult, never, R> =>
   effect.pipe(
     Effect.map((workflow): DiscardResult => ({ _tag: "Ok", workflow })),
     Effect.catchTags({
+      TasksChangedError: () => Effect.succeed<DiscardResult>({ _tag: "Changed" }),
       WorkflowNotFoundError: () => Effect.succeed<DiscardResult>({ _tag: "NotFound" }),
       NoDraftError: () => Effect.succeed<DiscardResult>({ _tag: "NoDraft" }),
     }),
@@ -124,13 +136,14 @@ const discardResult = <R>(
 const switchResult = <R>(
   effect: Effect.Effect<
     Workflow,
-    WorkflowNotFoundError | NoTasksError | TaskUnassignedError | Fault,
+    WorkflowNotFoundError | TasksChangedError | NoTasksError | TaskUnassignedError | Fault,
     R
   >,
 ): Effect.Effect<SwitchResult, never, R> =>
   effect.pipe(
     Effect.map((workflow): SwitchResult => ({ _tag: "Ok", workflow })),
     Effect.catchTags({
+      TasksChangedError: () => Effect.succeed<SwitchResult>({ _tag: "Changed" }),
       WorkflowNotFoundError: () => Effect.succeed<SwitchResult>({ _tag: "NotFound" }),
       NoTasksError: () => Effect.succeed<SwitchResult>({ _tag: "NoTasks" }),
       TaskUnassignedError: ({ taskNames }) =>
@@ -145,12 +158,18 @@ const switchResult = <R>(
 const taskResult = <R>(
   effect: Effect.Effect<
     TaskResult,
-    TaskNotFoundError | StepNotFoundError | WorkflowNotFoundError | WorkflowLimitError | Fault,
+    | TaskNotFoundError
+    | StepNotFoundError
+    | WorkflowNotFoundError
+    | TasksChangedError
+    | WorkflowLimitError
+    | Fault,
     R
   >,
 ): Effect.Effect<TaskResult, never, R> =>
   effect.pipe(
     Effect.catchTags({
+      TasksChangedError: () => Effect.succeed<TaskResult>({ _tag: "Changed" }),
       TaskNotFoundError: () => Effect.succeed<TaskResult>({ _tag: "NotFound" }),
       StepNotFoundError: () => Effect.succeed<TaskResult>({ _tag: "NotFound" }),
       WorkflowNotFoundError: () => Effect.succeed<TaskResult>({ _tag: "NotFound" }),
@@ -281,6 +300,7 @@ export const makeWorkflows = <R>({
       });
     const data: WorkflowPageData = {
       workflow: detail.value.workflow,
+      tasksRevision: detail.value.tasksRevision,
       tasks: withTeamNames(detail.value.tasks),
       draftTasks: detail.value.draftTasks === null ? null : withTeamNames(detail.value.draftTasks),
       teams: shopTeams,
@@ -345,11 +365,12 @@ export const makeWorkflows = <R>({
    * what the Workflow select lists, which is not a run write, so there is no
    * count to gate on.
    */
-  const applyDraft = ({ workflowId }: ApplyDraftInput) =>
+  const applyDraft = ({ workflowId, tasksRevision }: ApplyDraftInput) =>
     applyResult(
       Effect.gen(function* () {
         const workflow = yield* repository.applyDraft({
           workflowId,
+          tasksRevision,
           teams: yield* teams(),
         });
         yield* log(`Workflows.applyDraft: shop=${shop} workflowId=${workflowId}`, { workflowId });
@@ -358,10 +379,10 @@ export const makeWorkflows = <R>({
       }),
     ).pipe(Effect.tap(notifyIfOk(notify)));
 
-  const discardDraft = ({ workflowId }: DiscardDraftInput) =>
+  const discardDraft = ({ workflowId, tasksRevision }: DiscardDraftInput) =>
     discardResult(
       Effect.gen(function* () {
-        const workflow = yield* repository.discardDraft({ workflowId });
+        const workflow = yield* repository.discardDraft({ workflowId, tasksRevision });
         yield* log(`Workflows.discardDraft: shop=${shop} workflowId=${workflowId}`, { workflowId });
         return workflow;
       }),
@@ -399,11 +420,12 @@ export const makeWorkflows = <R>({
    * merchant made one decision, so a failure must leave the workflow
    * untouched rather than applied and inactive.
    */
-  const applyAndTurnOn = ({ workflowId }: ApplyAndTurnOnInput) =>
+  const applyAndTurnOn = ({ workflowId, tasksRevision }: ApplyAndTurnOnInput) =>
     switchResult(
       Effect.gen(function* () {
         const workflow = yield* repository.applyAndTurnOn({
           workflowId,
+          tasksRevision,
           teams: yield* teams(),
         });
         yield* log(`Workflows.applyAndTurnOn: shop=${shop} workflowId=${workflowId}`, {
@@ -440,13 +462,14 @@ export const makeWorkflows = <R>({
       Effect.orDie,
     );
 
-  const addStep = ({ workflowId, name, teamId, instructions }: AddStepInput) =>
+  const addStep = ({ workflowId, tasksRevision, name, teamId, instructions }: AddStepInput) =>
     taskResult(
       Effect.gen(function* () {
         const team = yield* teamExists(teamId);
         if (team === null) return { _tag: "TeamNotFound" } as const;
         const task = yield* repository.addStep({
           workflowId,
+          tasksRevision,
           name,
           teamId: team.id,
           instructions: instructions ?? null,
@@ -456,13 +479,14 @@ export const makeWorkflows = <R>({
     );
 
   /** `StepNotFoundError` surfaces as `NotFound`: the step the editor showed was closed by a concurrent edit. */
-  const addTask = ({ workflowId, step, name, teamId, instructions }: AddTaskInput) =>
+  const addTask = ({ workflowId, tasksRevision, step, name, teamId, instructions }: AddTaskInput) =>
     taskResult(
       Effect.gen(function* () {
         const team = yield* teamExists(teamId);
         if (team === null) return { _tag: "TeamNotFound" } as const;
         const task = yield* repository.addTask({
           workflowId,
+          tasksRevision,
           step,
           name,
           teamId: team.id,
@@ -476,13 +500,14 @@ export const makeWorkflows = <R>({
       }),
     );
 
-  const updateTask = ({ taskId, name, teamId, instructions }: UpdateTaskInput) =>
+  const updateTask = ({ taskId, tasksRevision, name, teamId, instructions }: UpdateTaskInput) =>
     taskResult(
       Effect.gen(function* () {
         const team = yield* teamExists(teamId);
         if (team === null) return { _tag: "TeamNotFound" } as const;
         const task = yield* repository.updateTask({
           taskId,
+          tasksRevision,
           name,
           teamId: team.id,
           instructions,
@@ -491,20 +516,20 @@ export const makeWorkflows = <R>({
       }),
     );
 
-  const moveTask = ({ taskId, direction }: MoveTaskInput) =>
+  const moveTask = ({ taskId, tasksRevision, direction }: MoveTaskInput) =>
     taskResult(
       Effect.gen(function* () {
-        yield* repository.moveTask({ taskId, direction });
+        yield* repository.moveTask({ taskId, tasksRevision, direction });
         return { _tag: "Ok", task: null } as const;
       }),
     );
 
-  const separateTask = ({ taskId }: SeparateTaskInput) =>
+  const separateTask = ({ taskId, tasksRevision }: SeparateTaskInput) =>
     taskResult(
       Effect.gen(function* () {
         const existing = yield* repository.getTask({ taskId });
         if (Option.isNone(existing)) return { _tag: "NotFound" } as const;
-        yield* repository.separateTask({ taskId });
+        yield* repository.separateTask({ taskId, tasksRevision });
         const workflowId = existing.value.workflow.id;
         const step = existing.value.task.step;
         yield* log(
@@ -515,12 +540,12 @@ export const makeWorkflows = <R>({
       }),
     );
 
-  const joinTask = ({ taskId }: JoinTaskInput) =>
+  const joinTask = ({ taskId, tasksRevision }: JoinTaskInput) =>
     taskResult(
       Effect.gen(function* () {
         const existing = yield* repository.getTask({ taskId });
         if (Option.isNone(existing)) return { _tag: "NotFound" } as const;
-        yield* repository.joinTask({ taskId });
+        yield* repository.joinTask({ taskId, tasksRevision });
         const workflowId = existing.value.workflow.id;
         const step = existing.value.task.step;
         yield* log(
@@ -531,10 +556,10 @@ export const makeWorkflows = <R>({
       }),
     );
 
-  const removeTask = ({ taskId }: TaskIdInput) =>
+  const removeTask = ({ taskId, tasksRevision }: RemoveTaskInput) =>
     taskResult(
       Effect.gen(function* () {
-        yield* repository.removeTask({ taskId });
+        yield* repository.removeTask({ taskId, tasksRevision });
         return { _tag: "Ok", task: null } as const;
       }),
     );

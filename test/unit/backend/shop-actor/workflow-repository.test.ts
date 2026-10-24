@@ -16,20 +16,23 @@ import { syncTransaction } from "../../../../src/backend/shop-actor/transaction.
 import * as Platform from "../../../../src/domain/platform.ts";
 import * as ShopWork from "../../../../src/domain/shop-work.ts";
 import { ActorSqliteTest } from "../layers.ts";
+import { type AtCurrentRevision, atCurrentRevision } from "./current-revision.ts";
 
 /**
  * The actor's workflow repository over a fresh in-memory SQLite migrated by the actor's own
  * schema. The cases write their rows with {@link insertWorkflows}.
  */
-class WorkflowRepository extends Context.Service<WorkflowRepository, Repository>()(
-  "test/WorkflowRepository",
-) {}
+class WorkflowRepository extends Context.Service<
+  WorkflowRepository,
+  AtCurrentRevision<Repository>
+>()("test/WorkflowRepository") {}
 
 const WorkflowRepositoryTest = Layer.effect(
   WorkflowRepository,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    return makeWorkflowRepository(sql, syncTransaction(sql));
+    const repository = makeWorkflowRepository(sql, syncTransaction(sql));
+    return atCurrentRevision(repository, repository);
   }),
 ).pipe(Layer.provideMerge(ActorSqliteTest));
 
@@ -1556,6 +1559,136 @@ describe("WorkflowRepository workflow and draft", () => {
           teams: [T1, T2, { ...T3, memberCount: 0 }],
         });
         deepStrictEqual([emptied?.unassigned, emptied?.emptyTeam], [false, true]);
+      }),
+    ),
+  );
+});
+
+/** The repository itself, not {@link atCurrentRevision}'s: a case that sends the revision a tab read. */
+const asTabs = Effect.map(SqlClient.SqlClient, (sql) =>
+  makeWorkflowRepository(sql, syncTransaction(sql)),
+);
+
+const revisionOf = (workflowId: string) =>
+  Effect.map(found(workflowId), (workflow) => workflow.tasksRevision);
+
+describe("WorkflowRepository tasks revision", () => {
+  it.effect("moves on every write to the task lists and on nothing else", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const repo = yield* WorkflowRepository;
+        const w = yield* repo.createWorkflow({ name: name("Rev"), tag: tag("rev") });
+        const workflowId = w.id;
+        strictEqual(yield* revisionOf(workflowId), 0);
+        yield* twoTasks(workflowId);
+        strictEqual(yield* revisionOf(workflowId), 2);
+        yield* repo.updateWorkflow({ workflowId, name: name("Rev 2") });
+        yield* repo.updateWorkflowTag({ workflowId, tag: tag("rev-2") });
+        strictEqual(yield* revisionOf(workflowId), 2, "rename and Edit tag leave it");
+        yield* repo.applyDraft({ workflowId, teams: ALL_TEAMS });
+        strictEqual(yield* revisionOf(workflowId), 3);
+        yield* repo.setWorkflowState({ workflowId, state: "active", teams: ALL_TEAMS });
+        strictEqual(yield* revisionOf(workflowId), 3, "the switch leaves it");
+        yield* repo.createDraft({ workflowId });
+        yield* repo.createDraft({ workflowId });
+        strictEqual(yield* revisionOf(workflowId), 4, "only a draft that did not exist moves it");
+        yield* repo.discardDraft({ workflowId });
+        strictEqual(yield* revisionOf(workflowId), 5);
+        yield* repo.unassignTeam({ teamId: T1.id });
+        strictEqual(yield* revisionOf(workflowId), 6);
+        yield* repo.unassignTeam({ teamId: T1.id });
+        strictEqual(yield* revisionOf(workflowId), 6, "a team no task points at leaves it");
+      }),
+    ),
+  );
+
+  it.effect(
+    "a write sent at an older revision is refused as changed before any other check, and writes nothing",
+    () =>
+      runInRepository(
+        Effect.gen(function* () {
+          const repo = yield* WorkflowRepository;
+          const tabs = yield* asTabs;
+          const w = yield* repo.createWorkflow({ name: name("Two tabs"), tag: tag("two-tabs") });
+          const workflowId = w.id;
+          yield* twoTasks(workflowId);
+          yield* repo.applyDraft({ workflowId, teams: ALL_TEAMS });
+          yield* repo.addStep({ workflowId, name: taskName("Polish"), teamId: T1.id });
+          // Both tabs read the draft at the same revision.
+          const read = yield* revisionOf(workflowId);
+          const [cut] = editable(Option.some(yield* found(workflowId)));
+          const cutId = cut?.id ?? "";
+
+          // Tab B discards. Tab A still shows the draft.
+          yield* tabs.discardDraft({ workflowId, tasksRevision: read });
+          const before = yield* found(workflowId);
+          const stale = { workflowId, tasksRevision: read };
+          const refusals = [
+            yield* Effect.flip(tabs.applyDraft({ ...stale, teams: ALL_TEAMS })),
+            yield* Effect.flip(tabs.discardDraft(stale)),
+            yield* Effect.flip(tabs.applyAndTurnOn({ ...stale, teams: ALL_TEAMS })),
+            yield* Effect.flip(tabs.addStep({ ...stale, name: taskName("Box"), teamId: T1.id })),
+            yield* Effect.flip(
+              tabs.addTask({ ...stale, step: 1, name: taskName("Box"), teamId: T1.id }),
+            ),
+            yield* Effect.flip(
+              tabs.updateTask({
+                taskId: cutId,
+                tasksRevision: read,
+                name: taskName("Cut 2"),
+                teamId: T1.id,
+                instructions: null,
+              }),
+            ),
+            yield* Effect.flip(
+              tabs.moveTask({ taskId: cutId, tasksRevision: read, direction: "down" }),
+            ),
+            yield* Effect.flip(tabs.separateTask({ taskId: cutId, tasksRevision: read })),
+            yield* Effect.flip(tabs.joinTask({ taskId: cutId, tasksRevision: read })),
+            yield* Effect.flip(tabs.removeTask({ taskId: cutId, tasksRevision: read })),
+          ];
+          deepStrictEqual(
+            refusals.map((error) => error._tag),
+            Array.from({ length: 10 }, () => "TasksChangedError"),
+          );
+          deepStrictEqual(yield* found(workflowId), before, "no refused write wrote anything");
+
+          // Re-read, the same press goes through.
+          const fresh = yield* revisionOf(workflowId);
+          const added = yield* tabs.addStep({
+            workflowId,
+            tasksRevision: fresh,
+            name: taskName("Box"),
+            teamId: T1.id,
+          });
+          strictEqual(added.name, "Box");
+        }),
+      ),
+  );
+
+  it.effect("an Apply never promotes edits another tab made after its read", () =>
+    runInRepository(
+      Effect.gen(function* () {
+        const tabs = yield* asTabs;
+        const repo = yield* WorkflowRepository;
+        const w = yield* repo.createWorkflow({ name: name("Unseen"), tag: tag("unseen") });
+        const workflowId = w.id;
+        yield* twoTasks(workflowId);
+        const read = yield* revisionOf(workflowId);
+        // Tab B adds a step to the shared draft; tab A, which never saw it, presses Apply.
+        yield* tabs.addStep({
+          workflowId,
+          tasksRevision: read,
+          name: taskName("Unseen"),
+          teamId: T1.id,
+        });
+        const refused = yield* Effect.flip(
+          tabs.applyDraft({ workflowId, tasksRevision: read, teams: ALL_TEAMS }),
+        );
+        strictEqual(refused._tag, "TasksChangedError");
+        const after = yield* found(workflowId);
+        deepStrictEqual(after.tasks, [], "nothing was promoted");
+        deepStrictEqual(taskNames(after.draftTasks ?? []), ["Cut", "Finish", "Unseen"]);
       }),
     ),
   );

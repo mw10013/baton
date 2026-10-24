@@ -1008,6 +1008,17 @@ const TaskWithTeamName = Schema.Struct({
 export type TaskWithTeamName = typeof TaskWithTeamName.Type;
 
 /**
+ * How many times a workflow's task lists, `tasks` and `draftTasks`, have been written. It moves on
+ * every write to either list (a task write, Apply, Discard, Apply and turn on, a team delete that
+ * unassigns a task) and on nothing else, so a rename, Edit tag or the switch never makes an editor
+ * stale. Every editor write that can change the lists sends the revision its tab last read, and the
+ * actor refuses a mismatch as `Changed` before any other check: a tab never writes against task
+ * lists it does not show, and an Apply promotes exactly the draft the tab showed.
+ */
+export const TasksRevision = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
+export type TasksRevision = typeof TasksRevision.Type;
+
+/**
  * Everything the merchant's workflow page and the workflow editor render, in
  * one socket round trip: the workflow (read-only, what creates runs) with its
  * tasks, and the draft's tasks (what the editor writes), `null` when there is
@@ -1015,6 +1026,7 @@ export type TaskWithTeamName = typeof TaskWithTeamName.Type;
  */
 export const WorkflowPageData = Schema.Struct({
   workflow: Workflow,
+  tasksRevision: TasksRevision,
   tasks: Schema.Array(TaskWithTeamName),
   draftTasks: Schema.NullOr(Schema.Array(TaskWithTeamName)),
   teams: Schema.Array(TeamWithMemberCount),
@@ -1073,10 +1085,14 @@ export type DuplicateWorkflowInput = typeof DuplicateWorkflowInput.Type;
 export const CreateDraftInput = WorkflowIdInput;
 export type CreateDraftInput = typeof CreateDraftInput.Type;
 
-export const ApplyDraftInput = WorkflowIdInput;
+/** Apply and Discard name the revision the tab showed ({@link TasksRevision}). */
+export const ApplyDraftInput = Schema.Struct({
+  workflowId: BoundedId,
+  tasksRevision: TasksRevision,
+});
 export type ApplyDraftInput = typeof ApplyDraftInput.Type;
 
-export const DiscardDraftInput = WorkflowIdInput;
+export const DiscardDraftInput = ApplyDraftInput;
 export type DiscardDraftInput = typeof DiscardDraftInput.Type;
 
 export const SetWorkflowStateInput = Schema.Struct({
@@ -1091,13 +1107,12 @@ export type SetWorkflowStateInput = typeof SetWorkflowStateInput.Type;
  * asked to Apply tasks that have never run and then turn on the thing they
  * just applied.
  */
-export const ApplyAndTurnOnInput = Schema.Struct({
-  workflowId: BoundedId,
-});
+export const ApplyAndTurnOnInput = ApplyDraftInput;
 export type ApplyAndTurnOnInput = typeof ApplyAndTurnOnInput.Type;
 
 export const AddStepInput = Schema.Struct({
   workflowId: BoundedId,
+  tasksRevision: TasksRevision,
   name: TaskName,
   teamId: BoundedId,
   instructions: Schema.optionalKey(TaskInstructions),
@@ -1107,6 +1122,7 @@ export type AddStepInput = typeof AddStepInput.Type;
 /** Same as {@link AddStepInput} but into an existing step: the new task lands after that step's last task and is current together with it. */
 export const AddTaskInput = Schema.Struct({
   workflowId: BoundedId,
+  tasksRevision: TasksRevision,
   step: Schema.Number,
   name: TaskName,
   teamId: BoundedId,
@@ -1117,6 +1133,7 @@ export type AddTaskInput = typeof AddTaskInput.Type;
 /** `instructions: null` clears; the UI maps a blank field to `null` before sending. */
 export const UpdateTaskInput = Schema.Struct({
   taskId: BoundedId,
+  tasksRevision: TasksRevision,
   name: TaskName,
   teamId: BoundedId,
   instructions: Schema.NullOr(TaskInstructions),
@@ -1171,20 +1188,26 @@ export type TaskDirection = typeof TaskDirection.Type;
  */
 export const MoveTaskInput = Schema.Struct({
   taskId: BoundedId,
+  tasksRevision: TasksRevision,
   direction: TaskDirection,
 });
 export type MoveTaskInput = typeof MoveTaskInput.Type;
 
-export const TaskIdInput = Schema.Struct({ taskId: BoundedId });
-export type TaskIdInput = typeof TaskIdInput.Type;
+/** A write that names one task and the revision the tab showed ({@link TasksRevision}). */
+export const TaskWriteInput = Schema.Struct({ taskId: BoundedId, tasksRevision: TasksRevision });
+export type TaskWriteInput = typeof TaskWriteInput.Type;
 
 /** `separateTask`: the task leaves its step into a new step of its own immediately after it. */
-export const SeparateTaskInput = TaskIdInput;
+export const SeparateTaskInput = TaskWriteInput;
 export type SeparateTaskInput = typeof SeparateTaskInput.Type;
 
 /** `joinTask`: the task merges into the previous step, after that step's last member. */
-export const JoinTaskInput = TaskIdInput;
+export const JoinTaskInput = TaskWriteInput;
 export type JoinTaskInput = typeof JoinTaskInput.Type;
+
+/** `removeTask`: the task leaves the draft and the steps after it close up. */
+export const RemoveTaskInput = TaskWriteInput;
+export type RemoveTaskInput = typeof RemoveTaskInput.Type;
 
 export const TeamIdInput = Schema.Struct({ teamId: BoundedId });
 export type TeamIdInput = typeof TeamIdInput.Type;
@@ -1222,6 +1245,8 @@ export type WorkflowResult = typeof WorkflowResult.Type;
  */
 export const ApplyResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Ok"), workflow: Workflow }),
+  /** The task lists moved since the tab read them ({@link TasksRevision}). */
+  Schema.Struct({ _tag: Schema.Literal("Changed") }),
   Schema.Struct({ _tag: Schema.Literal("NotFound") }),
   Schema.Struct({ _tag: Schema.Literal("NoDraft") }),
   Schema.Struct({ _tag: Schema.Literal("NoTasks") }),
@@ -1235,6 +1260,8 @@ export type ApplyResult = typeof ApplyResult.Type;
 /** Discard is always allowed; on a never-applied workflow it leaves zero tasks and no draft. */
 export const DiscardResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Ok"), workflow: Workflow }),
+  /** The task lists moved since the tab read them ({@link TasksRevision}). */
+  Schema.Struct({ _tag: Schema.Literal("Changed") }),
   Schema.Struct({ _tag: Schema.Literal("NotFound") }),
   Schema.Struct({ _tag: Schema.Literal("NoDraft") }),
 ]);
@@ -1250,8 +1277,11 @@ export const DraftResult = Schema.Union([
 ]);
 export type DraftResult = typeof DraftResult.Type;
 
+/** `Changed` comes only from the editor's Turn on (`ApplyAndTurnOnInput`); the plain switch sends no revision. */
 export const SwitchResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Ok"), workflow: Workflow }),
+  /** The task lists moved since the tab read them ({@link TasksRevision}). */
+  Schema.Struct({ _tag: Schema.Literal("Changed") }),
   Schema.Struct({ _tag: Schema.Literal("NotFound") }),
   Schema.Struct({ _tag: Schema.Literal("NoTasks") }),
   Schema.Struct({
@@ -1267,6 +1297,8 @@ export const TaskResult = Schema.Union([
     task: Schema.NullOr(WorkflowTask),
   }),
   Schema.Struct({ _tag: Schema.Literal("NotFound") }),
+  /** The task lists moved since the tab read them ({@link TasksRevision}). */
+  Schema.Struct({ _tag: Schema.Literal("Changed") }),
   Schema.Struct({ _tag: Schema.Literal("Limit"), limit: Schema.Number }),
   /** The picked team no longer exists in D1: it was deleted under the editor. */
   Schema.Struct({ _tag: Schema.Literal("TeamNotFound") }),

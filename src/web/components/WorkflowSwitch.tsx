@@ -9,7 +9,12 @@ import { applyAndTurnOnAtom, setWorkflowStateAtom } from "../client/shop-actor-c
 import { thrownCopy } from "./form.ts";
 import { usePressWaiting } from "./press-waiting.ts";
 import { Things } from "./screen/Things.tsx";
-import { TURN_OFF_BODY, TURN_OFF_HEADING, turnOnBlocker } from "./workflow-shared.ts";
+import {
+  TASKS_CHANGED_MESSAGE,
+  TURN_OFF_BODY,
+  TURN_OFF_HEADING,
+  turnOnBlocker,
+} from "./workflow-shared.ts";
 
 /** The Turn on dialog's id. */
 const TURN_ON_MODAL = "turn-on-workflow";
@@ -20,6 +25,7 @@ const TURN_OFF_MODAL = "turn-off-workflow";
 const switchResultMessage = Match.typeTags<ShopWork.SwitchResult, string | null>()({
   Ok: () => null,
   NotFound: () => "That workflow no longer exists.",
+  Changed: () => TASKS_CHANGED_MESSAGE,
   NoTasks: () => "Add a step to this workflow.",
   TaskUnassigned: ({ taskNames }) => `Assign a team to ${taskNames.join(", ")}.`,
 });
@@ -41,9 +47,10 @@ export interface WorkflowSwitchProps {
   /**
    * Turn on applies the draft in the same press, for a workflow that has never been applied:
    * promoting tasks that have never run and turning the workflow on are one decision
-   * (`MerchantApplyAndTurnOn`).
+   * (`MerchantApplyAndTurnOn`). It carries the revision of the tasks the editor shows, which
+   * the press sends.
    */
-  readonly appliesFirst?: boolean;
+  readonly appliesFirst?: { readonly tasksRevision: ShopWork.TasksRevision };
   readonly onChanged: () => Promise<void>;
   /** A banner line, or `null` to clear it. */
   readonly onMessage: (message: string | null) => void;
@@ -153,18 +160,19 @@ function useSwitchPress(props: WorkflowSwitchProps): SwitchPress {
   const press = (state: ShopWork.WorkflowState) => {
     void (async () => {
       const exit =
-        ShopWork.workflowIsActive({ state }) && props.appliesFirst === true
-          ? await applyAndTurnOn({ payload: { workflowId } })
+        ShopWork.workflowIsActive({ state }) && props.appliesFirst !== undefined
+          ? await applyAndTurnOn({
+              payload: { workflowId, tasksRevision: props.appliesFirst.tasksRevision },
+            })
           : await setState({ payload: { workflowId, state } });
       Exit.match(exit, {
         onSuccess: (result) => {
           props.onMessage(switchResultMessage(result));
-          if (result._tag === "Ok") {
-            // The element, not `shopify.modal.hide`: inside the editor's window the host's
-            // registry cannot see this document's modals (`hideModal`).
-            hideModal(TURN_ON_MODAL);
-            hideModal(TURN_OFF_MODAL);
-          }
+          // Every answer closes the dialog, refusals too: the banner is under it, and the re-read
+          // below shows why. The element, not `shopify.modal.hide`: inside the editor's window
+          // the host's registry cannot see this document's modals (`hideModal`).
+          hideModal(TURN_ON_MODAL);
+          hideModal(TURN_OFF_MODAL);
         },
         onFailure: (cause) => {
           props.onMessage(thrownCopy(Cause.squash(cause), "Couldn't change the workflow."));

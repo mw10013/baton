@@ -4,6 +4,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
+import * as Struct from "effect/Struct";
 import * as SqlClient from "effect/sql/SqlClient";
 import { MembershipRepository } from "../../../../src/backend/membership-repository.ts";
 import { makeBilling } from "../../../../src/backend/shop-actor/billing.ts";
@@ -30,6 +31,7 @@ import {
   testOrdersSyncWorkflows,
   testShopifyAdmin,
 } from "../layers.ts";
+import { type AtCurrentRevision, atCurrentRevision } from "./current-revision.ts";
 
 /**
  * Every path that creates a run sends the queue after its write commits: the rule on
@@ -59,7 +61,7 @@ const harness = <A, E>(
     readonly logged: Array<string>;
     readonly billing: Effect.Success<ReturnType<typeof makeBilling<never>>>;
     readonly runs: Effect.Success<ReturnType<typeof makeRuns<never>>>;
-    readonly workflows: ReturnType<typeof makeWorkflows<never>>;
+    readonly workflows: AtCurrentRevision<ReturnType<typeof makeWorkflows<never>>>;
     readonly orders: ReturnType<typeof makeOrders<never>>;
     readonly sql: SqlClient.SqlClient;
     readonly teamId: string;
@@ -112,13 +114,14 @@ const harness = <A, E>(
       flushUsage,
       shop,
     });
-    const workflows = makeWorkflows({
+    const editorWrites = makeWorkflows({
       repository: workflowRepository,
       membershipRepository: membership,
       reconcileAll: runs.reconcileAll,
       notify: () => Effect.void,
       shop,
     });
+    const workflows = atCurrentRevision(editorWrites, workflowRepository);
     const orders = makeOrders({
       repository: orderRepository,
       transaction,
@@ -197,7 +200,7 @@ const seedOrder = (sql: SqlClient.SqlClient, processedAt: number, tag: string) =
 
 /** An applied, inactive workflow matching `tag`, with one task on `teamId`. */
 const offWorkflow = (
-  workflows: ReturnType<typeof makeWorkflows<never>>,
+  workflows: AtCurrentRevision<ReturnType<typeof makeWorkflows<never>>>,
   tag: string,
   teamId: string,
 ) =>
@@ -208,14 +211,21 @@ const offWorkflow = (
     if (created._tag !== "Ok") return yield* Effect.die(new Error(created._tag));
     const workflowId = created.workflow.id;
     yield* workflows.addStep(
-      Schema.decodeUnknownSync(ShopWork.AddStepInput)({ workflowId, name: "Engrave", teamId }),
+      Schema.decodeUnknownSync(ShopWork.AddStepInput.mapFields(Struct.omit(["tasksRevision"])))({
+        workflowId,
+        name: "Engrave",
+        teamId,
+      }),
     );
     const applied = yield* workflows.applyDraft({ workflowId });
     if (applied._tag !== "Ok") return yield* Effect.die(new Error(applied._tag));
     return workflowId;
   });
 
-const turnOn = (workflows: ReturnType<typeof makeWorkflows<never>>, workflowId: string) =>
+const turnOn = (
+  workflows: AtCurrentRevision<ReturnType<typeof makeWorkflows<never>>>,
+  workflowId: string,
+) =>
   workflows.setWorkflowState(
     Schema.decodeUnknownSync(ShopWork.SetWorkflowStateInput)({ workflowId, state: "active" }),
   );

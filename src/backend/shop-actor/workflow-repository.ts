@@ -17,6 +17,7 @@ import {
   type TaskDirection,
   type TaskInstructions,
   TaskName,
+  TasksRevision,
   type TeamId,
   Workflow,
   type WorkflowDetail,
@@ -121,6 +122,15 @@ export class NoDraftError extends Schema.TaggedError<NoDraftError>()("NoDraftErr
   workflowId: Schema.String,
 }) {}
 
+/**
+ * The task lists moved since the editor read them: the revision it sent is not the row's
+ * ({@link TasksRevision}). Checked before anything else the write asks.
+ */
+export class TasksChangedError extends Schema.TaggedError<TasksChangedError>()(
+  "TasksChangedError",
+  { workflowId: Schema.String },
+) {}
+
 export class NoTasksError extends Schema.TaggedError<NoTasksError>()("NoTasksError", {
   workflowId: Schema.String,
 }) {}
@@ -139,6 +149,7 @@ export class TaskUnassignedError extends Schema.TaggedError<TaskUnassignedError>
 /** What `getWorkflow` returns: the workflow, its tasks, and the draft's tasks, `null` when there is no draft. */
 export interface WorkflowWithDraftTasks extends WorkflowDetail {
   readonly draftTasks: readonly WorkflowTask[] | null;
+  readonly tasksRevision: TasksRevision;
 }
 
 /**
@@ -202,6 +213,7 @@ export const makeWorkflowRepository = (sql: SqlClient.SqlClient, transaction: Tr
         ...Workflow.fields,
         tasks: WorkflowTasks,
         draftTasks: Schema.NullOr(WorkflowTasks),
+        tasksRevision: TasksRevision,
       }),
     ),
     "Invalid Workflow row",
@@ -237,6 +249,16 @@ export const makeWorkflowRepository = (sql: SqlClient.SqlClient, transaction: Tr
       ),
     );
 
+  /** The row, refused as {@link TasksChangedError} when its task lists are not at `tasksRevision`. */
+  const requireRevision = (workflowId: string, tasksRevision: TasksRevision) =>
+    requireWorkflowRow(workflowId).pipe(
+      Effect.flatMap((row) =>
+        row.tasksRevision === tasksRevision
+          ? Effect.succeed(row)
+          : Effect.fail(new TasksChangedError({ workflowId })),
+      ),
+    );
+
   const decodeIds = decode(Schema.Array(Schema.Struct({ id: Schema.String })), "Invalid id row");
 
   /**
@@ -266,15 +288,17 @@ export const makeWorkflowRepository = (sql: SqlClient.SqlClient, transaction: Tr
    * the id it sends names the workflow's task now and the draft's a
    * moment later. Then `edit` runs on the draft's list and the result is
    * written whole through `WorkflowTasks`, which refuses a list
-   * that breaks the step rule or the task cap. `updatedAt` moves on every
-   * edit. Returns the list as written.
+   * that breaks the step rule or the task cap. `updatedAt` and the revision move on every
+   * edit, and an edit against any other revision than `tasksRevision` is refused first.
+   * Returns the list as written.
    */
   const editDraft = <E>(
     workflowId: string,
+    tasksRevision: TasksRevision,
     edit: (tasks: readonly WorkflowTask[]) => Effect.Effect<readonly WorkflowTask[], E>,
   ) =>
     Effect.gen(function* () {
-      yield* requireWorkflowRow(workflowId);
+      yield* requireRevision(workflowId, tasksRevision);
       yield* sql`
         update Workflow set draftTasks = coalesce(draftTasks, tasks)
         where id = ${workflowId}
@@ -284,7 +308,8 @@ export const makeWorkflowRepository = (sql: SqlClient.SqlClient, transaction: Tr
       const now = yield* Clock.currentTimeMillis;
       yield* sql`
         update Workflow
-        set draftTasks = ${yield* encodeTasks(tasks)}, updatedAt = ${now}
+        set draftTasks = ${yield* encodeTasks(tasks)}, updatedAt = ${now},
+          tasksRevision = tasksRevision + 1
         where id = ${workflowId}
       `;
       return tasks;
@@ -293,12 +318,15 @@ export const makeWorkflowRepository = (sql: SqlClient.SqlClient, transaction: Tr
   /** {@link editDraft} on the draft holding `taskId`, rewriting its layout with `edit`. */
   const relayout = (
     taskId: string,
+    tasksRevision: TasksRevision,
     edit: (layout: WorkflowLayout.Layout) => WorkflowLayout.Layout,
   ) =>
     transaction(
       Effect.gen(function* () {
         const workflowId = yield* workflowIdOfTask(taskId);
-        yield* editDraft(workflowId, (tasks) => Effect.succeed(laidOut(tasks, edit(tasks))));
+        yield* editDraft(workflowId, tasksRevision, (tasks) =>
+          Effect.succeed(laidOut(tasks, edit(tasks))),
+        );
       }),
     );
 
@@ -346,7 +374,8 @@ export const makeWorkflowRepository = (sql: SqlClient.SqlClient, transaction: Tr
       const now = yield* Clock.currentTimeMillis;
       yield* sql`
         update Workflow
-        set tasks = draftTasks, draftTasks = null, updatedAt = ${now}
+        set tasks = draftTasks, draftTasks = null, updatedAt = ${now},
+          tasksRevision = tasksRevision + 1
         where id = ${workflowId}
       `;
     });
@@ -551,6 +580,7 @@ export const makeWorkflowRepository = (sql: SqlClient.SqlClient, transaction: Tr
       workflow: workflowOf(row.value),
       tasks: row.value.tasks,
       draftTasks: row.value.draftTasks,
+      tasksRevision: row.value.tasksRevision,
     };
     return Option.some(found);
   });
@@ -748,8 +778,9 @@ export const makeWorkflowRepository = (sql: SqlClient.SqlClient, transaction: Tr
       Effect.gen(function* () {
         yield* requireWorkflowRow(workflowId);
         yield* sql`
-          update Workflow set draftTasks = coalesce(draftTasks, tasks)
-          where id = ${workflowId}
+          update Workflow
+          set draftTasks = tasks, tasksRevision = tasksRevision + 1
+          where id = ${workflowId} and draftTasks is null
         `;
         const row = yield* requireWorkflowRow(workflowId);
         return row.draftTasks ?? row.tasks;
@@ -769,14 +800,16 @@ export const makeWorkflowRepository = (sql: SqlClient.SqlClient, transaction: Tr
    */
   const applyDraft = Effect.fn("WorkflowRepository.applyDraft")(function* ({
     workflowId,
+    tasksRevision,
     teams,
   }: {
     readonly workflowId: string;
+    readonly tasksRevision: TasksRevision;
     readonly teams: Teams;
   }) {
     return yield* transaction(
       Effect.gen(function* () {
-        const row = yield* requireWorkflowRow(workflowId);
+        const row = yield* requireRevision(workflowId, tasksRevision);
         if (row.draftTasks === null) return yield* new NoDraftError({ workflowId });
         yield* promoteDraft(workflowId, row.draftTasks, teams);
         return workflowOf(yield* requireWorkflowRow(workflowId));
@@ -796,14 +829,16 @@ export const makeWorkflowRepository = (sql: SqlClient.SqlClient, transaction: Tr
    */
   const applyAndTurnOn = Effect.fn("WorkflowRepository.applyAndTurnOn")(function* ({
     workflowId,
+    tasksRevision,
     teams,
   }: {
     readonly workflowId: string;
+    readonly tasksRevision: TasksRevision;
     readonly teams: Teams;
   }) {
     return yield* transaction(
       Effect.gen(function* () {
-        const row = yield* requireWorkflowRow(workflowId);
+        const row = yield* requireRevision(workflowId, tasksRevision);
         if (row.draftTasks !== null) yield* promoteDraft(workflowId, row.draftTasks, teams);
         yield* requireEligibleTasks(workflowId, row.draftTasks ?? row.tasks, teams);
         return yield* updateWorkflowRow(workflowId, sql`state = 'active'`);
@@ -814,14 +849,19 @@ export const makeWorkflowRepository = (sql: SqlClient.SqlClient, transaction: Tr
   /** Clears the draft. Always allowed; a never-applied workflow is left with zero tasks. */
   const discardDraft = Effect.fn("WorkflowRepository.discardDraft")(function* ({
     workflowId,
+    tasksRevision,
   }: {
     readonly workflowId: string;
+    readonly tasksRevision: TasksRevision;
   }) {
     return yield* transaction(
       Effect.gen(function* () {
-        const row = yield* requireWorkflowRow(workflowId);
+        const row = yield* requireRevision(workflowId, tasksRevision);
         if (row.draftTasks === null) return yield* new NoDraftError({ workflowId });
-        return yield* updateWorkflowRow(workflowId, sql`draftTasks = null`);
+        return yield* updateWorkflowRow(
+          workflowId,
+          sql`draftTasks = null, tasksRevision = tasksRevision + 1`,
+        );
       }),
     );
   });
@@ -829,18 +869,20 @@ export const makeWorkflowRepository = (sql: SqlClient.SqlClient, transaction: Tr
   /** New task in a new last step of the draft, creating the draft if this is the first change. */
   const addStep = Effect.fn("WorkflowRepository.addStep")(function* ({
     workflowId,
+    tasksRevision,
     name,
     teamId,
     instructions,
   }: {
     readonly workflowId: string;
+    readonly tasksRevision: TasksRevision;
     readonly name: TaskName;
     readonly teamId: TeamId;
     readonly instructions?: TaskInstructions | null;
   }) {
     const id = newTaskId();
     const tasks = yield* transaction(
-      editDraft(workflowId, (tasks) =>
+      editDraft(workflowId, tasksRevision, (tasks) =>
         requireRoom(tasks).pipe(
           Effect.as(
             laidOut(
@@ -870,12 +912,14 @@ export const makeWorkflowRepository = (sql: SqlClient.SqlClient, transaction: Tr
    */
   const addTask = Effect.fn("WorkflowRepository.addTask")(function* ({
     workflowId,
+    tasksRevision,
     step,
     name,
     teamId,
     instructions,
   }: {
     readonly workflowId: string;
+    readonly tasksRevision: TasksRevision;
     readonly step: number;
     readonly name: TaskName;
     readonly teamId: TeamId;
@@ -883,7 +927,7 @@ export const makeWorkflowRepository = (sql: SqlClient.SqlClient, transaction: Tr
   }) {
     const id = newTaskId();
     const tasks = yield* transaction(
-      editDraft(workflowId, (tasks) =>
+      editDraft(workflowId, tasksRevision, (tasks) =>
         Effect.gen(function* () {
           if (!tasks.some((task) => task.step === step))
             return yield* new StepNotFoundError({ workflowId, step });
@@ -945,11 +989,13 @@ export const makeWorkflowRepository = (sql: SqlClient.SqlClient, transaction: Tr
    */
   const updateTask = Effect.fn("WorkflowRepository.updateTask")(function* ({
     taskId,
+    tasksRevision,
     name,
     teamId,
     instructions,
   }: {
     readonly taskId: string;
+    readonly tasksRevision: TasksRevision;
     readonly name: TaskName;
     readonly teamId: TeamId;
     readonly instructions: TaskInstructions | null;
@@ -957,7 +1003,7 @@ export const makeWorkflowRepository = (sql: SqlClient.SqlClient, transaction: Tr
     const tasks = yield* transaction(
       Effect.gen(function* () {
         const workflowId = yield* workflowIdOfTask(taskId);
-        return yield* editDraft(workflowId, (tasks) =>
+        return yield* editDraft(workflowId, tasksRevision, (tasks) =>
           Effect.succeed(
             tasks.map((task) =>
               task.id === taskId ? { ...task, name, teamId, instructions } : task,
@@ -976,21 +1022,27 @@ export const makeWorkflowRepository = (sql: SqlClient.SqlClient, transaction: Tr
    */
   const moveTask = Effect.fn("WorkflowRepository.moveTask")(function* ({
     taskId,
+    tasksRevision,
     direction,
   }: {
     readonly taskId: string;
+    readonly tasksRevision: TasksRevision;
     readonly direction: TaskDirection;
   }) {
-    yield* relayout(taskId, (layout) => WorkflowLayout.move(layout, taskId, direction));
+    yield* relayout(taskId, tasksRevision, (layout) =>
+      WorkflowLayout.move(layout, taskId, direction),
+    );
   });
 
   /** The task leaves its step into a new one of its own right after it; no-op when already alone. */
   const separateTask = Effect.fn("WorkflowRepository.separateTask")(function* ({
     taskId,
+    tasksRevision,
   }: {
     readonly taskId: string;
+    readonly tasksRevision: TasksRevision;
   }) {
-    yield* relayout(taskId, (layout) => WorkflowLayout.separate(layout, taskId));
+    yield* relayout(taskId, tasksRevision, (layout) => WorkflowLayout.separate(layout, taskId));
   });
 
   /**
@@ -1000,19 +1052,23 @@ export const makeWorkflowRepository = (sql: SqlClient.SqlClient, transaction: Tr
    */
   const joinTask = Effect.fn("WorkflowRepository.joinTask")(function* ({
     taskId,
+    tasksRevision,
   }: {
     readonly taskId: string;
+    readonly tasksRevision: TasksRevision;
   }) {
-    yield* relayout(taskId, (layout) => WorkflowLayout.join(layout, taskId));
+    yield* relayout(taskId, tasksRevision, (layout) => WorkflowLayout.join(layout, taskId));
   });
 
   /** Removes the task and renumbers the rest, so steps stay dense from 1. */
   const removeTask = Effect.fn("WorkflowRepository.removeTask")(function* ({
     taskId,
+    tasksRevision,
   }: {
     readonly taskId: string;
+    readonly tasksRevision: TasksRevision;
   }) {
-    yield* relayout(taskId, (layout) => WorkflowLayout.remove(layout, taskId));
+    yield* relayout(taskId, tasksRevision, (layout) => WorkflowLayout.remove(layout, taskId));
   });
 
   /**
@@ -1059,7 +1115,9 @@ export const makeWorkflowRepository = (sql: SqlClient.SqlClient, transaction: Tr
               const tasks = yield* unassigned(row.tasks);
               const draftTasks = row.draftTasks === null ? null : yield* unassigned(row.draftTasks);
               yield* sql`
-                update Workflow set tasks = ${tasks}, draftTasks = ${draftTasks}
+                update Workflow
+                set tasks = ${tasks}, draftTasks = ${draftTasks},
+                  tasksRevision = tasksRevision + 1
                 where id = ${row.id}
               `;
             }),

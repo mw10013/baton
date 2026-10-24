@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as Struct from "effect/Struct";
 import * as SqlClient from "effect/sql/SqlClient";
 import { Email, ShopKey } from "../../../../src/domain/platform.ts";
 import { MemberId, TeamId, TeamName } from "../../../../src/domain/shop-work.ts";
@@ -12,6 +13,7 @@ import { makeWorkflows } from "../../../../src/backend/shop-actor/workflows.ts";
 import { ORDERS_KEY } from "../../../../src/contract/shop-actor.ts";
 import * as ShopWork from "../../../../src/domain/shop-work.ts";
 import { ActorSqliteTest, makeD1Test, QuietLogs, seedD1 } from "../layers.ts";
+import { type AtCurrentRevision, atCurrentRevision } from "./current-revision.ts";
 
 const shop = Schema.decodeUnknownSync(ShopKey)("membership.myshopify.com");
 const email = Schema.decodeUnknownSync(Email);
@@ -54,17 +56,20 @@ const harness = Effect.gen(function* () {
       }),
     shop,
   });
-  const workflows = makeWorkflows({
+  const editorWrites = makeWorkflows({
     repository: workflowRepository,
     membershipRepository,
     reconcileAll: () => Effect.void,
     notify: () => Effect.void,
     shop,
   });
+  const workflows = atCurrentRevision(editorWrites, workflowRepository);
   return { membership, membershipRepository, workflows, revoked, reconciled, notices };
 });
 
-const addStep = Schema.decodeUnknownSync(ShopWork.AddStepInput);
+const addStep = Schema.decodeUnknownSync(
+  ShopWork.AddStepInput.mapFields(Struct.omit(["tasksRevision"])),
+);
 const state = (workflowId: string, value: ShopWork.WorkflowState) =>
   Schema.decodeUnknownSync(ShopWork.SetWorkflowStateInput)({ workflowId, state: value });
 
@@ -72,7 +77,7 @@ const state = (workflowId: string, value: ShopWork.WorkflowState) =>
 const ALL_WORKFLOWS = { limit: 100, cursor: null, q: null, state: null };
 
 /** A fresh workflow's id; any answer but `Ok` fails the test. */
-const createdWorkflow = (workflows: ReturnType<typeof makeWorkflows<never>>) =>
+const createdWorkflow = (workflows: AtCurrentRevision<ReturnType<typeof makeWorkflows<never>>>) =>
   workflows
     .createWorkflow(Schema.decodeUnknownSync(ShopWork.CreateWorkflowInput)({ name: "W", tag: "w" }))
     .pipe(
@@ -82,7 +87,10 @@ const createdWorkflow = (workflows: ReturnType<typeof makeWorkflows<never>>) =>
     );
 
 /** Apply the draft and turn the workflow on, the two writes a fresh workflow needs before it starts. */
-const goLive = (workflows: ReturnType<typeof makeWorkflows<never>>, workflowId: string) =>
+const goLive = (
+  workflows: AtCurrentRevision<ReturnType<typeof makeWorkflows<never>>>,
+  workflowId: string,
+) =>
   Effect.gen(function* () {
     assert.strictEqual((yield* workflows.applyDraft({ workflowId }))._tag, "Ok");
     assert.strictEqual((yield* workflows.setWorkflowState(state(workflowId, "active")))._tag, "Ok");

@@ -31,6 +31,7 @@ import {
 import { DevRpcs } from "../../src/contract/dev.ts";
 import type { ShopFixtureData } from "../../src/contract/fixture.ts";
 import type { LineItemNode, OrderNode } from "../../src/backend/order-sync.ts";
+import { mintSessionToken } from "../shopify-session-token.ts";
 import { deliverWebhook } from "../shopify-webhook.ts";
 import { IntegRpcs } from "./rpcs.ts";
 
@@ -62,6 +63,20 @@ export const integ = <A, E>(
   Effect.gen(function* () {
     return yield* f(yield* RpcClient.make(IntegRpcs));
   }).pipe(Effect.scoped, Effect.provide(Test.rpcClientLayer(`${backendUrl}/api/integ`)));
+
+/**
+ * What the editor's writes name for `workflowId` on `shop`: the workflow and its tasks revision
+ * as the loader reads it (`ApiWorkflowDetail`), as a tab that has just re-read would send it. A
+ * workflow that is not there reads as revision 0.
+ */
+export const editingAt = (backendUrl: string, shop: ShopKey, workflowId: string) =>
+  Effect.gen(function* () {
+    const sessionToken = yield* mintSessionToken({ shop });
+    const found = yield* integ(backendUrl, (c) =>
+      c.ApiWorkflowDetail({ sessionToken, workflowId }),
+    );
+    return { workflowId, tasksRevision: found?.tasksRevision ?? 0 };
+  });
 
 /** `AddToFixture` with only the parts named; the rest empty. */
 export const addToFixture = (backendUrl: string, shop: ShopKey, parts: Partial<ShopFixtureData>) =>

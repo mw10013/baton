@@ -32,6 +32,7 @@ import * as Platform from "../../../../src/domain/platform.ts";
 import * as ShopWork from "../../../../src/domain/shop-work.ts";
 import { type ReconcileCounts, reconcileCountsChanged } from "../../../../src/domain/shop-work.ts";
 import { ActorSqliteTest } from "../layers.ts";
+import { type AtCurrentRevision, atCurrentRevision } from "./current-revision.ts";
 
 /**
  * The actor's run repository over a fresh in-memory SQLite migrated by the actor's own schema.
@@ -44,9 +45,10 @@ class OrderRepository extends Context.Service<OrderRepository, OrderRepositorySh
   "test/OrderRepository",
 ) {}
 
-class WorkflowRepository extends Context.Service<WorkflowRepository, WorkflowRepositoryShape>()(
-  "test/WorkflowRepository",
-) {}
+class WorkflowRepository extends Context.Service<
+  WorkflowRepository,
+  AtCurrentRevision<WorkflowRepositoryShape>
+>()("test/WorkflowRepository") {}
 
 class RunRepository extends Context.Service<RunRepository, RunRepositoryShape>()(
   "test/RunRepository",
@@ -71,7 +73,13 @@ const RepositoriesTest = Layer.effectContext(
       ReadonlyArray<{ readonly orderId: string; readonly now: number }>
     >([]);
     return Context.make(OrderRepository, makeOrderRepository(sql, transaction)).pipe(
-      Context.add(WorkflowRepository, makeWorkflowRepository(sql, transaction)),
+      Context.add(
+        WorkflowRepository,
+        (() => {
+          const repository = makeWorkflowRepository(sql, transaction);
+          return atCurrentRevision(repository, repository);
+        })(),
+      ),
       Context.add(
         RunRepository,
         makeRunRepository(sql, transaction, (orderId, now) =>
@@ -3460,7 +3468,13 @@ describe("RunRepository metering", () => {
       const transaction = syncTransaction(sql);
       const usageRepository = makeUsageRepository(sql, transaction);
       return Context.make(OrderRepository, makeOrderRepository(sql, transaction)).pipe(
-        Context.add(WorkflowRepository, makeWorkflowRepository(sql, transaction)),
+        Context.add(
+          WorkflowRepository,
+          (() => {
+            const repository = makeWorkflowRepository(sql, transaction);
+            return atCurrentRevision(repository, repository);
+          })(),
+        ),
         Context.add(RunRepository, makeRunRepository(sql, transaction, usageRepository.countOrder)),
         Context.add(UsageRepository, usageRepository),
       );

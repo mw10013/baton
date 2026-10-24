@@ -89,7 +89,7 @@ describe("WorkflowSwitch", () => {
           tasks={tasks}
           turnOnBody="Every open order starts this workflow."
           slot="primary-action"
-          appliesFirst={appliesFirst}
+          appliesFirst={appliesFirst ? { tasksRevision: 3 } : undefined}
           onChanged={async () => {
             calls.push("changed");
           }}

@@ -39,12 +39,12 @@ import {
   RunIdInput,
   RunPageData,
   RunResult,
+  RemoveTaskInput,
   SeparateTaskInput,
   SetRunNoteInput,
   StartTaskInput,
   SetWorkflowStateInput,
   SwitchResult,
-  TaskIdInput,
   TaskResult,
   Team,
   UpdateTaskInput,
@@ -311,7 +311,7 @@ export const MerchantRpcs = RpcGroup.make(
   Rpc.make("MerchantMoveTask", { payload: MoveTaskInput, success: TaskResult }),
   Rpc.make("MerchantSeparateTask", { payload: SeparateTaskInput, success: TaskResult }),
   Rpc.make("MerchantJoinTask", { payload: JoinTaskInput, success: TaskResult }),
-  Rpc.make("MerchantRemoveTask", { payload: TaskIdInput, success: TaskResult }),
+  Rpc.make("MerchantRemoveTask", { payload: RemoveTaskInput, success: TaskResult }),
 )
   .middleware(RequireMerchant)
   .middleware(ConnectionMiddleware);

@@ -272,7 +272,8 @@ export const migrations = SqliteMigrator.fromRecord({
     // buy nothing but renumbering on every reorder; a task's position is its index. The draft
     // is a second document of the same shape: null until the first edit, null again after it
     // is applied or discarded. A task's teamId is a D1 Team.id: it is checked before a write,
-    // and deleting the team clears it.
+    // and deleting the team clears it. tasksRevision is the editor's stale-write guard
+    // (`TasksRevision`).
     yield* sql`
       create table if not exists Workflow (
         id text primary key,
@@ -281,7 +282,8 @@ export const migrations = SqliteMigrator.fromRecord({
         state text not null check (state in ('active', 'inactive')),
         updatedAt integer not null,
         tasks text not null default '[]',
-        draftTasks text
+        draftTasks text,
+        tasksRevision integer not null default 0
       )
     `;
     // A run is one workflow applied to one order item, its tasks copied in. A run is for the

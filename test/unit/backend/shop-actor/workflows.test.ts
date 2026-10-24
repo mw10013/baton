@@ -2,6 +2,7 @@ import { describe, it } from "@effect/vitest";
 import { deepStrictEqual, strictEqual } from "@effect/vitest/utils";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as Struct from "effect/Struct";
 import * as SqlClient from "effect/sql/SqlClient";
 import { ORDERS_KEY } from "../../../../src/contract/shop-actor.ts";
 import { ShopKey } from "../../../../src/domain/platform.ts";
@@ -14,6 +15,7 @@ import {
 import { makeWorkflows } from "../../../../src/backend/shop-actor/workflows.ts";
 import * as ShopWork from "../../../../src/domain/shop-work.ts";
 import { ActorSqliteTest, makeD1Test, QuietLogs, seedD1 } from "../layers.ts";
+import { type AtCurrentRevision, atCurrentRevision } from "./current-revision.ts";
 
 /**
  * The workflows application service over the actor's repository on a fresh in-memory SQLite,
@@ -24,7 +26,9 @@ const shop = Schema.decodeUnknownSync(ShopKey)("workflows.myshopify.com");
 
 const harness = <A, E>(
   body: (context: {
-    readonly workflows: ReturnType<typeof makeWorkflows<never>>;
+    readonly workflows: AtCurrentRevision<ReturnType<typeof makeWorkflows<never>>>;
+    /** The service itself, for a case that sends the revision a tab read. */
+    readonly asTab: ReturnType<typeof makeWorkflows<never>>;
     readonly repository: WorkflowRepository;
     readonly membership: MembershipRepository["Service"];
     readonly reconciled: Array<readonly [string, string]>;
@@ -41,7 +45,7 @@ const harness = <A, E>(
     const repository = makeWorkflowRepository(sql, syncTransaction(sql));
     const reconciled: Array<readonly [string, string]> = [];
     const notices: Array<ReadonlyArray<string>> = [];
-    const workflows = makeWorkflows({
+    const editorWrites = makeWorkflows({
       repository,
       membershipRepository: membership,
       reconcileAll: (caller, id) =>
@@ -54,25 +58,80 @@ const harness = <A, E>(
         }),
       shop,
     });
-    return yield* body({ workflows, repository, membership, reconciled, notices });
+    const workflows = atCurrentRevision(editorWrites, repository);
+    return yield* body({
+      workflows,
+      asTab: editorWrites,
+      repository,
+      membership,
+      reconciled,
+      notices,
+    });
   }).pipe(Effect.provide(ActorSqliteTest), Effect.provide(QuietLogs));
 
 const teamName = Schema.decodeUnknownSync(ShopWork.TeamName);
 const create = Schema.decodeUnknownSync(ShopWork.CreateWorkflowInput);
-const addStep = Schema.decodeUnknownSync(ShopWork.AddStepInput);
-const addTask = Schema.decodeUnknownSync(ShopWork.AddTaskInput);
-const taskId = Schema.decodeUnknownSync(ShopWork.TaskIdInput);
+const addStepAt = Schema.decodeUnknownSync(ShopWork.AddStepInput);
+const addStep = Schema.decodeUnknownSync(
+  ShopWork.AddStepInput.mapFields(Struct.omit(["tasksRevision"])),
+);
+const addTask = Schema.decodeUnknownSync(
+  ShopWork.AddTaskInput.mapFields(Struct.omit(["tasksRevision"])),
+);
+const taskId = Schema.decodeUnknownSync(
+  ShopWork.TaskWriteInput.mapFields(Struct.omit(["tasksRevision"])),
+);
 const workflowId = Schema.decodeUnknownSync(ShopWork.WorkflowIdInput);
 const setState = Schema.decodeUnknownSync(ShopWork.SetWorkflowStateInput);
 const retag = Schema.decodeUnknownSync(ShopWork.UpdateWorkflowTagInput);
 
 /** Creates a workflow, failing the test on any answer but `Ok`. */
-const created = (workflows: ReturnType<typeof makeWorkflows<never>>, name: string, tag: string) =>
+const created = (
+  workflows: AtCurrentRevision<ReturnType<typeof makeWorkflows<never>>>,
+  name: string,
+  tag: string,
+) =>
   Effect.flatMap(workflows.createWorkflow(create({ name, tag })), (result) =>
     result._tag === "Ok" ? Effect.succeed(result.workflow) : Effect.die(new Error(result._tag)),
   );
 
 describe("Workflows", () => {
+  it.effect(
+    "a write at a revision the task lists moved past answers Changed and notifies nothing",
+    () =>
+      harness(({ workflows, asTab, membership, notices }) =>
+        Effect.gen(function* () {
+          const team = yield* membership.createTeam({ shop, name: teamName("T") });
+          const workflow = yield* created(workflows, "Stale", "stale");
+          const first = yield* workflows.addStep(
+            addStep({ workflowId: workflow.id, name: "A", teamId: team.id }),
+          );
+          if (first._tag !== "Ok" || first.task === null) throw new Error(first._tag);
+          const read = (yield* workflows.getWorkflowDetail(workflowId({ workflowId: workflow.id })))
+            ?.tasksRevision;
+          if (read === undefined) throw new Error("no workflow");
+          // Another tab's Discard moves the revision past what this tab read.
+          strictEqual(
+            (yield* asTab.discardDraft({ workflowId: workflow.id, tasksRevision: read }))._tag,
+            "Ok",
+          );
+          notices.length = 0;
+          const stale = { workflowId: workflow.id, tasksRevision: read };
+          const answers = [
+            yield* asTab.applyDraft(stale),
+            yield* asTab.discardDraft(stale),
+            yield* asTab.applyAndTurnOn(stale),
+            yield* asTab.addStep(addStepAt({ ...stale, name: "B", teamId: team.id })),
+          ];
+          deepStrictEqual(
+            answers.map((answer) => answer._tag),
+            ["Changed", "Changed", "Changed", "Changed"],
+          );
+          deepStrictEqual(notices, []);
+        }),
+      ),
+  );
+
   it.effect("addTask and separateTask map missing step / task / team to results", () =>
     harness(({ workflows, membership }) =>
       Effect.gen(function* () {

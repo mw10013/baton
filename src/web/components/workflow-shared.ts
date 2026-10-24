@@ -104,6 +104,14 @@ export const RENAME_FIELD_LABEL = "New name";
 export const RENAMED_TOAST = "Workflow renamed";
 
 /**
+ * The banner for a `Changed` refusal ({@link ShopWork.TasksRevision}), from the editor's task
+ * writes, Apply, Discard and Turn on. It says what happened in either case it covers, another tab
+ * or another person, and the re-read that follows shows what changed.
+ */
+export const TASKS_CHANGED_MESSAGE =
+  "This workflow changed since you opened it. Check the steps and try again.";
+
+/**
  * The trigger line: what has to be true of an order for this workflow to
  * start. Every workflow has exactly one tag, so there is no empty case. The
  * match sentence speaks from the order's side ("a product tagged"), which is

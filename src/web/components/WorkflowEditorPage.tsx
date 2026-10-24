@@ -46,6 +46,7 @@ import {
   RENAME_FIELD_LABEL,
   RENAME_HEADING,
   RENAMED_TOAST,
+  TASKS_CHANGED_MESSAGE,
   turnOnBody,
   workflowResultMessage,
 } from "./workflow-shared.ts";
@@ -58,6 +59,7 @@ const APPLY_MODAL = "apply-draft";
 const taskResultMessage = Match.typeTags<ShopWork.TaskResult, string | null>()({
   Ok: () => null,
   NotFound: () => "That task no longer exists. Reload the page.",
+  Changed: () => TASKS_CHANGED_MESSAGE,
   Limit: ({ limit }) => `A workflow can have ${String(limit)} tasks.`,
   TeamNotFound: () => "That team no longer exists. Choose another.",
 });
@@ -70,6 +72,7 @@ const taskResultMessage = Match.typeTags<ShopWork.TaskResult, string | null>()({
 const applyResultMessage = Match.typeTags<ShopWork.ApplyResult, string | null>()({
   Ok: () => null,
   NotFound: () => "That workflow no longer exists.",
+  Changed: () => TASKS_CHANGED_MESSAGE,
   NoDraft: () => "There are no changes to apply.",
   NoTasks: () => "Add a step to this workflow.",
   TaskUnassigned: ({ taskNames }) => `Assign a team to ${taskNames.join(", ")}.`,
@@ -78,6 +81,7 @@ const applyResultMessage = Match.typeTags<ShopWork.ApplyResult, string | null>()
 const discardResultMessage = Match.typeTags<ShopWork.DiscardResult, string | null>()({
   Ok: () => null,
   NotFound: () => "That workflow no longer exists.",
+  Changed: () => TASKS_CHANGED_MESSAGE,
   NoDraft: () => "There are no changes to discard.",
 });
 
@@ -501,7 +505,7 @@ function EditorScreen(
           tasks={tasks}
           turnOnBody={turnOnBody(workflow.tag)}
           slot="primary-action"
-          appliesFirst={fresh}
+          appliesFirst={fresh ? { tasksRevision: detail.tasksRevision } : undefined}
           onChanged={props.onChanged}
           onMessage={setBanner}
         />
@@ -793,6 +797,8 @@ function useEditorPresses(
 ): Presses {
   const hydrated = useHydrated();
   const workflowId = props.detail.workflow.id;
+  /** Every write that can change the task lists sends the revision this tab shows. */
+  const tasksRevision = props.detail.tasksRevision;
   const waiting = {
     addStep: usePressWaiting(addStepAtom),
     addTask: usePressWaiting(addTaskAtom),
@@ -835,20 +841,25 @@ function useEditorPresses(
     deleting: waiting.delete,
     add: async ({ step, instructions, ...fields }) => {
       // The add inputs leave out instructions they do not carry; they take no `null`.
-      const task = { workflowId, ...fields, ...(instructions === null ? {} : { instructions }) };
+      const task = {
+        workflowId,
+        tasksRevision,
+        ...fields,
+        ...(instructions === null ? {} : { instructions }),
+      };
       return taskAnswer(
         step === null
           ? await addStep({ payload: task })
           : await addTask({ payload: { ...task, step } }),
       );
     },
-    update: async (input) => taskAnswer(await update({ payload: input })),
-    move: async (input) => taskAnswer(await move({ payload: input })),
-    separate: async (taskId) => taskAnswer(await separate({ payload: { taskId } })),
-    join: async (taskId) => taskAnswer(await join({ payload: { taskId } })),
-    remove: async (taskId) => taskAnswer(await remove({ payload: { taskId } })),
+    update: async (input) => taskAnswer(await update({ payload: { ...input, tasksRevision } })),
+    move: async (input) => taskAnswer(await move({ payload: { ...input, tasksRevision } })),
+    separate: async (taskId) => taskAnswer(await separate({ payload: { taskId, tasksRevision } })),
+    join: async (taskId) => taskAnswer(await join({ payload: { taskId, tasksRevision } })),
+    remove: async (taskId) => taskAnswer(await remove({ payload: { taskId, tasksRevision } })),
     apply: async () =>
-      Exit.match(await apply({ payload: { workflowId } }), {
+      Exit.match(await apply({ payload: { workflowId, tasksRevision } }), {
         // A refusal closes the dialog and re-reads too: the banner it sets is under the dialog,
         // and a refusal such as `NoDraft` means the draft this tab shows is not the actor's.
         onSuccess: async (result) => {
@@ -862,7 +873,7 @@ function useEditorPresses(
         onFailure: thrown("Couldn't apply the changes."),
       }),
     discard: async () =>
-      Exit.match(await discard({ payload: { workflowId } }), {
+      Exit.match(await discard({ payload: { workflowId, tasksRevision } }), {
         onSuccess: async (result) => {
           hideModal(DISCARD_MODAL);
           if (result._tag === "Ok") toast("Draft discarded");
@@ -923,8 +934,29 @@ const IDLE_PRESSES: Presses = {
   deleteWorkflow: idle,
 };
 
+/**
+ * The editor stays busy until the re-read after a write has landed, not only while the write is
+ * in flight: a press sends the revision on screen, so a press between the answer and the re-read
+ * would send the revision its own write just moved past and be refused as changed.
+ */
 function Editor(props: WorkflowEditorProps & { readonly detail: ShopWork.WorkflowPageData }) {
-  return <EditorScreen {...props} presses={useEditorPresses(props)} />;
+  const [rereading, setRereading] = useState(0);
+  const onChanged = async () => {
+    setRereading((n) => n + 1);
+    try {
+      await props.onChanged();
+    } finally {
+      setRereading((n) => n - 1);
+    }
+  };
+  const presses = useEditorPresses({ ...props, onChanged });
+  return (
+    <EditorScreen
+      {...props}
+      onChanged={onChanged}
+      presses={{ ...presses, busy: presses.busy || rereading > 0 }}
+    />
+  );
 }
 
 /**

@@ -13,7 +13,7 @@ import { ShopKey } from "../../src/domain/platform.ts";
 import { ShopFixtureData } from "../../src/contract/fixture.ts";
 import { OTHER_SHOP, SEED_SHOP } from "../seed-shops.ts";
 import { mintSessionToken } from "../shopify-session-token.ts";
-import { addToFixture, email, integ, openAs, rawRequestAs } from "./actor-clients.ts";
+import { addToFixture, editingAt, email, integ, openAs, rawRequestAs } from "./actor-clients.ts";
 import { fileStage } from "./file-stage.ts";
 import Stack from "./stack.ts";
 
@@ -39,7 +39,7 @@ const teamName = Schema.decodeUnknownSync(TeamName);
 const create = Schema.decodeUnknownSync(ShopWork.CreateWorkflowInput);
 const addStep = Schema.decodeUnknownSync(ShopWork.AddStepInput);
 const workflowId = Schema.decodeUnknownSync(ShopWork.WorkflowIdInput);
-const taskId = Schema.decodeUnknownSync(ShopWork.TaskIdInput);
+const taskWrite = Schema.decodeUnknownSync(ShopWork.TaskWriteInput);
 const setState = Schema.decodeUnknownSync(ShopWork.SetWorkflowStateInput);
 const retag = Schema.decodeUnknownSync(ShopWork.UpdateWorkflowTagInput);
 const duplicate = Schema.decodeUnknownSync(ShopWork.DuplicateWorkflowInput);
@@ -70,9 +70,9 @@ const created = (client: Client, name: string, tag: string) =>
 const team = (client: Client, name: string) => client.MerchantCreateTeam({ name: teamName(name) });
 
 /** Apply the draft and turn the workflow on, the two writes a fresh workflow needs before it starts. */
-const goLive = (client: Client, id: string) =>
+const goLive = (client: Client, backendUrl: string, id: string) =>
   Effect.gen(function* () {
-    const applied = yield* client.MerchantApplyDraft(workflowId({ workflowId: id }));
+    const applied = yield* client.MerchantApplyDraft(yield* editing(backendUrl, id));
     assert.strictEqual(applied._tag, "Ok");
     const on = yield* client.MerchantSetWorkflowState(
       setState({ workflowId: id, state: "active" }),
@@ -86,6 +86,10 @@ const detail = (backendUrl: string, workflowId: string, shop: ShopKey = SEED_SHO
     const sessionToken = yield* mintSessionToken({ shop });
     return yield* integ(backendUrl, (c) => c.ApiWorkflowDetail({ sessionToken, workflowId }));
   });
+
+/** {@link editingAt} on `SEED_SHOP`. */
+const editing = (backendUrl: string, workflowId: string) =>
+  editingAt(backendUrl, SEED_SHOP, workflowId);
 
 /** `count` notices on `received`, each naming `ORDERS_KEY`, and no more queued. */
 const noticed = (
@@ -108,7 +112,7 @@ test(
       const engraving = yield* team(client, "Engraving wf-team-check");
       const workflow = yield* created(client, "Engrave wf-team-check", "Engraving wf-team-check");
       const unknown = yield* client.MerchantAddStep(
-        addStep({ workflowId: workflow.id, name: "Engrave", teamId: "nope" }),
+        addStep({ ...(yield* editing(backendUrl, workflow.id)), name: "Engrave", teamId: "nope" }),
       );
       assert.strictEqual(unknown._tag, "TeamNotFound");
       const fresh = yield* detail(backendUrl, workflow.id);
@@ -116,7 +120,11 @@ test(
       assert.deepStrictEqual<unknown>(fresh?.tasks, []);
       assert.strictEqual(fresh?.workflow.tag, "Engraving wf-team-check");
       const ok = yield* client.MerchantAddStep(
-        addStep({ workflowId: workflow.id, name: "Engrave", teamId: engraving.id }),
+        addStep({
+          ...(yield* editing(backendUrl, workflow.id)),
+          name: "Engrave",
+          teamId: engraving.id,
+        }),
       );
       assert.strictEqual(ok._tag, "Ok");
       const after = yield* detail(backendUrl, workflow.id);
@@ -140,17 +148,21 @@ test(
       const { client } = yield* merchant(backendUrl);
       const t = yield* team(client, "T wf-apply-activate");
       const workflow = yield* created(client, "W wf-apply-activate", "w-apply-activate");
-      const id = workflowId({ workflowId: workflow.id });
+      const at = () => editing(backendUrl, workflow.id);
       // Nothing to promote and nothing in force.
-      const empty = yield* client.MerchantApplyAndTurnOn(id);
+      const empty = yield* client.MerchantApplyAndTurnOn(yield* at());
       assert.strictEqual(empty._tag, "NoTasks");
-      const task = yield* client.MerchantAddStep(addStep({ ...id, name: "S", teamId: t.id }));
+      const task = yield* client.MerchantAddStep(
+        addStep({ ...(yield* at()), name: "S", teamId: t.id }),
+      );
       assert.strictEqual(task._tag, "Ok");
-      const result = yield* client.MerchantApplyAndTurnOn(id);
+      const result = yield* client.MerchantApplyAndTurnOn(yield* at());
       if (result._tag !== "Ok") return assert.fail(result._tag);
       assert.strictEqual(ShopWork.workflowIsActive(result.workflow), true);
       // The draft was promoted: no draft is left to apply.
-      assert.deepStrictEqual<unknown>(yield* client.MerchantApplyDraft(id), { _tag: "NoDraft" });
+      assert.deepStrictEqual<unknown>(yield* client.MerchantApplyDraft(yield* at()), {
+        _tag: "NoDraft",
+      });
     }).pipe(Effect.scoped);
   }),
 );
@@ -164,14 +176,17 @@ test(
       const t = yield* team(client, "T wf-removed");
       const workflow = yield* created(client, "W wf-removed", "w-removed");
       const id = workflowId({ workflowId: workflow.id });
-      const task = yield* client.MerchantAddStep(addStep({ ...id, name: "S", teamId: t.id }));
+      const at = () => editing(backendUrl, workflow.id);
+      const task = yield* client.MerchantAddStep(
+        addStep({ ...(yield* at()), name: "S", teamId: t.id }),
+      );
       if (task._tag !== "Ok" || task.task === null) return assert.fail(task._tag);
       yield* client.MerchantDeleteTeam({ teamId: t.id });
       const unassigned = yield* detail(backendUrl, workflow.id);
       assert.strictEqual(unassigned?.draftTasks?.[0]?.teamName, null);
       assert.isFalse(unassigned?.teams.some((each) => each.id === t.id));
       // The draft's task lost its team: Turn on names it.
-      assert.deepStrictEqual<unknown>(yield* client.MerchantApplyAndTurnOn(id), {
+      assert.deepStrictEqual<unknown>(yield* client.MerchantApplyAndTurnOn(yield* at()), {
         _tag: "TaskUnassigned",
         taskNames: ["S"],
       });
@@ -198,7 +213,9 @@ test(
       assert.deepStrictEqual<unknown>(yield* client.MerchantDeleteWorkflow(id), {
         _tag: "NotFound",
       });
-      const removeMissing = yield* client.MerchantRemoveTask(taskId({ taskId: task.task.id }));
+      const removeMissing = yield* client.MerchantRemoveTask(
+        taskWrite({ taskId: task.task.id, tasksRevision: (yield* at()).tasksRevision }),
+      );
       assert.strictEqual(removeMissing._tag, "NotFound");
       // Its name and tag are free at once.
       const recreated = yield* client.MerchantCreateWorkflow(
@@ -220,14 +237,18 @@ test(
         Effect.gen(function* () {
           const workflow = yield* created(client, name, tag);
           yield* client.MerchantAddStep(
-            addStep({ workflowId: workflow.id, name: "Do it", teamId: engraving.id }),
+            addStep({
+              ...(yield* editing(backendUrl, workflow.id)),
+              name: "Do it",
+              teamId: engraving.id,
+            }),
           );
           return workflow;
         });
       const holder = yield* build("Engraving wf-tagtaken", "engraved-tagtaken");
-      yield* goLive(client, holder.id);
+      yield* goLive(client, backendUrl, holder.id);
       const other = yield* build("Rush wf-tagtaken", "rush-tagtaken");
-      yield* goLive(client, other.id);
+      yield* goLive(client, backendUrl, other.id);
 
       const taken = {
         _tag: "TagTaken",
@@ -270,9 +291,9 @@ test(
       );
       assert.strictEqual(backOn._tag, "Ok");
       yield* client.MerchantAddStep(
-        addStep({ workflowId: other.id, name: "Pack", teamId: engraving.id }),
+        addStep({ ...(yield* editing(backendUrl, other.id)), name: "Pack", teamId: engraving.id }),
       );
-      const applied = yield* client.MerchantApplyDraft(workflowId({ workflowId: other.id }));
+      const applied = yield* client.MerchantApplyDraft(yield* editing(backendUrl, other.id));
       if (applied._tag !== "Ok") return assert.fail(applied._tag);
       assert.strictEqual(applied.workflow.tag, "rush-tagtaken");
     }).pipe(Effect.scoped);
@@ -288,37 +309,40 @@ test(
       const t = yield* team(client, "T wf-task-writes");
       const workflow = yield* created(client, "W wf-task-writes", "w-task-writes");
       const id = workflowId({ workflowId: workflow.id });
-      const a = yield* client.MerchantAddStep(addStep({ ...id, name: "A", teamId: t.id }));
+      const at = () => editing(backendUrl, workflow.id);
+      /** A task write's input as the editor sends it, at the workflow's current revision. */
+      const onTask = (taskId: string) =>
+        at().pipe(Effect.map(({ tasksRevision }) => taskWrite({ taskId, tasksRevision })));
+      const a = yield* client.MerchantAddStep(
+        addStep({ ...(yield* at()), name: "A", teamId: t.id }),
+      );
       if (a._tag !== "Ok" || a.task === null) return assert.fail(a._tag);
-      const b = yield* client.MerchantAddTask(addTask({ ...id, step: 1, name: "B", teamId: t.id }));
+      const b = yield* client.MerchantAddTask(
+        addTask({ ...(yield* at()), step: 1, name: "B", teamId: t.id }),
+      );
       if (b._tag !== "Ok" || b.task === null) return assert.fail(b._tag);
       assert.strictEqual(
-        (yield* client.MerchantAddTask(addTask({ ...id, step: 9, name: "C", teamId: t.id })))._tag,
+        (yield* client.MerchantAddTask(
+          addTask({ ...(yield* at()), step: 9, name: "C", teamId: t.id }),
+        ))._tag,
         "NotFound",
       );
       const updated = yield* client.MerchantUpdateTask(
-        updateTask({ taskId: a.task.id, name: "A2", teamId: t.id, instructions: null }),
+        updateTask({ ...(yield* onTask(a.task.id)), name: "A2", teamId: t.id, instructions: null }),
       );
       if (updated._tag !== "Ok" || updated.task === null) return assert.fail(updated._tag);
       assert.strictEqual(updated.task.name, "A2");
       assert.strictEqual(
-        (yield* client.MerchantMoveTask(moveTask({ taskId: b.task.id, direction: "up" })))._tag,
+        (yield* client.MerchantMoveTask(
+          moveTask({ ...(yield* onTask(b.task.id)), direction: "up" }),
+        ))._tag,
         "Ok",
       );
+      assert.strictEqual((yield* client.MerchantSeparateTask(yield* onTask(a.task.id)))._tag, "Ok");
+      assert.strictEqual((yield* client.MerchantJoinTask(yield* onTask(a.task.id)))._tag, "Ok");
+      assert.strictEqual((yield* client.MerchantRemoveTask(yield* onTask(b.task.id)))._tag, "Ok");
       assert.strictEqual(
-        (yield* client.MerchantSeparateTask(taskId({ taskId: a.task.id })))._tag,
-        "Ok",
-      );
-      assert.strictEqual(
-        (yield* client.MerchantJoinTask(taskId({ taskId: a.task.id })))._tag,
-        "Ok",
-      );
-      assert.strictEqual(
-        (yield* client.MerchantRemoveTask(taskId({ taskId: b.task.id })))._tag,
-        "Ok",
-      );
-      assert.strictEqual(
-        (yield* client.MerchantRemoveTask(taskId({ taskId: b.task.id })))._tag,
+        (yield* client.MerchantRemoveTask(yield* onTask(b.task.id)))._tag,
         "NotFound",
       );
       const renamed = yield* client.MerchantUpdateWorkflow(
@@ -326,14 +350,42 @@ test(
       );
       if (renamed._tag !== "Ok") return assert.fail(renamed._tag);
       assert.strictEqual(renamed.workflow.name, "W2 wf-task-writes");
-      const discarded = yield* client.MerchantDiscardDraft(id);
+      const discarded = yield* client.MerchantDiscardDraft(yield* at());
       assert.strictEqual(discarded._tag, "Ok");
-      assert.deepStrictEqual<unknown>(yield* client.MerchantDiscardDraft(id), { _tag: "NoDraft" });
+      assert.deepStrictEqual<unknown>(yield* client.MerchantDiscardDraft(yield* at()), {
+        _tag: "NoDraft",
+      });
       const copy = yield* client.MerchantDuplicateWorkflow(
         duplicate({ ...id, name: "W2 copy wf-task-writes", tag: "w-task-writes-copy" }),
       );
       if (copy._tag !== "Ok") return assert.fail(copy._tag);
       assert.strictEqual(ShopWork.workflowIsActive(copy.workflow), false);
+    }).pipe(Effect.scoped);
+  }),
+);
+
+test(
+  "a write sent at a revision another tab moved past answers Changed and writes nothing",
+  Effect.gen(function* () {
+    const { backendUrl } = yield* stack;
+    yield* Effect.gen(function* () {
+      const { client } = yield* merchant(backendUrl);
+      const t = yield* team(client, "T wf-stale-tab");
+      const workflow = yield* created(client, "W wf-stale-tab", "w-stale-tab");
+      yield* client.MerchantAddStep(
+        addStep({ ...(yield* editing(backendUrl, workflow.id)), name: "S", teamId: t.id }),
+      );
+      // Both tabs read the draft; tab B discards it.
+      const read = yield* editing(backendUrl, workflow.id);
+      assert.strictEqual((yield* client.MerchantDiscardDraft(read))._tag, "Ok");
+      // Tab A, still showing the draft, presses Apply, then Add step.
+      assert.deepStrictEqual<unknown>(yield* client.MerchantApplyDraft(read), { _tag: "Changed" });
+      assert.deepStrictEqual<unknown>(
+        yield* client.MerchantAddStep(addStep({ ...read, name: "T", teamId: t.id })),
+        { _tag: "Changed" },
+      );
+      const after = yield* detail(backendUrl, workflow.id);
+      assert.strictEqual(after?.draftTasks, null, "no draft was started under the refused write");
     }).pipe(Effect.scoped);
   }),
 );
@@ -347,8 +399,10 @@ test(
       const t = yield* team(client, "T sites-edit-tag-apply");
       const workflow = yield* created(client, "W sites-edit-tag-apply", "sites-edit-tag-apply");
       const id = workflowId({ workflowId: workflow.id });
-      yield* client.MerchantAddStep(addStep({ ...id, name: "S", teamId: t.id }));
-      yield* goLive(client, workflow.id);
+      yield* client.MerchantAddStep(
+        addStep({ ...(yield* editing(backendUrl, workflow.id)), name: "S", teamId: t.id }),
+      );
+      yield* goLive(client, backendUrl, workflow.id);
       const screen = yield* merchant(backendUrl);
       yield* screen.client.MerchantWhoAmI();
 
@@ -356,8 +410,10 @@ test(
       yield* client.MerchantUpdateWorkflowTag(retag({ ...id, tag: "sites-edit-tag-apply-2" }));
       yield* noticed(screen.received, 1);
       // A task write starts the draft; there is no createDraft procedure.
-      yield* client.MerchantAddStep(addStep({ ...id, name: "T", teamId: t.id }));
-      const applied = yield* client.MerchantApplyDraft(id);
+      yield* client.MerchantAddStep(
+        addStep({ ...(yield* editing(backendUrl, workflow.id)), name: "T", teamId: t.id }),
+      );
+      const applied = yield* client.MerchantApplyDraft(yield* editing(backendUrl, workflow.id));
       assert.strictEqual(applied._tag, "Ok");
       yield* noticed(screen.received, 1);
       assert.strictEqual(yield* PubSub.remaining(screen.received), 0, "no more notices");
@@ -375,8 +431,10 @@ test(
       const idle = yield* team(client, "Idle sites-configuration");
       const workflow = yield* created(client, "W sites-configuration", "sites-configuration");
       const id = workflowId({ workflowId: workflow.id });
-      yield* client.MerchantAddStep(addStep({ ...id, name: "S", teamId: working.id }));
-      yield* goLive(client, workflow.id);
+      yield* client.MerchantAddStep(
+        addStep({ ...(yield* editing(backendUrl, workflow.id)), name: "S", teamId: working.id }),
+      );
+      yield* goLive(client, backendUrl, workflow.id);
       const screen = yield* merchant(backendUrl);
       yield* screen.client.MerchantWhoAmI();
 
@@ -386,9 +444,9 @@ test(
       yield* noticed(screen.received, 1);
       const box = yield* created(client, "Box sites-configuration", "box-sites-configuration");
       yield* client.MerchantAddStep(
-        addStep({ workflowId: box.id, name: "Box", teamId: working.id }),
+        addStep({ ...(yield* editing(backendUrl, box.id)), name: "Box", teamId: working.id }),
       );
-      const turnedOn = yield* client.MerchantApplyAndTurnOn(workflowId({ workflowId: box.id }));
+      const turnedOn = yield* client.MerchantApplyAndTurnOn(yield* editing(backendUrl, box.id));
       assert.strictEqual(turnedOn._tag, "Ok");
       yield* noticed(screen.received, 1);
       yield* client.MerchantDeleteWorkflow(workflowId({ workflowId: box.id }));
@@ -428,7 +486,7 @@ test(
         retag({ workflowId: "missing", tag: "x-sites-refused" }),
       );
       assert.strictEqual(edited._tag, "NotFound");
-      const applied = yield* client.MerchantApplyDraft(id);
+      const applied = yield* client.MerchantApplyDraft(yield* editing(backendUrl, workflow.id));
       assert.strictEqual(applied._tag, "NoDraft");
       const switched = yield* client.MerchantSetWorkflowState(
         setState({ workflowId: "missing", state: "inactive" }),
@@ -458,19 +516,20 @@ test(
       });
       yield* client.MemberWhoAmI();
       const id = workflowId({ workflowId: "any" });
-      const task = taskId({ taskId: "any" });
+      const editorId = { ...id, tasksRevision: 0 };
+      const task = taskWrite({ taskId: "any", tasksRevision: 0 });
       const calls = [
         client.MerchantCreateWorkflow(create({ name: "X", tag: "x" })),
         client.MerchantDuplicateWorkflow(duplicate({ ...id, name: "X", tag: "x" })),
         client.MerchantUpdateWorkflow(rename({ ...id, name: "X" })),
         client.MerchantUpdateWorkflowTag(retag({ ...id, tag: "x" })),
-        client.MerchantApplyDraft(id),
-        client.MerchantDiscardDraft(id),
+        client.MerchantApplyDraft(editorId),
+        client.MerchantDiscardDraft(editorId),
         client.MerchantSetWorkflowState(setState({ ...id, state: "active" })),
-        client.MerchantApplyAndTurnOn(id),
+        client.MerchantApplyAndTurnOn(editorId),
         client.MerchantDeleteWorkflow(id),
-        client.MerchantAddStep(addStep({ ...id, name: "X", teamId: "t" })),
-        client.MerchantAddTask(addTask({ ...id, step: 1, name: "X", teamId: "t" })),
+        client.MerchantAddStep(addStep({ ...editorId, name: "X", teamId: "t" })),
+        client.MerchantAddTask(addTask({ ...editorId, step: 1, name: "X", teamId: "t" })),
         client.MerchantUpdateTask(
           updateTask({ ...task, name: "X", teamId: "t", instructions: null }),
         ),

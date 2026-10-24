@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 import {
   type ApplyResult,
   type DiscardResult,
+  type TaskResult,
   type TaskWithTeamName,
   Workflow,
   type WorkflowPageData,
@@ -39,6 +40,7 @@ const taskOf = (name: string, step: number) =>
 /** An applied workflow with a draft that adds Polish: what a stale tab shows after another discarded it. */
 const withDraft: WorkflowPageData = {
   workflow,
+  tasksRevision: 3,
   tasks: [taskOf("Cut", 1)],
   draftTasks: [taskOf("Cut", 1), taskOf("Polish", 2)],
   teams: [{ id: "team-bench", name: "Bench", memberCount: 1 } as never],
@@ -59,13 +61,21 @@ const pressModal = (container: HTMLElement, id: string) => {
 
 beforeEach(() => {
   hidden = [];
+  sent = [];
   installAppBridge();
 });
 afterEach(() => {
   Reflect.deleteProperty(globalThis, "shopify");
 });
 
-const render = (answers: { apply?: ApplyResult; discard?: DiscardResult }, calls: Array<string>) =>
+/** The revision each write sent, in order. */
+let sent: Array<number> = [];
+
+const render = (
+  answers: { apply?: ApplyResult; discard?: DiscardResult; move?: TaskResult },
+  calls: Array<string>,
+  reread: () => Promise<void> = async () => {},
+) =>
   renderInApp(
     <ShopSocket shop={SEED_SHOP} merchantToken={Option.some(Effect.succeed("token"))}>
       <WorkflowEditorPage
@@ -75,6 +85,7 @@ const render = (answers: { apply?: ApplyResult; discard?: DiscardResult }, calls
         teamsLink={{ href: "/app/teams", onClick: (event) => event.preventDefault() }}
         onChanged={async () => {
           calls.push("changed");
+          await reread();
         }}
         onApplied={async () => {
           calls.push("applied");
@@ -83,8 +94,21 @@ const render = (answers: { apply?: ApplyResult; discard?: DiscardResult }, calls
       />
     </ShopSocket>,
     shopTestRegistry({
-      MerchantApplyDraft: () => Effect.succeed(answers.apply ?? { _tag: "NoDraft" }),
-      MerchantDiscardDraft: () => Effect.succeed(answers.discard ?? { _tag: "NoDraft" }),
+      MerchantApplyDraft: ({ tasksRevision }) =>
+        Effect.sync(() => {
+          sent.push(tasksRevision);
+          return answers.apply ?? { _tag: "NoDraft" };
+        }),
+      MerchantDiscardDraft: ({ tasksRevision }) =>
+        Effect.sync(() => {
+          sent.push(tasksRevision);
+          return answers.discard ?? { _tag: "NoDraft" };
+        }),
+      MerchantMoveTask: ({ tasksRevision }) =>
+        Effect.sync(() => {
+          sent.push(tasksRevision);
+          return answers.move ?? { _tag: "Ok", task: null };
+        }),
     }),
   );
 
@@ -113,5 +137,46 @@ describe("WorkflowEditorPage", () => {
     await expect.poll(() => calls).toStrictEqual(["changed"]);
     expect(hidden).toStrictEqual(["discard-draft"]);
     await expect.element(screen.getByText("There are no changes to discard.")).toBeVisible();
+  });
+
+  it("Apply refused as changed sent the revision on screen, closes the dialog, says so and re-reads", async () => {
+    const calls: Array<string> = [];
+    const screen = await render({ apply: { _tag: "Changed" } }, calls);
+    pressModal(screen.container, "apply-draft");
+    await expect.poll(() => calls).toStrictEqual(["changed"]);
+    expect(sent).toStrictEqual([3]);
+    expect(hidden).toStrictEqual(["apply-draft"]);
+    await expect
+      .element(
+        screen.getByText(
+          "This workflow changed since you opened it. Check the steps and try again.",
+        ),
+      )
+      .toBeVisible();
+  });
+
+  it("a task write refused as changed says so; the editor stays busy until the re-read lands", async () => {
+    const calls: Array<string> = [];
+    let landed = () => {};
+    const screen = await render({ move: { _tag: "Changed" } }, calls, async () => {
+      await new Promise<void>((resolve) => {
+        landed = resolve;
+      });
+    });
+    await screen.getByRole("button", { name: "Edit Polish" }).click();
+    const earlier = screen.getByRole("button", { name: "Move earlier" });
+    await earlier.click();
+    await expect.poll(() => calls).toStrictEqual(["changed"]);
+    expect(sent).toStrictEqual([3]);
+    await expect
+      .element(
+        screen.getByText(
+          "This workflow changed since you opened it. Check the steps and try again.",
+        ),
+      )
+      .toBeVisible();
+    await expect.element(earlier).toHaveAttribute("disabled");
+    landed();
+    await expect.element(earlier).not.toHaveAttribute("disabled");
   });
 });

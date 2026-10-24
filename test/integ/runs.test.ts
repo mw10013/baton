@@ -15,6 +15,7 @@ import { mintSessionToken } from "../shopify-session-token.ts";
 import {
   addToFixture,
   dev,
+  editingAt,
   email,
   integ,
   openAs,
@@ -143,10 +144,14 @@ const created = (client: Client, name: string, tag: string) =>
     result._tag === "Ok" ? Effect.succeed(result.workflow) : Effect.die(new Error(result._tag)),
   );
 
+/** {@link editingAt} on `SEED_SHOP`, this file's shop. */
+const editing = (workflowId: string) =>
+  Effect.flatMap(stack, ({ backendUrl }) => editingAt(backendUrl, SEED_SHOP, workflowId));
+
 /** Apply the draft and turn the workflow on, the two writes a fresh workflow needs before it starts or attaches. */
 const goLive = (client: Client, id: string) =>
   Effect.gen(function* () {
-    const applied = yield* client.MerchantApplyDraft(workflowIdInput({ workflowId: id }));
+    const applied = yield* client.MerchantApplyDraft(yield* editing(id));
     assert.strictEqual(applied._tag, "Ok");
     const on = yield* client.MerchantSetWorkflowState(
       setState({ workflowId: id, state: "active" }),
@@ -159,7 +164,7 @@ const live = (client: Client, name: string, tag: string, onTeam: string) =>
   Effect.gen(function* () {
     const workflow = yield* created(client, name, tag);
     yield* client.MerchantAddStep(
-      addStep({ workflowId: workflow.id, name: "Do it", teamId: onTeam }),
+      addStep({ ...(yield* editing(workflow.id)), name: "Do it", teamId: onTeam }),
     );
     yield* goLive(client, workflow.id);
     return workflow;
@@ -305,13 +310,11 @@ test(
 
       assert.strictEqual((yield* attach(lineItemGid(1)))._tag, "WorkflowNotEligible");
       yield* client.MerchantAddStep(
-        addStep({ workflowId: workflow.id, name: "Engrave", teamId: engraving.id }),
+        addStep({ ...(yield* editing(workflow.id)), name: "Engrave", teamId: engraving.id }),
       );
       // A draft is not attachable; neither is an applied but inactive workflow.
       assert.strictEqual((yield* attach(lineItemGid(1)))._tag, "WorkflowNotEligible");
-      const applied = yield* client.MerchantApplyDraft(
-        workflowIdInput({ workflowId: workflow.id }),
-      );
+      const applied = yield* client.MerchantApplyDraft(yield* editing(workflow.id));
       assert.strictEqual(applied._tag, "Ok");
       assert.strictEqual((yield* attach(lineItemGid(1)))._tag, "WorkflowNotEligible");
       yield* client.MerchantSetWorkflowState(
@@ -508,13 +511,11 @@ test(
       const engraving = yield* team(client, "Engraving");
       const workflow = yield* created(client, "Engraving", "engraved");
       yield* client.MerchantAddStep(
-        addStep({ workflowId: workflow.id, name: "Do it", teamId: engraving.id }),
+        addStep({ ...(yield* editing(workflow.id)), name: "Do it", teamId: engraving.id }),
       );
       // Applied but not on: the two orders below are stored with no match, so the Turn on's
       // reconcile all is the first pass to see them.
-      const applied = yield* client.MerchantApplyDraft(
-        workflowIdInput({ workflowId: workflow.id }),
-      );
+      const applied = yield* client.MerchantApplyDraft(yield* editing(workflow.id));
       assert.strictEqual(applied._tag, "Ok");
       yield* storeOrder(1, ["engraved"]);
       yield* storeOrder(2, ["engraved"]);
@@ -538,14 +539,12 @@ test(
       const engraving = yield* team(client, "Engraving");
       const workflow = yield* created(client, "Engraving", "engraved");
       yield* client.MerchantAddStep(
-        addStep({ workflowId: workflow.id, name: "Do it", teamId: engraving.id }),
+        addStep({ ...(yield* editing(workflow.id)), name: "Do it", teamId: engraving.id }),
       );
       yield* storeOrder(1, ["engraved"]);
       // Both writes reconcile all and create a run; what they hand the screen is the workflow
       // and nothing a pass counted.
-      const applied = yield* client.MerchantApplyDraft(
-        workflowIdInput({ workflowId: workflow.id }),
-      );
+      const applied = yield* client.MerchantApplyDraft(yield* editing(workflow.id));
       assert.strictEqual(applied._tag, "Ok");
       assert.deepStrictEqual(Object.keys(applied).toSorted(), ["_tag", "workflow"]);
       const on = yield* client.MerchantSetWorkflowState(

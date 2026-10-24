@@ -21,6 +21,7 @@ import {
   addToFixture,
   connectAs,
   dev,
+  editingAt,
   email,
   nextCloseCode,
   openAs,
@@ -909,10 +910,14 @@ test(
       if (workflow._tag !== "Ok") return yield* Effect.die(new Error(workflow._tag));
       const workflowId = workflow.workflow.id;
       yield* w.merchant.client.MerchantAddStep(
-        Schema.decodeUnknownSync(ShopWork.AddStepInput)({ workflowId, name: "Hold", teamId: temp }),
+        Schema.decodeUnknownSync(ShopWork.AddStepInput)({
+          ...(yield* editingAt(w.backendUrl, SEED_SHOP, workflowId)),
+          name: "Hold",
+          teamId: temp,
+        }),
       );
       const on = yield* w.merchant.client.MerchantApplyAndTurnOn(
-        Schema.decodeUnknownSync(ShopWork.ApplyAndTurnOnInput)({ workflowId }),
+        yield* editingAt(w.backendUrl, SEED_SHOP, workflowId),
       );
       assert.strictEqual(on._tag, "Ok");
       const [n = 0] = yield* addOrders(w.backendUrl, [["gone"]]);
