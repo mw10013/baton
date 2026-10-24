@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # verify-baton helper: drives this checkout's embedded app through the Playwright CLI's `dev`
-# session and files evidence under .logs/verify/<run>/. Usage is in SKILL.md next to this file.
+# session, attached to the agent Chrome, and files evidence under .logs/verify/<run>/. Usage is in
+# SKILL.md next to this file.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
@@ -22,11 +23,7 @@ case "$cmd" in
   doctor)
     ok=0
     vp run dev:status || ok=1
-    if [ -f playwright/.auth/shopify-admin.json ]; then
-      echo "login:   playwright/.auth/shopify-admin.json ($(date -r playwright/.auth/shopify-admin.json '+%Y-%m-%d %H:%M'))"
-    else
-      echo "login:   missing; a person runs vp run e2e:auth"; ok=1
-    fi
+    vp run browser agent || ok=1
     echo "browser: $(cli list 2>&1 | tr '\n' ' ')"
     if [ -L "$CURRENT" ]; then echo "run:     $(readlink "$CURRENT") is open"; else echo "run:     none open"; fi
     exit $ok

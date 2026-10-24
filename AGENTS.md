@@ -35,7 +35,7 @@ E2E server logs: `.logs/e2e/current`. Rotated archives: `.logs/e2e/`.
 Staging logs: use `cf o11y telemetry query` on `cloudflare-workers`, filtering `$metadata.service` to `baton-website-staging` (Website) or `baton-backend-staging` (Backend).
 
 ## Browser checks
-- Playwright CLI or Chrome MCP: choose as useful for implementation and verification. CLI setup, cleanup and recovery: [runbook](docs/playwright-cli-runbook.md). Start with `vp run browser open`; headless by default, `--headed` when helpful.
+- Playwright CLI or Chrome MCP: choose as useful for implementation and verification. CLI setup, cleanup and recovery: [runbook](docs/playwright-cli-runbook.md). Start with `vp run browser open`; it drives the agent Chrome, never your own.
 
 ## Logging
 - One string message: `<operation>: shop=<shop> key=<value>: <detail>`. Structured fields go in `Effect.annotateLogs`; `shop` goes in both.

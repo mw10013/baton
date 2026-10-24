@@ -5,9 +5,17 @@ description: Drive Baton's embedded Shopify admin app in this checkout's dev sto
 
 # Verify Baton
 
-Baton runs inside the Shopify admin: the admin's own page holds the App nav and the hoisted title bar, and the app is an iframe in it. Every drive goes through this checkout's dev server (`vp run dev`), its dev store (`SHOPIFY_DEV_STORE` in `.env`) and the Playwright CLI session `dev`. The helper is `.claude/skills/verify-baton/verify.sh`; run it from the checkout root. Below, `V` means that path.
+Baton runs inside the Shopify admin: the admin's own page holds the App nav and the hoisted title bar, and the app is an iframe in it. Every drive goes through this checkout's dev server (`vp run dev`), its dev store (`SHOPIFY_DEV_STORE` in `.env`) and the Playwright CLI session `dev`, attached to the agent Chrome. The helper is `.claude/skills/verify-baton/verify.sh`; run it from the checkout root. Below, `V` means that path.
 
 The recipe for each feature is in [features/README.md](features/README.md). Read it before driving.
+
+## The agent Chrome
+
+Runs drive the agent Chrome: one Chrome per machine, with its own profile (`~/.chrome-agent`) on port 9333, logged in to Shopify once by a person. It is not the user's own Chrome, so it never shows a permission dialog and works with nobody at the laptop. `vp run browser agent` starts it if needed, checks the Shopify login, and attaches this checkout's chrome-devtools server. `V start` and `V doctor` run it.
+
+- Every project and checkout on the machine shares it. Open your own tab and touch only that one. `vp run browser open` opens one for the `dev` session, and `vp run browser close` closes only that tab.
+- Always use full admin URLs (`admin.shopify.com/store/<store>/…`), never the admin's remembered store.
+- **Login lapsed** (`not logged in to Shopify`): stop the run, and send the user a push notification saying a person must log in to Shopify in the agent Chrome. Never sign in yourself.
 
 ## Isolation
 
@@ -22,7 +30,7 @@ The recipe for each feature is in [features/README.md](features/README.md). Read
 .claude/skills/verify-baton/verify.sh start <run-id>
 ```
 
-Pick a short run id such as `teams-rename-1`. `start` records whether the dev server was already up, runs `vp run dev` (starts it or adopts the running one), then `vp run browser open`. That loads the exported Shopify login, opens the app in the dev store, waits for the iframe's `body[data-hydrated]` and collapses the Shopify CLI's Dev Console. It is ready when it prints `Run open: .logs/verify/<run-id>`.
+Pick a short run id such as `teams-rename-1`. `start` records whether the dev server was already up, runs `vp run dev` (starts it or adopts the running one), then `vp run browser open`. That runs `vp run browser agent`, attaches the `dev` session to the agent Chrome in a new tab, opens the app in the dev store, waits for the iframe's `body[data-hydrated]` and collapses the Shopify CLI's Dev Console. It is ready when it prints `Run open: .logs/verify/<run-id>`.
 
 A cold load through the tunnel hydrates in about 3 s. If `open` fails, check the doctor output, then `vp run dev:logs`.
 
@@ -34,10 +42,10 @@ From an empty database, run `vp run db:reset` before starting, and only with the
 .claude/skills/verify-baton/verify.sh doctor
 ```
 
-Read-only. Exits 1 unless all of these hold: `healthy: yes`, the port is listening and answering, the tunnel shows `(ready)`, and the login export exists. It also shows whether the `dev` browser is open and whether a run is open. Run it first, and again whenever a drive looks wrong.
+Exits 1 unless all of these hold: `healthy: yes`, the port is listening and answering, the tunnel shows `(ready)`, and `vp run browser agent` succeeds. That may start the agent Chrome; it changes nothing else. It also shows whether the `dev` browser is open and whether a run is open. Run it first, and again whenever a drive looks wrong.
 
 - Not healthy: `vp run dev`, or read `.logs/dev/current`.
-- Login missing or a drive lands on a Shopify login page: a person runs `vp run e2e:auth`, which reads macOS Keychain. Never sign in yourself.
+- A drive lands on a Shopify login page: the agent Chrome's login lapsed. See [The agent Chrome](#the-agent-chrome).
 
 ## Drive
 
@@ -89,7 +97,16 @@ Proof standards:
 V stop
 ```
 
-Closes the `dev` browser, stops the dev server only if this run started it, and closes the run. The evidence stays in `.logs/verify/<run-id>/`. Before `stop`, delete what the run created in the store, through the UI. Never kill a process by name. If `stop` fails partway, run `vp run browser close` and remove `.logs/verify/current`.
+Closes the `dev` session's tab and detaches from the agent Chrome, which keeps running. Stops the dev server only if this run started it, and closes the run. The evidence stays in `.logs/verify/<run-id>/`. Before `stop`, delete what the run created in the store, through the UI. Never kill a process by name. If `stop` fails partway, run `vp run browser close` and remove `.logs/verify/current`. Never quit the agent Chrome: other agents use it.
+
+## Inspect with the chrome-devtools CLI
+
+For what Playwright doesn't show well (the CSS cascade, network bodies, performance traces, Lighthouse), use the `chrome-devtools` CLI on the same agent Chrome. `vp run browser agent` prints this checkout's flag, `--sessionId=<WEBSITE_PORT>`; pass it on every command. Its commands and options are in the `chrome-devtools-cli` skill that ships inside the installed `chrome-devtools-mcp` package.
+
+- Never run `chrome-devtools start` or `stop` yourself. `vp run browser agent` starts this checkout's server with the right browser. Without it, the first command launches a separate, logged-out headless Chrome.
+- `chrome-devtools list_pages` shows every tab in the agent Chrome, other agents' included. Act only on your own page id.
+- Element uids change with every snapshot. Take a fresh `take_snapshot` before acting on a page that changed.
+- Snapshots repeat the app frame's URL, session token included, on every link. Write them with `--filePath` and search the file instead of printing them.
 
 ## Gotchas
 
@@ -101,4 +118,4 @@ Closes the `dev` browser, stops the dev server only if this run started it, and 
 - The admin's own nav has an Orders link too. App nav links are the ones whose `href` contains `/apps/`. Use `getByRole('link', { name: 'Orders', exact: true }).and(locator('a[href*="/apps/"]'))`.
 - The console always shows a 403 for `admin.shopify.com/favicon.ico` and two admin warnings (ShopifyQL, deprecated parameters). They are the admin's, not Baton's.
 - An open workflow editor is a second embedded iframe (`chrome=window`). The `in` target excludes it. Drive the editor with `V app` and `page.frameLocator('iframe[src*="chrome=window"]')`.
-- `vp run browser open` closes and reopens the `dev` session, so never run it while another agent drives this checkout.
+- `vp run browser open` closes the `dev` session's tab and opens a new one, so never run it while another agent drives this checkout.

@@ -1,7 +1,7 @@
 # Playwright CLI for LLM checks
 
 Optional while implementing or verifying Baton. Choose CLI or Chrome MCP as useful.
-Run commands from the checkout root. Headless by default; use `open --headed` when helpful.
+Run commands from the checkout root. It drives the agent Chrome (below), never your own.
 
 ## Start
 
@@ -10,11 +10,15 @@ vp run dev
 vp run browser open
 ```
 
-If login is missing or expired, run `vp run e2e:auth`, then reopen. This exports a
-Shopify login from macOS Keychain and can require a person. Chrome must be installed.
+`open` runs `vp run browser agent`, which starts the agent Chrome if needed and checks
+its Shopify login. It then attaches this checkout's `dev` session to that Chrome in a new
+tab, opens the dev store, waits for hydration and collapses Dev Console. It reloads once
+if hydration stalls.
 
-`open` restarts this checkout's `dev` session, loads the login, opens the dev store,
-waits for hydration and collapses Dev Console. It reloads once if hydration stalls.
+The agent Chrome is one Chrome per machine with its own profile (`~/.chrome-agent`) on
+port 9333, shared by every project and checkout. A person logs in to Shopify in its
+window once; the profile keeps the login. If `browser agent` reports the login lapsed,
+a person logs in there again. Chrome must be installed.
 Read `.playwright-cli/dev-ready.yml` for element references.
 
 ## Drive and verify
@@ -46,22 +50,22 @@ vp run browser close
 - `.playwright-cli/`: ignored snapshots, screenshots, console logs and traces, retained
   for debugging. Oldest files are pruned as CLI commands run; the budget is best-effort.
 - `dev-ready.yml`: latest prepared snapshot; overwritten by `open` and `ready`.
-- `playwright/.auth/shopify-admin.json`: ignored login export, outside that cleanup budget.
 
 Verification evidence storage is undecided.
 Explicit filenames resolve from the checkout root, not automatically from `.playwright-cli/`.
 
 Snapshots and logs can contain login tokens. Do not commit or share them unredacted.
-`close` stops the browser; it does not delete artifacts. Manual fallback:
+`close` closes the `dev` session's tab and detaches; the agent Chrome keeps running for
+other agents. It does not delete artifacts. Manual fallback:
 `vp run clean:playwright-cli` removes files roughly 48 hours old.
 
 ## Recover
 
 - **Server/tunnel failure:** inspect `vp run dev:status` and `.logs/dev/current`;
   restore `vp run dev`, then reopen.
-- **Login redirect:** refresh with `vp run e2e:auth`, then reopen.
+- **Login redirect:** a person logs in to Shopify in the agent Chrome's window, then reopen.
 - **Stale reference:** run `ready` and use the new snapshot.
-- **Readiness failure:** inspect the page and dev logs. Try `open --headed` or Chrome MCP.
+- **Readiness failure:** inspect the page and dev logs. Look at the agent Chrome's window, or try Chrome MCP.
 - **Wrong data:** this drives the dev store. `vp run fixture` restores fixture data.
 - **A Baton window or page spins forever while the Worker logs 200 for its document:** check
   whether Codex Browser Use is attached to the tab (Chrome shows "is debugging this browser").
