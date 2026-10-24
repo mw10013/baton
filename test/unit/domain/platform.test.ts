@@ -3,6 +3,7 @@ import { strictEqual } from "@effect/vitest/utils";
 import * as Schema from "effect/Schema";
 import {
   BoundedId,
+  Email,
   formatKilobytes,
   formatNumber,
   formatStatus,
@@ -50,6 +51,25 @@ describe("userIsAdmin", () => {
     strictEqual(userIsAdmin({ role: "user" }), false);
     strictEqual(userIsAdmin({ role: null }), false);
     strictEqual(userIsAdmin({}), false);
+  });
+});
+
+describe("Email", () => {
+  it("decodes a trimmed, lowercased address and refuses text that is not one", () => {
+    const decode = Schema.decodeUnknownExit(Email);
+    const decoded = decode("  New@M.com ");
+    strictEqual(decoded._tag === "Success" ? decoded.value : null, "new@m.com");
+    for (const bad of [
+      "",
+      "   ",
+      "qa not-an-email",
+      "a@b",
+      "@m.com",
+      "a@m.",
+      "a b@m.com",
+      "<img src=x>",
+    ])
+      strictEqual(decode(bad)._tag, "Failure", bad);
   });
 });
 

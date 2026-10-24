@@ -216,6 +216,11 @@ export const EMAIL_TOO_LONG = "Enter an email of 254 characters or fewer";
  * Deliberately not handled: provider aliasing (Gmail dots/plus) and
  * unicode/IDN domains — distinct strings are distinct members.
  *
+ * The shape check is the sign-in form's: no whitespace, one `@`, and a dot
+ * in the domain. A merchant adds members by typing, and an address that
+ * could never receive a sign-in link would still count toward the shop's
+ * member limit.
+ *
  * An address over {@link EMAIL_MAX_LENGTH} is refused with
  * {@link EMAIL_TOO_LONG}, after the trim, and never truncated: a cut address
  * is a different address, and sign-in would match nobody. The D1 check on
@@ -227,6 +232,7 @@ export const Email = Schema.String.pipe(
   Schema.decodeTo(
     Schema.NonEmptyString.check(
       Schema.isMaxLength(EMAIL_MAX_LENGTH, { message: EMAIL_TOO_LONG }),
+      Schema.isPattern(/^[^\s@]+@[^\s@]+\.[^\s@]+$/u, { message: "Enter an email address" }),
     ).pipe(Schema.brand("Email")),
     {
       decode: SchemaGetter.transform((s) => s.trim().toLowerCase()),

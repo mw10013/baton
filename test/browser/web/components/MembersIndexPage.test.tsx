@@ -120,6 +120,21 @@ describe("MembersIndexPage", () => {
     await expect.element(screen.getByText("Up to 254 characters")).toBeVisible();
   });
 
+  it("text that is not an email address is refused on Add, and nothing is added", async () => {
+    const added: Array<Member> = [];
+    const screen = await render(pageOf([]), {
+      onAdded: async (member) => {
+        added.push(member);
+      },
+    });
+    await screen.getByRole("button", { name: "Add member" }).last().click();
+    await screen.getByRole("textbox", { name: "Email" }).fill("qa not-an-email");
+    await screen.getByRole("button", { name: "Add", exact: true }).click();
+    await expect.element(screen.getByText("Enter an email")).toBeVisible();
+    expect(added).toStrictEqual([]);
+    expect(hidden).toStrictEqual([]);
+  });
+
   it("the ceiling's refusal is a banner stating the shop's member limit", async () => {
     // The empty state's twin: outside the admin, the title bar's copy is in `s-page`'s actions,
     // which a narrow test page folds away; in the admin App Bridge hoists it.
