@@ -14,7 +14,7 @@ A rollback runs older code against current data, and no rollback undoes a migrat
 
 ## Promote
 
-1. Land the change on `main` and push. Wait for the staging build to succeed and check staging.
+1. Land the change on `main` and push. Wait for the staging build to succeed (see [Build status](#build-status)) and check staging.
 2. Read the diff since the last promotion for migrations and Durable Object class changes (see the previous section):
 
    ```sh
@@ -22,16 +22,32 @@ A rollback runs older code against current data, and no rollback undoes a migrat
    git log --stat origin/production..origin/main
    ```
 
-3. Fast-forward `production` to the checked revision:
+3. Fast-forward `production` to `main`:
 
    ```sh
-   git push origin <sha>:production
+   git push origin origin/main:production
    ```
 
-   Git refuses a push that is not a fast-forward. If it refuses, stop: `production` has moved independently.
+   A promotion moves the `production` branch on GitHub, and the build deploys whatever it points at. `<src>:production` moves it without a local `production` branch.
 
-4. Watch the build: Cloudflare dashboard › Workers & Pages › `baton-website-production` › Deployments. It ends with `Success: Deploy command completed`. The `cf` Builds API has refused the CLI token before, so use the dashboard.
+   `origin/main` is right only if it is still the commit you checked on staging. If anything could have landed on `main` since, such as another session's push, push the checked commit instead: `git push origin <sha>:production`.
+
+   Git refuses a push that is not a fast-forward, whichever form you use. If it refuses, stop: `production` has moved independently.
+
+4. Watch the build (see [Build status](#build-status)) until `Workers Builds: baton-website-production` reports `success`.
 5. Check the release (below).
+
+## Build status
+
+Workers Builds runs from the GitHub integration and posts its result as a check run on the commit it built. Read it with `gh`:
+
+```sh
+gh api repos/mw10013/baton/commits/<sha>/check-runs --jq '.check_runs[] | {name, status, conclusion, completed_at}'
+```
+
+`Workers Builds: baton-website-staging` is the staging build and `Workers Builds: baton-website-production` is the production build. Each run's `details_url` opens its log in the Cloudflare dashboard.
+
+The `cf` CLI cannot show builds. Its token is an account token, and the Workers Builds API needs a permission an account token cannot carry.
 
 ## Roll back
 
@@ -49,6 +65,7 @@ Never move `production` backwards with a force push. The build would deploy the 
 
 ## Check a release or rollback
 
+- Both Workers serve the new version: `cf workers deployments list --script-name baton-website-production`, then `baton-backend-production`. The top deployment's version is at 100%, created after the push or rollback. It names no commit, so match it by time to the build's check run. After a rollback, this is the only check that shows what is live.
 - https://baton.mw10013.com loads, and Baton opens in `mw10013-production-shop-00`'s admin.
 - No warnings or errors since the deploy: `cf o11y telemetry query` on `cloudflare-workers`, with `$metadata.service` filtered to `baton-website-production` and then `baton-backend-production`.
 - If the release touched orders, workflows or billing, repeat the matching part of the development-store smoke test.
