@@ -108,6 +108,26 @@ describe("Membership", () => {
     }).pipe(Effect.provide(QuietLogs), Effect.provide(ActorSqliteTest)),
   );
 
+  it.effect("every write but adding a member notifies the workflows; a refusal does not", () =>
+    Effect.gen(function* () {
+      const { membership, notices } = yield* harness;
+      const a = yield* membership.addMember({ email: email("a@membership.test") });
+      const b = yield* membership.addMember({ email: email("b@membership.test") });
+      assert.deepStrictEqual<unknown>(notices, []);
+      const cut = yield* membership.createTeam({ name: teamName("Cut") });
+      yield* membership.renameTeam({ teamId: cut.id, name: teamName("Cutting") });
+      yield* membership.addMemberTeams({ memberId: a.id, teamIds: [cut.id] });
+      yield* membership.setTeamMember({ teamId: cut.id, memberId: a.id, inTeam: false });
+      yield* membership.addTeamMembers({ teamId: cut.id, memberIds: [b.id] });
+      yield* membership.deleteMember({ email: b.email });
+      yield* membership.createTeam({ name: teamName("Cutting") }).pipe(Effect.flip);
+      assert.deepStrictEqual<unknown>(
+        notices,
+        Array.from({ length: 6 }, () => [WORKFLOWS_KEY]),
+      );
+    }).pipe(Effect.provide(QuietLogs), Effect.provide(ActorSqliteTest)),
+  );
+
   it.effect("each membership write revokes exactly the members it changed", () =>
     Effect.gen(function* () {
       const { membership, revoked } = yield* harness;
@@ -337,7 +357,7 @@ describe("Membership", () => {
           ["deleteTeam", "nope"],
         ]);
         assert.deepStrictEqual<unknown>(
-          notices,
+          notices.filter((keys) => keys.includes(ORDERS_KEY)),
           Array.from({ length: 3 }, () => [ORDERS_KEY, WORKFLOWS_KEY]),
         );
       }).pipe(Effect.provide(QuietLogs), Effect.provide(ActorSqliteTest)),

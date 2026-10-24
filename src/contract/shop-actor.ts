@@ -109,7 +109,8 @@ export const SYNC_KEY = "sync";
 
 /**
  * The workflows' reactivity key: a workflow, its tasks or its draft changed (any workflow write
- * the actor answered `Ok`, and a team delete, which unassigns tasks). Read by the workflow page
+ * the actor answered `Ok`), or a team they name did (every team and member write but adding a
+ * member, and a team delete, which unassigns tasks). Read by the workflow page
  * and the editor, so a tab sees another tab's draft, Discard or Apply without pressing anything.
  */
 export const WORKFLOWS_KEY = "workflows";

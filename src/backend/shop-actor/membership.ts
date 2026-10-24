@@ -30,6 +30,10 @@ import type { WorkflowRepository } from "./workflow-repository.ts";
  * not names). A refusal writes nothing and closes nothing. The close is best effort: a failure
  * is logged and the write stands.
  *
+ * Every write but adding a member then notifies {@link WORKFLOWS_KEY}: the workflow page and the
+ * editor show each task's team name and member count, and the editor lists the teams to pick.
+ * Adding a member puts them on no team, so nothing a workflow shows changes.
+ *
  * Team delete also nulls the actor's task pointers (`deleteTeam`), over the actor's
  * workflow repository, then reconciles every stored order (`reconcileAll`, the runs service's)
  * and notifies.
@@ -84,6 +88,7 @@ export const makeMembership = <R>({
         closed,
       },
     );
+    yield* notify([WORKFLOWS_KEY]);
   });
 
   const addMemberTeams = Effect.fn("Membership.addMemberTeams")(function* ({
@@ -96,6 +101,7 @@ export const makeMembership = <R>({
       `Membership.addMemberTeams: shop=${shop} memberId=${memberId}: added teams=${teamIds.length} closed=${closed}`,
       { memberId, teams: teamIds.length, closed },
     );
+    yield* notify([WORKFLOWS_KEY]);
   });
 
   const setTeamMember = Effect.fn("Membership.setTeamMember")(function* ({
@@ -110,6 +116,7 @@ export const makeMembership = <R>({
       `Membership.setTeamMember: shop=${shop} teamId=${teamId}: ${outcome} memberId=${memberId} closed=${closed}`,
       { teamId, memberId, outcome, closed },
     );
+    yield* notify([WORKFLOWS_KEY]);
   });
 
   const createTeam = Effect.fn("Membership.createTeam")(function* ({ name }: CreateTeamInput) {
@@ -118,6 +125,7 @@ export const makeMembership = <R>({
       teamId: team.id,
       closed: 0,
     });
+    yield* notify([WORKFLOWS_KEY]);
     return team;
   });
 
@@ -130,6 +138,7 @@ export const makeMembership = <R>({
       teamId,
       closed: 0,
     });
+    yield* notify([WORKFLOWS_KEY]);
   });
 
   const addTeamMembers = Effect.fn("Membership.addTeamMembers")(function* ({
@@ -142,6 +151,7 @@ export const makeMembership = <R>({
       `Membership.addTeamMembers: shop=${shop} teamId=${teamId}: added members=${memberIds.length} closed=${closed}`,
       { teamId, members: memberIds.length, closed },
     );
+    yield* notify([WORKFLOWS_KEY]);
   });
 
   /**
@@ -181,18 +191,19 @@ export const makeMembership = <R>({
     yield* Effect.forEach(gone, (goneId) => workflowRepository.unassignTeam({ teamId: goneId }), {
       discard: true,
     }).pipe(Effect.orDie);
+    const unassigned = inUse.filter((candidate) => gone.has(candidate)).length;
     yield* reconcileAll("deleteTeam", teamId);
     const closed = Option.isSome(deleted)
       ? yield* close("Membership.deleteTeam", deleted.value)
       : 0;
     const outcome = Option.isSome(deleted) ? "deleted" : "not-found";
     yield* log(
-      `Membership.deleteTeam: shop=${shop} teamId=${teamId}: ${outcome} closed=${closed} unassigned=${gone.size}`,
+      `Membership.deleteTeam: shop=${shop} teamId=${teamId}: ${outcome} closed=${closed} unassigned=${unassigned}`,
       {
         teamId,
         outcome,
         closed,
-        unassigned: gone.size,
+        unassigned,
       },
     );
     yield* notify([ORDERS_KEY, WORKFLOWS_KEY]);
